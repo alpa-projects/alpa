@@ -1,8 +1,17 @@
+from functools import partial 
 import jax
 import jax.numpy as jnp
 
-jaxpr = jax.make_jaxpr(jax.pmap(lambda x: x ** 2))(jnp.arange(1))
+#f = lambda x: jax.lax.psum(x, axis_name='batch')
+#y = jax.pmap(f, axis_name='batch')(jnp.ones((4, 4)))
+#print(y, type(y))
 
-f = lambda x: x / jax.lax.psum(x, axis_name='i')
-out = jax.pmap(f, axis_name='i')(jnp.ones((1, 4)))
+jax.pmap
+def func(x, w):
+  return x @ w
+
+#y = func(jnp.ones((4, 4)), jnp.ones((4, 4)))
+#print(y, type(y))
+
+print(jax.make_jaxpr(func)(jnp.ones((4, 4)), jnp.ones((4, 4))))
 

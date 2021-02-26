@@ -6,12 +6,15 @@ import jax.numpy as jnp
 #y = jax.pmap(f, axis_name='batch')(jnp.ones((4, 4)))
 #print(y, type(y))
 
-jax.pmap
+@jax.pmap
 def func(x, w):
-  return x @ w
+    print("pmap A")
+    return x @ w
 
-#y = func(jnp.ones((4, 4)), jnp.ones((4, 4)))
-#print(y, type(y))
+print("pmap B")
+y = func(jnp.ones((1, 4)), jnp.ones((1, 4)))
+print("pmap C")
+print(y, type(y))
 
-print(jax.make_jaxpr(func)(jnp.ones((4, 4)), jnp.ones((4, 4))))
+#print(jax.make_jaxpr(func)(jnp.ones((4, 4)), jnp.ones((4, 4))))
 

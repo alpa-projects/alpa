@@ -254,8 +254,8 @@ def test_mlp_data_model_parallel():
         return w1 - lr * g_w1, w2 - lr * g_w2
 
     def train_parallel(x, y, w1, w2):
-        data_parallel = len(jax.devices())
-        model_parallel = 1
+        model_parallel = 2
+        data_parallel = len(jax.devices()) // model_parallel
 
         x = split(x, 0, data_parallel)
         y = split(y, 0, data_parallel)

@@ -2,6 +2,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
+
 def debug_pmap():
     #f = lambda x: jax.lax.psum(x, axis_name='batch')
     #y = jax.pmap(f, axis_name='batch')(jnp.ones((4, 4)))
@@ -44,29 +45,6 @@ def test_nested_pmap():
     print(c)
 
 
-def test_soft_pmap():
-    a = jnp.ones(12)
-
-    @jax.soft_pmap
-    def add(x):
-        return x + 2
-
-    b = add(a)
-    print(b.sharding_spec)
-
-
-def test_xmap():
-    x = jnp.arange(10).reshape((2, 5))
-    devices = np.array(jax.devices())[:4].reshape((2, 2))
-    with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
-      distributed_out = xmap(
-        jnp.vdot,
-        in_axes=({0: 'left'}, {1: 'right'}),
-        out_axes=['left', 'right', ...],
-        axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
-
 if __name__ == "__main__":
-    #test_soft_pmap()
-
-    test_xmap()
+    test_nested_pmap()
 

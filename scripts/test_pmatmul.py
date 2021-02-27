@@ -283,8 +283,81 @@ def test_mlp_data_model_parallel():
     np.testing.assert_allclose(w2_serial, w2_parallel, rtol=1e-4)
 
 
+def auto_parallel(func, batch, weights):
+    n_devices = len(jax.devices())
+
+    def process_batch(batch):
+        def split(x):
+            assert x.shape[0] % n_devices == 0
+            return x.reshape((n_devices, x.shape[0] // n_devices) + x.shape[1:])
+        return jax.tree_util.tree_map(split, batch)
+
+    def process_weight(weight):
+        return weight
+
+    jaxpr = jax.make_jaxpr(func)(batch, weights)
+
+    print(jaxpr)
+    exit()
+
+    func_parallel = jax.pmap(func, axis_name='batch',
+        in_axes=(0, None), out_axes=None)
+
+    return func_parallel, process_batch, process_weight
+
+
+def test_auto_parallel():
+    lr = 0.1
+    n_epoch = 1
+
+    def loss_serial(batch, weights):
+        x, y = batch
+        w1, w2 = weights
+        x = x @ w1
+        x = jax.nn.relu(x)
+        x = x @ w2
+        return ((x - y) ** 2).mean()
+
+    def step_serial(batch, weights):
+        gradients = jax.grad(loss_serial, argnums=1)(batch, weights)
+        return [w - g * lr for w, g in zip(weights, gradients)]
+
+    def train_serial(batch, weights):
+        for i in range(n_epoch):
+            weights = step_serial(batch, weights)
+        return weights
+
+    def train_parallel(batch, weights):
+        step_parallel, process_batch, process_weight =\
+            auto_parallel(step_serial, batch, weights)
+
+        weights = process_weight(weights)
+
+        for i in range(n_epoch):
+            pbatch = process_batch(batch)
+            weights = step_parallel(pbatch, weights)
+
+        return weights
+
+    N = 8
+    D = 128
+
+    np.random.seed(0)
+    x = np.random.uniform(size=(N, D))
+    y = np.random.uniform(size=(N, D))
+    w1 = np.random.uniform(size=(D, D))
+    w2 = np.random.uniform(size=(D, D))
+
+    w1_serial, w2_serial = train_serial((x, y), (w1, w2))
+    w1_parallel, w2_parallel = train_parallel((x, y), (w1, w2))
+
+    np.testing.assert_allclose(w1_serial, w1_parallel, rtol=1e-4)
+    np.testing.assert_allclose(w2_serial, w2_parallel, rtol=1e-4)
+
+
 if __name__ == "__main__":
     #test_mlp_model_parallel()
     #test_mlp_data_parallel()
-    test_mlp_data_model_parallel()
+    #test_mlp_data_model_parallel()
+    test_auto_parallel()
 

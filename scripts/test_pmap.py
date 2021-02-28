@@ -1,5 +1,6 @@
 from functools import partial 
 import jax
+from jax import lax
 import jax.numpy as jnp
 
 
@@ -45,6 +46,14 @@ def test_nested_pmap():
     print(c)
 
 
+def test_allreduce_sum():
+    @partial(jax.pmap, axis_name='i')
+    def normalize(x):
+        return x / lax.psum(x, 'i')
+
+    print(normalize(jnp.arange(4.)))
+
 if __name__ == "__main__":
-    test_nested_pmap()
+    #test_nested_pmap()
+    test_allreduce_sum()
 

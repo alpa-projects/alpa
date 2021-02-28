@@ -104,8 +104,8 @@ def test_grad():
 
 
 if __name__ == "__main__":
-    #test_dist_matmul()
+    test_dist_matmul()
     #test_collective_pdot()
-    test_mlp()
+    #test_mlp()
     #test_grad()
 

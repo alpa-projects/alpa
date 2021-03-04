@@ -48,7 +48,7 @@ def test_mlp_forward():
 
         x = x @ w1
         x = relu(x)
-        x = with_sharding_constraint(x, P('data_parallel', 'model_parallel'))
+        #x = with_sharding_constraint(x, P('data_parallel', 'model_parallel'))
         x = x @ w2
         x = relu(x)
         loss = jnp.mean((x - y) ** 2)

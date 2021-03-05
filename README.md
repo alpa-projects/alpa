@@ -6,7 +6,9 @@ with a simple decorator.
 
 Install
 =======
-
+```bash
+pip install -e .
+```
 
 
 Organization

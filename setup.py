@@ -1,4 +1,3 @@
 from setuptools import setup
 
-setup(name='paranum',
-)
+setup(name='paranum')

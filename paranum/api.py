@@ -1,3 +1,5 @@
+from functools import wraps
+
 import jax
 
 def process_batch(batch, n_devices):
@@ -7,7 +9,7 @@ def process_batch(batch, n_devices):
     return jax.tree_util.tree_map(split, batch)
 
 
-def parallel(func):
+def parallelize(func):
     n_devices = len(jax.devices())
 
     func_parallel = jax.pmap(jax.jit(func), axis_name='auto_parallel_batch',

@@ -21,9 +21,17 @@ def get_config():
   """Get the default hyperparameter configuration."""
   config = ml_collections.ConfigDict()
 
+
+  # original small batch size config
+  #config.learning_rate = 0.1
+  #config.momentum = 0.9
+  #config.batch_size = 128
+  #config.num_epochs = 10
+
+  # large batch size config
   config.learning_rate = 0.1
-  config.momentum = 0.9
-  config.batch_size = 8192
+  config.momentum = 0.5
+  config.batch_size = 16384
   config.num_epochs = 10
   return config
 

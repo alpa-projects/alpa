@@ -33,7 +33,7 @@ import ml_collections
 import numpy as np
 import tensorflow_datasets as tfds
 
-from paranum import auto_parallel, annotate_gradient
+from paranum import parallelize, annotate_gradient
 
 
 class CNN(nn.Module):
@@ -86,7 +86,7 @@ def compute_metrics(logits, labels):
   return metrics
 
 
-@auto_parallel
+@parallelize
 def train_step(optimizer, batch):
   """Train for a single step."""
   def loss_fn(params):

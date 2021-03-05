@@ -1,3 +1,3 @@
 
-from .api import parallel, annotate_gradient
+from .api import parallelize, annotate_gradient
 

@@ -18,18 +18,16 @@ This file is intentionally kept short. The majority for logic is in libraries
 than can be easily tested and imported in Colab.
 """
 
-from absl import app
-from absl import flags
-from absl import logging
+import os
 
+from absl import app, flags, logging
 from clu import platform
-import jax
 from ml_collections import config_flags
+import jax
 import tensorflow as tf
 
 import train
 
-FLAGS = flags.FLAGS
 
 flags.DEFINE_string('workdir', None, 'Directory to store model data.')
 config_flags.DEFINE_config_file(
@@ -44,8 +42,12 @@ def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
 
+  FLAGS = flags.FLAGS
   FLAGS.log_dir = FLAGS.workdir
   FLAGS.stderrthreshold = 'info'
+  if not os.path.exists(FLAGS.workdir):
+      os.makedirs(FLAGS.workdir)
+
   logging.get_absl_handler().start_logging_to_file()
 
   # Hide any GPUs form TensorFlow. Otherwise TF might reserve memory and make

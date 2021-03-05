@@ -4,6 +4,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
+from paranum import parallel
+
 def test_auto_parallel():
     lr = 0.1
     n_epoch = 2
@@ -26,7 +28,7 @@ def test_auto_parallel():
             weights = step_serial(weights, batch)
         return weights
 
-    step_parallel = auto_parallel(step_serial)
+    step_parallel = parallel(step_serial)
 
     def train_parallel(weights, batch):
         for i in range(n_epoch):

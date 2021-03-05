@@ -21,6 +21,8 @@ The data is loaded using tensorflow_datasets.
 # See issue #620.
 # pytype: disable=wrong-keyword-args
 
+import time
+
 from absl import logging
 from flax import linen as nn
 from flax import optim
@@ -30,6 +32,8 @@ import jax.numpy as jnp
 import ml_collections
 import numpy as np
 import tensorflow_datasets as tfds
+
+from test_auto_parallel import auto_parallel, annotate_gradient
 
 
 class CNN(nn.Module):
@@ -82,6 +86,7 @@ def compute_metrics(logits, labels):
   return metrics
 
 
+@auto_parallel
 def train_step(optimizer, batch):
   """Train for a single step."""
   def loss_fn(params):
@@ -90,6 +95,7 @@ def train_step(optimizer, batch):
     return loss, logits
   grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
   (_, logits), grad = grad_fn(optimizer.target)
+  grad = annotate_gradient(grad)
   optimizer = optimizer.apply_gradient(grad)
   metrics = compute_metrics(logits, batch['label'])
   return optimizer, metrics
@@ -111,7 +117,7 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
   perms = perms.reshape((steps_per_epoch, batch_size))
   batch_metrics = []
 
-
+  tic = time.time()
   for perm in perms:
     batch = {k: v[perm, ...] for k, v in train_ds.items()}
     optimizer, metrics = train_step(optimizer, batch)
@@ -123,8 +129,10 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
       k: np.mean([metrics[k] for metrics in batch_metrics_np])
       for k in batch_metrics_np[0]}
 
-  logging.info('train epoch: %d, loss: %.4f, accuracy: %.2f', epoch,
-               epoch_metrics_np['loss'], epoch_metrics_np['accuracy'] * 100)
+  toc = time.time()
+  logging.info('train epoch: %d, loss: %.4f, accuracy: %.2f, time: %.2f',
+	       epoch, epoch_metrics_np['loss'],
+	       epoch_metrics_np['accuracy'] * 100, toc - tic)
 
   return optimizer, epoch_metrics_np
 

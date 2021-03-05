@@ -1,5 +1,10 @@
+# Python cache
 __pycache__
 *.pyc
+build
+dist
+*.egg-info
+
 
 # Vim
 *.swp

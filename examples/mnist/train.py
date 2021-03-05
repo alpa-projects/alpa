@@ -33,7 +33,7 @@ import ml_collections
 import numpy as np
 import tensorflow_datasets as tfds
 
-from test_auto_parallel import auto_parallel, annotate_gradient
+from paranum import auto_parallel, annotate_gradient
 
 
 class CNN(nn.Module):

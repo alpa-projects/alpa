@@ -23,10 +23,11 @@ from absl import flags
 from absl import logging
 
 from clu import platform
-import flax_mnist_train as train
 import jax
 from ml_collections import config_flags
 import tensorflow as tf
+
+import train
 
 FLAGS = flags.FLAGS
 

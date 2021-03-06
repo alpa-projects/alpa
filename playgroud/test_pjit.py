@@ -48,7 +48,7 @@ def test_mlp_forward():
 
         x = x @ w1
         x = relu(x)
-        #x = with_sharding_constraint(x, P('data_parallel', 'model_parallel'))
+        x = with_sharding_constraint(x, P('data_parallel', 'model_parallel'))
         x = x @ w2
         x = relu(x)
         loss = jnp.mean((x - y) ** 2)
@@ -94,7 +94,7 @@ def test_mlp_grad():
 
     def step_serial(batch, weights):
         gradients = jax.grad(loss_func, argnums=1)(batch, weights)
-        return (w - g * lr for w, g in zip(weights, gradients))
+        return tuple(w - g * lr for w, g in zip(weights, gradients))
 
     step_parallel = pjit(
         step_serial,
@@ -102,6 +102,8 @@ def test_mlp_grad():
                            (P(None, 'model_parallel'), P('model_parallel', None))),
         out_axis_resources=((P(None, 'model_parallel'), P('model_parallel', None))),
     )
+
+    step_serail = jax.jit(step_serial)
 
     lr = 0.1
     N = 8
@@ -118,6 +120,9 @@ def test_mlp_grad():
     mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
     with mesh(mesh_devices, ('data_parallel', 'model_parallel')):
         w1_parallel, w2_parallel = step_parallel((x, y), (w1, w2))
+
+    np.testing.assert_allclose(w1_serial, w1_parallel, rtol=1e-5)
+    np.testing.assert_allclose(w2_serial, w2_parallel, rtol=1e-5)
 
 
 if __name__ == "__main__":

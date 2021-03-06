@@ -16,6 +16,9 @@ from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 from jax._src.util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                            split_list, extend_name_stack, wrap_name, cache, wraps,
                            HashableFunction)
+import flax
+
+from paranum import util
 
 map = safe_map
 zip = safe_zip
@@ -54,15 +57,16 @@ def is_static_arg(x):
 
 
 def decorate_partition_all(fun, args, static_argnums, out_avals):
-    # Shard arguments
     dyn_args = [args[i] for i in range(len(args)) if i not in static_argnums]
 
     def make_partition_spec(x):
         if len(x.shape) == 0:
-            return PartitionSpec()
+            return None
         else:
-            # always partition the first dimension
-            spec = ['x'] + [None] * (len(x.shape) - 1)
+            spec = [None] * len(x.shape)
+            if util.compute_bytes(x) > 1024:
+                # partition the first dimension for large tensors
+                spec[0] = 'x'
             return PartitionSpec(*spec)
 
     in_axis_resources = tree_map(make_partition_spec, dyn_args)
@@ -76,6 +80,44 @@ def decorate_partition_all(fun, args, static_argnums, out_avals):
     )
 
     with mesh(np.array(jax.devices()), ('x',)):
+        return shard_fun(*args)
+
+
+def decorate_data_parallel(fun, args, static_argnums, out_avals):
+    dyn_args = [args[i] for i in range(len(args)) if i not in static_argnums]
+
+    def make_partition_spec(x):
+        if isinstance(x, flax.optim.base.Optimizer):
+            return None
+
+        if len(x.shape) == 0:
+            return None
+        else:
+            spec = [None] * len(x.shape)
+            if util.compute_bytes(x) > 1024:
+                # partition the first dimension for large tensors
+                spec[0] = 'data_parallel_batch'
+            return PartitionSpec(*spec)
+
+    def is_leaf(x):
+        if isinstance(x, flax.optim.base.Optimizer):
+            return True
+        return False
+
+    # automatically detect weight or data
+    in_axis_resources = jax.tree_util.tree_map(make_partition_spec, dyn_args,
+            is_leaf=is_leaf)
+    out_axis_resources = jax.tree_util.tree_map(make_partition_spec, out_avals,
+            is_leaf=is_leaf)
+
+    shard_fun = pjit(
+        fun,
+        in_axis_resources=in_axis_resources,
+        out_axis_resources=out_axis_resources,
+        static_argnums=static_argnums
+    )
+
+    with mesh(np.array(jax.devices()), ('data_parallel_batch',)):
         return shard_fun(*args)
 
 
@@ -113,7 +155,7 @@ def parallelize(fun, static_argnums='auto'):
 
         # Choose optimization
         strategy = None
-        if True or "threefry" in c.as_hlo_text():
+        if "threefry" in c.as_hlo_text():
             strategy = "partition_all"
         else:
             strategy = "data_parallel"
@@ -135,13 +177,13 @@ def annotate_gradient(gradients):
     from jax.core import thread_local_state
 
     axis_env = thread_local_state.trace_state.axis_env
-    in_auto_parallel = False
+    in_data_parallel = False
     for x in axis_env:
-        if x.name == 'auto_parallel_batch':
-            in_auto_parallel = True
+        if x.name == 'data_parallel_batch':
+            in_data_parallel = True
 
-    if in_auto_parallel:
-        return jax.lax.pmean(gradients, 'auto_parallel_batch')
+    if in_data_parallel:
+        return jax.lax.pmean(gradients, 'data_parallel_batch')
     else:
         return gradients
 

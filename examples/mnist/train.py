@@ -22,18 +22,22 @@ The data is loaded using tensorflow_datasets.
 # pytype: disable=wrong-keyword-args
 
 import time
+from functools import partial
 
 from absl import logging
 from flax import linen as nn
 from flax import optim
 from flax.metrics import tensorboard
 import jax
+from jax.experimental.maps import mesh
+from jax.experimental.pjit import pjit
+from jax.interpreters.sharded_jit import PartitionSpec
 import jax.numpy as jnp
 import ml_collections
 import numpy as np
 import tensorflow_datasets as tfds
 
-from paranum import parallelize, annotate_gradient
+from paranum import parallelize, annotate_gradient, data_parallel
 
 
 class CNN(nn.Module):
@@ -86,7 +90,7 @@ def compute_metrics(logits, labels):
   return metrics
 
 
-@parallelize
+@data_parallel
 def train_step(optimizer, batch):
   """Train for a single step."""
   def loss_fn(params):
@@ -102,8 +106,8 @@ def train_step(optimizer, batch):
 
 
 @jax.jit
-def eval_step(params, batch):
-  logits = CNN().apply({'params': params}, batch['image'])
+def eval_step(optimizer, batch):
+  logits = CNN().apply({'params': optimizer.target}, batch['image'])
   return compute_metrics(logits, batch['label'])
 
 
@@ -117,11 +121,18 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
   perms = perms.reshape((steps_per_epoch, batch_size))
   batch_metrics = []
 
-  tic = time.time()
+  batch_times = []
   for perm in perms:
-    batch = {k: v[perm, ...] for k, v in train_ds.items()}
+    batch = {k: jnp.array(v[perm, ...]).block_until_ready()
+             for k, v in train_ds.items()}
+
+    tic = time.time()
     optimizer, metrics = train_step(optimizer, batch)
+    next(iter(metrics.values())).block_until_ready()
+    toc = time.time()
+
     batch_metrics.append(metrics)
+    batch_times.append(toc - tic)
 
   # compute mean of metrics across each batch in epoch.
   batch_metrics_np = jax.device_get(batch_metrics)
@@ -129,16 +140,15 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
       k: np.mean([metrics[k] for metrics in batch_metrics_np])
       for k in batch_metrics_np[0]}
 
-  toc = time.time()
   logging.info('train epoch: %d, loss: %.4f, accuracy: %.2f, time: %.2f',
 	       epoch, epoch_metrics_np['loss'],
-	       epoch_metrics_np['accuracy'] * 100, toc - tic)
+	       epoch_metrics_np['accuracy'] * 100, np.median(batch_times))
 
   return optimizer, epoch_metrics_np
 
 
-def eval_model(params, test_ds):
-  metrics = eval_step(params, test_ds)
+def eval_model(optimizer, test_ds):
+  metrics = eval_step(optimizer, test_ds)
   metrics = jax.device_get(metrics)
   summary = jax.tree_map(lambda x: x.item(), metrics)
   return summary['loss'], summary['accuracy']
@@ -150,8 +160,18 @@ def get_datasets():
   ds_builder.download_and_prepare()
   train_ds = tfds.as_numpy(ds_builder.as_dataset(split='train', batch_size=-1))
   test_ds = tfds.as_numpy(ds_builder.as_dataset(split='test', batch_size=-1))
-  train_ds['image'] = jnp.float32(train_ds['image']) / 255.
-  test_ds['image'] = jnp.float32(test_ds['image']) / 255.
+  train_ds['image'] = train_ds['image'] / 255.
+  test_ds['image'] = test_ds['image'] / 255.
+
+  #train_ds = {
+  #  "image": np.ones((2*16384, 28, 28, 1), dtype=np.float32),
+  #  "label": np.ones(2*16384, dtype=np.int32),
+  #}
+  #test_ds = {
+  #  "image": np.ones((1024, 28, 28, 1), dtype=np.float32),
+  #  "label": np.ones(1024, dtype=np.int32),
+  #}
+
   return train_ds, test_ds
 
 
@@ -180,7 +200,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     rng, input_rng = jax.random.split(rng)
     optimizer, train_metrics = train_epoch(
         optimizer, train_ds, config.batch_size, epoch, input_rng)
-    loss, accuracy = eval_model(optimizer.target, test_ds)
+    loss, accuracy = eval_model(optimizer, test_ds)
 
     logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
                  epoch, loss, accuracy * 100)

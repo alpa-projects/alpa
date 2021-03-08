@@ -24,9 +24,3 @@ class DataLoader:
         return (random.uniform(self.key, shape=(self.batch_size, self.hidden_size)),
                 random.uniform(self.key, shape=(self.batch_size, self.hidden_size)))
 
-
-def abstract_eval(func, args, static_argnums):
-    _, shaped_outs = jax.make_jaxpr(func, static_argnums=static_argnums,
-            return_shape=True)(args)
-    return shaped_outs
-

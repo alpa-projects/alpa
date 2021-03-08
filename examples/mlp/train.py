@@ -10,14 +10,14 @@ from flax.core import freeze, unfreeze
 from flax import linen as nn
 from flax import optim
 
-from paranum import parallelize, annotate_gradient, compute_bytes
-from utils import DataLoader, abstract_eval
+from paranum import parallelize, data_parallel, compute_bytes
+from utils import DataLoader
 
 GB = 1 << 30
 
 class Model(nn.Module):
     hidden_size: int
-    kernel_init = "zeros"
+    kernel_init: str = "zeros"
 
     @nn.compact
     def __call__(self, x):
@@ -34,14 +34,13 @@ class Model(nn.Module):
         return x
 
 
-@parallelize
 def create_train_state(rngkey, model, batch):
     params = model.init(rngkey, batch['x'])
     optimizer = optim.GradientDescent(1e-2).create(params)
     return optimizer
 
 
-@parallelize
+@data_parallel
 def train_step(optimizer, batch, apply_fn):
     def loss_func(params):
         out = apply_fn(params, batch['x'])
@@ -81,7 +80,6 @@ def main():
         for batch, (x, y) in enumerate(train_loader):
             tic = time.time()
             train_state = train_step(train_state, {"x": x, "y": y}, model.apply)
-
             print("Epoch: %d\tBatch: %d\tTime: %.2f" % (epoch, batch, time.time() - tic))
 
 

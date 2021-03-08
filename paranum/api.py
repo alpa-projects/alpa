@@ -4,31 +4,41 @@ import numpy as np
 
 import jax
 from jax import linear_util as lu
-from jax.api_util import (shaped_abstractify, flatten_fun,
-                          flatten_fun_nokwargs, argnums_partial)
+from jax.api_util import (
+    shaped_abstractify,
+    flatten_fun,
+    flatten_axes,
+    flatten_fun_nokwargs,
+    argnums_partial,
+)
 from jax.config import flags, config, bool_env
+from jax.core import ShapedArray
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit
 from jax.interpreters import xla, partial_eval as pe
+from jax.interpreters.pxla import parallel_callable
 from jax.interpreters.sharded_jit import PartitionSpec
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
-from jax._src.util import (unzip2, curry, partial, safe_map, safe_zip, prod,
-                           split_list, extend_name_stack, wrap_name, cache, wraps,
-                           HashableFunction)
+from jax._src.util import (
+    unzip2,
+    curry,
+    partial,
+    safe_map,
+    safe_zip,
+    prod,
+    split_list,
+    extend_name_stack,
+    wrap_name,
+    cache,
+    wraps,
+    HashableFunction,
+)
 import flax
 
 from paranum import util
 
-map = safe_map
-zip = safe_zip
-
-
-def process_batch(batch, n_devices):
-    def split(x):
-        assert x.shape[0] % n_devices == 0
-        return x.reshape((n_devices, x.shape[0] // n_devices) + x.shape[1:])
-    return jax.tree_util.tree_map(split, batch)
+unsafe_map, map = map, safe_map  # type: ignore
 
 
 def jaxpr_to_xla_computation(jaxpr, in_avals, consts, fun_name="", backend=None):
@@ -38,22 +48,18 @@ def jaxpr_to_xla_computation(jaxpr, in_avals, consts, fun_name="", backend=None)
     xla_args, donated_invars = xla._xla_callable_args(c, in_avals, should_tuple)
     axis_env = xla.AxisEnv(1, (), ())
     out_nodes = xla.jaxpr_subcomp(
-        c, jaxpr, backend, axis_env, xla_consts,
-        extend_name_stack(wrap_name(fun_name, "xla_computation")), *xla_args)
+        c,
+        jaxpr,
+        backend,
+        axis_env,
+        xla_consts,
+        extend_name_stack(wrap_name(fun_name, "xla_computation")),
+        *xla_args,
+    )
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     out_tuple = build_out_tuple()
     built = c.build(out_tuple)
     return built
-
-
-def is_static_arg(x):
-    xs, _ = tree_flatten(x)
-    for x in xs:
-        try:
-            x = shaped_abstractify(x)
-        except TypeError:
-            return True
-    return False
 
 
 def decorate_partition_all(fun, args, static_argnums, out_avals):
@@ -66,7 +72,7 @@ def decorate_partition_all(fun, args, static_argnums, out_avals):
             spec = [None] * len(x.shape)
             if util.compute_bytes(x) > 1024:
                 # partition the first dimension for large tensors
-                spec[0] = 'x'
+                spec[0] = "x"
             return PartitionSpec(*spec)
 
     in_axis_resources = tree_map(make_partition_spec, dyn_args)
@@ -76,14 +82,14 @@ def decorate_partition_all(fun, args, static_argnums, out_avals):
         fun,
         in_axis_resources=in_axis_resources,
         out_axis_resources=out_axis_resources,
-        static_argnums=static_argnums
+        static_argnums=static_argnums,
     )
 
-    with mesh(np.array(jax.devices()), ('x',)):
+    with mesh(np.array(jax.devices()), ("x",)):
         return shard_fun(*args)
 
 
-def decorate_data_parallel(fun, args, static_argnums, out_avals):
+def decorate_data_parallel_pjit(fun, args, static_argnums, out_avals):
     dyn_args = [args[i] for i in range(len(args)) if i not in static_argnums]
 
     def make_partition_spec(x):
@@ -96,7 +102,7 @@ def decorate_data_parallel(fun, args, static_argnums, out_avals):
             spec = [None] * len(x.shape)
             if util.compute_bytes(x) > 1024:
                 # partition the first dimension for large tensors
-                spec[0] = 'data_parallel_batch'
+                spec[0] = "data_parallel_batch"
             return PartitionSpec(*spec)
 
     def is_leaf(x):
@@ -105,39 +111,43 @@ def decorate_data_parallel(fun, args, static_argnums, out_avals):
         return False
 
     # automatically detect weight or data
-    in_axis_resources = jax.tree_util.tree_map(make_partition_spec, dyn_args,
-            is_leaf=is_leaf)
-    out_axis_resources = jax.tree_util.tree_map(make_partition_spec, out_avals,
-            is_leaf=is_leaf)
+    in_axis_resources = jax.tree_util.tree_map(
+        make_partition_spec, dyn_args, is_leaf=is_leaf
+    )
+    out_axis_resources = jax.tree_util.tree_map(
+        make_partition_spec, out_avals, is_leaf=is_leaf
+    )
+
+    out_axis_resources = util.freeze_dict(out_axis_resources)
 
     shard_fun = pjit(
         fun,
         in_axis_resources=in_axis_resources,
         out_axis_resources=out_axis_resources,
-        static_argnums=static_argnums
+        static_argnums=static_argnums,
     )
 
-    with mesh(np.array(jax.devices()), ('data_parallel_batch',)):
+    with mesh(np.array(jax.devices()), ("data_parallel_batch",)):
         return shard_fun(*args)
 
 
-def parallelize(fun, static_argnums='auto'):
+def parallelize(fun, static_argnums="auto"):
     n_devices = len(jax.devices())
     fun_name = getattr(fun, "__name__", "unknown")
 
     @wraps(fun)
     def ret_fun(*args, **kwargs):
+        raw_args = args
         if kwargs:
             raise NotImplementedError("parallelize over kwargs not yet supported")
-
-        raw_args = args
+        # Automatic static argnums
         nonlocal static_argnums
+        if static_argnums == "auto":
+            static_argnums = [i for i in range(len(args)) if is_static_arg(args[i])]
+
+        return decorate_data_parallel_pmap(fun, raw_args, static_argnums)
 
         wrapped = lu.wrap_init(fun)
-
-        # Automatic static argnums
-        if static_argnums == 'auto':
-            static_argnums = [i for i in range(len(args)) if is_static_arg(args[i])]
 
         # Abstractify arguments
         if static_argnums:
@@ -153,37 +163,23 @@ def parallelize(fun, static_argnums='auto'):
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
         c = jaxpr_to_xla_computation(jaxpr, in_avals, consts, fun_name)
 
-        # Choose optimization
+        # Choose parallel strategy
         strategy = None
-        if "threefry" in c.as_hlo_text():
+        if "threefry" in c.as_hlo_text():  # weight initialization
             strategy = "partition_all"
         else:
             strategy = "data_parallel"
 
-        # Apply optimization
+        # Apply parallel strategy
         if strategy == "partition_all":
-            return decorate_partition_all(fun, raw_args, static_argnums,
-                                          tree_unflatten(out_tree(), out_avals))
+            return decorate_partition_all(
+                fun, raw_args, static_argnums, tree_unflatten(out_tree(), out_avals)
+            )
         elif strategy == "data_parallel":
-            return decorate_data_parallel(fun, raw_args, static_argnums,
-                                          tree_unflatten(out_tree(), out_avals))
+            return decorate_data_parallel(
+                fun, raw_args, static_argnums, tree_unflatten(out_tree(), out_avals)
+            )
         else:
             raise ValueError("Invalid parallel strategy")
 
     return ret_fun
-
-
-def annotate_gradient(gradients):
-    from jax.core import thread_local_state
-
-    axis_env = thread_local_state.trace_state.axis_env
-    in_data_parallel = False
-    for x in axis_env:
-        if x.name == 'data_parallel_batch':
-            in_data_parallel = True
-
-    if in_data_parallel:
-        return jax.lax.pmean(gradients, 'data_parallel_batch')
-    else:
-        return gradients
-

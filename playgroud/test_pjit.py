@@ -41,6 +41,25 @@ def test_matmul():
     np.testing.assert_allclose(out, x @ y, rtol=1e-5)
 
 
+def test_dict_arg():
+    @partial(pjit,
+             in_axis_resources=None,
+             out_axis_resources=None)
+    def f(inputs):
+        x = inputs['x']
+        y = inputs['y']
+        return x @ y
+
+    x = np.random.randn(8, 4).astype(np.float32)
+    y = np.random.randn(4, 8).astype(np.float32)
+
+    mesh_devices = np.array(jax.devices()[:2])
+    with mesh(mesh_devices, ('x',)):
+        out = f({"x": x, "y": y})
+
+    np.testing.assert_allclose(out, x @ y, rtol=1e-5)
+
+
 def test_mlp_forward():
     def loss_func(batch, weights):
         x, y = batch
@@ -129,6 +148,8 @@ if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
 
-    test_mlp_forward()
+    test_dict_arg()
+
+    #test_mlp_forward()
     #test_mlp_grad()
 

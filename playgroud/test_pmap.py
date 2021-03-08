@@ -5,17 +5,12 @@ import jax.numpy as jnp
 
 
 def debug_pmap():
-    #f = lambda x: jax.lax.psum(x, axis_name='batch')
-    #y = jax.pmap(f, axis_name='batch')(jnp.ones((4, 4)))
-    #print(y, type(y))
-
     @jax.pmap
     def func(x, w):
-        print("pmap A")
         return x @ w
 
     print("pmap B")
-    y = func(jnp.ones((1, 4)), jnp.ones((1, 4)))
+    y = func(jnp.ones((2, 4)), jnp.ones((2, 4)))
     print("pmap C")
     print(y, type(y))
 
@@ -54,6 +49,8 @@ def test_allreduce_sum():
     print(normalize(jnp.arange(4.)))
 
 if __name__ == "__main__":
+    debug_pmap()
+
     #test_nested_pmap()
-    test_allreduce_sum()
+    #test_allreduce_sum()
 

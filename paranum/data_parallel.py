@@ -15,6 +15,7 @@ from jax.interpreters.pxla import parallel_callable
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 from jax._src.util import (
     safe_map,
+    prod,
     wraps,
     HashableFunction,
 )
@@ -41,39 +42,17 @@ def annotate_gradient(gradients):
         return gradients
 
 
-def auto_static_argnums(args):
-    """Return the indices of static arguments"""
-    return [i for i in range(len(args)) if util.is_static_arg(args[i])]
-
-
-def should_replicate_map(x):
-    """Detect whether we should replicate an argument for data parallel"""
-    if isinstance(x, flax.optim.base.Optimizer):
-        return True
-
-    if len(x.shape) == 0:
-        return True
-    else:
-        return False
-
-
-def should_replicate_is_leaf(x):
-    if isinstance(x, flax.optim.base.Optimizer):
-        return True
-    return False
-
-
-def data_parallel(fun, static_argnums="auto"):
+def data_parallel(fun, static_argnums="auto", devices=None):
     @wraps(fun)
     def ret_func(*args, **kwargs):
         assert not kwargs, "kwargs not supported"
 
-        # Deal with static arguments
         f = lu.wrap_init(fun)
 
+        # Deal with static arguments
         nonlocal static_argnums
         if static_argnums == "auto":
-            static_argnums = auto_static_argnums(args)
+            static_argnums = util.auto_static_argnums(args)
 
         if static_argnums:
             dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -86,27 +65,13 @@ def data_parallel(fun, static_argnums="auto"):
         f, out_tree = flatten_fun_nokwargs(f, in_tree)
         out_tree_hashable = HashableFunction(lambda: out_tree(), closure=None)
 
-        # Detect weight tensors and mark them as "should_replicate"
-        should_replicate = tree_map(
-            should_replicate_map, dyn_args, should_replicate_is_leaf
-        )
-        should_replicate = tuple(
-            flatten_axes("data_parallel should_replicate", in_tree, should_replicate)
-        )
-
         # JIT compile and call the compiled func
-        axis_name = "data_parallel_batch"
-        axis_size = len(jax.devices())
-        device = None
-        out = data_parallel_impl(
-            f,
-            *args_flat,
-            should_replicate=should_replicate,
-            out_tree=out_tree_hashable,
-            axis_name=axis_name,
-            axis_size=axis_size,
-            device=device
+        abstract_args = unsafe_map(xla.abstractify, args_flat)
+        compiled_func = data_parallel_callable(
+            f, in_tree, out_tree_hashable, devices, *abstract_args
         )
+        out = compiled_func(*args_flat)
+
         return tree_unflatten(out_tree(), out)
 
     return ret_func
@@ -121,32 +86,44 @@ def data_parallel_split(x, axis_size):
         return x.reshape((axis_size, x.shape[0] // axis_size) + x.shape[1:])
 
 
-def data_parallel_impl(
-    fun: lu.WrappedFun, *args, should_replicate, out_tree, axis_name, axis_size, device
-):
-    abstract_args = unsafe_map(xla.abstractify, args)
-    compiled_func = data_parallel_callable(
-        fun, should_replicate, out_tree, axis_name, axis_size, device, *abstract_args
-    )
+def should_replicate_map(x):
+    """Detect whether we should replicate an argument for data parallel"""
+    if isinstance(x, flax.optim.base.Optimizer):
+        return True
 
-    split_args = (
-        args[i] if should_replicate[i] else data_parallel_split(args[i], axis_size)
-        for i in range(len(args))
-    )
-    return compiled_func(*split_args)
+    if prod(x.shape) < 16:
+        return True
+    else:
+        return False
+
+
+def should_replicate_is_leaf(x):
+    if isinstance(x, flax.optim.base.Optimizer):
+        return True
+    return False
 
 
 @lu.cache
 def data_parallel_callable(
     fun: lu.WrappedFun,
-    should_replicate,
+    in_tree,
     out_tree,
-    axis_name,
-    axis_size,
     devices,
     *avals
 ):
     fun_name = fun.__name__
+    devices = devices or tuple(jax.devices())
+    axis_name = "data_parallel_batch"
+    axis_size = len(devices)
+
+    # Detect weight tensors and mark them as "should_replicate"
+    dyn_args = tree_unflatten(in_tree, avals)
+    should_replicate = tree_map(
+        should_replicate_map, dyn_args, should_replicate_is_leaf
+    )
+    should_replicate = tuple(
+        flatten_axes("data_parallel should_replicate", in_tree, should_replicate)
+    )
 
     # Create in_axes paritition spec
     flatten_in_axes = tuple(unsafe_map(lambda x: None if x else 0, should_replicate))
@@ -203,4 +180,12 @@ def data_parallel_callable(
         global_arg_shapes,
         *split_avals
     )
-    return compiled_fun
+
+    def ret_func(*args):
+        split_args = (
+            args[i] if should_replicate[i] else data_parallel_split(args[i], axis_size)
+            for i in range(len(args))
+        )
+        return compiled_fun(*split_args)
+
+    return ret_func

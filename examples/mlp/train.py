@@ -34,13 +34,14 @@ class Model(nn.Module):
         return x
 
 
+@parallelize
 def create_train_state(rngkey, model, batch):
     params = model.init(rngkey, batch['x'])
     optimizer = optim.GradientDescent(1e-2).create(params)
     return optimizer
 
 
-@data_parallel
+@parallelize
 def train_step(optimizer, batch, apply_fn):
     def loss_func(params):
         out = apply_fn(params, batch['x'])
@@ -74,6 +75,7 @@ def main():
 
     train_state.target['params']['Dense_0']['kernel'].block_until_ready()
     print(f"Total size: {compute_bytes(train_state) / GB: .2f} GB")
+    exit()
 
     print("Train")
     for epoch in range(n_epoch):

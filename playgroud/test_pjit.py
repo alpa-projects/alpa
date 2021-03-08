@@ -147,9 +147,8 @@ def test_mlp_grad():
 if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
+    #test_dict_arg()
 
-    test_dict_arg()
-
-    #test_mlp_forward()
+    test_mlp_forward()
     #test_mlp_grad()
 

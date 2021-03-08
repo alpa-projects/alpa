@@ -37,3 +37,9 @@ def is_static_arg(x):
         except TypeError:
             return True
     return False
+
+
+def auto_static_argnums(args):
+    """Return the indices of static arguments"""
+    return [i for i in range(len(args)) if is_static_arg(args[i])]
+

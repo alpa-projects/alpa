@@ -55,7 +55,7 @@ def train_step(optimizer, batch, apply_fn):
 
 def main():
     batch_size = 1024
-    hidden_size = (1 << 10)
+    hidden_size = (1 << 16)
 
     n_epoch = 2
     n_batch = 2
@@ -74,6 +74,7 @@ def main():
     )
 
     train_state.target['params']['Dense_0']['kernel'].block_until_ready()
+    print(train_state.target['params']['Dense_0']['kernel'].sharding_spec)
     print(f"Total size: {compute_bytes(train_state) / GB: .2f} GB")
     exit()
 

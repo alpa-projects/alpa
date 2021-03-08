@@ -63,12 +63,12 @@ def data_parallel(fun, static_argnums="auto", devices=None):
         # Flatten pytree arguments
         args_flat, in_tree = tree_flatten(dyn_args)
         f, out_tree = flatten_fun_nokwargs(f, in_tree)
-        out_tree_hashable = HashableFunction(lambda: out_tree(), closure=None)
+        out_tree_thunk = HashableFunction(lambda: out_tree(), closure=None)
 
         # JIT compile and call the compiled func
         abstract_args = unsafe_map(xla.abstractify, args_flat)
         compiled_func = data_parallel_callable(
-            f, in_tree, out_tree_hashable, devices, *abstract_args
+            f, in_tree, out_tree_thunk, devices, *abstract_args
         )
         out = compiled_func(*args_flat)
 
@@ -91,7 +91,7 @@ def should_replicate_map(x):
     if isinstance(x, flax.optim.base.Optimizer):
         return True
 
-    if prod(x.shape) < 16:
+    if util.compute_bytes(x) < 128:
         return True
     else:
         return False
@@ -107,7 +107,7 @@ def should_replicate_is_leaf(x):
 def data_parallel_callable(
     fun: lu.WrappedFun,
     in_tree,
-    out_tree,
+    out_tree_thunk,
     devices,
     *avals
 ):
@@ -133,14 +133,13 @@ def data_parallel_callable(
     # c = jaxpr_to_xla_computation(jaxpr, avals, consts, fun_name)
 
     # Create out_axes paritition spec
-    unflatten_out_avals = tree_unflatten(out_tree(), out_avals)
+    unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
     out_should_replicate = tree_map(
         should_replicate_map, unflatten_out_avals, should_replicate_is_leaf
     )
-
     out_should_replicate = flatten_axes(
         "data_parallel_callable out_should_replicate",
-        out_tree(),
+        out_tree_thunk(),
         out_should_replicate,
     )
     flatten_out_axes = tuple(
@@ -161,7 +160,7 @@ def data_parallel_callable(
     for store in fun.stores:
         store and store.reset()
 
-    # Split avals
+    # Split avals and lower to parallel_callable
     split_avals = (
         avals[i] if should_replicate[i] else data_parallel_split(avals[i], axis_size)
         for i in range(len(avals))

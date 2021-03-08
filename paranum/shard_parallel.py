@@ -1,4 +1,5 @@
 from functools import wraps, partial
+from collections import OrderedDict
 
 import numpy as np
 
@@ -16,7 +17,7 @@ from jax.core import ShapedArray
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit
 from jax.interpreters import xla, partial_eval as pe
-from jax.interpreters.pxla import parallel_callable
+from jax.interpreters.pxla import parallel_callable, mesh_callable, Mesh
 from jax.interpreters.sharded_jit import PartitionSpec
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
@@ -102,6 +103,13 @@ def decorate_data_parallel_pjit(fun, args, static_argnums, out_avals):
     with mesh(np.array(jax.devices()), ("data_parallel_batch",)):
         return shard_fun(*args)
 
+
+def shard_first_dim(x):
+    if util.compute_bytes(x) < 128:
+        return OrderedDict()
+    return OrderedDict([('mesh_x', 0)])
+
+
 @lu.cache
 def shard_parallel_callable(
     fun: lu.WrappedFun,
@@ -111,40 +119,29 @@ def shard_parallel_callable(
     *avals
 ):
     fun_name = fun.__name__
+    devices = devices or np.array(jax.devices())
 
     # Get jaxpr and XLA hlo
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
-    #c = jaxpr_to_xla_computation(jaxpr, avals, consts, fun_name)
-    print(jaxpr)
 
     strategy = 'partition_all'
 
     if strategy == 'partition_all':
-        pass
+        mesh = Mesh(devices, ('mesh_x',))
+        in_axes = tuple(unsafe_map(shard_first_dim, avals))
+        out_axes = tuple(unsafe_map(shard_first_dim, out_avals))
+        out_axes_thunk = lambda: out_axes
+        donated_invars = (False,) * len(avals)
+    else:
+        raise ValueError("Invalid strategy: " + strategy)
 
-    exit()
+    # Clean stores for the next call
+    for store in fun.stores:
+        store and store.reset()
 
-#    def make_partition_spec(x):
-#        if len(x.shape) == 0:
-#            return None
-#        else:
-#            spec = [None] * len(x.shape)
-#            if util.compute_bytes(x) > 1024:
-#                # partition the first dimension for large tensors
-#                spec[0] = "x"
-#            return PartitionSpec(*spec)
-#
-#    in_axis_resources = tree_map(make_partition_spec, dyn_args)
-#    out_axis_resources = tree_map(make_partition_spec, out_avals)
-#
-#    shard_fun = pjit(
-#        fun,
-#        in_axis_resources=in_axis_resources,
-#        out_axis_resources=out_axis_resources,
-#        static_argnums=static_argnums,
-#    )
-#
-#    with mesh(np.array(jax.devices()), ("x",)):
-#        return shard_fun(*args)
-
+    # Lower to mesh_callable
+    compiled_func = mesh_callable(fun, fun_name, None, mesh,
+                                  in_axes, out_axes_thunk, donated_invars,
+                                  True, *avals, tile_by_mesh_axes=False)
+    return compiled_func
 

@@ -5,9 +5,10 @@ from jax import random, numpy as jnp
 class DataLoader:
     """A synthetic data loader"""
 
-    def __init__(self, batch_size, hidden_size, n_batch):
+    def __init__(self, batch_size, input_dim, output_dim, n_batch):
         self.batch_size = batch_size
-        self.hidden_size = hidden_size
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         self.n_batch = n_batch
         self.key = random.PRNGKey(0)
 
@@ -21,6 +22,6 @@ class DataLoader:
 
         self.ct += 1
 
-        return (random.uniform(self.key, shape=(self.batch_size, self.hidden_size)),
-                random.uniform(self.key, shape=(self.batch_size, self.hidden_size)))
+        return (random.uniform(self.key, shape=(self.batch_size, self.input_dim)),
+                random.uniform(self.key, shape=(self.batch_size, self.output_dim)))
 

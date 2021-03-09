@@ -9,6 +9,8 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit, with_sharding_constraint
 
+from util import benchmark_func
+
 
 def test_basic1d():
     @partial(pjit,
@@ -26,8 +28,8 @@ def test_basic1d():
 
 def test_matmul():
     @partial(pjit,
-             in_axis_resources=(P(None, 'x'), P('x', None)),
-             out_axis_resources=None)
+             in_axis_resources=(P('x', None), P('x', None)),
+             out_axis_resources=P('x', None))
     def f(x, y):
         return x @ y
 
@@ -39,6 +41,54 @@ def test_matmul():
         out = f(x, y)
 
     np.testing.assert_allclose(out, x @ y, rtol=1e-5)
+
+
+def split(a, axis):
+    in_axis_resources = [None] * len(a.shape)
+    in_axis_resources[axis] = 'x'
+
+    split_func = pjit(lambda x: x,
+                      in_axis_resources=P(*in_axis_resources),
+                      out_axis_resources=P(*in_axis_resources))
+
+    with mesh(np.array(jax.devices()), ('x',)):
+        a = split_func(a)
+    return a
+
+
+def test_matmul_speed():
+    N = M = 1024
+    K = 1 << 20
+    n_devices = len(jax.devices())
+
+    x_jnp = jnp.empty((N, K), dtype=np.float32).block_until_ready()
+    y_jnp = jnp.empty((K, M), dtype=np.float32).block_until_ready()
+
+    @jax.jit
+    def matmul(x, y):
+        return x @ y
+
+    def serial_func():
+        z = matmul(x_jnp, y_jnp)
+        z.block_until_ready()
+
+    costs = benchmark_func(serial_func) * 1000
+    print("Mean Cost: %.3f ms (std: %.3f ms)" % (np.mean(costs), np.std(costs)))
+
+    x_split = split(x_jnp, 1).block_until_ready()
+    y_split = split(y_jnp, 0).block_until_ready()
+
+    parallel_matmul = pjit(matmul,
+                           in_axis_resources=(P(None, 'x'), P('x', None)),
+                           out_axis_resources=None)
+
+    def parallel_func():
+        z = parallel_matmul(x_split, y_split)
+        z.block_until_ready()
+
+    with mesh(np.array(jax.devices()), ('x',)):
+        costs = benchmark_func(parallel_func) * 1000
+    print("Mean Cost: %.3f ms (std: %.3f ms)" % (np.mean(costs), np.std(costs)))
 
 
 def test_dict_arg():
@@ -147,8 +197,9 @@ def test_mlp_grad():
 if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
+    test_matmul_speed()
     #test_dict_arg()
 
-    test_mlp_forward()
+    #test_mlp_forward()
     #test_mlp_grad()
 

@@ -122,7 +122,7 @@ def data_parallel_callable(
         should_replicate_map, dyn_args, should_replicate_is_leaf
     )
     should_replicate = tuple(
-        flatten_axes("data_parallel should_replicate", in_tree, should_replicate)
+        flatten_axes("data_parallel_callable should_replicate", in_tree, should_replicate)
     )
 
     # Create in_axes paritition spec

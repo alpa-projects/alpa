@@ -55,7 +55,7 @@ def parallelize(fun, static_argnums="auto", devices=None):
 def auto_parallel_callable(
     fun: lu.WrappedFun,
     in_tree,
-    out_tree,
+    out_tree_thunk,
     devices,
     *avals
 ):
@@ -67,7 +67,7 @@ def auto_parallel_callable(
 
     # Choose parallel strategy
     strategy = None
-    if "threefry" in str(jaxpr):  # weight initialization
+    if True or "threefry" in str(jaxpr):  # weight initialization
         strategy = "shard_parallel"
     else:
         strategy = "data_parallel"
@@ -79,11 +79,11 @@ def auto_parallel_callable(
     # Apply parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(
-            fun, in_tree, out_tree, devices, *avals
+            fun, in_tree, out_tree_thunk, devices, *avals
         )
     elif strategy == "data_parallel":
         return data_parallel_callable(
-            fun, in_tree, out_tree, devices, *avals
+            fun, in_tree, out_tree_thunk, devices, *avals
         )
     else:
         raise ValueError("Invalid parallel strategy")

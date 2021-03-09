@@ -37,6 +37,7 @@ from jax._src.util import (
 )
 
 from paranum import util
+from paranum.data_parallel import should_replicate_map, should_replicate_is_leaf
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -62,48 +63,6 @@ def jaxpr_to_xla_computation(jaxpr, in_avals, consts, fun_name="", backend=None)
     return built
 
 
-def decorate_data_parallel_pjit(fun, args, static_argnums, out_avals):
-    dyn_args = [args[i] for i in range(len(args)) if i not in static_argnums]
-
-    def make_partition_spec(x):
-        if isinstance(x, flax.optim.base.Optimizer):
-            return None
-
-        if len(x.shape) == 0:
-            return None
-        else:
-            spec = [None] * len(x.shape)
-            if util.compute_bytes(x) > 1024:
-                # partition the first dimension for large tensors
-                spec[0] = "data_parallel_batch"
-            return PartitionSpec(*spec)
-
-    def is_leaf(x):
-        if isinstance(x, flax.optim.base.Optimizer):
-            return True
-        return False
-
-    # automatically detect weight or data
-    in_axis_resources = jax.tree_util.tree_map(
-        make_partition_spec, dyn_args, is_leaf=is_leaf
-    )
-    out_axis_resources = jax.tree_util.tree_map(
-        make_partition_spec, out_avals, is_leaf=is_leaf
-    )
-
-    out_axis_resources = util.freeze_dict(out_axis_resources)
-
-    shard_fun = pjit(
-        fun,
-        in_axis_resources=in_axis_resources,
-        out_axis_resources=out_axis_resources,
-        static_argnums=static_argnums,
-    )
-
-    with mesh(np.array(jax.devices()), ("data_parallel_batch",)):
-        return shard_fun(*args)
-
-
 def shard_first_dim(x):
     if util.compute_bytes(x) < 128:
         return OrderedDict()
@@ -114,7 +73,7 @@ def shard_first_dim(x):
 def shard_parallel_callable(
     fun: lu.WrappedFun,
     in_tree,
-    out_tree,
+    out_tree_thunk,
     devices,
     *avals
 ):
@@ -124,12 +83,43 @@ def shard_parallel_callable(
     # Get jaxpr and XLA hlo
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
 
-    strategy = 'partition_all'
+    #strategy = 'partition_all'
+    strategy = 'data_parallel'
 
     if strategy == 'partition_all':
         mesh = Mesh(devices, ('mesh_x',))
         in_axes = tuple(unsafe_map(shard_first_dim, avals))
         out_axes = tuple(unsafe_map(shard_first_dim, out_avals))
+        out_axes_thunk = lambda: out_axes
+        donated_invars = (False,) * len(avals)
+    elif strategy == 'data_parallel':
+        # Detect weight tensors and mark them as "should_replicate"
+        dyn_args = tree_unflatten(in_tree, avals)
+        should_replicate = tree_map(
+            should_replicate_map, dyn_args, should_replicate_is_leaf
+        )
+        should_replicate = tuple(
+            flatten_axes("shard_parallel_callable should_replicate", in_tree, should_replicate)
+        )
+
+        # Create in_axes paritition spec
+        in_axes = tuple(OrderedDict() if should_replicate[i] else shard_first_dim(avals[i])
+                        for i in range(len(avals)))
+
+        # Create out_axes paritition spec
+        unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
+        out_should_replicate = tree_map(
+            should_replicate_map, unflatten_out_avals, should_replicate_is_leaf
+        )
+        out_should_replicate = flatten_axes(
+            "shard_parallel_callable out_should_replicate",
+            out_tree_thunk(),
+            out_should_replicate,
+        )
+        out_axes = tuple(OrderedDict() if out_should_replicate[i] else shard_first_dim(out_avals[i])
+                        for i in range(len(out_avals)))
+
+        mesh = Mesh(devices, ('mesh_x',))
         out_axes_thunk = lambda: out_axes
         donated_invars = (False,) * len(avals)
     else:

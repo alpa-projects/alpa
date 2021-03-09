@@ -29,9 +29,6 @@ from flax import linen as nn
 from flax import optim
 from flax.metrics import tensorboard
 import jax
-from jax.experimental.maps import mesh
-from jax.experimental.pjit import pjit
-from jax.interpreters.sharded_jit import PartitionSpec
 import jax.numpy as jnp
 import ml_collections
 import numpy as np
@@ -90,6 +87,8 @@ def compute_metrics(logits, labels):
   return metrics
 
 
+#@parallelize
+#@jax.jit
 @data_parallel
 def train_step(optimizer, batch):
   """Train for a single step."""

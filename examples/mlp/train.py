@@ -15,9 +15,14 @@ from utils import DataLoader
 
 GB = 1 << 30
 
+
+def replicate(a, factor=4):
+    a = jax.pmap(lambda x, y: x, in_axes=(None, 0), out_axes=None)(a, jnp.ones(factor))
+    return a
+
+
 class Model(nn.Module):
     hidden_dim: int
-    output_dim: int
     kernel_init: str = "zeros"
 
     @nn.compact
@@ -31,9 +36,6 @@ class Model(nn.Module):
                      kernel_init=kernel_init, use_bias=False)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim,
-                     kernel_init=kernel_init, use_bias=False)(x)
-        x = nn.relu(x)
-        x = nn.Dense(features=self.output_dim,
                      kernel_init=kernel_init, use_bias=False)(x)
         return x
 
@@ -55,7 +57,7 @@ def train_step(optimizer, batch, apply_fn):
 
     grad = jax.grad(loss_func)(optimizer.target)
     grad = annotate_gradient(grad)
-    new_optimizer = optimizer.apply_gradient(grad, learning_rate=0.1)
+    new_optimizer = optimizer.apply_gradient(grad)
 
     return new_optimizer
 
@@ -65,10 +67,9 @@ def block_until_ready(train_state):
 
 
 def main():
-    batch_size = 8192
-    input_dim = 128
+    batch_size = 2048
     hidden_dim = (1 << 13)
-    output_dim = 128
+    input_dim = output_dim = hidden_dim
 
     n_epoch = 1
     n_batch = 10
@@ -76,7 +77,7 @@ def main():
     train_loader = DataLoader(batch_size, input_dim, output_dim, n_batch)
 
     print("Init model")
-    model = Model(hidden_dim=hidden_dim, output_dim=output_dim)
+    model = Model(hidden_dim=hidden_dim)
 
     rngkey = jax.random.PRNGKey(0)
     train_state = create_train_state(
@@ -88,7 +89,6 @@ def main():
 
     block_until_ready(train_state)
     print(f"Total size: {compute_bytes(train_state) / GB: .2f} GB")
-    #exit()
 
     print("Train")
     for epoch in range(n_epoch):

@@ -1,3 +1,5 @@
+import os
+
 import flax
 import jax
 from jax.api_util import shaped_abstractify
@@ -42,4 +44,9 @@ def is_static_arg(x):
 def auto_static_argnums(args):
     """Return the indices of static arguments"""
     return [i for i in range(len(args)) if is_static_arg(args[i])]
+
+
+def run_cmd(cmd):
+    print(cmd)
+    os.system(cmd)
 

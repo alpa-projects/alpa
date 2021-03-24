@@ -92,7 +92,7 @@ def shard_parallel_callable(
     # Get jaxpr and XLA hlo
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
 
-    strategy = 'naive_search'
+    strategy = 'data_parallel'
 
     if strategy == 'partition_all':
         mesh = Mesh(devices, ('mesh_x',))

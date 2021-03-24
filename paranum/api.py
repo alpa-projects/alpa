@@ -16,7 +16,7 @@ from paranum.shard_parallel import shard_parallel_callable
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun, static_argnums="auto", devices=None):
+def parallelize(fun, donate_argnums="auto", static_argnums="auto", devices=None):
     @wraps(fun)
     def ret_func(*args, **kwargs):
         assert not kwargs, "kwargs not supported"
@@ -33,6 +33,9 @@ def parallelize(fun, static_argnums="auto", devices=None):
             f, dyn_args = argnums_partial(f, dyn_argnums, args)
         else:
             dyn_args = args
+        
+        # Deal with donate argnums
+        # todo(lmzheng)
 
         # Flatten pytree arguments
         args_flat, in_tree = tree_flatten(dyn_args)

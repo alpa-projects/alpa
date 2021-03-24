@@ -88,7 +88,7 @@ def main():
     )
 
     block_until_ready(train_state)
-    print(f"Total size: {compute_bytes(train_state) / GB: .2f} GB")
+    print(f"Train state size: {compute_bytes(train_state) / GB: .2f} GB")
 
     print("Train")
     for epoch in range(n_epoch):

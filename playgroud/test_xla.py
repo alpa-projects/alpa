@@ -175,7 +175,7 @@ def test_manual_construct_spmd_shard():
 def test_manual_construct_spmd_one_device():
     c = xla_client.XlaBuilder("shard")
 
-    # Set input sharding
+    # Build a computational graph on device 0
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
     sharding.tile_assignment_dimensions.extend([1, 1])
@@ -183,12 +183,12 @@ def test_manual_construct_spmd_one_device():
     c.set_sharding(sharding)
     x = parameter(c, 0, (2, 2), np.float32)
 
-    # Build computational graph
     z = ops.Add(x, x)
     z = ops.Add(z, z)
     z = ops.Add(z, z)
     c.clear_sharding()
 
+    # Build a computational graph on device 1
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
     sharding.tile_assignment_dimensions.extend([1, 1])

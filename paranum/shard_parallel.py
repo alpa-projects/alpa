@@ -40,7 +40,7 @@ from jax._src.util import (
 )
 
 from paranum import util
-from paranum.data_parallel import should_replicate_map, should_replicate_is_leaf
+from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -84,6 +84,7 @@ def shard_parallel_callable(
     in_tree,
     out_tree_thunk,
     devices,
+    donated_invars,
     *avals
 ):
     fun_name = fun.__name__
@@ -99,7 +100,6 @@ def shard_parallel_callable(
         in_axes = tuple(unsafe_map(shard_first_dim, avals))
         out_axes = tuple(unsafe_map(shard_first_dim, out_avals))
         out_axes_thunk = lambda: out_axes
-        donated_invars = (False,) * len(avals)
     elif strategy == 'data_parallel':
         # Detect weight tensors and mark them as "should_replicate"
         dyn_args = tree_unflatten(in_tree, avals)
@@ -129,7 +129,6 @@ def shard_parallel_callable(
 
         mesh = Mesh(devices, ('mesh_x',))
         out_axes_thunk = lambda: out_axes
-        donated_invars = (False,) * len(avals)
     elif strategy == 'model_parallel':
         # Detect weight tensors and mark them as "should_replicate"
         dyn_args = tree_unflatten(in_tree, avals)
@@ -159,7 +158,6 @@ def shard_parallel_callable(
 
         mesh = Mesh(devices, ('mesh_x',))
         out_axes_thunk = lambda: out_axes
-        donated_invars = (False,) * len(avals)
     elif strategy == 'naive_search':
         # Generate search space
         subspaces = []
@@ -178,7 +176,6 @@ def shard_parallel_callable(
         best_idx = -1
         best_cost = float("inf")
         best_in_axes = None
-        donated_invars = (False,) * len(avals)
         mesh = Mesh(devices, ('mesh_x',))
         perm = np.random.permutation(len(search_space))
 

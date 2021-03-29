@@ -9,6 +9,7 @@ import numpy as np
 
 
 def compute_bytes(pytree):
+    """Compute the total bytes of arrays in a pytree"""
     flatten_args, _ = tree_flatten(pytree)
     ret = 0
     for x in flatten_args:
@@ -18,6 +19,7 @@ def compute_bytes(pytree):
 
 
 def freeze_dict(pytree):
+    """Convert a pytree to a FrozenDict"""
     def is_leaf(x):
         return isinstance(x, dict)
 
@@ -28,22 +30,32 @@ def freeze_dict(pytree):
     return tree_map(freeze, pytree, is_leaf)
 
 
-def is_static_arg(x):
-    if isinstance(x, flax.optim.base.Optimizer):
-        return False
-
-    xs, _ = tree_flatten(x)
-    for x in xs:
-        try:
-            x = shaped_abstractify(x)
-        except TypeError:
-            return True
-    return False
-
-
 def auto_static_argnums(args):
     """Return the indices of static arguments"""
+    def is_static_arg(x):
+        """Return whether an argument is a static argument according to heuristic rules"""
+        if isinstance(x, flax.optim.base.Optimizer):
+            return False
+
+        xs, _ = tree_flatten(x)
+        for x in xs:
+            try:
+                x = shaped_abstractify(x)
+            except TypeError:
+                return True
+        return False
+
     return [i for i in range(len(args)) if is_static_arg(args[i])]
+
+
+def auto_donate_argnums(args):
+    """Return the indices of donated arguments"""
+    def should_donate(x):
+        # Always donate optimizer
+        if isinstance(x, flax.optim.base.Optimizer):
+            return True
+
+    return [i for i in range(len(args)) if should_donate(args[i])]
 
 
 def run_cmd(cmd):

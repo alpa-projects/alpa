@@ -54,7 +54,7 @@ from transformers import (
     set_seed,
 )
 
-from paranum import parallelize
+from paranum import parallelize, annotate_gradient
 
 
 # Cache the result
@@ -409,6 +409,7 @@ def training_step(optimizer, batch, dropout_rng):
     lr = lr_scheduler_fn(step)
     grad_fn = jax.value_and_grad(loss_fn)
     loss, grad = grad_fn(optimizer.target)
+    grad = annotate_gradient(grad)
     optimizer = optimizer.apply_gradient(grad, learning_rate=lr)
 
     return loss, optimizer, new_dropout_rng

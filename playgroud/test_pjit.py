@@ -58,7 +58,7 @@ def split(a, axis):
 
 def test_matmul_speed():
     N = M = 1024
-    K = 1 << 20
+    K = 1 << 19
     n_devices = len(jax.devices())
 
     x_jnp = jnp.empty((N, K), dtype=np.float32).block_until_ready()
@@ -195,9 +195,9 @@ def test_mlp_grad():
 
 
 if __name__ == "__main__":
-    #test_basic1d()
+    test_basic1d()
     #test_matmul()
-    test_matmul_speed()
+    #test_matmul_speed()
     #test_dict_arg()
 
     #test_mlp_forward()

@@ -3,7 +3,6 @@ import jax.numpy as jnp
 
 vv = lambda x, y: jnp.vdot(x, y)
 
-
 v = jnp.ones(10)
 m = jnp.ones((10, 10))
 

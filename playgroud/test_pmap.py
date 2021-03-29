@@ -9,9 +9,7 @@ def debug_pmap():
     def func(x, w):
         return x @ w
 
-    print("pmap B")
     y = func(jnp.ones((2, 4)), jnp.ones((2, 4)))
-    print("pmap C")
     print(y, type(y))
 
 

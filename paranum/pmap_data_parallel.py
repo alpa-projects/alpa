@@ -1,3 +1,4 @@
+"""pmap based data parallel"""
 from functools import wraps
 
 import numpy as np

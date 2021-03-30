@@ -6,7 +6,6 @@ def test_jit_cache():
 
     @jax.jit
     def add_one(x):
-        # return jnp.arange(x[0])
         return x + 1
 
     a = jnp.ones(10)
@@ -14,6 +13,23 @@ def test_jit_cache():
     print(add_one(a))
     print(add_one(a))
     print(add_one(a))
+
+
+def test_cache_closure():
+    outer_scope = [0]
+
+    @jax.jit
+    def add_one(x):
+        print('call add_one')
+        return x + outer_scope[0]
+
+    a = jnp.ones(10)
+
+    print(add_one(a))
+    print(add_one(a))
+    outer_scope[0] = 1
+    print(add_one(a))
+
 
 
 def test_non_jit():
@@ -28,5 +44,6 @@ def test_non_jit():
 
 if __name__ == "__main__":
     #test_jit_cache()
-    test_non_jit()
+    test_cache_closure()
+    #test_non_jit()
 

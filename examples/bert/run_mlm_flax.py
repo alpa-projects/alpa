@@ -551,6 +551,13 @@ if __name__ == "__main__":
         from_pt=True,
     )
 
+    #model = FlaxBertForMaskedLM(
+    #    config=config,
+    #    input_shape=(training_args.train_batch_size, config.max_position_embeddings),
+    #    seed=training_args.seed,
+    #    dtype=jnp.float32,
+    #)
+
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     if training_args.do_train:

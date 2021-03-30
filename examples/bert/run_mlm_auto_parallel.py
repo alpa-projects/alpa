@@ -23,6 +23,7 @@ https://huggingface.co/models?filter=masked-lm
 from dataclasses import dataclass, field
 import itertools
 import logging
+from functools import partial
 import os
 from pathlib import Path
 import sys
@@ -35,10 +36,9 @@ from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
-from flax import jax_utils
 from flax.optim import Adam
+from flax.core.frozen_dict import freeze
 from flax.training import common_utils
-from flax.training.common_utils import get_metrics
 from jax.nn import log_softmax
 from transformers import (
     CONFIG_MAPPING,
@@ -53,24 +53,9 @@ from transformers import (
     is_tensorboard_available,
     set_seed,
 )
+from transformers.models.bert.modeling_flax_bert import FlaxBertForMaskedLMModule
 
 from paranum import parallelize, annotate_gradient
-
-
-# Cache the result
-has_tensorboard = is_tensorboard_available()
-if has_tensorboard:
-    try:
-        from flax.metrics.tensorboard import SummaryWriter
-    except ImportError as ie:
-        has_tensorboard = False
-        print(f"Unable to display metrics through TensorBoard because some package are not installed: {ie}")
-
-else:
-    print(
-        "Unable to display metrics through TensorBoard because the package is not installed: "
-        "Please run pip install tensorboard to enable."
-    )
 
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
@@ -271,6 +256,158 @@ class FlaxDataCollatorForLanguageModeling:
         return inputs, labels
 
 
+def prepare_dataset(model_args, data_args, training_args):
+    if model_args.tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name, cache_dir=model_args.cache_dir, use_fast=model_args.use_fast_tokenizer
+        )
+    elif model_args.model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path, cache_dir=model_args.cache_dir, use_fast=model_args.use_fast_tokenizer
+        )
+    else:
+        raise ValueError(
+            "You are instantiating a new tokenizer from scratch. This is not supported by this script."
+            "You can do it from another script, save it, and load it from here, using --tokenizer_name."
+        )
+
+    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
+    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
+    # (the dataset will be downloaded automatically from the datasets Hub).
+    #
+    # For CSV/JSON files, this script will use the column called 'text' or the first column if no column called
+    # 'text' is found. You can easily tweak this behavior (see below).
+    #
+    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
+    # download the dataset.
+    if data_args.dataset_name is not None:
+        # Downloading and loading a dataset from the hub.
+        datasets = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
+        if "validation" not in datasets.keys():
+            datasets["validation"] = load_dataset(
+                data_args.dataset_name,
+                data_args.dataset_config_name,
+                split=f"train[:{data_args.validation_split_percentage}%]",
+            )
+            datasets["train"] = load_dataset(
+                data_args.dataset_name,
+                data_args.dataset_config_name,
+                split=f"train[{data_args.validation_split_percentage}%:]",
+            )
+    else:
+        data_files = {}
+        if data_args.train_file is not None:
+            data_files["train"] = data_args.train_file
+        if data_args.validation_file is not None:
+            data_files["validation"] = data_args.validation_file
+        extension = data_args.train_file.split(".")[-1]
+        if extension == "txt":
+            extension = "text"
+        datasets = load_dataset(extension, data_files=data_files)
+    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
+    # https://huggingface.co/docs/datasets/loading_datasets.html.
+
+
+    # Preprocessing the datasets.
+    # First we tokenize all the texts.
+    if training_args.do_train:
+        column_names = datasets["train"].column_names
+    else:
+        column_names = datasets["validation"].column_names
+    text_column_name = "text" if "text" in column_names else column_names[0]
+
+    if data_args.max_seq_length is None:
+        max_seq_length = tokenizer.model_max_length
+        if max_seq_length > 1024:
+            logger.warn(
+                f"The tokenizer picked seems to have a very large `model_max_length` ({tokenizer.model_max_length}). "
+                "Picking 1024 instead. You can change that default value by passing --max_seq_length xxx."
+            )
+            max_seq_length = 1024
+    else:
+        if data_args.max_seq_length > tokenizer.model_max_length:
+            logger.warn(
+                f"The max_seq_length passed ({data_args.max_seq_length}) is larger than the maximum length for the"
+                f"model ({tokenizer.model_max_length}). Using max_seq_length={tokenizer.model_max_length}."
+            )
+        max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
+
+    if data_args.line_by_line:
+        # When using line_by_line, we just tokenize each nonempty line.
+        padding = "max_length" if data_args.pad_to_max_length else False
+
+        def tokenize_function(examples):
+            # Remove empty lines
+            examples["text"] = [line for line in examples["text"] if len(line) > 0 and not line.isspace()]
+            return tokenizer(
+                examples["text"],
+                padding=padding,
+                truncation=True,
+                max_length=max_seq_length,
+                # We use this option because DataCollatorForLanguageModeling (see below) is more efficient when it
+                # receives the `special_tokens_mask`.
+                return_special_tokens_mask=True,
+            )
+
+        tokenized_datasets = datasets.map(
+            tokenize_function,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=[text_column_name],
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+    else:
+        # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
+        # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
+        # efficient when it receives the `special_tokens_mask`.
+        def tokenize_function(examples):
+            return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
+
+        tokenized_datasets = datasets.map(
+            tokenize_function,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+
+        # Main data processing function that will concatenate all texts from our dataset and generate chunks of
+        # max_seq_length.
+        def group_texts(examples):
+            # Concatenate all texts.
+            concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+            total_length = len(concatenated_examples[list(examples.keys())[0]])
+            # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+            # customize this part to your needs.
+            total_length = (total_length // max_seq_length) * max_seq_length
+            # Split by chunks of max_len.
+            result = {
+                k: [t[i : i + max_seq_length] for i in range(0, total_length, max_seq_length)]
+                for k, t in concatenated_examples.items()
+            }
+            return result
+
+        # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
+        # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
+        # might be slower to preprocess.
+        #
+        # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
+        # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+
+        tokenized_datasets = tokenized_datasets.map(
+            group_texts,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+
+    # Data collator
+    # This one will take care of randomly masking the tokens.
+    data_collator = FlaxDataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=data_args.mlm_probability)
+
+    return tokenized_datasets, data_collator
+
+
 def create_learning_rate_scheduler(
     factors="constant * linear_warmup * rsqrt_decay",
     base_learning_rate=0.5,
@@ -391,6 +528,59 @@ def cross_entropy(logits, targets, weights=None, label_smoothing=0.0):
     return loss.sum(), normalizing_factor
 
 
+def model_forward(
+    input_ids,
+    attention_mask=None,
+    token_type_ids=None,
+    position_ids=None,
+    params: dict = None,
+    dropout_rng=None,
+    train: bool = False):
+    if token_type_ids is None:
+        token_type_ids = jnp.ones_like(input_ids)
+
+    if position_ids is None:
+        position_ids = jnp.arange(jnp.atleast_2d(input_ids).shape[-1])
+
+    if attention_mask is None:
+        attention_mask = jnp.ones_like(input_ids)
+
+    rngs = {}
+    if dropout_rng is not None:
+        rngs["dropout"] = dropout_rng
+
+    return module.apply(
+        params,
+        input_ids,
+        attention_mask,
+        token_type_ids,
+        position_ids,
+        not train,
+        rngs=rngs,
+    )
+
+
+@parallelize(static_argnums=(1,))
+def initialize_model_optimizer(rng, init_args):
+    # Init params
+    params_rng, dropout_rng = jax.random.split(rng)
+    rngs = {"params": params_rng, "dropout": dropout_rng}
+    input_ids = jnp.zeros(init_args['input_shape'], dtype="i4")
+    attention_mask = jnp.ones_like(input_ids)
+    token_type_ids = jnp.ones_like(input_ids)
+    position_ids = jnp.arange(jnp.atleast_2d(input_ids).shape[-1])
+    params = module.init(rngs, input_ids, attention_mask, token_type_ids, position_ids)
+
+    # Create optimizer
+    optimizer = Adam(
+        learning_rate=init_args['learning_rate'],
+        weight_decay=init_args['weight_decay'],
+        beta1=init_args['adam_beta1'],
+        beta2=init_args['adam_beta2'],
+    ).create(params)
+    return optimizer
+
+
 @parallelize
 def training_step(optimizer, batch, dropout_rng):
     dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
@@ -401,7 +591,7 @@ def training_step(optimizer, batch, dropout_rng):
         # Hide away tokens which doesn't participate in the optimization
         token_mask = jnp.where(targets > 0, 1.0, 0.0)
 
-        logits = model(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+        logits = model_forward(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
         loss, weight_sum = cross_entropy(logits, targets, token_mask)
         return loss / weight_sum
 
@@ -424,7 +614,7 @@ def eval_step(optimizer, batch):
 
     # Hide away tokens which doesn't participate in the optimization
     token_mask = jnp.where(targets > 0, 1.0, 0.0)
-    logits = model(**batch, params=optimizer.target, train=False)[0]
+    logits = model_forward(**batch, params=optimizer.target, train=False)[0]
 
     return compute_metrics(logits, targets, token_mask)
 
@@ -469,61 +659,40 @@ if __name__ == "__main__":
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="[%X]",
     )
-
     # Log on each process the small summary:
     logger = logging.getLogger(__name__)
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu} "
         + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
-
     # Set the verbosity to info of the Transformers logger (on main process only):
     logger.info("Training/evaluation parameters %s", training_args)
 
+    # Enable tensorboard only on the master node
+    has_tensorboard = is_tensorboard_available()
+    if has_tensorboard:
+        try:
+            from flax.metrics.tensorboard import SummaryWriter
+        except ImportError as ie:
+            has_tensorboard = False
+            print(f"Unable to display metrics through TensorBoard because some package are not installed: {ie}")
+
+    else:
+        print(
+            "Unable to display metrics through TensorBoard because the package is not installed: "
+            "Please run pip install tensorboard to enable."
+        )
+    if has_tensorboard and jax.host_id() == 0:
+        summary_writer = SummaryWriter(log_dir=Path(training_args.output_dir).joinpath("logs").as_posix())
+
+    # Prepare dataset (todo(lmzheng): update this to a dataloader interface)
+    tokenized_datasets, data_collator = prepare_dataset(model_args, data_args, training_args)
+
     # Set seed before initializing model.
     set_seed(training_args.seed)
+    rng = jax.random.PRNGKey(training_args.seed)
 
-    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
-    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
-    # (the dataset will be downloaded automatically from the datasets Hub).
-    #
-    # For CSV/JSON files, this script will use the column called 'text' or the first column if no column called
-    # 'text' is found. You can easily tweak this behavior (see below).
-    #
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if data_args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        datasets = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
-        if "validation" not in datasets.keys():
-            datasets["validation"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[:{data_args.validation_split_percentage}%]",
-            )
-            datasets["train"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:]",
-            )
-    else:
-        data_files = {}
-        if data_args.train_file is not None:
-            data_files["train"] = data_args.train_file
-        if data_args.validation_file is not None:
-            data_files["validation"] = data_args.validation_file
-        extension = data_args.train_file.split(".")[-1]
-        if extension == "txt":
-            extension = "text"
-        datasets = load_dataset(extension, data_files=data_files)
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
-    # Load pretrained model and tokenizer
-
-    # Distributed training:
-    # The .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
+    # Load pretrained model config
     if model_args.config_name:
         config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
     elif model_args.model_name_or_path:
@@ -532,141 +701,45 @@ if __name__ == "__main__":
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
 
-    if model_args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_args.tokenizer_name, cache_dir=model_args.cache_dir, use_fast=model_args.use_fast_tokenizer
-        )
-    elif model_args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path, cache_dir=model_args.cache_dir, use_fast=model_args.use_fast_tokenizer
-        )
-    else:
-        raise ValueError(
-            "You are instantiating a new tokenizer from scratch. This is not supported by this script."
-            "You can do it from another script, save it, and load it from here, using --tokenizer_name."
-        )
-
-    model = FlaxBertForMaskedLM.from_pretrained(
-        model_args.model_name_or_path,
-        dtype=jnp.float32,
-        input_shape=(training_args.train_batch_size, config.max_position_embeddings),
-        seed=training_args.seed,
+    # Initialize model and optimizer
+    param_rng, dropout_rng = jax.random.split(rng)
+    module = FlaxBertForMaskedLMModule(
+        vocab_size=config.vocab_size,
+        type_vocab_size=config.type_vocab_size,
+        hidden_size=config.hidden_size,
+        intermediate_size=config.intermediate_size,
+        head_size=config.hidden_size,
+        num_heads=config.num_attention_heads,
+        num_encoder_layers=config.num_hidden_layers,
+        max_length=config.max_position_embeddings,
+        hidden_act=config.hidden_act,
         dropout_rate=config.hidden_dropout_prob,
-        from_pt=True,
     )
 
-    # Preprocessing the datasets.
-    # First we tokenize all the texts.
-    if training_args.do_train:
-        column_names = datasets["train"].column_names
-    else:
-        column_names = datasets["validation"].column_names
-    text_column_name = "text" if "text" in column_names else column_names[0]
-
-    if data_args.max_seq_length is None:
-        max_seq_length = tokenizer.model_max_length
-        if max_seq_length > 1024:
-            logger.warn(
-                f"The tokenizer picked seems to have a very large `model_max_length` ({tokenizer.model_max_length}). "
-                "Picking 1024 instead. You can change that default value by passing --max_seq_length xxx."
-            )
-            max_seq_length = 1024
-    else:
-        if data_args.max_seq_length > tokenizer.model_max_length:
-            logger.warn(
-                f"The max_seq_length passed ({data_args.max_seq_length}) is larger than the maximum length for the"
-                f"model ({tokenizer.model_max_length}). Using max_seq_length={tokenizer.model_max_length}."
-            )
-        max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
-
-    if data_args.line_by_line:
-        # When using line_by_line, we just tokenize each nonempty line.
-        padding = "max_length" if data_args.pad_to_max_length else False
-
-        def tokenize_function(examples):
-            # Remove empty lines
-            examples["text"] = [line for line in examples["text"] if len(line) > 0 and not line.isspace()]
-            return tokenizer(
-                examples["text"],
-                padding=padding,
-                truncation=True,
-                max_length=max_seq_length,
-                # We use this option because DataCollatorForLanguageModeling (see below) is more efficient when it
-                # receives the `special_tokens_mask`.
-                return_special_tokens_mask=True,
-            )
-
-        tokenized_datasets = datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=[text_column_name],
-            load_from_cache_file=not data_args.overwrite_cache,
+    load_pretrained_weight = False
+    if load_pretrained_weight:
+        model = FlaxBertForMaskedLM.from_pretrained(
+            model_args.model_name_or_path,
+            dtype=jnp.float32,
+            input_shape=(training_args.train_batch_size, config.max_position_embeddings),
+            seed=training_args.seed,
+            dropout_rate=config.hidden_dropout_prob,
+            from_pt=True,
         )
+        optimizer = Adam(
+            learning_rate=training_args.learning_rate,
+            weight_decay=training_args.weight_decay,
+            beta1=training_args.adam_beta1,
+            beta2=training_args.adam_beta2,
+        ).create({"params": model.params})
     else:
-        # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
-        # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
-        # efficient when it receives the `special_tokens_mask`.
-        def tokenize_function(examples):
-            return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
-
-        tokenized_datasets = datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
-
-        # Main data processing function that will concatenate all texts from our dataset and generate chunks of
-        # max_seq_length.
-        def group_texts(examples):
-            # Concatenate all texts.
-            concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-            total_length = len(concatenated_examples[list(examples.keys())[0]])
-            # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
-            # customize this part to your needs.
-            total_length = (total_length // max_seq_length) * max_seq_length
-            # Split by chunks of max_len.
-            result = {
-                k: [t[i : i + max_seq_length] for i in range(0, total_length, max_seq_length)]
-                for k, t in concatenated_examples.items()
-            }
-            return result
-
-        # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
-        # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
-        # might be slower to preprocess.
-        #
-        # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
-        # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
-
-        tokenized_datasets = tokenized_datasets.map(
-            group_texts,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
-
-    # Enable tensorboard only on the master node
-    if has_tensorboard and jax.host_id() == 0:
-        summary_writer = SummaryWriter(log_dir=Path(training_args.output_dir).joinpath("logs").as_posix())
-
-    # Data collator
-    # This one will take care of randomly masking the tokens.
-    data_collator = FlaxDataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=data_args.mlm_probability)
-
-    # Initialize our training
-    rng = jax.random.PRNGKey(training_args.seed)
-    dropout_rng = rng
-
-    # Setup optimizer
-    optimizer = Adam(
-        learning_rate=training_args.learning_rate,
-        weight_decay=training_args.weight_decay,
-        beta1=training_args.adam_beta1,
-        beta2=training_args.adam_beta2,
-    ).create(model.params)
+        optimizer = initialize_model_optimizer(param_rng, {
+            'input_shape': (training_args.train_batch_size, config.max_position_embeddings),
+            'learning_rate': training_args.learning_rate,
+            'weight_decay': training_args.weight_decay,
+            'adam_beta1': training_args.adam_beta1,
+            'adam_beta2': training_args.adam_beta2
+        })
 
     # Store some constant
     nb_epochs = int(training_args.num_train_epochs)

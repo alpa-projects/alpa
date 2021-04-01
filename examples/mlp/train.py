@@ -10,15 +10,10 @@ from flax.core import freeze, unfreeze
 from flax import linen as nn
 from flax import optim
 
-from paranum import parallelize, data_parallel, annotate_gradient, compute_bytes
+from paranum import parallelize, annotate_gradient, compute_bytes
 from utils import DataLoader
 
 GB = 1 << 30
-
-
-def replicate(a, factor=4):
-    a = jax.pmap(lambda x, y: x, in_axes=(None, 0), out_axes=None)(a, jnp.ones(factor))
-    return a
 
 
 class Model(nn.Module):
@@ -48,8 +43,6 @@ def create_train_state(rngkey, model, batch):
 
 
 @parallelize
-#@partial(jax.jit, static_argnums=(2,))
-#@data_parallel
 def train_step(optimizer, batch, apply_fn):
     def loss_func(params):
         out = apply_fn(params, batch['x'])

@@ -29,7 +29,7 @@ def auto_sharding_callable(
     tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
     # Make xla arguments
-    c = xb.make_computation_builder(f"xmap_{fun.__name__}")
+    c = xb.make_computation_builder(f"auto_shard_{fun.__name__}")
     xla_consts = map(partial(xb.constant, c), consts)
     xla_args, donated_invars = xla._xla_callable_args(c, avals, tuple_args, donated_invars=donated_invars)
 
@@ -70,8 +70,8 @@ def auto_sharding_callable(
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
-    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple)
-                           for proto_tuple in input_shardings]
+    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, num_partitions)
+                           for (proto_tuple, aval) in zip(input_shardings, avals)]
     input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                      aval, spec in zip(avals, input_sharding_specs)]
     handle_args = partial(pxla.shard_args, compiled.local_devices(), input_indices)
@@ -82,38 +82,42 @@ def auto_sharding_callable(
 
     # Handle output
     output_sharding = compiled.hlo_modules()[0].spmd_output_sharding()
-    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding)
+    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, num_partitions)
     handle_outs = pxla.avals_to_results_handler(num_replicas, num_partitions,
                                                 output_sharding_specs, out_avals)
 
     return partial(pxla.execute_replicated, compiled, backend, handle_args, handle_outs)
 
 
-def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple):
+def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions):
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
 
+    sharding = []
+    mesh_mapping = []
     if sharding_type == OpSharding.Type.OTHER:
-        device_ids = np.array(tile_assignment_devices)
-        sharding = []
-        mesh_mapping = []
         for i in range(len(tile_assignment_dimensions)):
             sharding.append(pxla.Chunked([tile_assignment_dimensions[i]]))
             mesh_mapping.append(pxla.ShardedAxis(i))
-        return pxla.ShardingSpec(sharding, mesh_mapping)
+    elif sharding_type == OpSharding.Type.REPLICATED:
+        sharding = (pxla.NoSharding(),) * len(aval.shape)
+        mesh_mapping = (pxla.Replicated(num_partitions),)
     else:
         raise NotImplementedError("Type: " + str(sharding_type))
 
+    return pxla.ShardingSpec(sharding, mesh_mapping)
 
-def hlo_sharding_to_sharding_spec(hlo_sharding):
+
+def hlo_sharding_to_sharding_spec(hlo_sharding, aval, num_partitions):
     proto_tuple = hlo_sharding.proto_tuple()
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
     if sharding_type == OpSharding.Type.TUPLE:
-        return [hlo_sharding_to_sharding_spec_no_tuple(shard)
-                for shard in tuple_shardings]
+        avals = aval
+        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, num_partitions)
+                for (shard, aval) in zip(tuple_shardings, avals)]
     else:
-        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple)
+        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions)
 
 
 ## 5. Argument sharding / output wrapping
@@ -125,5 +129,4 @@ def hlo_sharding_to_sharding_spec(hlo_sharding):
 #                 if spec is not None else None
 #                 for aval, spec in safe_zip(local_in_untiled_avals, local_input_specs)]
 #handle_args = partial(shard_args, compiled.local_devices(), input_indices)
-
 

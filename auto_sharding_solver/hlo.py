@@ -66,12 +66,12 @@ class HloInstruction:
 
 
 class HloParameter(HloInstruction):
-    def __init__(self, shape):
+    def __init__(self, shape, fix_strategy=None):
         super().__init__(OpCode.PARAMETER, shape, [])
+        self.fix_strategy = fix_strategy
 
     def build_strategy_and_cost(self, cluster_env):
         assert len(self.shape) == 2
-
 
         self.strategies.append(InstructionStrategy("S0", ShardingSpec.SPLIT_0))
         self.compute_costs.append(0)
@@ -87,6 +87,25 @@ class HloParameter(HloInstruction):
         self.compute_costs.append(0)
         self.communication_costs.append(0)
         self.memory_costs.append(compute_bytes(self.shape))
+
+        if self.fix_strategy:
+            new_strategies = []
+            new_compute_costs = []
+            new_communication_costs = []
+            new_memory_costs = []
+
+            # filter strategies
+            for i in range(len(self.strategies)):
+                if self.strategies[i].name == self.fix_strategy:
+                    new_strategies.append(self.strategies[i])
+                    new_compute_costs.append(self.compute_costs[i])
+                    new_communication_costs.append(self.communication_costs[i])
+                    new_memory_costs.append(self.memory_costs[i])
+
+            self.strategies = new_strategies
+            self.compute_costs = new_compute_costs
+            self.communication_costs = new_communication_costs
+            self.memory_costs = new_memory_costs
 
     def __str__(self):
         return f"{self.name} {self.shape} = parameter()"

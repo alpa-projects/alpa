@@ -89,7 +89,10 @@ def shard_parallel_callable(
     donated_invars,
     *avals
 ):
-    strategy = 'auto_shard'
+    strategy = 'data_parallel'
+
+    if strategy != "auto_shard":
+        os.environ["XLA_FLAGS"]="--xla_disable_hlo_passes=auto_sharding"
 
     if strategy == 'auto_shard':
         # Lower to mesh_callable

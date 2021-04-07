@@ -9,7 +9,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="bert-base-uncased")
     args = parser.parse_args()
 
-    cmd = f"python {args.script} "\
+    cmd = f"python3 {args.script} "\
           f"--model_name_or_path {args.model} "\
            "--dataset_name wikitext "\
            "--dataset_config_name wikitext-2-raw-v1 "\

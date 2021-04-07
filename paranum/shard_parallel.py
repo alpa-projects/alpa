@@ -2,6 +2,7 @@
 from collections import OrderedDict
 from functools import wraps, partial
 import itertools
+import os
 import re
 import threading
 
@@ -42,6 +43,7 @@ from jax._src.util import (
 
 from paranum import util
 from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
+from paranum.auto_sharding import auto_sharding_callable
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -88,20 +90,19 @@ def shard_parallel_callable(
     donated_invars,
     *avals
 ):
-    fun_name = fun.__name__
-    devices = devices or np.array(jax.devices())
-
-    # Get jaxpr and XLA hlo
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
-
     strategy = 'data_parallel'
 
-    if strategy == 'partition_all':
-        mesh = Mesh(devices, ('mesh_x',))
-        in_axes = tuple(unsafe_map(shard_first_dim, avals))
-        out_axes = tuple(unsafe_map(shard_first_dim, out_avals))
-        out_axes_thunk = lambda: out_axes
+    if strategy == 'auto_shard':
+        # Lower to mesh_callable
+        compiled_func = auto_sharding_callable(fun, out_tree_thunk, devices, donated_invars, *avals)
+        return compiled_func
     elif strategy == 'data_parallel':
+        fun_name = fun.__name__
+        devices = devices or np.array(jax.devices())
+
+        # Get jaxpr and XLA hlo
+        jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
+
         # Detect weight tensors and mark them as "should_replicate"
         dyn_args = tree_unflatten(in_tree, avals)
         should_replicate = tree_map(
@@ -130,93 +131,18 @@ def shard_parallel_callable(
 
         mesh = Mesh(devices, ('mesh_x',))
         out_axes_thunk = lambda: out_axes
-    elif strategy == 'model_parallel':
-        # Detect weight tensors and mark them as "should_replicate"
-        dyn_args = tree_unflatten(in_tree, avals)
-        should_replicate = tree_map(
-            should_replicate_map, dyn_args, should_replicate_is_leaf
-        )
-        should_replicate = tuple(
-            flatten_axes("shard_parallel_callable should_replicate", in_tree, should_replicate)
-        )
 
-        # Create in_axes paritition spec
-        in_axes = tuple(shard_last_dim(avals[i]) if should_replicate[i] else OrderedDict()
-                        for i in range(len(avals)))
+        # Clean stores for the next call
+        for store in fun.stores:
+            store and store.reset()
 
-        # Create out_axes paritition spec
-        unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
-        out_should_replicate = tree_map(
-            should_replicate_map, unflatten_out_avals, should_replicate_is_leaf
-        )
-        out_should_replicate = flatten_axes(
-            "shard_parallel_callable out_should_replicate",
-            out_tree_thunk(),
-            out_should_replicate,
-        )
-        out_axes = tuple(shard_last_dim(out_avals[i]) if out_should_replicate[i] else OrderedDict()
-                         for i in range(len(out_avals)))
-
-        mesh = Mesh(devices, ('mesh_x',))
-        out_axes_thunk = lambda: out_axes
-    elif strategy == 'naive_search':
-        # Generate search space
-        subspaces = []
-        for aval in avals:
-            subspace = []
-            subspace.append(OrderedDict())
-            if len(aval.shape) == 1:
-                subspace.append([shard_first_dim(aval)])
-            elif len(aval.shape) >= 2:
-                subspace.extend([shard_first_dim(aval), shard_last_dim(aval)])
-            subspaces.append(subspace)
-
-        search_space = tuple(itertools.product(*subspaces))
-
-        # Grid search
-        best_idx = -1
-        best_cost = float("inf")
-        best_in_axes = None
-        mesh = Mesh(devices, ('mesh_x',))
-        perm = np.random.permutation(len(search_space))
-
-        for i in range(len(search_space)):
-        #for i in [56]:
-            #in_axes = (OrderedDict(), OrderedDict([('mesh_x', 1)]), OrderedDict([('mesh_x', 0)]), OrderedDict(), OrderedDict())
-            in_axes = search_space[i]
-            out_axes = in_axes[:len(out_avals)]
-            out_axes_thunk = lambda: out_axes
-            cost = compute_mesh_callable_cost(
-                fun, fun_name, None, mesh,
-                in_axes, out_axes_thunk, donated_invars,
-                True, *avals, tile_by_mesh_axes=False)
-
-            if cost <= best_cost:
-                best_cost = cost
-                best_idx = i
-                best_in_axes = in_axes
-
-            print(f"idx: {i}/{len(search_space)}, cost : {cost:.2f}")
-
-        print(f"Best idx: {best_idx}")
-        print(f"Best cost: {best_cost}")
-        print(f"Best in_axes: {best_in_axes}")
-
-        in_axes = best_in_axes
-        out_axes = in_axes[:len(out_avals)]
-        out_axes_thunk = lambda: out_axes
+        # Lower to mesh_callable
+        compiled_func = mesh_callable(fun, fun_name, None, mesh,
+                                      in_axes, out_axes_thunk, donated_invars,
+                                      True, *avals, tile_by_mesh_axes=False)
+        return compiled_func
     else:
         raise ValueError("Invalid strategy: " + strategy)
-
-    # Clean stores for the next call
-    for store in fun.stores:
-        store and store.reset()
-
-    # Lower to mesh_callable
-    compiled_func = mesh_callable(fun, fun_name, None, mesh,
-                                  in_axes, out_axes_thunk, donated_invars,
-                                  True, *avals, tile_by_mesh_axes=False)
-    return compiled_func
 
 def compile_to_hlo_string(fun, fun_name, backend, mesh,
                           in_axes, out_axes_thunk, donated_invars,

@@ -2,6 +2,7 @@
 from collections import OrderedDict
 from functools import wraps, partial
 import itertools
+import os
 import re
 import threading
 
@@ -90,9 +91,6 @@ def shard_parallel_callable(
     *avals
 ):
     strategy = 'data_parallel'
-
-    if strategy != "auto_shard":
-        os.environ["XLA_FLAGS"]="--xla_disable_hlo_passes=auto_sharding"
 
     if strategy == 'auto_shard':
         # Lower to mesh_callable

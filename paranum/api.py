@@ -1,3 +1,4 @@
+"""Top-level user API"""
 from functools import wraps
 
 import numpy as np
@@ -38,7 +39,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
                 frozen_args = []
                 for i in range(len(args)):
                     if i in static_argnums and isinstance(args[i], dict):
-                        frozen_args.append(freeze(args[i]))
+                        frozen_args.append(FrozenDict(args[i]))
                     else:
                         frozen_args.append(args[i])
                 f, dyn_args = argnums_partial(f, dyn_argnums, frozen_args)

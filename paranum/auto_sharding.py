@@ -1,3 +1,4 @@
+"""Use the auto sharding pass in XLA"""
 from functools import partial
 
 import numpy as np
@@ -118,15 +119,4 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, num_partitions):
                 for (shard, aval) in zip(tuple_shardings, avals)]
     else:
         return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions)
-
-
-## 5. Argument sharding / output wrapping
-#local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
-#local_input_specs = [local_sharding_spec(aval, aval_in_axes)
-#                     if aval is not core.abstract_unit else None
-#                     for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
-#input_indices = [spec_to_indices(aval.shape, spec)
-#                 if spec is not None else None
-#                 for aval, spec in safe_zip(local_in_untiled_avals, local_input_specs)]
-#handle_args = partial(shard_args, compiled.local_devices(), input_indices)
 

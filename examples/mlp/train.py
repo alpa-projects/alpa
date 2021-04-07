@@ -29,7 +29,7 @@ class Model(nn.Module):
 
         x = nn.Dense(features=self.hidden_dim,
                      kernel_init=kernel_init, use_bias=False)(x)
-        x = nn.relu(x)
+        #x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim,
                      kernel_init=kernel_init, use_bias=False)(x)
         return x
@@ -60,8 +60,8 @@ def block_until_ready(train_state):
 
 
 def main():
-    batch_size = 2048
-    hidden_dim = (1 << 13)
+    batch_size = 128
+    hidden_dim = 1024
     input_dim = output_dim = hidden_dim
 
     n_epoch = 1

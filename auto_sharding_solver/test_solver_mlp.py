@@ -128,7 +128,7 @@ def test_mlp_n_layer_forward_backward():
     # Build Hlo Computation
     batch_size = 128
     input_dim = hidden_dim = output_dim = 1024
-    num_layers = 8
+    num_layers = 10
 
     computation = HloComputation()
     with computation:
@@ -190,13 +190,13 @@ def test_mlp_n_layer_forward_backward():
         computation.set_alias(alias_list)
 
     # Solve
-    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=14 * 1024**2)
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=20 * 1024**2)
     solve_auto_sharding(computation, cluster_env)
 
 
 if __name__ == "__main__":
-    test_mlp_2_layer_forward()
+    #test_mlp_2_layer_forward()
     #test_mlp_n_layer_forward()
     #test_mlp_2_layer_forward_backward()
-    #test_mlp_n_layer_forward_backward()
+    test_mlp_n_layer_forward_backward()
 

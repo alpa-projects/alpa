@@ -1,4 +1,5 @@
 """ILP Solver"""
+import multiprocessing
 
 import pulp
 from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
@@ -124,9 +125,9 @@ def solve_auto_sharding(computation, cluster_env):
             C = len(s[j])
             prob += lpSum(e[i][j][row * C + col] for row in range(0, R)) <= s[j][col]
 
-    #print(prob)
-
-    prob.solve()
+    solver = pulp.PULP_CBC_CMD(mip=True,
+                               threads=multiprocessing.cpu_count())
+    result = prob.solve(solver)
     print("Status:", LpStatus[prob.status])
 
     # Print sharding spec

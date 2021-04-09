@@ -134,8 +134,8 @@ def solve_auto_sharding(computation, cluster_env):
     instructions = computation.instructions
     for i in range(N):
         spec_index = get_non_zero_index(s[i])
-        print(f"Instruction {i}, Strategy: "
-              f"{instructions[i].strategies[spec_index].name}")
+        print(f"Time {i:2d}: {computation.instructions[i]}"\
+              f"   Strategy: {instructions[i].strategies[spec_index].name}")
 
     # Check edges
     for (i, j) in E:

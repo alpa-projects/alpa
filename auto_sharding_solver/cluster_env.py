@@ -1,5 +1,5 @@
 """Cluster Environment"""
-from hlo import ShardingSpec
+from hlo import ShardingSpec, ShardingSpecType
 from common import compute_bytes
 
 
@@ -21,26 +21,10 @@ class ClusterEnvironment:
                0.001
 
     def resharding_cost(self, shape, src_spec, dst_spec):
-        if src_spec == ShardingSpec.SPLIT_0:
-            if dst_spec == ShardingSpec.SPLIT_0:
-                return 0
-            elif dst_spec == ShardingSpec.SPLIT_1:
-                return self.all_gather_cost(compute_bytes(shape))
-            elif dst_spec == ShardingSpec.REPLICATE:
-                return self.all_gather_cost(compute_bytes(shape))
-            else:
-                raise ValueError(f"Invalid sharding spec: {dst_spec}")
-        elif src_spec == ShardingSpec.SPLIT_1:
-            if dst_spec == ShardingSpec.SPLIT_0:
-                return self.all_gather_cost(compute_bytes(shape))
-            elif dst_spec == ShardingSpec.SPLIT_1:
-                return 0
-            elif dst_spec == ShardingSpec.REPLICATE:
-                return self.all_gather_cost(compute_bytes(shape))
-            else:
-                raise ValueError(f"Invalid sharding spec: {dst_spec}")
-        elif src_spec == ShardingSpec.REPLICATE:
+        if src_spec == dst_spec:
             return 0
-        else:
-            raise ValueError(f"Invalid sharding spec: {src_spec}")
+        if src_spec.type == ShardingSpecType.REPLICATED:
+            return 0
+
+        return self.all_gather_cost(compute_bytes(shape))
 

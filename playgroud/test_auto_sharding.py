@@ -101,8 +101,10 @@ def test_attention():
     @parallelize
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
+            rngs = {"dropout": batch['rng']}
             out = apply_fn(params, batch['hidden_states'],
-                           batch['attention_mask'], deterministic)
+                           batch['attention_mask'], deterministic,
+                           rngs=rngs)
             return jnp.mean((out - batch['label']) ** 2)
 
         grad = jax.grad(loss_func)(optimizer.target)
@@ -111,16 +113,18 @@ def test_attention():
 
     @parallelize
     def forward_step(optimizer, batch, apply_fn):
+        rngs = {"dropout": batch['rng']}
         out = apply_fn(optimizer.target, batch['hidden_states'],
-                       batch['attention_mask'], deterministic)
+                       batch['attention_mask'], deterministic,
+                       rngs=rngs)
         return out
 
     batch_size = 4
     seq_len = 512
     num_heads = 12
     hidden_dim = 768
-    dropout_rate = 0
-    deterministic = True
+    dropout_rate = 0.0
+    deterministic = False
 
     hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
     attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
@@ -157,15 +161,17 @@ def test_attention():
         },
     })
     optimizer = optim.GradientDescent(1e-2).create(params)
-    #optimizer = train_step(optimizer,
-    #                      {"hidden_states": hidden_states,
-    #                       "attention_mask": attention_mask,
-    #                       "label": label}, model.apply)
+    optimizer = train_step(optimizer,
+                          {"hidden_states": hidden_states,
+                           "attention_mask": attention_mask,
+                           "label": label,
+                           "rng": rngkey
+                           }, model.apply)
 
-    optimizer = forward_step(optimizer,
-                             {"hidden_states": hidden_states,
-                              "attention_mask": attention_mask,
-                              "label": label}, model.apply)
+    #optimizer = forward_step(optimizer,
+    #                         {"hidden_states": hidden_states,
+    #                          "attention_mask": attention_mask,
+    #                          "label": label}, model.apply)
 
 
 if __name__ == "__main__":

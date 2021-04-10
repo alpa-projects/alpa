@@ -90,7 +90,7 @@ def shard_parallel_callable(
     donated_invars,
     *avals
 ):
-    strategy = 'data_parallel'
+    strategy = 'auto_shard'
 
     if strategy == 'auto_shard':
         # Lower to mesh_callable

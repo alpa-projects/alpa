@@ -39,7 +39,7 @@ def test_mlp():
         @nn.compact
         def __call__(self, x):
             x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
-            x = nn.relu(x)
+            #x = nn.relu(x)
             x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
             return x
 
@@ -53,7 +53,6 @@ def test_mlp():
         grad = jax.grad(loss_func)(optimizer.target)
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
-
 
     batch_size = 32
     hidden_dim = 512
@@ -177,6 +176,6 @@ def test_attention():
 if __name__ == "__main__":
     #test_matmul()
 
-    #test_mlp()
-    test_attention()
+    test_mlp()
+    #test_attention()
 

@@ -440,8 +440,10 @@ class HloDot(HloInstruction):
         rhs_space_dim = self.rhs_space_dims[0]
         rhs_con_dim = self.rhs_contracting_dims[0]
 
+        space_base_dim = len(self.lhs_batch_dims)
+
         # split the space dim of lhs
-        self.strategies.append(InstructionStrategy("Sl = Sl x R", ShardingSpec.split(self.shape, lhs_space_dim, cluster_env)))
+        self.strategies.append(InstructionStrategy("Sl = Sl x R", ShardingSpec.split(self.shape, space_base_dim, cluster_env)))
         self.compute_costs.append(0)
         self.communication_costs.append(0)
         self.memory_costs.append(compute_bytes(self.shape) / cluster_env.num_devices)
@@ -451,7 +453,7 @@ class HloDot(HloInstruction):
         ])
 
         # split the space dim of rhs
-        self.strategies.append(InstructionStrategy("Sr = R x Sr", ShardingSpec.split(self.shape, rhs_space_dim, cluster_env)))
+        self.strategies.append(InstructionStrategy("Sr = R x Sr", ShardingSpec.split(self.shape, space_base_dim+1, cluster_env)))
         self.compute_costs.append(0)
         self.communication_costs.append(0)
         self.memory_costs.append(compute_bytes(self.shape) / cluster_env.num_devices)

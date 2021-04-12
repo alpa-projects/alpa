@@ -508,6 +508,7 @@ class HloTuple(HloInstruction):
         self.strategies.append(InstructionStrategy("tuple", ShardingSpec.tuple()))
         self.memory_costs.append(0)
         self.compute_costs.append(0)
+        self.communication_costs.append(0)
         self.resharding_costs.append([np.zeros(len(operand.strategies))
             for operand in self.operands])
 

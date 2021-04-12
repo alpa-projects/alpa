@@ -30,7 +30,6 @@ def test_matmul():
 
 
 def test_mlp():
-    #os.environ['XLA_FLAGS'] = '--xla_disable_hlo_passes=auto_sharding'
     os.environ['NCCL_LAUNCH_MODE'] = 'PARALLEL'
 
     class Model(nn.Module):
@@ -44,7 +43,7 @@ def test_mlp():
             return x
 
 
-    @parallelize
+    @parallelize(memory_budget_per_device=50 * (1 << 20))
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])
@@ -54,8 +53,8 @@ def test_mlp():
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
 
-    batch_size = 32
-    hidden_dim = 512
+    batch_size = 128
+    hidden_dim = 2048
     input_dim = output_dim = hidden_dim
 
     x = jnp.ones((batch_size, input_dim))

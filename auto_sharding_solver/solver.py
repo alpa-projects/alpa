@@ -1,21 +1,43 @@
 """ILP Solver"""
-import multiprocessing
-
+import numpy as np
 import pulp
 from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
 
+from paranum.auto_sharding import call_solver_serialized_args
 
-def get_non_zero_index(binary_vector):
-    """Get the index of non-zero item in a vector"""
-    ct = 0
-    ret = None
-    for i in range(len(binary_vector)):
-        if pulp.value(binary_vector[i]):
-            ret = i
-            ct += 1
 
-    assert ct == 1
-    return ret
+def call_solver(N, M, s_len, E, L, c, d, m, r):
+    s_len_np = np.empty((N,), dtype=np.int32)
+    s_len_np[:] = s_len
+
+    # serialize edge set 
+    len_edges = len(E)
+    E_np = np.empty((len_edges, 2), dtype=np.int32)
+    for (no, (i, j)) in enumerate(E):
+        E_np[no][:] = [i, j]
+
+    # serialize liveness set 
+    len_liveness_set = N + sum(len(v) for v in L)
+    L_np = np.empty((len_liveness_set,), dtype=np.int32)
+    L_np[0:N] = [len(v) for v in L]
+    L_np[N:] = [x for v in L for x in v]
+
+    # serialize node costs 
+    len_node_costs = sum(len(v) for v in c)
+    c_np = np.empty((len_node_costs,), dtype=np.float32)
+    d_np = np.empty((len_node_costs,), dtype=np.float32)
+    m_np = np.empty((len_node_costs,), dtype=np.float32)
+    c_np[:] = [x for v in c for x in v]
+    d_np[:] = [x for v in d for x in v]
+    m_np[:] = [x for v in m for x in v]
+
+    # serialize edge costs 
+    len_edge_costs = sum(len(r[i][j]) for (i, j) in E)
+    r_np = np.empty((len_edge_costs,), dtype=np.float32)
+    r_np[:] = [x for (i, j) in E for x in r[i][j]]
+
+    return call_solver_serialized_args(
+        N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_np)
 
 
 def solve_auto_sharding(computation, cluster_env):
@@ -32,28 +54,25 @@ def solve_auto_sharding(computation, cluster_env):
     # Build strategies and costs
     computation.build_strategy_and_cost(cluster_env)
 
-    # Build an ILP problem
-    # 0. Constant
+    # Build all constants for ILP
     N = len(computation.instructions)
     M = cluster_env.memory_per_device
 
-    # 1. Strategy vector
+    s_len = []
     E = []
     L = []
     c = []
     d = []
     m = []
     r = [[None for i in range(N)] for j in range(N)]
-    s = []
-    e = [[None for i in range(N)] for j in range(N)]
     for i in range(N):
         ins = computation.instructions[i]
+        s_len.append(len(ins.strategies))
+        L.append([ins.index for ins in liveness_dict[i]])
         c.append(ins.compute_costs)
         d.append(ins.communication_costs)
         m.append(ins.memory_costs)
-        s.append(LpVariable.matrix(f"s[{i}]",
-            (range(len(ins.strategies)),), cat="Binary"))
-        L.append([ins.index for ins in liveness_dict[i]])
+
         for op_idx, operand in enumerate(ins.operands):
             E.append((operand.index, i))
 
@@ -62,96 +81,33 @@ def solve_auto_sharding(computation, cluster_env):
 
             #ins.resharding_costs  # [s_i, operand_idx, s_operand]
             cost = []
-            for p in range(len(s[src])):
-                for q in range(len(s[dst])):
+            for p in range(len(computation.instructions[src].strategies)):
+                for q in range(len(computation.instructions[dst].strategies)):
                     cost.append(ins.resharding_costs[q][op_idx][p])
             r[src][dst] = cost
 
     for ((ins_a, ins_b), cost_vector) in zip(computation.alias_list,
                                              computation.alias_cost_vector):
         E.append((ins_a.index, ins_b.index))
-        #assert r[ins_a.index][ins_b.index] is None
         r[ins_a.index][ins_b.index] = cost_vector
 
-    for (i, j) in E:
-        e[i][j] = LpVariable.matrix(f"e[{i},{j}]",
-            (range(len(s[i]) * len(s[j])),), cat="Binary")
-        assert len(r[i][j]) == len(e[i][j])
-
-
-    # 2. Objective
-    prob = LpProblem("myProblem", LpMinimize)
-    # (a). compute cost
-    obj = 0
-    for i in range(N):
-        obj += lpDot(s[i], c[i]) + lpDot(s[i], d[i])
-
-    # (b). communication cost
-    for (i, j) in E:
-        obj += lpDot(e[i][j], r[i][j])
-
-    prob += obj
-
-    # 3. Constraints
-    # (a). specified by `cat="Binary"`
-
-    # (b)
-    for i in range(N):
-        prob += lpSum(s[i]) == 1
-
-    # (c)
-    for t in range(N):
-        mem = 0
-        for i in L[t]:
-            mem += lpSum(s[i][j] * m[i][j] for j in range(len(s[i])))
-        prob += mem <= M
-
-    # (d). specified by `cat="Binary"`
-
-    # (e)
-    for (i, j) in E:
-        prob += lpSum(e[i][j]) == 1
-
-    # (f)
-    for (i, j) in E:
-        for row in range(len(s[i])):
-            C = len(s[j])
-            prob += lpSum(e[i][j][row * C + col] for col in range(0, C)) <= s[i][row]
-
-    # (g)
-    for (i, j) in E:
-        for col in range(len(s[j])):
-            R = len(s[i])
-            C = len(s[j])
-            prob += lpSum(e[i][j][row * C + col] for row in range(0, R)) <= s[j][col]
-
-    solver = pulp.PULP_CBC_CMD(mip=True,
-                               threads=multiprocessing.cpu_count())
-    result = prob.solve(solver)
-    print("Status:", LpStatus[prob.status])
+    s_val, e_val = call_solver(N, M, s_len, E, L, c, d, m, r)
 
     # Print sharding spec
     instructions = computation.instructions
     for i in range(N):
-        spec_index = get_non_zero_index(s[i])
-        print(f"Time {i:2d}: {computation.instructions[i]}"\
-              f"   Strategy: {instructions[i].strategies[spec_index].name}")
+        name = instructions[i].strategies[s_val[i]].name
+        print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
 
-    # Check edges
+    # Print edge cost
     for (i, j) in E:
-        spec_index = get_non_zero_index(e[i][j])
-        i_spec_index = spec_index // len(s[j])
-        j_spec_index = spec_index % len(s[j])
-        assert i_spec_index == get_non_zero_index(s[i])
-        assert j_spec_index == get_non_zero_index(s[j])
-
-        if r[i][j][spec_index] > 0.0:
+        if r[i][j][e_val[i][j]] > 0:
             print("Edge cost", i, j)
 
     # Print peak memory
     for t in range(N):
         mem = 0
         for i in L[t]:
-            mem += sum(pulp.value(s[i][j]) * m[i][j] for j in range(len(s[i])))
+            mem += m[i][s_val[i]]
         print(f"Time {t}, memory: {mem / 1024**2: .2f} MB")
 

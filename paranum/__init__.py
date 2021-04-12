@@ -1,4 +1,5 @@
 from . import api
+from . import auto_sharding
 from . import monkey_patch
 from . import util
 

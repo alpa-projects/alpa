@@ -13,6 +13,16 @@ from paranum import parallelize
 from transformers.models.bert.modeling_flax_bert import FlaxBertAttention
 
 
+def test_donate_buffer():
+    @parallelize(donate_argnums=(0,), memory_budget_per_device=5 * 1024 **2)
+    def add_one(x):
+        x = x + 1
+        return x
+
+    a = jnp.ones((1024, 1024))
+    b = add_one(a)
+
+
 def test_matmul():
 
     @parallelize
@@ -41,7 +51,6 @@ def test_mlp():
             #x = nn.relu(x)
             x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
             return x
-
 
     @parallelize(memory_budget_per_device=50 * (1 << 20))
     def train_step(optimizer, batch, apply_fn):
@@ -173,8 +182,8 @@ def test_attention():
 
 
 if __name__ == "__main__":
+    #test_donate_buffer()
     #test_matmul()
-
     test_mlp()
     #test_attention()
 

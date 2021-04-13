@@ -1,6 +1,7 @@
 """Use the auto sharding pass in XLA"""
 from functools import partial
 import multiprocessing
+import pickle
 import sys
 
 import numpy as np
@@ -134,8 +135,11 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
 
     for x in [s_len_np, E_np, L_np, c_np, d_np, m_np, r_np]:
         assert isinstance(x, np.ndarray)
-
     assert len(s_len_np) == N, "s_len_np"
+
+    # Dump arguments for re-solving
+    # pickle.dump([N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_np],
+    #             open("args.pkl", "wb"))
 
     def get_non_zero_index(binary_vector):
         """Get the index of non-zero item in a vector"""
@@ -242,12 +246,12 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
             C = len(s[j])
             prob += lpSum(e[i][j][row * C + col] for row in range(0, R)) <= s[j][col]
 
-    solver = pulp.PULP_CBC_CMD(mip=True,
-                               msg=False,
-                               threads=multiprocessing.cpu_count())
+    solver = pulp.COIN_CMD(mip=True,
+                           msg=False,
+                           threads=multiprocessing.cpu_count())
     result = prob.solve(solver)
-    #print("Auto-sharding ILP Status:", LpStatus[prob.status])
-    #print("Auto-sharding ILP Value:", pulp.value(prob.objective))
+    print("Auto-sharding ILP Status:", LpStatus[prob.status])
+    print("Auto-sharding ILP Value:", pulp.value(prob.objective))
     if prob.status in [pulp.LpStatusInfeasible]:
         print("Cannot run the function under given memory budget. " +
               "Please increase the memory budget")

@@ -17,7 +17,15 @@ git clone git@github.com:merrymercy/tensorflow-paranum.git
 2. Install dependencies  
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
-      numpy, scipy, flax
+  ```bash
+  pip3 instll numpy, scipy, flax
+  ```
+  - ILP Solver:
+  ```bash
+  sudo apt install coinor-cbc
+  pip3 install pulp
+  ```
+      
 3. Build and install jaxlib
 ```bash
 cd jax

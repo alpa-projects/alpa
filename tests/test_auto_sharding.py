@@ -5,12 +5,14 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+from jax.interpreters import pxla
 from flax import linen as nn
 from flax import optim
 from flax.core.frozen_dict import FrozenDict, freeze
+from transformers.models.bert.modeling_flax_bert import FlaxBertAttention
+
 from paranum import parallelize, global_config, testing
 
-from transformers.models.bert.modeling_flax_bert import FlaxBertAttention
 
 MB = 1024 ** 2
 
@@ -30,6 +32,8 @@ def test_donate_buffer():
 
     hlo_module = testing.last_compiled_executable().hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
+
+    # assert a and b are split over the second dimention
     assert "parameter(0), sharding={devices=[1,4]0,1,2,3}" in hlo_ir
     assert "(param: f32[1024,256]) -> (f32[1024,256])" in hlo_ir
 
@@ -84,10 +88,23 @@ def test_2_layer_mlp():
     # which is an all-reduce
     assert hlo_ir.count("channel_id") == 1
     assert hlo_ir.count("all-reduce(") == 1
+    weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
+    weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
+    assert isinstance(weight0, pxla.ShardedDeviceArray)
+    assert isinstance(weight1, pxla.ShardedDeviceArray)
+    # column partitioned
+    assert weight0.sharding_spec == pxla.ShardingSpec(
+        sharding=(pxla.Chunked([1]), pxla.Chunked([4])),
+        mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+    )
+    # row partitioned
+    assert weight1.sharding_spec == pxla.ShardingSpec(
+        sharding=(pxla.Chunked([4]), pxla.Chunked([1])),
+        mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+    )
 
 
 def test_n_layer_mlp():
-
     class Model(nn.Module):
         hidden_dim: int
         output_dim: int
@@ -146,9 +163,26 @@ def test_n_layer_mlp():
 
     hlo_module = testing.last_compiled_executable().hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
+
     # The function should contain 5 all-reduce
     assert hlo_ir.count("channel_id") == 5
     assert hlo_ir.count("all-reduce(") == 5
+
+    for i in range(num_layers):
+        weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
+        assert isinstance(weight, pxla.ShardedDeviceArray)
+        if i % 2 == 0:
+            # column partitioned
+            assert weight.sharding_spec == pxla.ShardingSpec(
+                sharding=(pxla.Chunked([1]), pxla.Chunked([4])),
+                mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+            )
+        else:
+            # row partitioned
+            assert weight.sharding_spec == pxla.ShardingSpec(
+                sharding=(pxla.Chunked([4]), pxla.Chunked([1])),
+                mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+            )
 
 
 if __name__ == "__main__":

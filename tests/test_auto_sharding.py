@@ -126,7 +126,7 @@ def test_n_layer_mlp():
             return x
 
     @parallelize(memory_budget_per_device=80 * (1 << 20),
-                 devices=len(devices))
+                 devices=devices)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])

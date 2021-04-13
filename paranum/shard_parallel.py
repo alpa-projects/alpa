@@ -41,9 +41,9 @@ from jax._src.util import (
     HashableFunction,
 )
 
-from paranum import util
-from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
+from paranum import util, global_config
 from paranum.auto_sharding import auto_sharding_callable
+from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -88,13 +88,14 @@ def shard_parallel_callable(
     out_tree_thunk,
     devices,
     donated_invars,
+    memory_budget_per_device,
     *avals
 ):
-    strategy = 'data_parallel'
+    strategy = global_config.shard_parallel_strategy()
 
-    if strategy == 'auto_shard':
-        # Lower to mesh_callable
-        compiled_func = auto_sharding_callable(fun, out_tree_thunk, devices, donated_invars, *avals)
+    if strategy == 'auto_sharding':
+        # Use our auto_sharing solver
+        compiled_func = auto_sharding_callable(fun, out_tree_thunk, devices, donated_invars, memory_budget_per_device, *avals)
         return compiled_func
     elif strategy == 'data_parallel':
         fun_name = fun.__name__
@@ -143,79 +144,4 @@ def shard_parallel_callable(
         return compiled_func
     else:
         raise ValueError("Invalid strategy: " + strategy)
-
-def compile_to_hlo_string(fun, fun_name, backend, mesh,
-                          in_axes, out_axes_thunk, donated_invars,
-                          spmd_lowering, avals, tile_by_mesh_axes):
-    # Clean stores for the next call
-    for store in fun.stores:
-        store and store.reset()
-
-    compiled_func = mesh_callable(fun, fun_name, backend, mesh,
-                                  in_axes, out_axes_thunk, donated_invars,
-                                  spmd_lowering, *avals, tile_by_mesh_axes=tile_by_mesh_axes)
-    compiled = compiled_func.args[0]
-    hlo_string = compiled.hlo_modules()[0].to_string()
-    return hlo_string
-
-
-def compute_mesh_callable_cost(fun: lu.WrappedFun,
-                               fun_name,
-                               backend,
-                               mesh,
-                               in_axes,
-                               out_axes_thunk,
-                               donated_invars,
-                               spmd_lowering,
-                               *avals,
-                               tile_by_mesh_axes):
-    hlo_string = compile_to_hlo_string(fun, fun_name, backend, mesh,
-                                       in_axes, out_axes_thunk, donated_invars,
-                                       spmd_lowering, avals, tile_by_mesh_axes)
-    compute_cost = compute_compute_cost(hlo_string)
-    communication_cost = compute_commuinication_cost(hlo_string)
-    #print(hlo_string)
-    #print(f"compute: {compute_cost}, communication: {communication_cost}")
-    cost = 0.001 * compute_cost + communication_cost
-    return cost
-
-
-def compute_compute_cost(hlo_string):
-    cost = 0
-    for match in re.finditer("custom-call.*f32\[(\d+),(\d+)\].*f32\[(\d+),(\d+)\].*f32\[(\d+),(\d+)\].*cublas", hlo_string):
-        cost += np.sqrt(np.prod([float(match.group(i)) for i in range(1, 7)]))
-
-    return cost
-
-
-def compute_commuinication_cost(hlo_string):
-    # collective-permute is not implemented with channel id 
-    if "collective-permute" in hlo_string:
-        return float("inf")
-
-    num_comm = 0
-    cost = 0
-    num_devices = 4  # number of devices
-
-    # all-reduce
-    for match in re.finditer("all-reduce\(f32\[(\d+),(\d+)\]", hlo_string):
-        cost += 2 * np.prod([float(match.group(i)) for i in range(1, 3)])
-        num_comm += 1
-
-    # all-gather
-    for match in re.finditer("all-gather\(f32\[(\d+),(\d+),(\d+)\]", hlo_string):
-        cost += num_devices * np.prod([float(match.group(i)) for i in range(1, 4)])
-        num_comm += 1
-
-    # all-to-all
-    for match in re.finditer("all-to-all\(f32\[(\d+),(\d+),(\d+)\]", hlo_string):
-        cost += np.prod([float(match.group(i)) for i in range(1, 4)])
-        num_comm += 1
-
-    # make sure that we count all communication
-    for match in re.finditer("channel_id", hlo_string):
-        num_comm -= 1
-    assert num_comm == 0
-
-    return cost
 

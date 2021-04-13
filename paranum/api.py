@@ -20,7 +20,8 @@ from paranum.shard_parallel import shard_parallel_callable
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=None):
+def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=None,
+                memory_budget_per_device=None):
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):
@@ -28,7 +29,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
 
             f = lu.wrap_init(fun)
 
-            # Deal with static arguments
+            # Deal with static arguments and extract dynamic arguments
             nonlocal static_argnums
             if static_argnums == "auto":
                 static_argnums = util.auto_static_argnums(args)
@@ -65,7 +66,8 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
             # JIT compile and call the compiled func
             abstract_args = unsafe_map(xla.abstractify, args_flat)
             compiled_func = auto_parallel_callable(
-                f, in_tree, out_tree_hashable, devices, donated_invars, *abstract_args
+                f, in_tree, out_tree_hashable, devices, donated_invars,
+                memory_budget_per_device, *abstract_args
             )
             out = compiled_func(*args_flat)
 
@@ -87,25 +89,23 @@ def auto_parallel_callable(
     out_tree_thunk,
     devices,
     donated_invars,
+    memory_budget_per_device,
     *avals
 ):
     fun_name = fun.__name__
-
-    # Get jaxpr and XLA hlo
-    #jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
-    #c = jaxpr_to_xla_computation(jaxpr, avals, consts, fun_name)
-
-    # Choose parallel strategy
-    strategy = 'shard_parallel'
 
     # Clean stores for the next call
     for store in fun.stores:
         store and store.reset()
 
+    # Choose parallel strategy
+    strategy = 'shard_parallel'
+
     # Apply parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(
-            fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
+            fun, in_tree, out_tree_thunk, devices, donated_invars,
+            memory_budget_per_device, *avals
         )
     elif strategy == "pmap_data_parallel":
         return pmap_data_parallel_callable(

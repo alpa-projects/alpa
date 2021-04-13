@@ -250,8 +250,8 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
                            msg=False,
                            threads=multiprocessing.cpu_count())
     result = prob.solve(solver)
-    print("Auto-sharding ILP Status:", LpStatus[prob.status])
-    print("Auto-sharding ILP Value:", pulp.value(prob.objective))
+    #print("Auto-sharding ILP Status:", LpStatus[prob.status])
+    #print("Auto-sharding ILP Value:", pulp.value(prob.objective))
     if prob.status in [pulp.LpStatusInfeasible]:
         print("Cannot run the function under given memory budget. " +
               "Please increase the memory budget")

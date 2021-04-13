@@ -195,8 +195,8 @@ def test_mlp_n_layer_forward_backward():
 
 
 if __name__ == "__main__":
-    test_mlp_2_layer_forward()
+    #test_mlp_2_layer_forward()
     #test_mlp_n_layer_forward()
-    #test_mlp_2_layer_forward_backward()
+    test_mlp_2_layer_forward_backward()
     #test_mlp_n_layer_forward_backward()
 

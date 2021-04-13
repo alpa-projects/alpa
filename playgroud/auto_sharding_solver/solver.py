@@ -100,8 +100,8 @@ def solve_auto_sharding(computation, cluster_env):
         print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
 
     # Print edge cost
-    for (i, j) in E:
-        if r[i][j][e_val[i][j]] > 0:
+    for (no, (i, j)) in enumerate(E):
+        if r[i][j][e_val[no]] > 0:
             print("Edge cost", i, j)
 
     # Print peak memory

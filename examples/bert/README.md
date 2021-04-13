@@ -2,8 +2,9 @@
 Modified from https://github.com/huggingface/transformers/tree/master/examples/language-modeling
 
 ## Dependency
+- Python packages
 ```
-pip3 install datasets transformers torch
+pip3 install datasets torch transformers==4.4
 ```
 
 ## Commands

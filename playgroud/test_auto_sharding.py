@@ -40,8 +40,6 @@ def test_matmul():
 
 
 def test_mlp():
-    os.environ['NCCL_LAUNCH_MODE'] = 'PARALLEL'
-
     class Model(nn.Module):
         hidden_dim: int
 

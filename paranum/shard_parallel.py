@@ -41,9 +41,9 @@ from jax._src.util import (
     HashableFunction,
 )
 
-from paranum import util
-from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
+from paranum import util, global_config
 from paranum.auto_sharding import auto_sharding_callable
+from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -91,9 +91,9 @@ def shard_parallel_callable(
     memory_budget_per_device,
     *avals
 ):
-    strategy = 'auto_shard'
+    strategy = global_config.shard_parallel_strategy()
 
-    if strategy == 'auto_shard':
+    if strategy == 'auto_sharding':
         # Use our auto_sharing solver
         compiled_func = auto_sharding_callable(fun, out_tree_thunk, devices, donated_invars, memory_budget_per_device, *avals)
         return compiled_func

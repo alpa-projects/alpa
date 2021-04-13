@@ -49,4 +49,5 @@ Organization
 - `examples`: public examples
 - `paranum`: the python interface of the library
 - `playground`: private experimental scripts
+- `tests`: unit tests
 

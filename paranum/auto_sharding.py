@@ -1,6 +1,7 @@
 """Use the auto sharding pass in XLA"""
 from functools import partial
 import multiprocessing
+import sys
 
 import numpy as np
 
@@ -13,6 +14,8 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                            extend_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, curry)
 from jaxlib.xla_client import OpSharding
+
+from paranum import testing
 
 xops = xc.ops
 
@@ -67,11 +70,15 @@ def auto_sharding_callable(
         device_assignment=device_assignment,
         use_spmd_partitioning=spmd_lowering,
     )
+    executable_build_options = compile_options.executable_build_options
+    executable_build_options.use_auto_sharding = True
     if memory_budget_per_device:
-        compile_options.memory_budget_per_device = memory_budget_per_device
+        executable_build_options.memory_budget_per_device = memory_budget_per_device
     compile_options.parameter_is_tupled_arguments = tuple_args
     built = c.Build(out_tuple)
     compiled = xla.backend_compile(backend, built, compile_options)
+
+    testing.set_last_compiled_executable(compiled)
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
@@ -80,10 +87,6 @@ def auto_sharding_callable(
     input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                      aval, spec in zip(avals, input_sharding_specs)]
     handle_args = partial(pxla.shard_args, compiled.local_devices(), input_indices)
-
-    #print("=" * 20)
-    #print((compiled.hlo_modules()[0]).to_string())
-    #print("=" * 20)
 
     # Handle output
     output_sharding = compiled.hlo_modules()[0].spmd_output_sharding()
@@ -243,9 +246,13 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
                                msg=False,
                                threads=multiprocessing.cpu_count())
     result = prob.solve(solver)
-    print("ILP Status:", LpStatus[prob.status])
-    print("ILP Value:", pulp.value(prob.objective))
-  
+    #print("Auto-sharding ILP Status:", LpStatus[prob.status])
+    #print("Auto-sharding ILP Value:", pulp.value(prob.objective))
+    if prob.status in [pulp.LpStatusInfeasible]:
+        print("Cannot run the function under given memory budget. " +
+              "Please increase the memory budget")
+        exit()
+
     # Get and check results
     s_val = np.full((N,), -1, dtype=np.int32)
     for i in range(N):

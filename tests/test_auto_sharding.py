@@ -39,6 +39,9 @@ def test_donate_buffer():
 
 
 def test_2_layer_mlp():
+    assert len(jax.devices()) >= 4
+    devices = tuple(jax.devices()[:4])
+
     class Model(nn.Module):
         hidden_dim: int
         output_dim: int
@@ -50,7 +53,8 @@ def test_2_layer_mlp():
             x = nn.Dense(features=self.output_dim, use_bias=False)(x)
             return x
 
-    @parallelize(memory_budget_per_device=50 * (1 << 20))
+    @parallelize(memory_budget_per_device=50 * (1 << 20),
+                 devices=devices)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])
@@ -105,6 +109,9 @@ def test_2_layer_mlp():
 
 
 def test_n_layer_mlp():
+    assert len(jax.devices()) >= 4
+    devices = tuple(jax.devices()[:4])
+
     class Model(nn.Module):
         hidden_dim: int
         output_dim: int
@@ -118,7 +125,8 @@ def test_n_layer_mlp():
             x = nn.Dense(features=self.output_dim, use_bias=False)(x)
             return x
 
-    @parallelize(memory_budget_per_device=80 * (1 << 20))
+    @parallelize(memory_budget_per_device=80 * (1 << 20),
+                 devices=len(devices))
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])

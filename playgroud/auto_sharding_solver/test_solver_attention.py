@@ -112,7 +112,7 @@ def test_attention_forward():
         self_att = HloDot(value, softmax,
                           lhs_batch_dims=(0, 1), lhs_contracting_dims=(3,),
                           rhs_batch_dims=(0, 1), rhs_contracting_dims=(3,))
-        self_att = HloTranspose(value, [0, 3, 1, 2])
+        self_att = HloTranspose(self_att, [0, 3, 1, 2])
         self_att = HloReshape(self_att, [batch_size * seq_len, hidden_dim])
 
         # out matmul

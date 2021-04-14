@@ -204,26 +204,36 @@ class HloReshape(HloInstruction):
         old_shape = self.operands[0].shape
         new_shape = self.new_shape
 
-        if len(old_shape) - 1 == len(new_shape) and np.prod(old_shape[:-2]) == new_shape[-1]:
-            # [768, 12, 64] -> [768, 768]
-            dim_mapping = {0: 0, 1: 1}
-        elif len(old_shape) - 1 == len(new_shape) and np.prod(old_shape[:2]) == new_shape[0]:
-            # [4, 512, 768] -> [2048, 768]
-            dim_mapping = {0: 0, 1: 2}
-        elif len(old_shape) + 1 == len(new_shape) and np.prod(new_shape[:2]) == old_shape[0]:
-            # [2048, 768] -> [4, 512, 768]
-            dim_mapping = {0: 0, 2: 1}
-        elif (len(old_shape) + 2 == len(new_shape) and np.prod(new_shape[:2]) == old_shape[0] and 
-                                                       np.prod(new_shape[2:]) == old_shape[1]):
-            # [768, 768] -> [4, 512, 12, 64]
-            dim_mapping = {0: 0, 2: 1}
-        elif (len(old_shape) - 2 == len(new_shape) and np.prod(old_shape[:2]) == new_shape[0] and 
-                                                       np.prod(old_shape[2:]) == new_shape[1]):
-            # [4, 512, 12, 64] -> [768, 768]
-            dim_mapping = {0: 0, 1: 2}
-        else:
-            print(old_shape, new_shape)
-            raise NotImplementedError
+        # Construct a map that maps a new dimension to its corresponding old dimension
+        dim_mapping = {}
+        new_pt = -1
+        old_pt = -1
+        old_prod = 1
+        new_prod = 1
+        while True:
+            move_new = False
+            move_old = False
+
+            if new_prod == old_prod:
+                dim_mapping[new_pt + 1] = old_pt + 1
+                move_new = move_old = True
+            elif new_prod < old_prod:
+                move_new = True
+            else:
+                move_old = True
+
+            if move_new:
+                new_pt += 1
+                if new_pt < len(new_shape):
+                    new_prod *= new_shape[new_pt]
+                else:
+                    break
+            if move_old:
+                old_pt += 1
+                if old_pt < len(old_shape):
+                    old_prod *= old_shape[old_pt]
+                else:
+                    break
 
         for i in range(len(new_shape)):
             name = f"S{i}"
@@ -362,12 +372,12 @@ class HloReduce(HloInstruction):
 
     def build_strategy_and_cost(self, cluster_env):
         dim_mapping = {}
-        ct = 0
+        pt = 0
         for i in range(len(self.operands[0].shape)):
             if i in self.dimensions:
                 continue
-            dim_mapping[ct] = i
-            ct += 1
+            dim_mapping[pt] = i
+            pt += 1
 
         for i in range(len(self.shape)):
             name = f"S{i}"

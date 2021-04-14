@@ -6,6 +6,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
+from jax.interpreters.pxla import Chunked, ShardedAxis
 from flax import linen as nn
 from flax import optim
 from flax.core.frozen_dict import FrozenDict, freeze
@@ -33,7 +34,7 @@ def test_donate_buffer():
     hlo_module = testing.last_compiled_executable().hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
 
-    # assert a and b are split over the second dimention
+    # assert a and b are split over the second dimension
     assert "parameter(0), sharding={devices=[1,4]0,1,2,3}" in hlo_ir
     assert "(param: f32[1024,256]) -> (f32[1024,256])" in hlo_ir
 
@@ -98,13 +99,13 @@ def test_2_layer_mlp():
     assert isinstance(weight1, pxla.ShardedDeviceArray)
     # column partitioned
     assert weight0.sharding_spec == pxla.ShardingSpec(
-        sharding=(pxla.Chunked([1]), pxla.Chunked([4])),
-        mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+        sharding=(Chunked([1]), Chunked([4])),
+        mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
     )
     # row partitioned
     assert weight1.sharding_spec == pxla.ShardingSpec(
-        sharding=(pxla.Chunked([4]), pxla.Chunked([1])),
-        mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+        sharding=(Chunked([4]), Chunked([1])),
+        mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
     )
 
 
@@ -182,16 +183,137 @@ def test_n_layer_mlp():
         if i % 2 == 0:
             # column partitioned
             assert weight.sharding_spec == pxla.ShardingSpec(
-                sharding=(pxla.Chunked([1]), pxla.Chunked([4])),
-                mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+                sharding=(Chunked([1]), Chunked([4])),
+                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
             )
         else:
             # row partitioned
             assert weight.sharding_spec == pxla.ShardingSpec(
-                sharding=(pxla.Chunked([4]), pxla.Chunked([1])),
-                mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1)),
+                sharding=(Chunked([4]), Chunked([1])),
+                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
             )
 
+
+def test_attention(mode='forward'):
+    assert len(jax.devices()) >= 4
+    devices = tuple(jax.devices()[:4])
+
+    class Model(nn.Module):
+        num_heads: int
+        head_size: int
+        kernel_init_scale: float = 0.2
+        dropout_rate: float = 0.0
+        dtype: jnp.dtype = jnp.float32
+
+        @nn.compact
+        def __call__(self, hidden_states, attention_mask, deterministic: bool=True):
+            attention = FlaxBertAttention(
+                self.num_heads,
+                self.head_size,
+                kernel_init_scale=self.kernel_init_scale,
+                dropout_rate=self.dropout_rate,
+                name="attention",
+                dtype=self.dtype,
+            )(hidden_states, attention_mask, deterministic=deterministic)
+            return attention
+
+    @parallelize(memory_budget_per_device=100 * (1 << 20),
+                 devices=devices)
+    def train_step(optimizer, batch, apply_fn):
+        def loss_func(params):
+            rngs = {"dropout": batch['rng']}
+            out = apply_fn(params, batch['hidden_states'],
+                           batch['attention_mask'], deterministic,
+                           rngs=rngs)
+            return jnp.mean((out - batch['label']) ** 2)
+
+        grad = jax.grad(loss_func)(optimizer.target)
+        new_optimizer = optimizer.apply_gradient(grad)
+        return new_optimizer
+
+    @parallelize(memory_budget_per_device=80 * (1 << 20),
+                 devices=devices)
+    def forward_step(optimizer, batch, apply_fn):
+        rngs = {"dropout": batch['rng']}
+        out = apply_fn(optimizer.target, batch['hidden_states'],
+                       batch['attention_mask'], deterministic,
+                       rngs=rngs)
+        return out
+
+    batch_size = 4
+    seq_len = 128
+    hidden_dim = 2048
+    num_heads = 16
+    per_head = hidden_dim // num_heads
+    dropout_rate = 0.0
+    deterministic = False
+
+    hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+    attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+    label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+
+    model = Model(num_heads=num_heads, head_size=hidden_dim, dropout_rate=dropout_rate)
+    rngkey = jax.random.PRNGKey(0)
+    params = FrozenDict({
+        "params": {
+            "attention": {
+                "self": {
+                    "query": {
+                        "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
+                        "bias": jnp.ones((num_heads, per_head)),
+                    },
+                    "key": {
+                        "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
+                        "bias": jnp.ones((num_heads, per_head)),
+                    },
+                    "value": {
+                        "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
+                        "bias": jnp.ones((num_heads, per_head)),
+                    },
+                    "out": {
+                        "kernel": jnp.ones((num_heads, per_head, hidden_dim)),
+                        "bias": jnp.ones((hidden_dim,)),
+                    },
+                },
+                "layer_norm": {
+                    "beta": jnp.ones((hidden_dim,)),
+                    "gamma": jnp.ones((hidden_dim,)),
+                },
+            },
+        },
+    })
+
+    optimizer = optim.GradientDescent(1e-2).create(params)
+
+    if mode == 'forward':
+        optimizer = forward_step(optimizer,
+                                 {"hidden_states": hidden_states,
+                                  "attention_mask": attention_mask,
+                                  "label": label,
+                                  "rng": rngkey},
+                                 model.apply)
+    else:
+        optimizer = train_step(optimizer,
+                               {"hidden_states": hidden_states,
+                                "attention_mask": attention_mask,
+                                "label": label,
+                                "rng": rngkey},
+                               model.apply)
+
+    hlo_module = testing.last_compiled_executable().hlo_modules()[0]
+    hlo_ir = hlo_module.to_string()
+
+    # The function should contain only one communication primitive,
+    # which is an all-reduce
+    assert hlo_ir.count("channel_id") == 1
+    assert hlo_ir.count("all-reduce(") == 1
+    # all weight tensors should be split over the head dimension
+    for name in ["query", "key", "value"]:
+        weight_q = optimizer.target["params"]["attention"]["self"][name]["kernel"]
+        assert weight_q.sharding_spec == pxla.ShardingSpec(
+            sharding=(Chunked([1]), Chunked([4]), Chunked([1])),
+            mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ShardedAxis(2)),
+        )
 
 if __name__ == "__main__":
     global_config.set_shard_parallel_strategy('auto_sharding')
@@ -199,4 +321,5 @@ if __name__ == "__main__":
     test_donate_buffer()
     test_2_layer_mlp()
     test_n_layer_mlp()
+    test_attention(mode='train')
 

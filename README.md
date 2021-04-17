@@ -38,7 +38,7 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 4. Install Jax
   ```bash
-  cd jax
+  cd jax-parax
   pip3 install -e .
   ```
 

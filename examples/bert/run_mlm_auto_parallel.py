@@ -55,7 +55,7 @@ from transformers import (
 )
 from transformers.models.bert.modeling_flax_bert import FlaxBertForMaskedLMModule
 
-from paranum import parallelize, annotate_gradient
+from parax import parallelize, annotate_gradient
 
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())

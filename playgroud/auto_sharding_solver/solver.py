@@ -3,7 +3,7 @@ import numpy as np
 import pulp
 from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
 
-from paranum.auto_sharding import call_solver_serialized_args
+from parax.auto_sharding import call_solver_serialized_args
 
 
 def call_solver(N, M, s_len, E, L, c, d, m, r):

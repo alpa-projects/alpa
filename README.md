@@ -1,6 +1,6 @@
-ParaNum
+Parax
 =======
-ParaNum automatically parallelizes your python numerical computing code and neural networks
+Parax automatically parallelizes your python numerical computing code and neural networks
 with a simple decorator.
 
 
@@ -10,10 +10,11 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 1. Clone repos
   ```bash
-  git clone git@github.com:merrymercy/model-parallel.git
-  git clone git@github.com:merrymercy/jax.git
-  git clone git@github.com:merrymercy/tensorflow-paranum.git
+  git clone git@github.com:parax-project/parax.git
+  git clone git@github.com:parax-project/jax-parax.git
+  git clone git@github.com:parax-project/tensorflow-parax.git
   ```
+
 - Step 2. Install dependencies  
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
@@ -28,20 +29,22 @@ This repo depends on our private fork of jax and tensorflow.
       
 - Step 3. Build and install jaxlib
   ```bash
-  cd jax
-  export TF_PATH=~/tensorflow-paranum  # update this with your path
+  cd jax-parax
+  export TF_PATH=~/tensorflow-parax  # update this with your path
   python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
   cd dist
   pip3 install -e .
   ```
+
 - Step 4. Install Jax
   ```bash
-  cd jax
+  cd jax-parax
   pip3 install -e .
   ```
-- Step 5. Install ParaNum
+
+- Step 5. Install Parax
   ```bash
-  cd model-parallel
+  cd parax
   pip3 install -e .
   ```
 
@@ -55,7 +58,7 @@ python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
 Organization
 ============
 - `examples`: public examples
-- `paranum`: the python interface of the library
+- `parax`: the python interface of the library
 - `playground`: private experimental scripts
 - `tests`: unit tests
 

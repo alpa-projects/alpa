@@ -3,6 +3,8 @@ from functools import partial
 import multiprocessing
 import pickle
 import sys
+from warnings import warn
+
 
 import numpy as np
 
@@ -269,6 +271,8 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
         j_spec_index = e_val[no] % len(s[j])
         assert i_spec_index == s_val[i], f"e_val[{i}][{j}]"
         assert j_spec_index == s_val[j], f"e_val[{i}][{j}]"
+        #if r[i][j][e_val[no]] > 0:
+        #    print("Edge cost", i, j)
 
     return s_val, e_val
 

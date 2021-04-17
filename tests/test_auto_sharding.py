@@ -12,7 +12,7 @@ from flax import optim
 from flax.core.frozen_dict import FrozenDict, freeze
 from transformers.models.bert.modeling_flax_bert import FlaxBertAttention, FlaxBertLayer
 
-from paranum import parallelize, global_config, testing
+from parax import parallelize, global_config, testing
 
 
 MB = 1024 ** 2

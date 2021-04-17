@@ -13,9 +13,9 @@ from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 from jax._src.util import safe_map, wraps, HashableFunction
 
-from paranum import util
-from paranum.pmap_data_parallel import pmap_data_parallel_callable
-from paranum.shard_parallel import shard_parallel_callable
+from parax import util
+from parax.pmap_data_parallel import pmap_data_parallel_callable
+from parax.shard_parallel import shard_parallel_callable
 
 unsafe_map, map = map, safe_map  # type: ignore
 

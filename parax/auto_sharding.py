@@ -18,7 +18,7 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                            tuple_insert, tuple_delete, curry)
 from jaxlib.xla_client import OpSharding
 
-from paranum import testing
+from parax import testing
 
 xops = xc.ops
 

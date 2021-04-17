@@ -10,9 +10,9 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 1. Clone repos
   ```bash
-  git clone git@github.com:merrymercy/model-parallel.git
-  git clone git@github.com:merrymercy/jax.git
-  git clone git@github.com:merrymercy/tensorflow-paranum.git
+  git clone git@github.com:parax-project/parax.git
+  git clone git@github.com:parax-project/jax-parax.git
+  git clone git@github.com:parax-project/tensorflow-parax.git
   ```
 - Step 2. Install dependencies  
   - CUDA Toolkit: cuda and cudnn

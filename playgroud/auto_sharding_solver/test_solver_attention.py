@@ -138,6 +138,40 @@ def test_attention_forward():
     solve_auto_sharding(computation, cluster_env)
 
 
+def test_allreduce_simplification():
+    # Build Hlo Computation
+    batch_size = 128
+    input_dim = hidden_dim = output_dim = 1024
+
+    computation = HloComputation()
+
+    with computation:
+        x = HloParameter((batch_size, input_dim), fix_strategy="S1")
+        w1 = HloParameter((input_dim, output_dim), fix_strategy="S0")
+        w2 = HloParameter((input_dim, output_dim), fix_strategy="S0")
+        w3 = HloParameter((input_dim, output_dim), fix_strategy="S0")
+        h1 = HloDot(x, w1)
+        h2 = HloDot(x, w2)
+        h3 = HloDot(x, w3)
+
+        out = HloAdd(h1, h2)
+        out = HloAdd(out, h3)
+
+        out = HloExp(out)
+        out = HloTuple((out, w1, w2, w3))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=10 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
 if __name__ == "__main__":
-    test_attention_forward()
+    #test_attention_forward()
+
+    test_allreduce_simplification()
 

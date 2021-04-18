@@ -21,6 +21,7 @@ def test_mlp_2_layer_forward():
         w2 = HloParameter((hidden_dim, output_dim))
         h1 = HloDot(x, w1)
         h2 = HloDot(h1, w2)
+        h2 = HloExp(h2)
         out = HloTuple((h2, w1, w2))
 
     # Solve
@@ -94,7 +95,9 @@ def test_mlp_2_layer_forward_backward():
     # | megatron-LM + naive partition | 4.62 M   | 1 all-reduce + 2 all-gather |
     # | ours new finding              | 4.25 M   | 2 all-reduce                |
     cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=5 * 1024**2)
-    solve_auto_sharding(computation, cluster_env)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    assert int(objective) == int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4))
 
 
 def test_mlp_n_layer_forward():
@@ -191,12 +194,17 @@ def test_mlp_n_layer_forward_backward():
 
     # Solve
     cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=20 * 1024**2)
-    solve_auto_sharding(computation, cluster_env)
+    objective = solve_auto_sharding(computation, cluster_env)
 
+
+    print("Objective:", int(objective))
+    print("Expected:", int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1)))
+    assert int(objective) ==\
+           int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1))
 
 if __name__ == "__main__":
     #test_mlp_2_layer_forward()
     #test_mlp_n_layer_forward()
-    test_mlp_2_layer_forward_backward()
-    #test_mlp_n_layer_forward_backward()
+    #test_mlp_2_layer_forward_backward()
+    test_mlp_n_layer_forward_backward()
 

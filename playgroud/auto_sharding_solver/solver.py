@@ -1,7 +1,5 @@
 """ILP Solver"""
 import numpy as np
-import pulp
-from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
 
 from parax.auto_sharding import call_solver_serialized_args
 
@@ -106,7 +104,7 @@ def solve_auto_sharding(computation, cluster_env):
         A.append((ins_a.index, ins_b.index))
         v.append(cost_vector)
 
-    s_val, e_val = call_solver(N, M, s_len, E, A, L, c, d, m, r, v)
+    s_val, e_val, objective, status = call_solver(N, M, s_len, E, A, L, c, d, m, r, v)
 
     # Print sharding spec
     instructions = computation.instructions
@@ -125,4 +123,6 @@ def solve_auto_sharding(computation, cluster_env):
         for i in L[t]:
             mem += m[i][s_val[i]]
         print(f"Time {t}, memory: {mem / 1024**2: .2f} MB")
+
+    return objective
 

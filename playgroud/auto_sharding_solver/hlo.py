@@ -12,6 +12,7 @@ class ShardingSpecType(Enum):
     MAXIMAL = auto()
     OTHER = auto()
     TUPLE = auto()
+    PARTIAL_REDUCTION = auto()
 
 
 class ShardingSpec:
@@ -36,6 +37,11 @@ class ShardingSpec:
     @staticmethod
     def tuple():
         return ShardingSpec(ShardingSpecType.TUPLE, None, None)
+
+    @staticmethod
+    def partial_reduction(cluster_env):
+        tile_assignment_devices = tuple(range(cluster_env.num_devices))
+        return ShardingSpec(ShardingSpecType.PARTIAL_REDUCTION, None, tile_assignment_devices)
 
     def __eq__(self, other):
         return (self.type == other.type and self.tile_assignment_dimensions == other.tile_assignment_dimensions
@@ -338,6 +344,18 @@ class HloAdd(HloElementwise):
     def __init__(self, lhs, rhs):
         super().__init__(OpCode.ADD, [lhs, rhs])
 
+    def build_strategy_and_cost(self, cluster_env):
+        super().build_strategy_and_cost(cluster_env)
+
+        self.strategies.append(InstructionStrategy("P", ShardingSpec.partial_reduction(cluster_env)))
+        self.compute_costs.append(0)
+        self.communication_costs.append(0)
+        self.memory_costs.append(compute_bytes(self.shape))
+        self.resharding_costs.append([
+            resharding_cost_vector(self.operands[j], ShardingSpec.partial_reduction(cluster_env), cluster_env)
+            for j in range(len(self.operands))
+        ])
+
 
 class HloSubtract(HloElementwise):
     def __init__(self, lhs, rhs):
@@ -470,6 +488,16 @@ class HloDot(HloInstruction):
         self.resharding_costs.append([
             resharding_cost_vector(lhs, ShardingSpec.replicated(cluster_env), cluster_env),
             resharding_cost_vector(rhs, ShardingSpec.split(rhs.shape, rhs_space_dim, cluster_env), cluster_env)
+        ])
+
+        # split the contracting dim
+        self.strategies.append(InstructionStrategy("P = Sk x Sk", ShardingSpec.partial_reduction(cluster_env)))
+        self.compute_costs.append(0)
+        self.communication_costs.append(0)
+        self.memory_costs.append(compute_bytes(self.shape))
+        self.resharding_costs.append([
+            resharding_cost_vector(lhs, ShardingSpec.split(lhs.shape, lhs_con_dim, cluster_env), cluster_env),
+            resharding_cost_vector(rhs, ShardingSpec.split(rhs.shape, rhs_con_dim, cluster_env), cluster_env),
         ])
 
         # split the contracting dim

@@ -574,13 +574,10 @@ class HloComputation:
             cost_vector = []
             for stra_a in ins_a.strategies:
                 for stra_b in ins_b.strategies:
-                    #cost_vector.append(cluster_env.resharding_cost(ins_a.shape,
-                    #    stra_a.output_spec, stra_b.output_spec))
                     if stra_a.output_spec == stra_b.output_spec:
                         cost_vector.append(0)
                     else:
-                        cost_vector.append(1 << 30)
-            # todo: some cases can be reduced to an equality constraint
+                        cost_vector.append(1)
             self.alias_cost_vector.append(cost_vector)
 
     def __enter__(self):

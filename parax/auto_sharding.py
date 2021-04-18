@@ -3,6 +3,8 @@ from functools import partial
 import multiprocessing
 import pickle
 import sys
+import time
+import traceback
 from warnings import warn
 
 
@@ -76,7 +78,7 @@ def auto_sharding_callable(
     executable_build_options = compile_options.executable_build_options
     executable_build_options.use_auto_sharding = True
     if memory_budget_per_device:
-        executable_build_options.memory_budget_per_device = memory_budget_per_device
+        executable_build_options.memory_budget_per_device = int(memory_budget_per_device)
     compile_options.parameter_is_tupled_arguments = tuple_args
     built = c.Build(out_tuple)
     compiled = xla.backend_compile(backend, built, compile_options)
@@ -131,17 +133,29 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, num_partitions):
         return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions)
 
 
-def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_np):
+def call_solver_serialized_args(*args):
+    try:
+        ret = _call_solver_serialized_args(*args)
+    except Exception:
+        info = str(traceback.format_exc()[:-1])
+        print(info, flush=True)
+        exit(-1)
+    return ret
+
+
+def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
+                                 c_np, d_np, m_np, r_np, v_np):
     import pulp
     from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
+    tic = time.time()
 
-    for x in [s_len_np, E_np, L_np, c_np, d_np, m_np, r_np]:
+    for x in [s_len_np, E_np, A_np, L_np, c_np, d_np, m_np, r_np, v_np]:
         assert isinstance(x, np.ndarray)
     assert len(s_len_np) == N, "s_len_np"
 
     # Dump arguments for re-solving
-    # pickle.dump([N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_np],
-    #             open("args.pkl", "wb"))
+    # pickle.dump([N, M, s_len_np, E_np, A_np, L_np,
+    #              c_np, d_np, m_np, r_np, v_np], open("args.pkl", "wb"))
 
     def get_non_zero_index(binary_vector):
         """Get the index of non-zero item in a vector"""
@@ -157,7 +171,32 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
 
     # 0. Unpack flatten numpy arrays
     s_len = s_len_np
-    E = E_np.reshape((-1, 2))
+
+    # Remove duplicated edges.
+    # Duplicated edges can appear when a binary instruction takes
+    # the same tensor as both its lhs and rhs.
+    E = []
+    r = []
+    pt = 0
+    edge_set = set()
+    for (i, j) in E_np.reshape((-1, 2)):
+        prod_length = s_len[i] * s_len[j]
+
+        if (i, j) not in edge_set:
+            E.append((i, j))
+            edge_set.add((i, j))
+            r.append(r_np[pt:pt + prod_length])
+        pt += prod_length
+    assert pt == len(r_np)
+
+    A = A_np.reshape((-1, 2))
+    v = []
+    pt = 0
+    for (i, j) in A:
+        prod_length = s_len[i] * s_len[j]
+        v.append(v_np[pt:pt + prod_length])
+        pt += prod_length
+    assert pt == len(v_np)
 
     L = []
     pt = N
@@ -181,26 +220,18 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
     assert pt == len(d_np), "d_np"
     assert pt == len(m_np), "m_np"
 
-    r = [[None for i in range(N)] for j in range(N)]
-    pt = 0
-    for (i, j) in E:
-        length = s_len[i] * s_len[j]
-        r[i][j] = r_np[pt:pt + length]
-        pt += length
-    assert pt == len(r_np)
-
     # 1. Create variables
     s = []
-    e = [[None for i in range(N)] for j in range(N)]
+    e = []
 
     for i in range(N):
         s.append(LpVariable.matrix(f"s[{i}]",
             (range(s_len[i]),), cat="Binary"))
 
-    for (i, j) in E:
-        e[i][j] = LpVariable.matrix(f"e[{i},{j}]",
-            (range(len(s[i]) * len(s[j])),), cat="Binary")
-        assert len(r[i][j]) == len(e[i][j])
+    for (idx, (i, j)) in enumerate(E):
+        e.append(LpVariable.matrix(f"e[{i},{j}]",
+            (range(len(s[i]) * len(s[j])),), cat="Binary"))
+        assert len(e[idx]) == len(r[idx])
 
     # 2. Objective
     prob = LpProblem("myProblem", LpMinimize)
@@ -210,8 +241,8 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
         obj += lpDot(s[i], c[i]) + lpDot(s[i], d[i])
 
     # (b). communication cost
-    for (i, j) in E:
-        obj += lpDot(e[i][j], r[i][j])
+    for i in range(len(E)):
+        obj += lpDot(e[i], r[i])
 
     prob += obj
 
@@ -232,28 +263,52 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
     # (d). specified by `cat="Binary"`
 
     # (e)
-    for (i, j) in E:
-        prob += lpSum(e[i][j]) == 1
+    for i in range(len(E)):
+        prob += lpSum(e[i]) == 1
 
     # (f)
-    for (i, j) in E:
+    for (idx, (i, j)) in enumerate(E):
         for row in range(len(s[i])):
             C = len(s[j])
-            prob += lpSum(e[i][j][row * C + col] for col in range(0, C)) <= s[i][row]
+            prob += lpSum(e[idx][row * C + col] for col in range(0, C)) <= s[i][row]
 
     # (g)
-    for (i, j) in E:
+    for (idx, (i, j)) in enumerate(E):
         for col in range(len(s[j])):
             R = len(s[i])
             C = len(s[j])
-            prob += lpSum(e[i][j][row * C + col] for row in range(0, R)) <= s[j][col]
+            prob += lpSum(e[idx][row * C + col] for row in range(0, R)) <= s[j][col]
 
-    solver = pulp.COIN_CMD(mip=True,
-                           msg=False,
-                           threads=multiprocessing.cpu_count())
+    # (h)
+    alias_set = set()
+    for (idx, (i, j)) in enumerate(A):
+        R = len(s[i])
+        C = len(s[j])
+        if (i,j) in alias_set:
+            for i in range(10):
+                print("duplicated!!")
+            exit()
+        else:
+            alias_set.add((i, j))
+            alias_set.add((j, i))
+
+        for row in range(len(s[i])):
+            for col in range(len(s[j])):
+                if v[idx][row * C + col] > 0.5:
+                    prob += s[i][row] + s[j][col] <= 1
+
+    msg = False
+    time_limit = j
+    solver = pulp.COIN_CMD(mip=True, msg=msg, threads=multiprocessing.cpu_count())
+    #solver = pulp.GLPK_CMD(mip=True, msg=msg)
     result = prob.solve(solver)
-    #print("Auto-sharding ILP Status:", LpStatus[prob.status])
-    #print("Auto-sharding ILP Value:", pulp.value(prob.objective))
+
+    verbose = False
+    if verbose:
+        print("Auto-sharding ILP Status:", LpStatus[prob.status])
+        print("Auto-sharding ILP Value:", pulp.value(prob.objective))
+        print(f"Auto-sharding ILP Time: {time.time() - tic:.2f}")
+
     if prob.status in [pulp.LpStatusInfeasible]:
         print("Cannot run the function under given memory budget. " +
               "Please increase the memory budget")
@@ -265,14 +320,14 @@ def call_solver_serialized_args(N, M, s_len_np, E_np, L_np, c_np, d_np, m_np, r_
         s_val[i] = get_non_zero_index(s[i])
 
     e_val = np.full((len(E),), -1, dtype=np.int32)
-    for (no, (i, j)) in enumerate(E):
-        e_val[no] = get_non_zero_index(e[i][j])
-        i_spec_index = e_val[no] // len(s[j])
-        j_spec_index = e_val[no] % len(s[j])
+    for (idx, (i, j)) in enumerate(E):
+        e_val[idx] = get_non_zero_index(e[idx])
+        i_spec_index = e_val[idx] // len(s[j])
+        j_spec_index = e_val[idx] % len(s[j])
         assert i_spec_index == s_val[i], f"e_val[{i}][{j}]"
         assert j_spec_index == s_val[j], f"e_val[{i}][{j}]"
-        #if r[i][j][e_val[no]] > 0:
-        #    print("Edge cost", i, j)
+        if verbose and r[idx][e_val[idx]] > 0:
+            print("Edge cost", i, j)
 
     return s_val, e_val
 

@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from paranum.util import run_cmd
+from parax.util import run_cmd
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

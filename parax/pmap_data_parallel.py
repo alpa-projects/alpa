@@ -22,7 +22,7 @@ from jax._src.util import (
 )
 import flax
 
-from paranum import util
+from parax import util
 
 unsafe_map, map = map, safe_map  # type: ignore
 

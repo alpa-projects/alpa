@@ -34,7 +34,7 @@ import ml_collections
 import numpy as np
 import tensorflow_datasets as tfds
 
-from paranum import parallelize, annotate_gradient
+from parax import parallelize, annotate_gradient
 
 
 class CNN(nn.Module):

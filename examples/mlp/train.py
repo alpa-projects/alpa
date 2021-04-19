@@ -10,7 +10,7 @@ from flax.core import freeze, unfreeze
 from flax import linen as nn
 from flax import optim
 
-from paranum import parallelize, annotate_gradient, compute_bytes
+from parax import parallelize, annotate_gradient, compute_bytes
 from utils import DataLoader
 
 GB = 1 << 30

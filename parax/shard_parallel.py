@@ -41,9 +41,9 @@ from jax._src.util import (
     HashableFunction,
 )
 
-from paranum import util, global_config
-from paranum.auto_sharding import auto_sharding_callable
-from paranum.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
+from parax import util, global_config
+from parax.auto_sharding import auto_sharding_callable
+from parax.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
 
 unsafe_map, map = map, safe_map  # type: ignore
 

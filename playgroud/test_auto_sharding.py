@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from flax import linen as nn
 from flax import optim
 from flax.core.frozen_dict import FrozenDict, freeze
-from paranum import parallelize
+from parax import parallelize
 
 from transformers.models.bert.modeling_flax_bert import FlaxBertAttention
 

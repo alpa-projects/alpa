@@ -21,6 +21,9 @@ class ClusterEnvironment:
                 0.001)
 
     def resharding_cost(self, shape, src_spec, dst_spec):
+        if src_spec is None:
+            return self.all_gather_cost(compute_bytes(shape))
+
         if src_spec == dst_spec:
             return 0
         if src_spec.type == ShardingSpecType.REPLICATED:
@@ -30,3 +33,4 @@ class ClusterEnvironment:
             return self.all_reduce_cost(compute_bytes(shape))
 
         return self.all_gather_cost(compute_bytes(shape))
+

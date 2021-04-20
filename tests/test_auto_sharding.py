@@ -504,7 +504,7 @@ def test_n_bert_layer(mode='forward'):
                 )(hidden_states, attention_mask, deterministic=deterministic)
             return hidden_states
 
-    @parallelize(memory_budget_per_device=440 * (1 << 20),
+    @parallelize(memory_budget_per_device=460 * (1 << 20),
                  devices=devices)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
@@ -655,11 +655,10 @@ def test_n_bert_layer(mode='forward'):
 if __name__ == "__main__":
     global_config.set_shard_parallel_strategy('auto_sharding')
 
-    test_donate_buffer()
-    test_2_layer_mlp()
-    test_n_layer_mlp()
-    test_attention(mode='train')
-    test_bert_layer(mode='train')
+    #test_2_layer_mlp()
+    #test_n_layer_mlp()
+    #test_attention(mode='train')
+    #test_bert_layer(mode='train')
 
     #test_n_bert_layer(mode='train')
 

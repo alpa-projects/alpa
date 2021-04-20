@@ -126,6 +126,8 @@ def test_attention_forward():
         bias_out_dense_ = HloBroadcast(bias_out_dense, (batch_size, seq_len, hidden_dim), dimensions=(2,))
         out = HloAdd(out, bias_out_dense_)
 
+        out = HloExp(out) # to force an all-reduce on partial_reduction
+
         out = HloTuple([out,
                         weight_value_dense, bias_value_dense, 
                         weight_query_dense, bias_query_dense,
@@ -134,44 +136,183 @@ def test_attention_forward():
         ])
 
     # Solve
-    cluster_env = ClusterEnvironment(num_devices=batch_size, memory_per_device=50 * 1024**2)
-    solve_auto_sharding(computation, cluster_env)
-
-
-def test_allreduce_simplification():
-    # Build Hlo Computation
-    batch_size = 128
-    input_dim = hidden_dim = output_dim = 1024
-
-    computation = HloComputation()
-
-    with computation:
-        x = HloParameter((batch_size, input_dim), fix_strategy="S1")
-        w1 = HloParameter((input_dim, output_dim), fix_strategy="S0")
-        w2 = HloParameter((input_dim, output_dim), fix_strategy="S0")
-        w3 = HloParameter((input_dim, output_dim), fix_strategy="S0")
-        h1 = HloDot(x, w1)
-        h2 = HloDot(x, w2)
-        h3 = HloDot(x, w3)
-
-        out = HloAdd(h1, h2)
-        out = HloAdd(out, h3)
-
-        out = HloExp(out)
-        out = HloTuple((out, w1, w2, w3))
-
-    # Solve
-    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=10 * 1024**2)
+    cluster_env = ClusterEnvironment(num_devices=batch_size, memory_per_device=30 * 1024**2)
     objective = solve_auto_sharding(computation, cluster_env)
 
-    expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4)
+    expected = cluster_env.all_gather_cost(batch_size * seq_len * hidden_dim * 4)
     print("Objective:", objective)
     print("Expected:", expected)
     assert int(objective) == int(expected)
 
 
+def test_allreduce_simplification():
+    # Build Hlo Computation
+    computation = HloComputation()
+    dim_0 = 128
+    dim_1 = 2048
+
+    with computation:
+        x = HloParameter((dim_0, dim_1))
+        y = HloParameter((dim_1, dim_0))
+        h1 = HloDot(x, y)
+        h2 = HloDot(x, y)
+        out = HloAdd(h1, h2)
+        out = HloExp(out)
+        out = HloTuple((out,))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=1 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
+def test_allreduce_simplification_reshape():
+    # Build Hlo Computation
+    computation = HloComputation()
+    dim_0 = 128
+    dim_1 = 2048
+
+    with computation:
+        x = HloParameter((dim_0, dim_1))
+        y = HloParameter((dim_1, dim_0))
+        h1 = HloDot(x, y)
+        h2 = HloDot(x, y)
+        h1 = HloTranspose(h1, [1, 0])
+        h2 = HloReshape(h2, (dim_0 // 2, 2, dim_0))
+        h1 = HloTranspose(h1, [1, 0])
+        h2 = HloReshape(h2, (dim_0, dim_0))
+        out = HloAdd(h1, h2)
+        out = HloExp(out)
+        out = HloTuple((out,))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=1 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
+def test_tranpose():
+    # Build Hlo Computation
+    computation = HloComputation()
+    dim_0 = 128
+    dim_1 = 2048
+
+    with computation:
+        x = HloParameter((dim_1, dim_0))
+        y = HloParameter((dim_0, dim_1))
+        x = HloTranspose(x, [1, 0])
+        y = HloTranspose(y, [1, 0])
+        out = HloDot(x, y)
+        out = HloExp(out)
+        out = HloTuple((out,))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=1 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
+def test_mulit_tranpose():
+    # Build Hlo Computation
+    computation = HloComputation()
+    dim_0 = 128
+    dim_1 = 2048
+
+    with computation:
+        x = HloParameter((dim_1, dim_0))
+        y = HloParameter((dim_0, dim_1))
+        x = HloTranspose(x, [1, 0])
+        y = HloTranspose(y, [1, 0])
+        x = HloTranspose(x, [1, 0])
+        y = HloTranspose(y, [1, 0])
+        x = HloTranspose(x, [1, 0])
+        y = HloTranspose(y, [1, 0])
+        out = HloDot(x, y)
+        out = HloExp(out)
+        out = HloTuple((out,))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=1 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
+def test_reshape():
+    # Build Hlo Computation
+    computation = HloComputation()
+    dim_0 = 128
+    dim_1 = 2048
+
+    with computation:
+        x = HloParameter((dim_0, dim_1 // 2, 2))
+        y = HloParameter((dim_1 // 2, 2, dim_0))
+        x = HloReshape(x, (dim_0, dim_1))
+        y = HloReshape(y, (dim_1, dim_0))
+        out = HloDot(x, y)
+        out = HloExp(out)
+        out = HloTuple((out,))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=1 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
+def test_mulit_reshape():
+    # Build Hlo Computation
+    computation = HloComputation()
+    dim_0 = 128
+    dim_1 = 2048
+
+    with computation:
+        x = HloParameter((dim_0, dim_1 // 2, 2))
+        y = HloParameter((dim_1 // 2, 2, dim_0))
+        x = HloReshape(x, (dim_0, dim_1))
+        y = HloReshape(y, (dim_1, dim_0))
+        x = HloReshape(x, (dim_0 // 4, 4, dim_1))
+        y = HloReshape(y, (dim_1 // 4, 4, dim_0))
+        x = HloReshape(x, (dim_0, dim_1))
+        y = HloReshape(y, (dim_1, dim_0))
+        out = HloDot(x, y)
+        out = HloExp(out)
+        out = HloTuple((out,))
+
+    # Solve
+    cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=1 * 1024**2)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
+
+
+
 if __name__ == "__main__":
-    #test_attention_forward()
-
+    test_tranpose()
+    test_mulit_tranpose()
+    test_reshape()
+    test_mulit_reshape()
     test_allreduce_simplification()
-
+    test_allreduce_simplification_reshape()
+    test_attention_forward()

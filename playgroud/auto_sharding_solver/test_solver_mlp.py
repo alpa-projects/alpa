@@ -26,14 +26,18 @@ def test_mlp_2_layer_forward():
 
     # Solve
     cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=4 * 1024**2)
-    solve_auto_sharding(computation, cluster_env)
+    objective = solve_auto_sharding(computation, cluster_env)
+
+    expected = cluster_env.all_gather_cost(batch_size * hidden_dim * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
 
 
 def test_mlp_2_layer_forward_backward():
     # Build Hlo Computation
     batch_size = 128
     input_dim = hidden_dim = output_dim = 1024
-
 
     computation = HloComputation()
     with computation:
@@ -203,8 +207,8 @@ def test_mlp_n_layer_forward_backward():
            int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1))
 
 if __name__ == "__main__":
-    #test_mlp_2_layer_forward()
-    #test_mlp_n_layer_forward()
-    #test_mlp_2_layer_forward_backward()
+    test_mlp_2_layer_forward()
+    test_mlp_n_layer_forward()
+    test_mlp_2_layer_forward_backward()
     test_mlp_n_layer_forward_backward()
 

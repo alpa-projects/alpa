@@ -143,8 +143,9 @@ def call_solver_serialized_args(*args):
     return ret
 
 
-def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
-                                 c_np, d_np, m_np, r_np, v_np):
+def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
+                                 c_np, d_np, m_np, r_np, v_np,
+                                 s_init_np=None):
     import pulp
     from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
     tic = time.time()
@@ -154,8 +155,9 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
     assert len(s_len_np) == N, "s_len_np"
 
     # Dump arguments for re-solving
-    # pickle.dump([N, M, s_len_np, E_np, A_np, L_np,
-    #              c_np, d_np, m_np, r_np, v_np], open("args.pkl", "wb"))
+    # pickle.dump([N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
+    #              c_np, d_np, m_np, r_np, v_np, s_init_np],
+    #              open("args.pkl", "wb"))
 
     def get_non_zero_index(binary_vector):
         """Get the index of non-zero item in a vector"""
@@ -171,21 +173,20 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
 
     # 0. Unpack flatten numpy arrays
     s_len = s_len_np
+    s_follow = s_follow_np
 
-    # Remove duplicated edges.
-    # Duplicated edges can appear when a binary instruction takes
-    # the same tensor as both its lhs and rhs.
-    E = []
+    E = E_np.reshape((-1, 2))
     r = []
     pt = 0
     edge_set = set()
-    for (i, j) in E_np.reshape((-1, 2)):
+    for (i, j) in E:
         prod_length = s_len[i] * s_len[j]
 
-        if (i, j) not in edge_set:
-            E.append((i, j))
-            edge_set.add((i, j))
-            r.append(r_np[pt:pt + prod_length])
+        if (i, j) in edge_set:
+            raise ValueError(f"Duplicated edges: {(i, j)}")
+
+        edge_set.add((i, j))
+        r.append(r_np[pt:pt + prod_length])
         pt += prod_length
     assert pt == len(r_np)
 
@@ -225,33 +226,55 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
     e = []
 
     for i in range(N):
-        s.append(LpVariable.matrix(f"s[{i}]",
-            (range(s_len[i]),), cat="Binary"))
+        if s_follow[i] < 0:
+            if s_len[i] == 1:
+                s.append([1])
+            else:
+                s.append(LpVariable.matrix(f"s[{i}]",
+                    (range(s_len[i]),), cat="Binary"))
+        else:
+            s.append(s[s_follow[i]])
 
     for (idx, (i, j)) in enumerate(E):
-        e.append(LpVariable.matrix(f"e[{i},{j}]",
-            (range(len(s[i]) * len(s[j])),), cat="Binary"))
+        if len(s[i]) == 1:
+            e.append(s[j])
+        elif len(s[j]) == 1:
+            e.append(s[i])
+        else:
+            e.append(LpVariable.matrix(f"e[{i},{j}]",
+                (range(len(s[i]) * len(s[j])),), cat="Binary"))
         assert len(e[idx]) == len(r[idx])
 
-    # 2. Objective
+    # 2. Set initial value for warm start
+    if s_init_np is not None:
+        s_init = s_init_np.reshape((-1, 3))
+        for (idx, value, fix) in s_init:
+            for i in range(len(s[idx])):
+                s[idx][i].setInitialValue(i == value)
+                if fix:
+                    s[idx][i].fixValue()
+        # todo: set edge value
+
+    # 3. Objective
     prob = LpProblem("myProblem", LpMinimize)
-    # (a). compute cost
+    # compute cost
     obj = 0
     for i in range(N):
         obj += lpDot(s[i], c[i]) + lpDot(s[i], d[i])
 
-    # (b). communication cost
+    # communication cost
     for i in range(len(E)):
         obj += lpDot(e[i], r[i])
 
     prob += obj
 
-    # 3. Constraints
+    # 4. Constraints
     # (a). specified by `cat="Binary"`
 
     # (b)
     for i in range(N):
-        prob += lpSum(s[i]) == 1
+        if s_follow[i] < 0:
+            prob += lpSum(s[i]) == 1
 
     # (c)
     for t in range(N):
@@ -262,18 +285,19 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
 
     # (d). specified by `cat="Binary"`
 
-    # (e)
-    for i in range(len(E)):
-        prob += lpSum(e[i]) == 1
-
-    # (f)
     for (idx, (i, j)) in enumerate(E):
+        if s_len[i] == 1 or s_len[j] == 1:
+            continue
+
+        # (e)
+        prob += lpSum(e[idx]) == 1
+
+        # (f)
         for row in range(len(s[i])):
             C = len(s[j])
             prob += lpSum(e[idx][row * C + col] for col in range(0, C)) <= s[i][row]
 
-    # (g)
-    for (idx, (i, j)) in enumerate(E):
+        # (g)
         for col in range(len(s[j])):
             R = len(s[i])
             C = len(s[j])
@@ -285,9 +309,7 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
         R = len(s[i])
         C = len(s[j])
         if (i,j) in alias_set:
-            for i in range(10):
-                print("duplicated!!")
-            exit()
+            raise ValueError(f"Duplicated edges: {(i, j)}")
         else:
             alias_set.add((i, j))
             alias_set.add((j, i))
@@ -298,15 +320,18 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
                     prob += s[i][row] + s[j][col] <= 1
 
     msg = False
-    time_limit = j
-    solver = pulp.COIN_CMD(mip=True, msg=msg, threads=multiprocessing.cpu_count())
+    time_limit = 2000
+    solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
+                           threads=multiprocessing.cpu_count())
     #solver = pulp.GLPK_CMD(mip=True, msg=msg)
     result = prob.solve(solver)
 
-    verbose = False
+    verbose = True
+    objective = float(pulp.value(prob.objective))
+    status = prob.status
     if verbose:
-        print("Auto-sharding ILP Status:", LpStatus[prob.status])
-        print("Auto-sharding ILP Value:", pulp.value(prob.objective))
+        print("Auto-sharding ILP Status:", LpStatus[status])
+        print("Auto-sharding ILP Value:", objective)
         print(f"Auto-sharding ILP Time: {time.time() - tic:.2f}")
 
     if prob.status in [pulp.LpStatusInfeasible]:
@@ -329,5 +354,5 @@ def _call_solver_serialized_args(N, M, s_len_np, E_np, A_np, L_np,
         if verbose and r[idx][e_val[idx]] > 0:
             print("Edge cost", i, j)
 
-    return s_val, e_val
+    return s_val, e_val, objective, status
 

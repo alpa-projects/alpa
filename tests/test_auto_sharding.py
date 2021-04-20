@@ -61,6 +61,7 @@ def test_2_layer_mlp():
     @parallelize(memory_budget_per_device=50 * (1 << 20),
                  devices=devices)
     def train_step(optimizer, batch, apply_fn):
+        @jax.jit
         def loss_func(params):
             out = apply_fn(params, batch['x'])
             return jnp.mean((out - batch['y']) ** 2)
@@ -93,6 +94,7 @@ def test_2_layer_mlp():
 
     hlo_module = testing.last_compiled_executable().hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
+    print("hlo_ir", hlo_ir)
     # The function should contain only one communication primitive,
     # which is an all-reduce
     assert hlo_ir.count("channel_id") == 1, hlo_ir.count("channel_id")
@@ -655,11 +657,11 @@ def test_n_bert_layer(mode='forward'):
 if __name__ == "__main__":
     global_config.set_shard_parallel_strategy('auto_sharding')
 
-    test_donate_buffer()
+    #test_donate_buffer()
     test_2_layer_mlp()
-    test_n_layer_mlp()
-    test_attention(mode='train')
-    test_bert_layer(mode='train')
+    #test_n_layer_mlp()
+    #test_attention(mode='train')
+    #test_bert_layer(mode='train')
 
     #test_n_bert_layer(mode='train')
 

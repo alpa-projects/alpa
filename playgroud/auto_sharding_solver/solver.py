@@ -60,7 +60,7 @@ class CostGraph:
         self.node_lens = node_lens
         self.adjacency = dict()   # map a node to its neighbors
         self.edge_costs = dict()  # map an edge to its cost matrix
-        self.merged_strategy_mapping = dict()  # map a node to its strategy mapping during merge
+        self.reindexing_vector = dict()  # map a node to its reindexing vector
         self.merged_to = dict()   # map an merged node to its destination
         self.to_merge_pair = to_merge_pair  # the input follow pairs
 
@@ -118,17 +118,17 @@ class CostGraph:
 
         # Find the strategy to follow greedily
         row_sum = np.sum(edge_cost, axis=0)
-        greedy_map = []
+        reindexing = []
         for i in range(self.node_lens[dst]):
             # Pick the strategy with the lowest cost to follow.
             # If there are multiple strategies with the same lowest costs,
             # prefer to follow "replicated", which has the largest index.
             candidates = list(range(self.node_lens[src]))
             candidates.sort(key=lambda j: (edge_cost[i][j], -j))
-            greedy_map.append(candidates[0])
+            reindexing.append(candidates[0])
 
         self.merged_to[src] = dst
-        self.merged_strategy_mapping[src] = greedy_map
+        self.reindexing_vector[src] = reindexing
 
         # Merge edge cost matrix
         for adj in self.adjacency[src]:
@@ -136,7 +136,7 @@ class CostGraph:
                 continue
             new_edge_cost = []
             for i in range(self.node_lens[dst]):
-                j = greedy_map[i]
+                j = reindexing[i]
                 edge_cost_src_adj = self.get_edge_cost(src, adj)
                 new_edge_cost.append(edge_cost_src_adj[j] + edge_cost[i][j])
 
@@ -154,13 +154,13 @@ class CostGraph:
             new_dst = self.query_destination(old_dst)
             if old_dst != new_dst:
                 # Compress path
-                old_strategy_mapping = self.merged_strategy_mapping[node]
-                new_strategy_mapping = []
+                old_reindexing_vector = self.reindexing_vector[node]
+                new_reindexing_vector = []
                 for i in range(self.node_lens[new_dst]):
-                    new_strategy_mapping.append(
-                        old_strategy_mapping[self.merged_strategy_mapping[old_dst][i]])
+                    new_reindexing_vector.append(
+                        old_reindexing_vector[self.reindexing_vector[old_dst][i]])
 
-                self.merged_strategy_mapping[node] = new_strategy_mapping
+                self.reindexing_vector[node] = new_reindexing_vector
                 self.merged_to[node] = new_dst
             return new_dst
         else:
@@ -190,7 +190,7 @@ class CostGraph:
 
             assert len(v) == self.node_lens[i] * self.node_lens[j]
 
-        return s_follow, E, r, self.merged_strategy_mapping
+        return s_follow, E, r, self.reindexing_vector
 
     def __str__(self):
         ret = ""
@@ -262,20 +262,38 @@ def solve_auto_sharding(computation, cluster_env):
     # Simplify the graph by merging nodes
     cost_graph = CostGraph(s_len, E, r, follow_pair)
     cost_graph.simplify()
-    s_follow, E, r, strategy_mapping = cost_graph.export_result()
+    s_follow, E, r, reindexing_vector = cost_graph.export_result()
 
     for src, dst in enumerate(s_follow):
         if dst >= 0:
-            s_len[src] = len(strategy_mapping[src])
-            c[src] = np.array(c[src])[strategy_mapping[src]]
-            d[src] = np.array(d[src])[strategy_mapping[src]]
-            m[src] = np.array(m[src])[strategy_mapping[src]]
+            s_len[src] = len(reindexing_vector[src])
+            c[src] = np.array(c[src])[reindexing_vector[src]]
+            d[src] = np.array(d[src])[reindexing_vector[src]]
+            m[src] = np.array(m[src])[reindexing_vector[src]]
 
     # Deal with alias
     for ((ins_a, ins_b), cost_vector) in zip(computation.alias_list,
                                              computation.alias_cost_vector):
-        A.append((ins_a.index, ins_b.index))
-        v.append(cost_vector)
+
+        idx_a, idx_b = ins_a.index, ins_b.index
+        cost_vector = np.array(cost_vector).reshape(
+            len(ins_a.strategies), len(ins_b.strategies))
+
+        if s_follow[idx_a] >= 0:
+            reindexing_a = reindexing_vector[idx_a]
+            idx_a = s_follow[idx_a]
+        else:
+            reindexing_a = None
+
+        if s_follow[idx_b] >= 0:
+            reindexing_b = reindexing_vector[idx_b]
+            idx_b = s_follow[idx_b]
+        else:
+            reindexing_b = None
+
+        if idx_a != idx_b:
+            A.append((idx_a, idx_b))
+            v.append(cost_vector[reindexing_a,reindexing_b].flatten())
 
     s_val, e_val, objective, status = call_solver(N, M, s_len, s_follow, E, A, L,
                                                   c, d, m, r, v, s_init=None)
@@ -285,11 +303,11 @@ def solve_auto_sharding(computation, cluster_env):
         instructions = computation.instructions
         for i in range(N):
             if s_follow[i] < 0:
-                ins_idx = s_val[i]
-                name = instructions[i].strategies[ins_idx].name
+                stra_idx = s_val[i]
+                name = instructions[i].strategies[stra_idx].name
             else:
-                ins_idx = strategy_mapping[i][s_val[i]]
-                name = instructions[i].strategies[ins_idx].name + "_follow"
+                stra_idx = reindexing_vector[i][s_val[i]]
+                name = instructions[i].strategies[stra_idx].name + "_follow"
             print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
 
         # Print edge cost

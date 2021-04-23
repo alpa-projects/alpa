@@ -367,9 +367,16 @@ class HloAdd(HloElementwise):
         super().__init__(OpCode.ADD, [lhs, rhs])
 
     def build_strategy_and_cost(self, cluster_env):
-        super().build_strategy_and_cost(cluster_env)
+        self.strategies.append(InstructionStrategy("R = P + P", ShardingSpec.replicated(cluster_env)))
+        self.compute_costs.append(0)
+        self.communication_costs.append(cluster_env.all_reduce_cost(compute_bytes(self.shape)))
+        self.memory_costs.append(compute_bytes(self.shape))
+        self.resharding_costs.append([
+            resharding_cost_vector(self.operands[j], ShardingSpec.partial_reduction(cluster_env), cluster_env)
+            for j in range(len(self.operands))
+        ])
 
-        self.strategies.append(InstructionStrategy("P", ShardingSpec.partial_reduction(cluster_env)))
+        self.strategies.append(InstructionStrategy("P = P + P", ShardingSpec.partial_reduction(cluster_env)))
         self.compute_costs.append(0)
         self.communication_costs.append(0)
         self.memory_costs.append(compute_bytes(self.shape))
@@ -377,6 +384,13 @@ class HloAdd(HloElementwise):
             resharding_cost_vector(self.operands[j], ShardingSpec.partial_reduction(cluster_env), cluster_env)
             for j in range(len(self.operands))
         ])
+
+        super().build_strategy_and_cost(cluster_env)
+
+        for op in self.operands:
+            # todo: update the condition to `if isinstance(root_follow_ins(op), HloDot):`
+            if isinstance(op, HloReshape):
+                self.follow_ins = None
 
 
 class HloSubtract(HloElementwise):

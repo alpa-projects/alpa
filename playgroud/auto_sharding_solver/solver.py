@@ -117,36 +117,36 @@ class CostGraph:
         edge_cost = self.get_edge_cost(dst, src)
 
         # Find the strategy to follow greedily
-        row_sum = np.sum(edge_cost, axis=0)
         reindexing = []
+        candidates = list(range(self.node_lens[src]))
         for i in range(self.node_lens[dst]):
             # Pick the strategy with the lowest cost to follow.
             # If there are multiple strategies with the same lowest costs,
             # prefer to follow "replicated", which has the largest index.
-            candidates = list(range(self.node_lens[src]))
-            candidates.sort(key=lambda j: (edge_cost[i][j], -j))
+            keys = [(edge_cost[i][j], -j) for j in range(self.node_lens[src])]
+            candidates.sort(key=lambda j: keys[j])
             reindexing.append(candidates[0])
 
         self.merged_to[src] = dst
         self.reindexing_vector[src] = reindexing
 
         # Merge edge cost matrix
-        for adj in self.adjacency[src]:
+        adj_list = list(self.adjacency[src])
+        for adj in adj_list:
             if adj == dst:
                 continue
-            new_edge_cost = []
+            added_edge_cost = np.empty((self.node_lens[dst], self.node_lens[adj]))
             for i in range(self.node_lens[dst]):
                 j = reindexing[i]
                 edge_cost_src_adj = self.get_edge_cost(src, adj)
-                new_edge_cost.append(edge_cost_src_adj[j] + edge_cost[i][j])
+                for k in range(self.node_lens[adj]):
+                    added_edge_cost[i][k] = edge_cost_src_adj[j][k] + edge_cost[i][j]
 
-            new_edge_cost = np.array(new_edge_cost)
-            self.add_edge_cost(dst, adj, new_edge_cost)
+            self.add_edge_cost(dst, adj, added_edge_cost)
 
         # Remove edges
-        to_remove = [(src, x) for x in self.adjacency[src]]
-        for i, j in to_remove:
-            self.remove_edge(i, j)
+        for adj in adj_list:
+            self.remove_edge(src, adj)
 
     def query_destination(self, node):
         if node in self.merged_to:
@@ -170,7 +170,8 @@ class CostGraph:
         for (src, dst) in self.to_merge_pair:
             assert src not in self.merged_to
             dst = self.query_destination(dst)
-            self.merge_node(src, dst)
+            if src != dst:
+                self.merge_node(src, dst)
 
     def export_result(self):
         E = []
@@ -305,15 +306,25 @@ def solve_auto_sharding(computation, cluster_env):
             if s_follow[i] < 0:
                 stra_idx = s_val[i]
                 name = instructions[i].strategies[stra_idx].name
+                follow_map = ""
             else:
+                dst = s_follow[i]
                 stra_idx = reindexing_vector[i][s_val[i]]
-                name = instructions[i].strategies[stra_idx].name + "_follow"
+                name = instructions[i].strategies[stra_idx].name + f" follow {dst}"
+
+                follow_map = ""
+                for idx in range(len(reindexing_vector[i])):
+                    stra_idx = reindexing_vector[i][idx]
+                    follow_map += f"[{instructions[dst].strategies[idx].name} -> "\
+                            f"{instructions[i].strategies[stra_idx].name}] "
             print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
+            #if follow_map:
+            #    print(follow_map)
 
         # Print edge cost
         for (idx, (i, j)) in enumerate(E):
             if r[idx][e_val[idx]] > 0:
-                print("Edge cost", i, j)
+                print(f"Edge cost {(i, j)} : {r[idx][e_val[idx]]}")
 
         # Print peak memory
         for t in range(N):

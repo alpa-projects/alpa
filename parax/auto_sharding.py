@@ -83,7 +83,7 @@ def auto_sharding_callable(
     built = c.Build(out_tuple)
     compiled = xla.backend_compile(backend, built, compile_options)
 
-    testing.set_last_compiled_executable(compiled)
+    testing.last_compiled_executable = compiled
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
@@ -217,9 +217,9 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         d.append(d_np[pt:pt + length])
         m.append(m_np[pt:pt + length])
         pt += length
-    assert pt == len(c_np), "c_np"
-    assert pt == len(d_np), "d_np"
-    assert pt == len(m_np), "m_np"
+    assert pt == len(c_np), f"{pt} == {len(c_np)}"
+    assert pt == len(d_np), f"{pt} == {len(d_np)}"
+    assert pt == len(m_np), f"{pt} == {len(m_np)}"
 
     # 1. Create variables
     s = []
@@ -321,17 +321,18 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
 
     msg = False
     time_limit = 2000
-    solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
-                           threads=multiprocessing.cpu_count())
-    #solver = pulp.GLPK_CMD(mip=True, msg=msg)
+    #solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
+    #                       threads=multiprocessing.cpu_count())
+    solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     result = prob.solve(solver)
 
-    verbose = True
+    verbose = False
     objective = float(pulp.value(prob.objective))
     status = prob.status
     if verbose:
-        print("Auto-sharding ILP Status:", LpStatus[status])
-        print("Auto-sharding ILP Value:", objective)
+        print("Auto-sharding ILP status:", LpStatus[status])
+        print("Auto-sharding ILP value:", objective)
+        print("Auto-sharding ILP graph nodes:", np.sum(s_follow_np < 0))
         print(f"Auto-sharding ILP Time: {time.time() - tic:.2f}")
 
     if prob.status in [pulp.LpStatusInfeasible]:
@@ -352,7 +353,8 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         assert i_spec_index == s_val[i], f"e_val[{i}][{j}]"
         assert j_spec_index == s_val[j], f"e_val[{i}][{j}]"
         if verbose and r[idx][e_val[idx]] > 0:
-            print("Edge cost", i, j)
+            print(f"Edge cost {(i, j)} : {r[idx][e_val[idx]]}")
 
+    testing.last_compiled_auto_sharding_objective = objective
     return s_val, e_val, objective, status
 

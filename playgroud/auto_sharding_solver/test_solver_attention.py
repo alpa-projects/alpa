@@ -8,6 +8,10 @@ from cluster_env import ClusterEnvironment
 from solver import solve_auto_sharding
 
 
+def assert_close(x, y):
+    assert abs(x / y - 1) < 0.001, f"{x} vs. {y}"
+
+
 def test_tranpose():
     # Build Hlo Computation
     computation = HloComputation()
@@ -30,7 +34,7 @@ def test_tranpose():
     expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 def test_mulit_tranpose():
@@ -59,7 +63,7 @@ def test_mulit_tranpose():
     expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 def test_reshape():
@@ -84,7 +88,7 @@ def test_reshape():
     expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 def test_mulit_reshape():
@@ -113,7 +117,7 @@ def test_mulit_reshape():
     expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 def test_allreduce_simplification():
@@ -138,7 +142,7 @@ def test_allreduce_simplification():
     expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 def test_allreduce_simplification_out_reuse():
@@ -176,7 +180,7 @@ def test_allreduce_simplification_out_reuse():
     expected = cluster_env.all_reduce_cost(dim_0 * dim_0 * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 def test_attention_forward():
@@ -313,7 +317,7 @@ def test_attention_forward():
     expected = cluster_env.all_gather_cost(batch_size * seq_len * hidden_dim * 4)
     print("Objective:", objective)
     print("Expected:", expected)
-    assert int(objective) == int(expected)
+    assert_close(objective, expected)
 
 
 if __name__ == "__main__":

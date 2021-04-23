@@ -101,7 +101,10 @@ def test_mlp_2_layer_forward_backward():
     cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=5 * 1024**2)
     objective = solve_auto_sharding(computation, cluster_env)
 
-    assert int(objective) == int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4))
+    expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4)
+    print("Objective:", objective)
+    print("Expected:", expected)
+    assert int(objective) == int(expected)
 
 
 def test_mlp_n_layer_forward():

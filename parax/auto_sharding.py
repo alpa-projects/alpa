@@ -136,10 +136,16 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, num_partitions):
 def call_solver_serialized_args(*args):
     try:
         ret = _call_solver_serialized_args(*args)
-    except Exception:
+    except AssertionError:
+        ret = None
         info = str(traceback.format_exc()[:-1])
-        print(info, flush=True)
-        exit(-1)
+    except Exception:
+        ret = None
+        info = str(traceback.format_exc()[:-1])
+
+    if ret is None:
+        print(info)
+
     return ret
 
 
@@ -321,6 +327,8 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
 
     msg = False
     time_limit = 2000
+    assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), \
+        "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
     #solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
     #                       threads=multiprocessing.cpu_count())
     solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)

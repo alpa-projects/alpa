@@ -23,7 +23,7 @@ This repo depends on our private fork of jax and tensorflow.
     ```
   - ILP Solver:
     ```bash
-    sudo apt install coinor-cbc
+    sudo apt install coinor-cbc glpk-utils
     pip3 install pulp
     ```
       

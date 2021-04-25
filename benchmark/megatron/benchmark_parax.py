@@ -1,7 +1,3 @@
-"""
-Usage:
-python3 -m unittest -bv test_auto_sharding_attention.py
-"""
 from functools import partial
 import os
 import unittest
@@ -10,11 +6,8 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis
 from flax import linen as nn
 from flax import optim
-from flax.core.frozen_dict import FrozenDict, freeze
 from transformers.models.bert.modeling_flax_bert import FlaxBertAttention, FlaxBertLayer
 
 from parax import parallelize, global_config, testing

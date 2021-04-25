@@ -8,7 +8,6 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, ShardedAxis
 from flax import linen as nn
 from flax import optim
-from flax.core.frozen_dict import FrozenDict
 
 from parax import parallelize, global_config, testing
 

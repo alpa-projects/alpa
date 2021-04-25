@@ -34,7 +34,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
-        @parallelize(memory_budget_per_device=40 * (1 << 20),
+        @parallelize(memory_budget_per_device=30 * (1 << 20),
                      devices=self.devices)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
@@ -109,7 +109,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
-        @parallelize(memory_budget_per_device=80 * (1 << 20),
+        @parallelize(memory_budget_per_device=50 * (1 << 20),
                      devices=devices)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):

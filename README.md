@@ -20,6 +20,7 @@ This repo depends on our private fork of jax and tensorflow.
   - Python packages:
     ```bash
     pip3 install numpy scipy flax
+    pip3 install transformers==4.4.0
     ```
   - ILP Solver:
     ```bash

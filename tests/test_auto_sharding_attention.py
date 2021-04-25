@@ -14,7 +14,6 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, ShardedAxis
 from flax import linen as nn
 from flax import optim
-from flax.core.frozen_dict import FrozenDict, freeze
 from transformers.models.bert.modeling_flax_bert import FlaxBertAttention, FlaxBertLayer
 
 from parax import parallelize, global_config, testing
@@ -76,38 +75,13 @@ class AutoShardingAttentionTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
 
+        # Init model and optimizer
         model = Model(num_heads=num_heads, head_size=hidden_dim, dropout_rate=dropout_rate)
         rngkey = jax.random.PRNGKey(0)
-        params = FrozenDict({
-            "params": {
-                "attention": {
-                    "self": {
-                        "query": {
-                            "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                            "bias": jnp.ones((num_heads, per_head)),
-                        },
-                        "key": {
-                            "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                            "bias": jnp.ones((num_heads, per_head)),
-                        },
-                        "value": {
-                            "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                            "bias": jnp.ones((num_heads, per_head)),
-                        },
-                        "out": {
-                            "kernel": jnp.ones((num_heads, per_head, hidden_dim)),
-                            "bias": jnp.ones((hidden_dim,)),
-                        },
-                    },
-                    "layer_norm": {
-                        "beta": jnp.ones((hidden_dim,)),
-                        "gamma": jnp.ones((hidden_dim,)),
-                    },
-                },
-            },
-        })
-
+        params = model.init(rngkey, hidden_states, attention_mask, deterministic)
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # JIT compile
         optimizer = train_step(optimizer,
                                {"hidden_states": hidden_states,
                                 "attention_mask": attention_mask,
@@ -183,61 +157,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
 
+        # Init model and optimizer
         model = Model(num_heads=num_heads, head_size=hidden_dim,
                       intermediate_size=intermediate_size, dropout_rate=dropout_rate)
         rngkey = jax.random.PRNGKey(0)
-
         params = model.init(rngkey, hidden_states, attention_mask, deterministic)
-        #print(jax.tree_map(lambda x: x.shape, params))
-
-        params = FrozenDict({
-            "params": {
-                "FlaxBertLayer_0": {
-                    "attention": {
-                        "self": {
-                            "query": {
-                                "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                                "bias": jnp.ones((num_heads, per_head)),
-                            },
-                            "key": {
-                                "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                                "bias": jnp.ones((num_heads, per_head)),
-                            },
-                            "value": {
-                                "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                                "bias": jnp.ones((num_heads, per_head)),
-                            },
-                            "out": {
-                                "kernel": jnp.ones((num_heads, per_head, hidden_dim)),
-                                "bias": jnp.ones((hidden_dim,)),
-                            },
-                        },
-                        "layer_norm": {
-                            "beta": jnp.ones((hidden_dim,)),
-                            "gamma": jnp.ones((hidden_dim,)),
-                        },
-                    },
-                    "intermediate": {
-                        "dense": {
-                            "kernel": jnp.ones((hidden_dim, intermediate_size)),
-                            "bias": jnp.ones((intermediate_size,))
-                        }
-                    },
-                    "output": {
-                        "dense": {
-                            "kernel": jnp.ones((intermediate_size, hidden_dim)),
-                            "bias": jnp.ones((hidden_dim,))
-                        },
-                        "layer_norm": {
-                            "beta": jnp.ones((hidden_dim,)),
-                            "gamma": jnp.ones((hidden_dim,)),
-                        },
-                    },
-                },
-            },
-        })
-
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # JIT compile
         optimizer = train_step(optimizer,
                                {"hidden_states": hidden_states,
                                 "attention_mask": attention_mask,
@@ -328,62 +255,15 @@ class AutoShardingAttentionTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
 
+        # Init model and optimizer
         model = Model(num_layers=num_layers,
                       num_heads=num_heads, head_size=hidden_dim,
                       intermediate_size=intermediate_size, dropout_rate=dropout_rate)
         rngkey = jax.random.PRNGKey(0)
-
         params = model.init(rngkey, hidden_states, attention_mask, deterministic)
-
-        params = dict({
-            "params": {}
-        })
-
-        for i in range(num_layers):
-            params['params'][f"FlaxBertLayer_{i}"] = {
-                "attention": {
-                    "self": {
-                        "query": {
-                            "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                            "bias": jnp.ones((num_heads, per_head)),
-                        },
-                        "key": {
-                            "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                            "bias": jnp.ones((num_heads, per_head)),
-                        },
-                        "value": {
-                            "kernel": jnp.ones((hidden_dim, num_heads, per_head)),
-                            "bias": jnp.ones((num_heads, per_head)),
-                        },
-                        "out": {
-                            "kernel": jnp.ones((num_heads, per_head, hidden_dim)),
-                            "bias": jnp.ones((hidden_dim,)),
-                        },
-                    },
-                    "layer_norm": {
-                        "beta": jnp.ones((hidden_dim,)),
-                        "gamma": jnp.ones((hidden_dim,)),
-                    },
-                },
-                "intermediate": {
-                    "dense": {
-                        "kernel": jnp.ones((hidden_dim, intermediate_size)),
-                        "bias": jnp.ones((intermediate_size,))
-                    }
-                },
-                "output": {
-                    "dense": {
-                        "kernel": jnp.ones((intermediate_size, hidden_dim)),
-                        "bias": jnp.ones((hidden_dim,))
-                    },
-                    "layer_norm": {
-                        "beta": jnp.ones((hidden_dim,)),
-                        "gamma": jnp.ones((hidden_dim,)),
-                    },
-                },
-            }
-
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # JIT compile
         optimizer = train_step(optimizer,
                                {"hidden_states": hidden_states,
                                 "attention_mask": attention_mask,

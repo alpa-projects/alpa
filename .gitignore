@@ -10,3 +10,5 @@ dist
 # Vim
 *.swp
 
+# Analysis temp files
+*.nvprof

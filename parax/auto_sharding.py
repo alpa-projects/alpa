@@ -344,9 +344,9 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         print(f"Auto-sharding ILP Time: {time.time() - tic:.2f}")
 
     if prob.status in [pulp.LpStatusInfeasible]:
-        print("Cannot run the function under given memory budget. " +
-              "Please increase the memory budget")
-        exit()
+        raise RuntimeError(
+            "Cannot run the function under the given memory budget. "
+            "Please increase the memory budget.")
 
     # Get and check results
     s_val = np.full((N,), -1, dtype=np.int32)

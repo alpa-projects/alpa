@@ -52,18 +52,13 @@ class AutoShardingMLPTest(unittest.TestCase):
         x = jnp.ones((batch_size, input_dim))
         y = jnp.ones((batch_size, output_dim))
 
+        # Init model and optimizer
         model = Model(hidden_dim=hidden_dim, output_dim=output_dim)
-        params = FrozenDict({
-            "params": {
-                "Dense_0": {
-                    "kernel": jnp.ones((input_dim, hidden_dim)),
-                },
-                "Dense_1": {
-                    "kernel": jnp.ones((hidden_dim, output_dim)),
-                }
-            }
-        })
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # JIT compiler
         optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
 
         # Check sharding strategy
@@ -128,27 +123,14 @@ class AutoShardingMLPTest(unittest.TestCase):
         x = jnp.ones((batch_size, input_dim))
         y = jnp.ones((batch_size, output_dim))
 
+        # Init model and optimizer
         model = Model(num_layers=num_layers,
                       hidden_dim=hidden_dim, output_dim=output_dim)
-        params = ({
-            "params": {}
-        })
-        for i in range(num_layers):
-            if i == 0:
-                params['params'][f'Dense_{i}'] = {
-                    "kernel": jnp.ones((input_dim, hidden_dim))
-                }
-            elif i == num_layers - 1:
-                params['params'][f'Dense_{i}'] = {
-                    "kernel": jnp.ones((hidden_dim, output_dim))
-                }
-            else:
-                params['params'][f'Dense_{i}'] = {
-                    "kernel": jnp.ones((hidden_dim, hidden_dim))
-                }
-        params = FrozenDict(params)
-
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # JIT compiler
         optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
 
         # Check sharding strategy

@@ -163,7 +163,8 @@ def benchmark_transformer_layer():
     rngkey = jax.random.PRNGKey(0)
     params = model.init(rngkey, hidden_states, attention_mask, deterministic)
 
-    optimizer = optim.GradientDescent(1e-2).create(params)
+    #optimizer = optim.GradientDescent(1e-2).create(params)
+    optimizer = optim.Adam(1e-2).create(params)
 
     # Define benchmark function
     closure = [optimizer]

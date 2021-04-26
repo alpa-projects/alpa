@@ -74,7 +74,7 @@ def benchmark_mlp_worker(devices, mem_budget):
     model = Model(hidden_dim=hidden_dim)
     rngkey = jax.random.PRNGKey(0)
     params = model.init(rngkey, x)
-    optimizer = optim.GradientDescent(1e-2).create(params)
+    optimizer = optim.Adam(1e-2).create(params)
     optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
 
     # Define benchmark function
@@ -102,7 +102,10 @@ def benchmark_mlp_worker(devices, mem_budget):
     objective = testing.last_compiled_auto_sharding_objective
     real_mem = testing.last_compiled_executable.total_allocation_size()
 
-    print(hlo_ir)
+    optimizer = closure[0]
+    sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
+    #print(hlo_ir)
+    #print(sharding_specs)
 
     return real_mem, cost, objective
 
@@ -112,16 +115,16 @@ def benchmark_mlp():
     devices = tuple(jax.local_devices()[:4])
     global_config.set_shard_parallel_strategy('auto_sharding')
 
-    for mem_budget in [290, 310, 330, 350, 370, 390, 410, 430]:
+    for mem_budget in range(920, 921, 20):
         real_mem, cost, objective = benchmark_mlp_worker(devices, mem_budget * MB)
         log_line = f"mem_budget: {mem_budget}\tobjective: {objective:.3f}\t" +\
                    f"real_mem: {real_mem / MB:.3f}\tcost: {cost:.3f}"
         print(log_line, flush=True)
-        with open("results.tsv", "a") as fout:
+        with open("mlp_results.tsv", "a") as fout:
             fout.write(log_line + "\n")
 
 
-def benchmark_bert_layer_worker(devices, mem_budget):
+def benchmark_transformer_layer_worker(devices, mem_budget):
     class Model(nn.Module):
         num_heads: int
         head_size: int
@@ -142,7 +145,7 @@ def benchmark_bert_layer_worker(devices, mem_budget):
             )(hidden_states, attention_mask, deterministic=deterministic)
             return attention
 
-    @parallelize(memory_budget_per_device=800 * (1 << 20),
+    @parallelize(memory_budget_per_device=mem_budget,
                  devices=devices)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
@@ -208,13 +211,28 @@ def benchmark_bert_layer_worker(devices, mem_budget):
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print(f"#communication: {hlo_ir.count('channel_id')}")
-    print(f"#all-reduce: {hlo_ir.count('all-reduce(')}")
+    objective = testing.last_compiled_auto_sharding_objective
+    real_mem = testing.last_compiled_executable.total_allocation_size()
 
-    print(f"Time: {cost * 1e3:.2f} ms")
+    return real_mem, cost, objective
+
+
+def benchmark_transformer_layer():
+    assert len(jax.local_devices()) >= 4
+    devices = tuple(jax.local_devices()[:4])
+    global_config.set_shard_parallel_strategy('auto_sharding')
+
+    for mem_budget in range(390, 650, 20):
+        real_mem, cost, objective = benchmark_transformer_layer_worker(
+            devices, mem_budget * MB)
+        log_line = f"mem_budget: {mem_budget}\tobjective: {objective:.3f}\t" +\
+                   f"real_mem: {real_mem / MB:.3f}\tcost: {cost:.3f}"
+        print(log_line, flush=True)
+        with open("results.tsv", "a") as fout:
+            fout.write(log_line + "\n")
 
 
 if __name__ == '__main__':
-    #benchmark_mlp()
-    benchmark_bert_layer()
+    benchmark_mlp()
+    #benchmark_transformer_layer()
 

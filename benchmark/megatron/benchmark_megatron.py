@@ -134,7 +134,7 @@ def benchmark_transformer_layer():
     input_mem = get_memory_usage() - weight_mem
     before_backward_mem = [None]
 
-    optimizer = torch.optim.SGD(layer.parameters(), lr=0.1)
+    optimizer = torch.optim.Adam(layer.parameters(), lr=0.1)
 
     def func(record_peak=False):
         torch.distributed.barrier()

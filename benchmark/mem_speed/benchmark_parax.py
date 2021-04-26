@@ -27,22 +27,29 @@ def block_until_ready(x):
     jax.tree_util.tree_leaves(x)[-1].block_until_ready()
 
 
-def benchmark_2_layer_mlp():
-    assert len(jax.local_devices()) >= 4
-    devices = tuple(jax.local_devices()[:4])
-    global_config.set_shard_parallel_strategy('auto_sharding')
+def compute_bytes(param_tree):
+    n_bytes = 4
+    param_tree = jax.tree_util.tree_map(lambda arr: np.prod(arr.shape) * n_bytes,
+                                        param_tree)
+    total = np.sum(jax.tree_util.tree_flatten(param_tree)[0])
+    return total
 
+
+def benchmark_mlp_worker(devices, mem_budget):
     class Model(nn.Module):
         hidden_dim: int
 
         @nn.compact
         def __call__(self, x):
             x = nn.Dense(features=self.hidden_dim * 4)(x)
-            x = nn.gelu(x)
+            x = nn.Dense(features=self.hidden_dim)(x)
+            x = nn.Dense(features=self.hidden_dim * 4)(x)
+            x = nn.Dense(features=self.hidden_dim)(x)
+            x = nn.Dense(features=self.hidden_dim * 4)(x)
             x = nn.Dense(features=self.hidden_dim)(x)
             return x
 
-    @parallelize(memory_budget_per_device=300 * (1 << 20),
+    @parallelize(memory_budget_per_device=mem_budget,
                  devices=devices)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
@@ -81,7 +88,6 @@ def benchmark_2_layer_mlp():
         block_until_ready(optimizer)
         closure[0] = optimizer
 
-
     # Benchmark time cost
     func()
     func()
@@ -93,17 +99,29 @@ def benchmark_2_layer_mlp():
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print(f"#communication: {hlo_ir.count('channel_id')}")
-    print(f"#all-reduce: {hlo_ir.count('all-reduce(')}")
+    objective = testing.last_compiled_auto_sharding_objective
+    real_mem = testing.last_compiled_executable.total_allocation_size()
 
-    print(f"Time: {cost * 1e3:.2f} ms")
+    print(hlo_ir)
+
+    return real_mem, cost, objective
 
 
-def benchmark_transformer_layer():
+def benchmark_mlp():
     assert len(jax.local_devices()) >= 4
     devices = tuple(jax.local_devices()[:4])
     global_config.set_shard_parallel_strategy('auto_sharding')
 
+    for mem_budget in [290, 310, 330, 350, 370, 390, 410, 430]:
+        real_mem, cost, objective = benchmark_mlp_worker(devices, mem_budget * MB)
+        log_line = f"mem_budget: {mem_budget}\tobjective: {objective:.3f}\t" +\
+                   f"real_mem: {real_mem / MB:.3f}\tcost: {cost:.3f}"
+        print(log_line, flush=True)
+        with open("results.tsv", "a") as fout:
+            fout.write(log_line + "\n")
+
+
+def benchmark_bert_layer_worker(devices, mem_budget):
     class Model(nn.Module):
         num_heads: int
         head_size: int
@@ -190,15 +208,13 @@ def benchmark_transformer_layer():
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    mem = testing.last_compiled_executable.total_allocation_size()
-
     print(f"#communication: {hlo_ir.count('channel_id')}")
     print(f"#all-reduce: {hlo_ir.count('all-reduce(')}")
-    print(f"Mem: {mem / MB:.2f} ms")
+
     print(f"Time: {cost * 1e3:.2f} ms")
 
 
 if __name__ == '__main__':
-    #benchmark_2_layer_mlp()
-    benchmark_transformer_layer()
+    #benchmark_mlp()
+    benchmark_bert_layer()
 

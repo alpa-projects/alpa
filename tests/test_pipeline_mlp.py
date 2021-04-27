@@ -1,3 +1,4 @@
+from jax.interpreters.ad import linear_transpose2
 import numpy as np
 
 import unittest
@@ -27,11 +28,11 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             @nn.compact
             def __call__(self, x):
-                x = mark_pipeline(x, '1', 'start')
+                x = mark_pipeline(x, name='1', mark_type='start')
                 x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
                 x = nn.relu(x)
-                x = mark_pipeline(x, '1', 'end')
-                x = mark_pipeline(x, '2', 'start')
+                x = mark_pipeline(x, name='1', mark_type='end')
+                x = mark_pipeline(x, name='2', mark_type='start')
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
@@ -41,7 +42,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             def loss_func(params):
                 out = apply_fn(params, batch['x'])
                 loss = jnp.mean((out - batch['y']) ** 2)
-                loss = mark_pipeline(loss, '2', 'end')
+                loss = mark_pipeline(loss, name='2', mark_type='end')
                 return loss
 
             grad = jax.grad(loss_func)(optimizer.target)

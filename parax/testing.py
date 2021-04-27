@@ -3,14 +3,7 @@
 class TestingEnv:
     def __init__(self):
         self.last_compiled_executable = None
+        self.last_compiled_auto_sharding_objective = None
 
 testing_env = TestingEnv()
-
-
-def last_compiled_executable():
-    return testing_env.last_compiled_executable
-
-
-def set_last_compiled_executable(executable):
-    testing_env.last_compiled_executable = executable
 

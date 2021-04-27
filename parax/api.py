@@ -47,6 +47,11 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
             else:
                 dyn_args = args
 
+            # Flatten pytree arguments
+            args_flat, in_tree = tree_flatten(dyn_args)
+            f, out_tree = flatten_fun_nokwargs(f, in_tree)
+            out_tree_hashable = HashableFunction(lambda: out_tree(), closure=None)
+
             # Deal with donate argnums
             nonlocal donate_argnums
             if donate_argnums == "auto":
@@ -56,12 +61,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
             if donate_tuple:
                 donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
             else:
-                donated_invars = (False,) * len(dyn_args)
-
-            # Flatten pytree arguments
-            args_flat, in_tree = tree_flatten(dyn_args)
-            f, out_tree = flatten_fun_nokwargs(f, in_tree)
-            out_tree_hashable = HashableFunction(lambda: out_tree(), closure=None)
+                donated_invars = (False,) * len(args_flat)
 
             # JIT compile and call the compiled func
             abstract_args = unsafe_map(xla.abstractify, args_flat)

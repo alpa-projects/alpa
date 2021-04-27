@@ -9,7 +9,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, global_config, testing
+from parax import parallelize, global_config, testing, mark_pipeline
 
 from test_auto_sharding_basic import assert_close, all_reduce_cost
 
@@ -19,7 +19,6 @@ class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
-        global_config.set_shard_parallel_strategy('auto_sharding')
 
     def test_2_layer_mlp(self):
         class Model(nn.Module):
@@ -28,8 +27,11 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             @nn.compact
             def __call__(self, x):
+                x = mark_pipeline(x, '1', 'start')
                 x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
                 x = nn.relu(x)
+                x = mark_pipeline(x, '1', 'end')
+                x = mark_pipeline(x, '2', 'start')
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
@@ -38,7 +40,9 @@ class AutoShardingMLPTest(unittest.TestCase):
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
                 out = apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y']) ** 2)
+                loss = jnp.mean((out - batch['y']) ** 2)
+                loss = mark_pipeline(loss, '2', 'end')
+                return loss
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)

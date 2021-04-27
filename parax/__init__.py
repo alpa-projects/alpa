@@ -7,3 +7,4 @@ from . import util
 from .api import parallelize
 from .pmap_data_parallel import pmap_data_parallel, annotate_gradient
 from .util import compute_bytes
+from .pipeline_parallel import mark_pipeline

@@ -16,6 +16,7 @@ from jax._src.util import safe_map, wraps, HashableFunction
 from parax import util
 from parax.pmap_data_parallel import pmap_data_parallel_callable
 from parax.shard_parallel import shard_parallel_callable
+from parax.pipeline_parallel import pipeline_parallel_callable
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -99,7 +100,7 @@ def auto_parallel_callable(
         store and store.reset()
 
     # Choose parallel strategy
-    strategy = 'shard_parallel'
+    strategy = 'pipeline_parallel'
 
     # Apply parallel strategy
     if strategy == "shard_parallel":
@@ -110,6 +111,11 @@ def auto_parallel_callable(
     elif strategy == "pmap_data_parallel":
         return pmap_data_parallel_callable(
             fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
+        )
+    elif strategy == "pipeline_parallel":
+        return pipeline_parallel_callable(
+             fun, in_tree, out_tree_thunk, devices, donated_invars,
+            memory_budget_per_device, *avals
         )
     else:
         raise ValueError("Invalid parallel strategy")

@@ -28,6 +28,9 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             @nn.compact
             def __call__(self, x):
+                # FIXME (zhuohan): if don't require the gradient of x here, the
+                #                  backward pass of the pipeline start will not
+                #                  be generated.
                 x, = mark_pipeline(x, name='1', mark_type='start')
                 x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
                 x = nn.relu(x)
@@ -39,14 +42,14 @@ class AutoShardingMLPTest(unittest.TestCase):
         @parallelize(memory_budget_per_device=30 * (1 << 20),
                      devices=self.devices)
         def train_step(optimizer, batch, apply_fn):
-            def loss_func(params):
-                out = apply_fn(params, batch['x'])
-                loss = jnp.mean((out - batch['y']) ** 2)
+            def loss_func(params, x, y):
+                out = apply_fn(params, x)
+                loss = jnp.mean((out - y) ** 2)
                 loss, = mark_pipeline(loss, name='2', mark_type='end')
                 return loss
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
+            grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'])
+            new_optimizer = optimizer.apply_gradient(grad_param)
             return new_optimizer
 
         batch_size = 128

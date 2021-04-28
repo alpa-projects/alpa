@@ -338,10 +338,8 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     objective = float(pulp.value(prob.objective))
     status = prob.status
     if verbose:
-        print("Auto-sharding ILP status:", LpStatus[status])
-        print("Auto-sharding ILP value:", objective)
-        print("Auto-sharding ILP graph nodes:", np.sum(s_follow_np < 0))
-        print(f"Auto-sharding ILP Time: {time.time() - tic:.2f}")
+        print(f"ILP Status: {LpStatus[status]}\tObjective: {objective}\t"
+              f"Time: {time.time() - tic}")
 
     if prob.status in [pulp.LpStatusInfeasible]:
         raise RuntimeError(

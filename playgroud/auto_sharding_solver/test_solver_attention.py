@@ -30,7 +30,7 @@ class AttentionSolverTest(unittest.TestCase):
             x = HloTranspose(x, [1, 0])
             y = HloTranspose(y, [1, 0])
             out = HloDot(x, y)
-            out = HloExp(out)
+            out = HloForceReplicated(out)
             out = HloTuple((out,))
 
         # Solve
@@ -58,7 +58,7 @@ class AttentionSolverTest(unittest.TestCase):
             x = HloTranspose(x, [1, 0])
             y = HloTranspose(y, [1, 0])
             out = HloDot(x, y)
-            out = HloExp(out)
+            out = HloForceReplicated(out)
             out = HloTuple((out,))
 
         # Solve
@@ -82,7 +82,7 @@ class AttentionSolverTest(unittest.TestCase):
             x = HloReshape(x, (dim_0, dim_1))
             y = HloReshape(y, (dim_1, dim_0))
             out = HloDot(x, y)
-            out = HloExp(out)
+            out = HloForceReplicated(out)
             out = HloTuple((out,))
 
         # Solve
@@ -110,7 +110,7 @@ class AttentionSolverTest(unittest.TestCase):
             x = HloReshape(x, (dim_0, dim_1))
             y = HloReshape(y, (dim_1, dim_0))
             out = HloDot(x, y)
-            out = HloExp(out)
+            out = HloForceReplicated(out)
             out = HloTuple((out,))
 
         # Solve
@@ -134,7 +134,7 @@ class AttentionSolverTest(unittest.TestCase):
             h1 = HloDot(x, y)
             h2 = HloDot(x, y)
             out = HloAdd(h1, h2)
-            out = HloExp(out)
+            out = HloForceReplicated(out)
             out = HloTuple((out,))
 
         # Solve

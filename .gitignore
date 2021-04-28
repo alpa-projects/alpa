@@ -12,3 +12,5 @@ dist
 
 # Analysis temp files
 *.nvprof
+*.prof
+*.tsv

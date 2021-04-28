@@ -53,7 +53,13 @@ pipeline_p.multiple_results = True
 def mark_pipeline(*args, name, mark_type):
     if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
         raise ValueError('Unknown mark type: %s' % mark_type)
-    return pipeline_p.bind(*args, name=name, mark_type=mark_type)
+    res = pipeline_p.bind(*args, name=name, mark_type=mark_type)
+    if len(args) == 0:
+        return None
+    elif len(args) == 1:
+        return res[0]
+    else:
+        return res
 
 def _pipeline_impl(*args, **kwargs):
     # The pipeline marker acts as an identity function

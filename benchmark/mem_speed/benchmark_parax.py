@@ -115,7 +115,7 @@ def benchmark_mlp():
     devices = tuple(jax.local_devices()[:4])
     global_config.set_shard_parallel_strategy('auto_sharding')
 
-    for mem_budget in range(920, 921, 20):
+    for mem_budget in range(900, 1100, 20):
         real_mem, cost, objective = benchmark_mlp_worker(devices, mem_budget * MB)
         log_line = f"mem_budget: {mem_budget}\tobjective: {objective:.3f}\t" +\
                    f"real_mem: {real_mem / MB:.3f}\tcost: {cost:.3f}"
@@ -228,11 +228,11 @@ def benchmark_transformer_layer():
         log_line = f"mem_budget: {mem_budget}\tobjective: {objective:.3f}\t" +\
                    f"real_mem: {real_mem / MB:.3f}\tcost: {cost:.3f}"
         print(log_line, flush=True)
-        with open("results.tsv", "a") as fout:
+        with open("trans_results.tsv", "a") as fout:
             fout.write(log_line + "\n")
 
 
 if __name__ == '__main__':
     benchmark_mlp()
-    #benchmark_transformer_layer()
+    benchmark_transformer_layer()
 

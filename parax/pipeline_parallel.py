@@ -5,6 +5,8 @@ import itertools
 import os
 import re
 import threading
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -18,7 +20,7 @@ from jax.api_util import (
     argnums_partial,
 )
 from jax.config import flags, config, bool_env
-from jax.core import Jaxpr, ClosedJaxpr, Primitive, Literal, ShapedArray, abstract_unit
+from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, Primitive, Literal, ShapedArray, abstract_unit
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit
 from jax.interpreters import xla, ad, partial_eval as pe
@@ -95,21 +97,21 @@ xla.translations[pipeline_p] = _pipeline_xla_translation
 ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
 ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 
+@dataclass
 class PipelineStage:
-    def __init__(self, name):
-        self.name = name
-        self.eqns = []
-        self.consts_dir = OrderedDict()
-        # invars
-        self.pipeline_invars = set()
-        self.global_invars = set()
-        self.local_invars = set()
-        # outvars
-        self.pipeline_outvars = set()
-        self.global_outvars = set()
-        self.local_outvars = set()
-        # intermediate vars
-        self.intermediate_vars = set()
+    name: str
+    eqns: list[JaxprEqn] = field(default_factory=list)
+    consts_dir: OrderedDict[Atom, Any] = field(default_factory=OrderedDict)
+    # invars
+    pipeline_invars: set[Var] = field(default_factory=set)
+    global_invars: set[Var] = field(default_factory=set)
+    local_invars: set[Var] = field(default_factory=set)
+    # outvars
+    pipeline_outvars: set[Var] = field(default_factory=set)
+    global_outvars: set[Var] = field(default_factory=set)
+    local_outvars: set[Var] = field(default_factory=set)
+    # intermediate vars
+    intermediate_vars: set[Var] = field(default_factory=set)
 
     def closed_jaxpr(self):
         jaxpr = Jaxpr(

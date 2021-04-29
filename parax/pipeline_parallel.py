@@ -1,5 +1,5 @@
 """gshard based hybrid parallel"""
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from functools import wraps, partial
 import itertools
 import os
@@ -18,7 +18,7 @@ from jax.api_util import (
     argnums_partial,
 )
 from jax.config import flags, config, bool_env
-from jax.core import Primitive, ShapedArray, abstract_unit
+from jax.core import Jaxpr, ClosedJaxpr, Primitive, Literal, ShapedArray, abstract_unit
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit
 from jax.interpreters import xla, ad, partial_eval as pe
@@ -94,6 +94,37 @@ xla.translations[pipeline_p] = _pipeline_xla_translation
 ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
 ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 
+PipelineStage = namedtuple("PipelineStage", ["name", "closed_jaxpr", "n_pipeline_invars", "n_local_invars", "n_pipeline_outvars", "n_local_outvars"])
+
+def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
+    # We assume the closed_jaxpr includes pipeline start and end markers. Also,
+    # the variables in the markers represents the variables being sent
+    # through the network. While other input variables must be directly from
+    # the invars.
+    invars = set(closed_jaxpr.jaxpr.invars)
+    consts_dir = OrderedDict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+
+    result_pipeline_stages = []
+
+    pred_intermediate_vars = set()
+
+    slice_consts_dir = OrderedDict()
+    slice_invars = []
+    slice_invars_set = set()
+    slice_outvars = []
+    slice_eqns = []
+    slice_intermediate_vars = set()
+
+    succ_intermediate_vars = set()
+
+    inside_pipeline_stage = False
+
+    current_pipeline_stage = None
+    for index, eqn in enumerate(closed_jaxpr.jaxpr.eqns):
+        if eqn.primitive is pipeline_p:
+            print("pipeline", eqn)
+    return result_pipeline_stages
+
 @lu.cache
 def pipeline_parallel_callable(
     fun: lu.WrappedFun,
@@ -106,7 +137,9 @@ def pipeline_parallel_callable(
 ):
     with jax.disable_jit():
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    print("jaxpr", jaxpr)
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    print("closed_jaxpr", closed_jaxpr)
+    slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     exit(0)
     return compiled_func
 

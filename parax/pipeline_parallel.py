@@ -6,7 +6,7 @@ import os
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import List, Set, Any
 
 import numpy as np
 
@@ -100,18 +100,18 @@ ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 @dataclass
 class PipelineStage:
     name: str
-    eqns: list[JaxprEqn] = field(default_factory=list)
+    eqns: List[JaxprEqn] = field(default_factory=list)
     consts_dir: OrderedDict[Atom, Any] = field(default_factory=OrderedDict)
     # invars
-    pipeline_invars: set[Var] = field(default_factory=set)
-    global_invars: set[Var] = field(default_factory=set)
-    local_invars: set[Var] = field(default_factory=set)
+    pipeline_invars: Set[Var] = field(default_factory=set)
+    global_invars: Set[Var] = field(default_factory=set)
+    local_invars: Set[Var] = field(default_factory=set)
     # outvars
-    pipeline_outvars: set[Var] = field(default_factory=set)
-    global_outvars: set[Var] = field(default_factory=set)
-    local_outvars: set[Var] = field(default_factory=set)
+    pipeline_outvars: Set[Var] = field(default_factory=set)
+    global_outvars: Set[Var] = field(default_factory=set)
+    local_outvars: Set[Var] = field(default_factory=set)
     # intermediate vars
-    intermediate_vars: set[Var] = field(default_factory=set)
+    intermediate_vars: Set[Var] = field(default_factory=set)
 
     def closed_jaxpr(self):
         jaxpr = Jaxpr(

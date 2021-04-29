@@ -20,7 +20,7 @@ from jax.api_util import (
     argnums_partial,
 )
 from jax.config import flags, config, bool_env
-from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, Primitive, Literal, ShapedArray, abstract_unit
+from jax.core import Atom, Var, DropVar, JaxprEqn, Jaxpr, ClosedJaxpr, Primitive, Literal, ShapedArray, abstract_unit
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit
 from jax.interpreters import xla, ad, partial_eval as pe
@@ -147,13 +147,11 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
         assert current_stage is not None
 
         for var in eqn.invars:
-            if isinstance(var, Literal):
+            if isinstance(var, Literal) or (var in current_stage.pipeline_invars) or (var in current_stage.intermediate_vars):
                 continue
             elif var in global_consts_dir:
                 if var not in current_stage.consts_dir:
                     current_stage.consts_dir[var] = global_consts_dir[var]
-            elif (var in current_stage.pipeline_invars) or (var in current_stage.intermediate_vars):
-                continue
             elif var in global_invars:
                 if var not in current_stage.global_invars:
                     current_stage.global_invars.add(var)
@@ -170,17 +168,18 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
                     raise ValueError("Variable {} should be indicated as a pipeline stage input.".format(var))
 
         for var in eqn.outvars:
-            current_stage.intermediate_vars.add(var)
-            var2stage[var] = current_stage
-            if var in global_outvars:
-                current_stage.global_outvars.add(var)
+            if not isinstance(var, DropVar):
+                current_stage.intermediate_vars.add(var)
+                var2stage[var] = current_stage
+                if var in global_outvars:
+                    current_stage.global_outvars.add(var)
 
         current_stage.eqns.append(eqn)
 
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
             assert current_stage is not None, "Ending a pipeline stage before its start."
             assert current_stage.name == eqn.params['name'], "Ending a pipeline stage different from its start."
-            current_stage.pipeline_outvars = set(eqn.outvars)
+            current_stage.pipeline_outvars = set(var for var in eqn.outvars if not isinstance(var, DropVar))
             result_stages.append(current_stage)
             current_stage = None
     return result_stages

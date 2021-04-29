@@ -6,7 +6,7 @@ import os
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import List, Set, Any
+from typing import List, Set, Any, Dict
 
 import numpy as np
 
@@ -101,7 +101,7 @@ ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 class PipelineStage:
     name: str
     eqns: List[JaxprEqn] = field(default_factory=list)
-    consts_dir: OrderedDict[Atom, Any] = field(default_factory=OrderedDict)
+    consts_dir: Dict[Atom, Any] = field(default_factory=dict)
     # invars
     pipeline_invars: Set[Var] = field(default_factory=set)
     global_invars: Set[Var] = field(default_factory=set)
@@ -131,7 +131,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
     # the invars.
     global_invars = set(closed_jaxpr.jaxpr.invars)
     global_outvars = set(closed_jaxpr.jaxpr.outvars)
-    global_consts_dir = OrderedDict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
     var2stage = {}
     result_stages = []
 

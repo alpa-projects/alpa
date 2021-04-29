@@ -130,7 +130,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
     # through the network. While other input variables must be directly from
     # the invars.
     global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_outvars = set(closed_jaxpr.jaxpr.outvars)
+    global_outvars = set(var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
     global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
     var2stage = {}
     result_stages = []
@@ -198,9 +198,20 @@ def pipeline_parallel_callable(
     with jax.disable_jit():
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    print("closed_jaxpr", closed_jaxpr)
+    print("=" * 30 + " closed_jaxpr " + "=" * 30)
+    print(closed_jaxpr)
     pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    print(pipeline_stages)
+    for stage in pipeline_stages:
+        print("=" * 30 + " stage " + stage.name + " " + "=" * 30)
+        print("consts_dir", stage.consts_dir)
+        print("pipeline_invars", stage.pipeline_invars)
+        print("global_invars", stage.global_invars)
+        print("local_invars", stage.local_invars)
+        print("pipeline_outvars", stage.pipeline_outvars)
+        print("global_outvars", stage.global_outvars)
+        print("local_outvars", stage.local_outvars)
+        print("intermediate_vars", stage.intermediate_vars)
+        print(stage.closed_jaxpr())
     exit(0)
     return compiled_func
 

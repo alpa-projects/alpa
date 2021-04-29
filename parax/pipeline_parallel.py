@@ -101,21 +101,21 @@ class PipelineStage:
         self.eqns = []
         self.consts_dir = OrderedDict()
         # invars
-        self.pipeline_invars = FastLookupList()
-        self.global_invars = FastLookupList()
-        self.local_invars = FastLookupList()
+        self.pipeline_invars = set()
+        self.global_invars = set()
+        self.local_invars = set()
         # outvars
-        self.pipeline_outvars = FastLookupList()
-        self.global_outvars = FastLookupList()
-        self.local_outvars = FastLookupList()
+        self.pipeline_outvars = set()
+        self.global_outvars = set()
+        self.local_outvars = set()
         # intermediate vars
-        self.intermediate_vars = FastLookupList()
+        self.intermediate_vars = set()
 
     def closed_jaxpr(self):
         jaxpr = Jaxpr(
             constvars=self.consts_dir.keys(),
-            invars=list(self.pipeline_invars) + list(self.global_invars) + list(self.local_invars),
-            outvars=list(self.pipeline_outvars) + list(self.global_outvars) + list(self.local_outvars),
+            invars=list(self.pipeline_invars | self.global_invars | self.local_invars),
+            outvars=list(self.pipeline_outvars | self.global_outvars | self.local_outvars),
             eqns=self.eqns,
         )
         closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
@@ -139,7 +139,9 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
             current_stage = PipelineStage(name=eqn.params['name'])
-            current_stage.pipeline_invars = FastLookupList(eqn.invars)
+            for var in eqn.invars:
+                if not isinstance(var, Literal):
+                    current_stage.pipeline_invars.add(var)
         assert current_stage is not None
 
         for var in eqn.invars:
@@ -152,31 +154,31 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
                 continue
             elif var in global_invars:
                 if var not in current_stage.global_invars:
-                    current_stage.global_invars.append(var)
+                    current_stage.global_invars.add(var)
             else:
                 if var not in var2stage:
                     raise ValueError("Unknown variable {}".format(var))
                 original_stage = var2stage[var]
                 if original_stage.name == current_stage.name:
                     if var not in original_stage.local_outvars:
-                        original_stage.local_outvars.append(var)
+                        original_stage.local_outvars.add(var)
                     if var not in current_stage.local_invars:
-                        current_stage.local_invars.append(var)
+                        current_stage.local_invars.add(var)
                 else:
                     raise ValueError("Variable {} should be indicated as a pipeline stage input.".format(var))
 
         for var in eqn.outvars:
-            current_stage.intermediate_vars.append(var)
+            current_stage.intermediate_vars.add(var)
             var2stage[var] = current_stage
             if var in global_outvars:
-                current_stage.global_outvars.append(var)
+                current_stage.global_outvars.add(var)
 
         current_stage.eqns.append(eqn)
 
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
             assert current_stage is not None, "Ending a pipeline stage before its start."
             assert current_stage.name == eqn.params['name'], "Ending a pipeline stage different from its start."
-            current_stage.pipeline_outvars = FastLookupList(eqn.outvars)
+            current_stage.pipeline_outvars = set(eqn.outvars)
             result_stages.append(current_stage)
             current_stage = None
     return result_stages

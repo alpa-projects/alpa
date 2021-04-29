@@ -77,6 +77,7 @@ def auto_sharding_callable(
     )
     executable_build_options = compile_options.executable_build_options
     executable_build_options.use_auto_sharding = True
+    executable_build_options.
     if memory_budget_per_device:
         executable_build_options.memory_budget_per_device = int(memory_budget_per_device)
     compile_options.parameter_is_tupled_arguments = tuple_args

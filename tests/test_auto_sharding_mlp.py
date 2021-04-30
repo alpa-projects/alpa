@@ -5,7 +5,7 @@ import unittest
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis
+from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 from flax import linen as nn
 from flax import optim
 
@@ -19,7 +19,7 @@ class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
-        global_config.set_shard_parallel_strategy('auto_sharding')
+        global_config.shard_parallel_strategy = "auto_sharding"
 
     def test_2_layer_mlp(self):
         class Model(nn.Module):
@@ -160,6 +160,8 @@ class AutoShardingMLPTest(unittest.TestCase):
                 )
 
     def test_2_layer_mlp_force_data_parallel(self):
+        global_config.auto_sharding_solver_strategy = 'force_data_parallel'
+
         class Model(nn.Module):
             hidden_dim: int
             output_dim: int
@@ -171,7 +173,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim)(x)
                 return x
 
-        @parallelize(memory_budget_per_device=30 * (1 << 20),
+        @parallelize(memory_budget_per_device=1000 * (1 << 20),
                      devices=self.devices)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
@@ -203,25 +205,25 @@ class AutoShardingMLPTest(unittest.TestCase):
         hlo_ir = hlo_module.to_string()
         # The function should contain only one communication primitive,
         # which is an all-reduce
-        assert hlo_ir.count("channel_id") == 1, hlo_ir.count("channel_id")
-        assert hlo_ir.count("all-reduce(") == 1
+        assert hlo_ir.count("channel_id") == 2, hlo_ir.count("channel_id")
 
-        expected = all_reduce_cost(len(self.devices), batch_size * hidden_dim * 4)
+        forced_all_reduce_cost = 1000
+        num_weight_tensors = len(jax.tree_util.tree_leaves(params))
+        expected = forced_all_reduce_cost * num_weight_tensors
         assert_close(testing.last_compiled_auto_sharding_objective, expected)
+
 
         weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
         weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
         assert isinstance(weight0, pxla.ShardedDeviceArray)
         assert isinstance(weight1, pxla.ShardedDeviceArray)
-        # Column partitioned
         assert weight0.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([1]), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+            sharding=(NoSharding(), NoSharding()),
+            mesh_mapping=(Replicated(4),),
         )
-        # Row partitioned
         assert weight1.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([4]), Chunked([1])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+            sharding=(NoSharding(), NoSharding()),
+            mesh_mapping=(Replicated(4),),
         )
 
 
@@ -229,7 +231,7 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMLPTest('test_2_layer_mlp'))
     suite.addTest(AutoShardingMLPTest('test_n_layer_mlp'))
-    #suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_force_data_parallel'))
+    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_force_data_parallel'))
     return suite
 
 

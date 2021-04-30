@@ -41,7 +41,8 @@ from jax._src.util import (
     HashableFunction,
 )
 
-from parax import util, global_config, testing
+from parax import util, testing
+from parax.global_env import global_config
 from parax.auto_sharding import auto_sharding_callable
 from parax.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
 
@@ -91,7 +92,7 @@ def shard_parallel_callable(
     memory_budget_per_device,
     *avals
 ):
-    strategy = global_config.shard_parallel_strategy()
+    strategy = global_config.shard_parallel_strategy
 
     if strategy == 'auto_sharding':
         # Use our auto_sharing solver

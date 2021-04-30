@@ -302,6 +302,7 @@ def solve_auto_sharding(computation, cluster_env):
     if True:
         # Print sharding spec
         instructions = computation.instructions
+        print("===== Sharding Strategy =====")
         for i in range(N):
             if s_follow[i] < 0:
                 stra_idx = s_val[i]
@@ -327,6 +328,7 @@ def solve_auto_sharding(computation, cluster_env):
                 print(f"Edge cost {(i, j)} : {r[idx][e_val[idx]]}")
 
         # Print peak memory
+        print("===== Memory Usage =====")
         for t in range(N):
             mem = 0
             for i in L[t]:

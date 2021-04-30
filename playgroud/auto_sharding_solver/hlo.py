@@ -68,7 +68,9 @@ class OpCode(Enum):
     BROADCAST = auto()
     RESHAPE = auto()
     TRANSPOSE = auto()
+    IDENTITY = auto()
     EXP = auto()
+    FORCE_REPLICATED = auto()
     ADD = auto()
     SUBTRACT = auto()
     MULTIPLY = auto()
@@ -357,9 +359,28 @@ class HloElementwise(HloInstruction):
         return f"{self.name} {self.shape} = {fun_name}({args})"
 
 
+class HloIdentity(HloElementwise):
+    def __init__(self, operand):
+        super().__init__(OpCode.IDENTITY, [operand])
+
+
 class HloExp(HloElementwise):
     def __init__(self, operand):
         super().__init__(OpCode.EXP, [operand])
+
+
+class HloForceReplicated(HloElementwise):
+    def __init__(self, operand):
+        super().__init__(OpCode.FORCE_REPLICATED, [operand])
+
+    def build_strategy_and_cost(self, cluster_env):
+        super().build_strategy_and_cost(cluster_env)
+
+        self.strategies = self.strategies[-1:]
+        self.compute_costs = self.communication_costs[-1:]
+        self.communication_costs = self.communication_costs[-1:]
+        self.memory_costs = self.memory_costs[-1:]
+        self.resharding_costs = self.resharding_costs[-1:]
 
 
 class HloAdd(HloElementwise):
@@ -528,9 +549,9 @@ class HloDot(HloInstruction):
             resharding_cost_vector(rhs, ShardingSpec.split(rhs.shape, rhs_space_dim, cluster_env), cluster_env)
         ])
 
-        # split the contracting dim
+        # split the contracting dim, no all-reduce
         self.strategies.append(InstructionStrategy("P = Sk x Sk", ShardingSpec.partial_reduction(cluster_env)))
-        self.compute_costs.append(0)
+        self.compute_costs.append(2)
         self.communication_costs.append(0)
         self.memory_costs.append(compute_bytes(self.shape))
         self.resharding_costs.append([
@@ -538,7 +559,17 @@ class HloDot(HloInstruction):
             resharding_cost_vector(rhs, ShardingSpec.split(rhs.shape, rhs_con_dim, cluster_env), cluster_env),
         ])
 
-        # split the contracting dim
+        # split the contracting dim, do half all-reduce
+        self.strategies.append(InstructionStrategy("Sl = Sk x Sk", ShardingSpec.split(self.shape, space_base_dim, cluster_env)))
+        self.compute_costs.append(1)
+        self.communication_costs.append(cluster_env.reduce_scatter_cost(compute_bytes(self.shape)))
+        self.memory_costs.append(compute_bytes(self.shape) / cluster_env.num_devices)
+        self.resharding_costs.append([
+            resharding_cost_vector(lhs, ShardingSpec.split(lhs.shape, lhs_con_dim, cluster_env), cluster_env),
+            resharding_cost_vector(rhs, ShardingSpec.split(rhs.shape, rhs_con_dim, cluster_env), cluster_env),
+        ])
+
+        # split the contracting dim, do all-reduce
         self.strategies.append(InstructionStrategy("R = Sk x Sk", ShardingSpec.replicated(cluster_env)))
         self.compute_costs.append(0)
         self.communication_costs.append(cluster_env.all_reduce_cost(compute_bytes(self.shape)))
@@ -561,15 +592,15 @@ class HloDot(HloInstruction):
             ])
             self.recommend_strategy = len(self.strategies) - 1
 
-        # replicated
-        self.strategies.append(InstructionStrategy("R = R x R", ShardingSpec.replicated(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(self.lhs, ShardingSpec.replicated(cluster_env), cluster_env),
-            resharding_cost_vector(self.rhs, ShardingSpec.replicated(cluster_env), cluster_env),
-        ])
+        ## replicated
+        #self.strategies.append(InstructionStrategy("R = R x R", ShardingSpec.replicated(cluster_env)))
+        #self.compute_costs.append(0)
+        #self.communication_costs.append(0)
+        #self.memory_costs.append(compute_bytes(self.shape))
+        #self.resharding_costs.append([
+        #    resharding_cost_vector(self.lhs, ShardingSpec.replicated(cluster_env), cluster_env),
+        #    resharding_cost_vector(self.rhs, ShardingSpec.replicated(cluster_env), cluster_env),
+        #])
 
     def __str__(self):
         return f"{self.name} {self.shape} = dot({self.lhs.name}, {self.rhs.name}) "\

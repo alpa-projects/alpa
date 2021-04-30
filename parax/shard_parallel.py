@@ -41,7 +41,7 @@ from jax._src.util import (
     HashableFunction,
 )
 
-from parax import util, global_config
+from parax import util, global_config, testing
 from parax.auto_sharding import auto_sharding_callable
 from parax.pmap_data_parallel import should_replicate_map, should_replicate_is_leaf
 
@@ -130,6 +130,7 @@ def shard_parallel_callable(
         out_axes = tuple(OrderedDict() if out_should_replicate[i] else shard_first_dim(out_avals[i])
                         for i in range(len(out_avals)))
 
+        devices = np.array(devices)
         mesh = Mesh(devices, ('mesh_x',))
         out_axes_thunk = lambda: out_axes
 
@@ -141,6 +142,7 @@ def shard_parallel_callable(
         compiled_func = mesh_callable(fun, fun_name, None, mesh,
                                       in_axes, out_axes_thunk, donated_invars,
                                       True, *avals, tile_by_mesh_axes=False)
+        testing.last_compiled_executable = compiled_func.args[0]
         return compiled_func
     else:
         raise ValueError("Invalid strategy: " + strategy)

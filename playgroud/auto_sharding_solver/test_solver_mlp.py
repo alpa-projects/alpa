@@ -13,6 +13,10 @@ from cluster_env import ClusterEnvironment
 from solver import solve_auto_sharding
 
 
+def assert_close(x, y):
+    assert abs(x / y - 1) < 0.001, f"{x} vs. {y}"
+
+
 class MLPSolverTest(unittest.TestCase):
     def test_mlp_2_layer_forward(self):
         # Build Hlo Computation
@@ -37,7 +41,7 @@ class MLPSolverTest(unittest.TestCase):
         expected = cluster_env.all_gather_cost(batch_size * hidden_dim * 4)
         print("Objective:", objective)
         print("Expected:", expected)
-        assert int(objective) == int(expected)
+        assert_close(objective, expected)
 
     def test_mlp_2_layer_forward_backward(self):
         # Build Hlo Computation
@@ -109,7 +113,7 @@ class MLPSolverTest(unittest.TestCase):
         expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4)
         print("Objective:", objective)
         print("Expected:", expected)
-        assert int(objective) == int(expected)
+        assert_close(objective, expected)
 
     def test_mlp_n_layer_forward(self):
         # Build Hlo Computation
@@ -131,6 +135,7 @@ class MLPSolverTest(unittest.TestCase):
             for i in range(num_layers - 2):
                 h_now = HloDot(h_now, w_inter[i])
             h_last = HloDot(h_now, w_last)
+            h_last = HloExp(h_last)
             out = HloTuple([h_last, w_first, w_last] + w_inter)
 
         # Solve
@@ -209,8 +214,62 @@ class MLPSolverTest(unittest.TestCase):
 
         print("Objective:", int(objective))
         print("Expected:", int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1)))
-        assert int(objective) ==\
-               int(cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1))
+        assert_close(objective,
+            cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1))
+
+    def test_mlp_2_layer_forward_backward_data_parallel(self):
+        # Build Hlo Computation
+        batch_size = 4096
+        input_dim = hidden_dim = output_dim = 1024
+
+        computation = HloComputation()
+        with computation:
+            x = HloParameter((batch_size, input_dim))
+            y = HloParameter((batch_size, output_dim))
+            w1 = HloParameter((input_dim, hidden_dim))
+            w2 = HloParameter((hidden_dim, output_dim))
+            w1_aux = HloParameter((input_dim, hidden_dim))
+            w2_aux = HloParameter((hidden_dim, output_dim))
+
+            # forward
+            h1 = HloDot(x, w1)
+            h2 = HloDot(h1, w2)
+            loss = HloSubtract(h2, y)
+
+            # backward
+            coef = HloConstant(2 / batch_size / output_dim)
+            coef = HloBroadcast(coef, (batch_size, output_dim))
+            grad_loss = HloMutiply(loss, coef)
+
+            grad_w2 = HloDot(h1, grad_loss,
+                             lhs_contracting_dims=(0,),
+                             rhs_contracting_dims=(0,),)
+            new_w2 = HloSubtract(w2, grad_w2)
+            new_w2_aux = HloMutiply(w2_aux, grad_w2)
+
+            grad_h2 = HloDot(grad_loss, w2,
+                             lhs_contracting_dims=(1,),
+                             rhs_contracting_dims=(1,),)
+
+            grad_w1 = HloDot(x, grad_h2,
+                             lhs_contracting_dims=(0,),
+                             rhs_contracting_dims=(0,),)
+            new_w1 = HloSubtract(w1, grad_w1)
+            new_w1_aux = HloMutiply(w1_aux, grad_w1)
+
+            out = HloTuple((new_w1, new_w2, w1_aux, w2_aux))
+
+            # alias
+            computation.set_alias([(w1, new_w1), (w2, new_w2),
+                                   (w1_aux, new_w1_aux), (w2_aux, new_w2_aux)])
+
+        cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=29 * 1024**2)
+        objective = solve_auto_sharding(computation, cluster_env)
+
+        expected = 2 * cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4)
+        print("Objective:", objective)
+        print("Expected:", expected)
+        assert_close(expected, objective)
 
 
 def suite():
@@ -219,10 +278,10 @@ def suite():
     suite.addTest(MLPSolverTest('test_mlp_n_layer_forward'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_forward_backward'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_forward_backward'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_forward_backward_data_parallel'))
     return suite
 
 
 if __name__ == '__main__':
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

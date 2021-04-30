@@ -201,7 +201,7 @@ class LocalPipelineRunner:
                     invals_list.append(self.global_invals[var])
                 else:
                     invals_list.append(prev_stage_pipeline_outvals[var])
-            elif var in stage.global_invals:
+            elif var in stage.global_invars:
                 invals_list.append(self.global_invals[var])
             else:
                 assert var in stage.local_invars
@@ -223,8 +223,8 @@ def local_pipeline_runtime(pipeline_stages, global_invars, global_outvars):
         pipeline_outvals = None
         for stage in pipeline_stages:
             if stage.name not in runners:
-                runners[stage.name] = LocalPipelineRunner(stage.name, global_invals, pipeline_outvals)
-            pipeline_outvals, stage_global_outvals = runners[stage.name].run_stage(stage)
+                runners[stage.name] = LocalPipelineRunner(stage.name, global_invals)
+            pipeline_outvals, stage_global_outvals = runners[stage.name].run_stage(stage, pipeline_outvals)
             global_outvals.update(stage_global_outvals)
         global_outvals_list = []
         for var in global_outvars:

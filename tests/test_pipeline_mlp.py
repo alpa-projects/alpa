@@ -39,8 +39,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
-        @parallelize(donate_argnums=(),
-                     devices=self.devices)
+        @parallelize(donate_argnums=(), devices=self.devices)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
@@ -67,7 +66,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         # JIT compiler
-        optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
+        gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
+        print(gradients)
 
 
 def suite():

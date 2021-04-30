@@ -1,4 +1,5 @@
 """Use the auto sharding pass in XLA"""
+
 from functools import partial
 import multiprocessing
 import pickle
@@ -21,8 +22,9 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
+from parax.global_env import global_config
+from parax.xla_pass_context import XlaPassContext
 
-xops = xc.ops
 
 def auto_sharding_callable(
     fun: lu.WrappedFun,
@@ -51,7 +53,7 @@ def auto_sharding_callable(
     out_nodes = xla.jaxpr_subcomp(
         c, jaxpr, backend_name, axis_env, xla_consts,
         extend_name_stack(wrap_name(transformed_name, 'auto_sharding')), *xla_args)
-    out_tuple = xops.Tuple(c, out_nodes)
+    out_tuple = xc.ops.Tuple(c, out_nodes)
 
     # Set up aliases (donating invars)
     backend = xb.get_backend(backend_name)
@@ -75,13 +77,19 @@ def auto_sharding_callable(
         device_assignment=device_assignment,
         use_spmd_partitioning=spmd_lowering,
     )
-    executable_build_options = compile_options.executable_build_options
-    executable_build_options.use_auto_sharding = True
-    if memory_budget_per_device:
-        executable_build_options.memory_budget_per_device = int(memory_budget_per_device)
     compile_options.parameter_is_tupled_arguments = tuple_args
     built = c.Build(out_tuple)
-    compiled = xla.backend_compile(backend, built, compile_options)
+
+    if memory_budget_per_device is None:
+        memory_budget_per_device = 1 << 30
+
+    with XlaPassContext({
+        "auto_sharding::enable": True,
+        "auto_sharding::solver_strategy": global_config.auto_sharding_solver_strategy,
+        "auto_sharding::memory_budget_per_device": memory_budget_per_device,
+        "auto_sharding::print_strategy": False,
+    }):
+        compiled = xla.backend_compile(backend, built, compile_options)
 
     testing.last_compiled_executable = compiled
 

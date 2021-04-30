@@ -26,9 +26,10 @@ class AutoShardingAttentionTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
-        global_config.set_shard_parallel_strategy('auto_sharding')
+        global_config.shard_parallel_strategy = 'auto_sharding'
 
     def test_attention(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
 
         class Model(nn.Module):
             num_heads: int
@@ -110,6 +111,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 
     def test_bert_layer(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
+
         class Model(nn.Module):
             num_heads: int
             head_size: int
@@ -204,6 +207,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 
     def test_n_bert_layer(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
 
         class Model(nn.Module):
             num_layers: int
@@ -311,11 +315,86 @@ class AutoShardingAttentionTest(unittest.TestCase):
             )
 
 
+    def test_bert_layer_force_data_parallel(self):
+        global_config.auto_sharding_solver_strategy = 'force_data_parallel'
+
+        class Model(nn.Module):
+            num_heads: int
+            head_size: int
+            intermediate_size: int
+            dropout_rate: float = 0.0
+            kernel_init_scale: float = 0.2
+            dtype: jnp.dtype = jnp.float32
+
+            @nn.compact
+            def __call__(self, hidden_states, attention_mask, deterministic: bool=True):
+                attention = FlaxBertLayer(
+                    self.num_heads,
+                    self.head_size,
+                    self.intermediate_size,
+                    dropout_rate=self.dropout_rate,
+                    kernel_init_scale=self.kernel_init_scale,
+                    dtype=self.dtype,
+                )(hidden_states, attention_mask, deterministic=deterministic)
+                return attention
+
+        @parallelize(memory_budget_per_device=1000 * (1 << 20),
+                     devices=self.devices)
+        def train_step(optimizer, batch, apply_fn):
+            def loss_func(params):
+                rngs = {"dropout": batch['rng']}
+                out = apply_fn(params, batch['hidden_states'],
+                               batch['attention_mask'], deterministic,
+                               rngs=rngs)
+                return jnp.mean((out - batch['label']) ** 2)
+
+            grad = jax.grad(loss_func)(optimizer.target)
+            new_optimizer = optimizer.apply_gradient(grad)
+            return new_optimizer
+
+        batch_size = 4
+        seq_len = 128
+        hidden_dim = 2048
+        intermediate_size = hidden_dim * 4
+        num_heads = 16
+        per_head = hidden_dim // num_heads
+        dropout_rate = 0.0
+        deterministic = False
+
+        hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+        label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+
+        # Init model and optimizer
+        model = Model(num_heads=num_heads, head_size=hidden_dim,
+                      intermediate_size=intermediate_size, dropout_rate=dropout_rate)
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, hidden_states, attention_mask, deterministic)
+        optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # JIT compile
+        optimizer = train_step(optimizer,
+                               {"hidden_states": hidden_states,
+                                "attention_mask": attention_mask,
+                                "label": label,
+                                "rng": rngkey},
+                               model.apply)
+
+        # Check sharding strategy
+        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
+        hlo_ir = hlo_module.to_string()
+
+        forced_all_reduce_cost = 1000
+        num_weight_tensors = len(jax.tree_util.tree_leaves(params))
+        expected = forced_all_reduce_cost * num_weight_tensors
+        assert_close(testing.last_compiled_auto_sharding_objective, expected)
+
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingAttentionTest('test_attention'))
     suite.addTest(AutoShardingAttentionTest('test_bert_layer'))
     suite.addTest(AutoShardingAttentionTest('test_n_bert_layer'))
+    suite.addTest(AutoShardingAttentionTest('test_bert_layer_force_data_parallel'))
     return suite
 
 

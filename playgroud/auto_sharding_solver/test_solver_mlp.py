@@ -10,7 +10,7 @@ import numpy as np
 
 from hlo import *
 from cluster_env import ClusterEnvironment
-from solver import solve_auto_sharding
+from solver import solve_auto_sharding, SolverOption
 
 
 def assert_close(x, y):
@@ -217,9 +217,62 @@ class MLPSolverTest(unittest.TestCase):
         assert_close(objective,
             cluster_env.all_reduce_cost(batch_size * hidden_dim * 4) * (num_layers - 1))
 
-    def test_mlp_2_layer_forward_backward_data_parallel(self):
+
+    def test_mlp_2_layer_forward_backward_force_data_parallel(self):
         # Build Hlo Computation
-        batch_size = 4096
+        batch_size = 128
+        input_dim = hidden_dim = output_dim = 1024
+
+        computation = HloComputation()
+        with computation:
+            x = HloParameter((batch_size, input_dim))
+            y = HloParameter((batch_size, output_dim))
+            w1 = HloParameter((input_dim, hidden_dim))
+            w2 = HloParameter((hidden_dim, output_dim))
+
+            # forward
+            h1 = HloDot(x, w1)
+            h2 = HloDot(h1, w2)
+            loss = HloSubtract(h2, y)
+
+            # backward
+            coef = HloConstant(2 / batch_size / output_dim)
+            coef = HloBroadcast(coef, (batch_size, output_dim))
+            grad_loss = HloMutiply(loss, coef)
+
+            grad_w2 = HloDot(h1, grad_loss,
+                             lhs_contracting_dims=(0,),
+                             rhs_contracting_dims=(0,),)
+            new_w2 = HloSubtract(w2, grad_w2)
+            grad_h2 = HloDot(grad_loss, w2,
+                             lhs_contracting_dims=(1,),
+                             rhs_contracting_dims=(1,),)
+
+            grad_w1 = HloDot(x, grad_h2,
+                             lhs_contracting_dims=(0,),
+                             rhs_contracting_dims=(0,),)
+            new_w1 = HloSubtract(w1, grad_w1)
+            out = HloTuple((new_w1, new_w2))
+
+            # alias
+            computation.set_alias([(w1, new_w1), (w2, new_w2)])
+
+        solver_option = SolverOption()
+        solver_option.force_data_parallel = True
+        solver_option.force_all_reduce_cost = 1000
+        cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=20 * 1024**2,
+                                         solver_option=solver_option)
+
+        objective = solve_auto_sharding(computation, cluster_env, solver_option)
+        expected = solver_option.force_all_reduce_cost * 2
+        print("Objective:", objective)
+        print("Expected:", expected)
+        assert_close(objective, expected)
+
+
+    def test_mlp_2_layer_forward_backward_force_zero_data_parallel(self):
+        # Build Hlo Computation
+        batch_size = 128
         input_dim = hidden_dim = output_dim = 1024
 
         computation = HloComputation()
@@ -244,8 +297,8 @@ class MLPSolverTest(unittest.TestCase):
             grad_w2 = HloDot(h1, grad_loss,
                              lhs_contracting_dims=(0,),
                              rhs_contracting_dims=(0,),)
-            new_w2 = HloSubtract(w2, grad_w2)
             new_w2_aux = HloMutiply(w2_aux, grad_w2)
+            new_w2 = HloSubtract(w2, new_w2_aux)
 
             grad_h2 = HloDot(grad_loss, w2,
                              lhs_contracting_dims=(1,),
@@ -254,22 +307,26 @@ class MLPSolverTest(unittest.TestCase):
             grad_w1 = HloDot(x, grad_h2,
                              lhs_contracting_dims=(0,),
                              rhs_contracting_dims=(0,),)
-            new_w1 = HloSubtract(w1, grad_w1)
             new_w1_aux = HloMutiply(w1_aux, grad_w1)
+            new_w1 = HloSubtract(w1, new_w1_aux)
 
-            out = HloTuple((new_w1, new_w2, w1_aux, w2_aux))
+            out = HloTuple((new_w1, new_w2, new_w1_aux, new_w2_aux))
 
             # alias
             computation.set_alias([(w1, new_w1), (w2, new_w2),
                                    (w1_aux, new_w1_aux), (w2_aux, new_w2_aux)])
 
-        cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=29 * 1024**2)
-        objective = solve_auto_sharding(computation, cluster_env)
+        solver_option = SolverOption()
+        solver_option.force_data_parallel = True
+        solver_option.force_reduce_scatter_cost = 1000
+        cluster_env = ClusterEnvironment(num_devices=4, memory_per_device=100 * 1024**2,
+                                         solver_option=solver_option)
 
-        expected = 2 * cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4)
+        objective = solve_auto_sharding(computation, cluster_env, solver_option)
+        expected = cluster_env.all_gather_cost(4 * hidden_dim * hidden_dim) * 2
         print("Objective:", objective)
         print("Expected:", expected)
-        assert_close(expected, objective)
+        assert_close(objective, expected)
 
 
 def suite():
@@ -278,10 +335,12 @@ def suite():
     suite.addTest(MLPSolverTest('test_mlp_n_layer_forward'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_forward_backward'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_forward_backward'))
-    suite.addTest(MLPSolverTest('test_mlp_2_layer_forward_backward_data_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_forward_backward_force_data_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_forward_backward_force_zero_data_parallel'))
     return suite
 
 
 if __name__ == '__main__':
     runner = unittest.TextTestRunner()
     runner.run(suite())
+

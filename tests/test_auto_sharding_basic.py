@@ -15,7 +15,7 @@ from parax import parallelize, global_config, testing
 MB = 1024 ** 2
 
 def assert_close(x, y):
-    assert abs(x / y - 1) < 0.001, f"{x} vs. {y}"
+    assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"
 
 
 def all_reduce_cost(num_devices, num_bytes):
@@ -26,7 +26,8 @@ class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
-        global_config.set_shard_parallel_strategy('auto_sharding')
+        global_config.shard_parallel_strategy = "auto_sharding"
+        global_config.auto_sharding_solver_strategy = 'normal'
 
     def test_donate_buffer(self):
         @parallelize(donate_argnums=(0,),

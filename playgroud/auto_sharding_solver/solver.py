@@ -208,7 +208,15 @@ class CostGraph:
         return ret
 
 
-def solve_auto_sharding(computation, cluster_env):
+class SolverOption:
+    def __init__(self):
+        self.force_data_parallel = False
+        self.forward_backward_sep_id = None
+        self.force_all_reduce_cost = None
+        self.force_reduce_scatter_cost = None
+
+
+def solve_auto_sharding(computation, cluster_env, solver_option=None):
     print("===== Hlo Computation =====")
     print(computation, "\n")
 
@@ -219,8 +227,12 @@ def solve_auto_sharding(computation, cluster_env):
         names.sort()
         print(f"Time: {i}, Live set: {names}")
 
+    if solver_option is None:
+        solver_option = SolverOption()
+
+
     # Build strategies and costs
-    computation.build_strategy_and_cost(cluster_env)
+    computation.build_strategy_and_cost(cluster_env, solver_option)
 
     # Build all constants for ILP
     N = len(computation.instructions)

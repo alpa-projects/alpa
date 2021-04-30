@@ -5,5 +5,6 @@ from . import util
 
 # Shortcut
 from .api import parallelize
+from .global_env import global_config
 from .pmap_data_parallel import pmap_data_parallel, annotate_gradient
 from .util import compute_bytes

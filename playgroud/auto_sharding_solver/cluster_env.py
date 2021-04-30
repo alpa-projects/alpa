@@ -4,7 +4,7 @@ from common import compute_bytes
 
 
 class ClusterEnvironment:
-    def __init__(self, num_devices, memory_per_device):
+    def __init__(self, num_devices, memory_per_device, solver_option=None):
         self.num_devices = num_devices
         self.memory_per_device = memory_per_device
         self.alpha = 1
@@ -14,7 +14,18 @@ class ClusterEnvironment:
         self.reduce_scatter_penalty = 0
         self.partial_reduction_penalty = 0
 
+        self.force_all_reduce_cost = None
+        self.force_reduce_scatter_cost = None
+
+        if solver_option:
+            self.force_all_reduce_cost = solver_option.force_all_reduce_cost
+            self.force_reduce_scatter_cost = solver_option.force_reduce_scatter_cost
+
+
     def all_reduce_cost(self, num_bytes):
+        if self.force_all_reduce_cost:
+            return self.force_all_reduce_cost
+
         return (self.alpha +
                 self.beta * 2 * (self.num_devices - 1) / self.num_devices * num_bytes +
                 0.1) + self.all_reduce_penalty
@@ -25,6 +36,9 @@ class ClusterEnvironment:
                 0.01) + self.all_gather_penalty
 
     def reduce_scatter_cost(self, num_bytes):
+        if self.force_reduce_scatter_cost:
+            return self.force_reduce_scatter_cost
+
         return (self.alpha +
                 self.beta * (self.num_devices - 1) / self.num_devices * num_bytes +
                 0.001) + self.reduce_scatter_penalty

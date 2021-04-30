@@ -30,7 +30,7 @@ def block_until_ready(x):
 def benchmark_2_layer_mlp():
     assert len(jax.local_devices()) >= 4
     devices = tuple(jax.local_devices()[:4])
-    global_config.set_shard_parallel_strategy('auto_sharding')
+    global_config.shard_parallel_strategy = "auto_sharding"
 
     class Model(nn.Module):
         hidden_dim: int
@@ -102,7 +102,8 @@ def benchmark_2_layer_mlp():
 def benchmark_transformer_layer():
     assert len(jax.local_devices()) >= 4
     devices = tuple(jax.local_devices()[:4])
-    global_config.set_shard_parallel_strategy('auto_sharding')
+    global_config.shard_parallel_strategy = "auto_sharding"
+    #global_config.auto_sharding_solver_strategy = "force_data_parallel"
 
     class Model(nn.Module):
         num_heads: int
@@ -124,7 +125,7 @@ def benchmark_transformer_layer():
             )(hidden_states, attention_mask, deterministic=deterministic)
             return attention
 
-    @parallelize(memory_budget_per_device=800 * (1 << 20),
+    @parallelize(memory_budget_per_device=2000.0 * (1 << 20),
                  devices=devices)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
@@ -195,7 +196,7 @@ def benchmark_transformer_layer():
 
     print(f"#communication: {hlo_ir.count('channel_id')}")
     print(f"#all-reduce: {hlo_ir.count('all-reduce(')}")
-    print(f"Mem: {mem / MB:.2f} ms")
+    print(f"Mem: {mem / MB:.2f} MB")
     print(f"Time: {cost * 1e3:.2f} ms")
 
 

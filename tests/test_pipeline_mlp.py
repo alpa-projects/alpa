@@ -39,7 +39,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
-        @parallelize(donate_argnums=(), devices=self.devices)
+        @parallelize(donate_argnums=(), devices=self.devices, strategy="pipeline_parallel")
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params, x, y):
                 out = apply_fn(params, x)

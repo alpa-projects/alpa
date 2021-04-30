@@ -1,5 +1,5 @@
 """
-A global context to pass arguments from python to XLA passes.
+A global context to pass arguments from python to XLA c++ passes.
 """
 
 from jax.lib import xla_extension as _xla

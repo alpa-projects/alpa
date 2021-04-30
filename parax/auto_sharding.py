@@ -1,4 +1,5 @@
 """Use the auto sharding pass in XLA"""
+
 from functools import partial
 import multiprocessing
 import pickle

@@ -1,3 +1,5 @@
+""" Monkey patch other python libraries """
+
 import flax
 
 # DEPRECATED!

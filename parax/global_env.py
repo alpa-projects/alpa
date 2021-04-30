@@ -1,5 +1,4 @@
-"""Global configuration"""
-
+"""All global configurations for this project"""
 
 class GlobalConfig:
     def __init__(self):

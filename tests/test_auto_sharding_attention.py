@@ -29,6 +29,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         global_config.shard_parallel_strategy = 'auto_sharding'
 
     def test_attention(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
 
         class Model(nn.Module):
             num_heads: int
@@ -110,6 +111,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 
     def test_bert_layer(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
+
         class Model(nn.Module):
             num_heads: int
             head_size: int
@@ -204,6 +207,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 
     def test_n_bert_layer(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
 
         class Model(nn.Module):
             num_layers: int

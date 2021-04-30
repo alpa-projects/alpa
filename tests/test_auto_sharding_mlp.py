@@ -22,6 +22,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         global_config.shard_parallel_strategy = "auto_sharding"
 
     def test_2_layer_mlp(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
+
         class Model(nn.Module):
             hidden_dim: int
             output_dim: int
@@ -87,6 +89,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         )
 
     def test_n_layer_mlp(self):
+        global_config.auto_sharding_solver_strategy = 'normal'
+
         assert len(jax.devices()) >= 4
         devices = tuple(jax.devices()[:4])
 

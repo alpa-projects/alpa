@@ -27,6 +27,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
         global_config.shard_parallel_strategy = "auto_sharding"
+        global_config.auto_sharding_solver_strategy = 'force_data_parallel'
 
     def test_donate_buffer(self):
         @parallelize(donate_argnums=(0,),

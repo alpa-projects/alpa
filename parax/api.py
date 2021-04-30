@@ -114,8 +114,7 @@ def auto_parallel_callable(
         )
     elif strategy == "pipeline_parallel":
         return pipeline_parallel_callable(
-             fun, in_tree, out_tree_thunk, devices, donated_invars,
-            memory_budget_per_device, *avals
+             fun, *avals
         )
     else:
         raise ValueError("Invalid parallel strategy")

@@ -248,4 +248,3 @@ def pipeline_parallel_callable(
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     return local_pipeline_runtime(pipeline_stages, global_invars, global_outvars)
-

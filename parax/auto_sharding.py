@@ -35,11 +35,7 @@ def auto_sharding_callable(
     devices = devices or np.array(jax.devices())
 
     # Trace to get jaxpr
-    with jax.disable_jit():
-        jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    print("=" * 80)
-    print("jaxpr", jaxpr)
-    print("=" * 80)
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
     tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
@@ -85,10 +81,6 @@ def auto_sharding_callable(
         executable_build_options.memory_budget_per_device = int(memory_budget_per_device)
     compile_options.parameter_is_tupled_arguments = tuple_args
     built = c.Build(out_tuple)
-    print("=" * 80)
-    print("type(built)", type(built))
-    print("xla_hlo_uncompiled", built.as_hlo_text())
-    print("=" * 80)
     compiled = xla.backend_compile(backend, built, compile_options)
 
     testing.last_compiled_executable = compiled

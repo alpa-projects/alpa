@@ -68,7 +68,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
             abstract_args = unsafe_map(xla.abstractify, args_flat)
             compiled_func = auto_parallel_callable(
                 f, in_tree, out_tree_hashable, devices, donated_invars,
-                memory_budget_per_device, *abstract_args, strategy=strategy
+                memory_budget_per_device, strategy, *abstract_args
             )
             out = compiled_func(*args_flat)
 
@@ -91,8 +91,8 @@ def auto_parallel_callable(
     devices,
     donated_invars,
     memory_budget_per_device,
+    strategy,
     *avals,
-    strategy="shard_parallel",
 ):
     fun_name = fun.__name__
 

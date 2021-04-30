@@ -7,6 +7,8 @@ import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, ShardedAxis
+from jax.experimental.maps import FrozenDict
+
 from flax import linen as nn
 from flax import optim
 
@@ -15,6 +17,35 @@ from parax import parallelize, global_config, testing, mark_pipeline
 from test_auto_sharding_basic import assert_close, all_reduce_cost
 
 MB = 1024 ** 2
+
+def is_sequence(x):
+  try:
+    iter(x)
+  except TypeError:
+    return False
+  else:
+    return True
+
+def assert_allclose(x, y):
+    if isinstance(x, dict) or isinstance(x, FrozenDict):
+        assert isinstance(y, dict) or isinstance(y, FrozenDict)
+        assert set(x.keys()) == set(y.keys())
+        for k in x.keys():
+            assert_allclose(x[k], y[k])
+    elif is_sequence(x) and not hasattr(x, '__array__'):
+      assert is_sequence(y) and not hasattr(y, '__array__')
+      assert len(x) == len(y)
+      for x_elt, y_elt in zip(x, y):
+          assert_allclose(x_elt, y_elt)
+    elif hasattr(x, '__array__') or np.isscalar(x):
+      assert hasattr(y, '__array__') or np.isscalar(y)
+      x = np.asarray(x)
+      y = np.asarray(y)
+      assert np.allclose(x, y)
+    elif x == y:
+      return
+    else:
+      raise TypeError((type(x), type(y)))
 
 class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
@@ -39,7 +70,6 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
-        @parallelize(donate_argnums=(), devices=self.devices, strategy="pipeline_parallel")
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
@@ -65,9 +95,10 @@ class AutoShardingMLPTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        # JIT compiler
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        print(gradients)
+        pipelined_train_step = parallelize(donate_argnums=(), devices=self.devices, strategy="pipeline_parallel")(train_step)
+        gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
+        assert_allclose(gradients, gradients_with_pipeline)
 
 
 def suite():

@@ -62,3 +62,20 @@ def run_cmd(cmd):
     print(cmd)
     os.system(cmd)
 
+class FastLookupList:
+    def __init__(self, iterable=()):
+        self.elements = list(iterable)
+        self.elements_set = set(iterable)
+
+    def __getitem__(self, key):
+        return self.elements[key]
+
+    def __len__(self):
+        return len(self.elements)
+
+    def __contains__(self, element):
+        return element in self.elements_set
+
+    def append(self, element):
+        self.elements.append(element)
+        self.elements_set.add(element)

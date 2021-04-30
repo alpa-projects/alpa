@@ -16,12 +16,13 @@ from jax._src.util import safe_map, wraps, HashableFunction
 from parax import util
 from parax.pmap_data_parallel import pmap_data_parallel_callable
 from parax.shard_parallel import shard_parallel_callable
+from parax.pipeline_parallel import pipeline_parallel_callable
 
 unsafe_map, map = map, safe_map  # type: ignore
 
 
 def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=None,
-                memory_budget_per_device=None):
+                memory_budget_per_device=None, strategy="shard_parallel"):
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):
@@ -67,7 +68,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=
             abstract_args = unsafe_map(xla.abstractify, args_flat)
             compiled_func = auto_parallel_callable(
                 f, in_tree, out_tree_hashable, devices, donated_invars,
-                memory_budget_per_device, *abstract_args
+                memory_budget_per_device, strategy, *abstract_args
             )
             out = compiled_func(*args_flat)
 
@@ -90,16 +91,14 @@ def auto_parallel_callable(
     devices,
     donated_invars,
     memory_budget_per_device,
-    *avals
+    strategy,
+    *avals,
 ):
     fun_name = fun.__name__
 
     # Clean stores for the next call
     for store in fun.stores:
         store and store.reset()
-
-    # Choose parallel strategy
-    strategy = 'shard_parallel'
 
     # Apply parallel strategy
     if strategy == "shard_parallel":
@@ -110,6 +109,10 @@ def auto_parallel_callable(
     elif strategy == "pmap_data_parallel":
         return pmap_data_parallel_callable(
             fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
+        )
+    elif strategy == "pipeline_parallel":
+        return pipeline_parallel_callable(
+             fun, *avals
         )
     else:
         raise ValueError("Invalid parallel strategy")

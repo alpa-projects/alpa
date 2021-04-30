@@ -7,7 +7,8 @@ import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, ShardedAxis
-from jax.experimental.maps import FrozenDict
+from jax.experimental.maps import FrozenDict as FrozenDictJax
+from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 from flax import linen as nn
 from flax import optim
@@ -27,8 +28,8 @@ def is_sequence(x):
     return True
 
 def assert_allclose(x, y):
-    if isinstance(x, dict) or isinstance(x, FrozenDict):
-        assert isinstance(y, dict) or isinstance(y, FrozenDict)
+    if isinstance(x, dict) or isinstance(x, FrozenDictJax) or isinstance(x, FrozenDictFlax):
+        assert isinstance(y, dict) or isinstance(y, FrozenDictJax) or isinstance(x, FrozenDictFlax)
         assert set(x.keys()) == set(y.keys())
         for k in x.keys():
             assert_allclose(x[k], y[k])

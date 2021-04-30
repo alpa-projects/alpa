@@ -1,21 +1,16 @@
-from jax.interpreters.ad import linear_transpose2
 import numpy as np
 
 import unittest
 
 import jax
 import jax.numpy as jnp
-from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, global_config, testing, mark_pipeline
-
-from test_auto_sharding_basic import assert_close, all_reduce_cost
+from parax import parallelize, mark_pipeline
 
 MB = 1024 ** 2
 

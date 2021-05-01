@@ -16,36 +16,97 @@ class ShardingSpecType(Enum):
 
 
 class ShardingSpec:
-    def __init__(self, type_, tile_assignment_dimensions, tile_assignment_devices):
+    def __init__(self, type_, tile_assignment_dimensions, tile_assignment_devices,
+                 replicate_on_last_tile_dim):
         self.type = type_
-        self.tile_assignment_dimensions = tile_assignment_dimensions
-        self.tile_assignment_devices = tile_assignment_devices
+        self.tile_assignment_dimensions = tuple(tile_assignment_dimensions)
+        self.tile_assignment_devices = tuple(tile_assignment_devices)
+        self.replicate_on_last_tile_dim = replicate_on_last_tile_dim
 
     @staticmethod
-    def split(shape, dim, cluster_env):
-        tile_assignment_dimensions = tuple(
-            cluster_env.num_devices if i == dim else 1 for i in range(len(shape)))
-        tile_assignment_devices = tuple(range(cluster_env.num_devices))
+    def tile(shape, tensor_dims, mesh_dims, cluster_env):
+        assert len(tensor_dims) == len(mesh_dims)
+
+        tile_assignment_dimensions = [1] * len(shape)
+
+        # Split on certain mesh dimensions
+        split_prod = 1
+        for tensor_dim, mesh_dim in zip(tensor_dims, mesh_dims):
+            tile_assignment_dimensions[tensor_dim] = len(cluster_env.device_mesh[mesh_dim])
+            split_prod *= len(cluster_env.device_mesh[mesh_dim])
+
+        # Replicate on reminding mesh dimensions
+        if split_prod < cluster_env.num_devices:
+            tile_assignment_dimensions.append(cluster_env.num_devices // split_prod)
+            replicate_on_last_tile_dim = True
+        else:
+            replicate_on_last_tile_dim = False
+
+        # Map device ids from device_mesh to tile_assignment_devices
+        def append_elements(result, array, indices, cur_depth, cur_indices):
+            if cur_depth == len(array.shape) - 1:
+                result.append(array[tuple(cur_indices)])
+            else:
+                next_depth = cur_depth + 1
+                index = indices[next_depth]
+
+                if index is None:
+                    for i in range(array.shape[next_depth]):
+                        cur_indices[next_depth] = i
+                        append_elements(result, array, indices, next_depth, cur_indices)
+                else:
+                    cur_indices[next_depth] = index
+                    append_elements(result, array, indices, next_depth, cur_indices)
+
+        tile_assignment_devices = []
+        def generate_tile_assignment_devices(tensor_dim, dim_value, mesh_indices):
+            if tensor_dim == len(tile_assignment_dimensions) - 1:
+                if (None in mesh_indices) and dim_value != 0:
+                    return
+                cur_indices = [None] * len(cluster_env.device_mesh)
+                cur_depth = -1
+                append_elements(tile_assignment_devices, cluster_env.device_mesh, mesh_indices,
+                                cur_depth, cur_indices)
+            else:
+                next_tensor_dim = tensor_dim + 1
+
+                if next_tensor_dim in tensor_dims:
+                    next_mesh_dim = mesh_dims[tensor_dims.index(next_tensor_dim)]
+                else:
+                    next_mesh_dim = None
+
+                for i in range(tile_assignment_dimensions[next_tensor_dim]):
+                    if next_mesh_dim is not None:
+                        mesh_indices[next_mesh_dim] = i
+                    generate_tile_assignment_devices(next_tensor_dim, i, mesh_indices)
+
+        generate_tile_assignment_devices(-1, 0, [None] * len(cluster_env.device_mesh))
+
         return ShardingSpec(ShardingSpecType.OTHER,
-                            tile_assignment_dimensions, tile_assignment_devices)
+                            tile_assignment_dimensions, tile_assignment_devices,
+                            replicate_on_last_tile_dim)
 
     @staticmethod
     def replicated(cluster_env):
-        tile_assignment_devices = tuple(range(cluster_env.num_devices))
-        return ShardingSpec(ShardingSpecType.REPLICATED, None, tile_assignment_devices)
+        tile_assignment_devices = range(cluster_env.num_devices)
+        return ShardingSpec(ShardingSpecType.REPLICATED, None, tile_assignment_devices,
+                            False)
 
     @staticmethod
     def tuple():
-        return ShardingSpec(ShardingSpecType.TUPLE, None, None)
+        return ShardingSpec(ShardingSpecType.TUPLE, None, None, False)
 
     @staticmethod
     def partial_reduction(cluster_env):
-        tile_assignment_devices = tuple(range(cluster_env.num_devices))
-        return ShardingSpec(ShardingSpecType.PARTIAL_REDUCTION, None, tile_assignment_devices)
+        tile_assignment_devices = range(cluster_env.num_devices)
+        return ShardingSpec(ShardingSpecType.PARTIAL_REDUCTION, None,
+                            tile_assignment_devices, False)
 
     def __eq__(self, other):
-        return (self.type == other.type and self.tile_assignment_dimensions == other.tile_assignment_dimensions
-                and self.tile_assignment_devices == other.tile_assignment_devices)
+        return (self.type == other.type and
+                self.tile_assignment_dimensions == other.tile_assignment_dimensions and
+                self.tile_assignment_devices == other.tile_assignment_devices and
+                self.replicate_on_last_tile_dim == other.replicate_on_last_tile_dim)
 
 
 def resharding_cost_vector(source_ins, required_spec, cluster_env):
@@ -468,6 +529,19 @@ class HloReduce(HloInstruction):
             self.resharding_costs.append([
                 resharding_cost_vector(self.operands[0],
                     ShardingSpec.split(self.operands[0].shape, orignal_dim, cluster_env), cluster_env),
+            ])
+
+        for i in range(len(self.dimensions)):
+            name = f"R (all-reduce)"
+            self.strategies.append(InstructionStrategy(name, ShardingSpec.replicated(cluster_env)))
+            self.compute_costs.append(0)
+            self.communication_costs.append(cluster_env.all_reduce_cost(compute_bytes(self.shape)))
+            self.memory_costs.append(compute_bytes(self.shape))
+
+            dim = self.dimensions[i]
+            self.resharding_costs.append([
+                resharding_cost_vector(self.operands[0],
+                    ShardingSpec.split(self.operands[0].shape, dim, cluster_env), cluster_env),
             ])
 
         self.strategies.append(InstructionStrategy("R", ShardingSpec.replicated(cluster_env)))

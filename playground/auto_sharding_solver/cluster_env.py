@@ -1,11 +1,15 @@
 """Cluster Environment"""
+import numpy as np
+
 from hlo import ShardingSpec, ShardingSpecType
 from common import compute_bytes
 
 
 class ClusterEnvironment:
-    def __init__(self, num_devices, memory_per_device, solver_option=None):
-        self.num_devices = num_devices
+    def __init__(self, device_mesh, memory_per_device, solver_option=None):
+        self.device_mesh = np.array(device_mesh)
+        self.num_devices = np.prod(self.device_mesh.shape)
+
         self.memory_per_device = memory_per_device
         self.alpha = 1
         self.beta = 1
@@ -20,7 +24,6 @@ class ClusterEnvironment:
         if solver_option:
             self.force_all_reduce_cost = solver_option.force_all_reduce_cost
             self.force_reduce_scatter_cost = solver_option.force_reduce_scatter_cost
-
 
     def all_reduce_cost(self, num_bytes):
         if self.force_all_reduce_cost:

@@ -230,7 +230,6 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
     if solver_option is None:
         solver_option = SolverOption()
 
-
     # Build strategies and costs
     computation.build_strategy_and_cost(cluster_env, solver_option)
 
@@ -320,19 +319,22 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
                 stra_idx = s_val[i]
                 name = instructions[i].strategies[stra_idx].name
                 follow_map = ""
+                spec = instructions[i].strategies[stra_idx].output_spec
             else:
                 dst = s_follow[i]
                 stra_idx = reindexing_vector[i][s_val[i]]
                 name = instructions[i].strategies[stra_idx].name + f" follow {dst}"
+                spec = instructions[i].strategies[stra_idx].output_spec
 
                 follow_map = ""
                 for idx in range(len(reindexing_vector[i])):
                     stra_idx = reindexing_vector[i][idx]
                     follow_map += f"[{instructions[dst].strategies[idx].name} -> "\
                             f"{instructions[i].strategies[stra_idx].name}] "
+            #print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name} Spec: {spec}")
             print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
-            #if follow_map:
-            #    print(follow_map)
+            if follow_map:
+                print(follow_map)
 
         # Print edge cost
         for (idx, (i, j)) in enumerate(E):

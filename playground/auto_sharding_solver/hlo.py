@@ -24,6 +24,16 @@ class ShardingSpec:
         self.tile_assignment_devices = tuple(tile_assignment_devices)
         self.replicate_on_last_tile_dim = replicate_on_last_tile_dim
 
+    def num_tile_devices(self):
+        if self.type == ShardingSpecType.REPLICATED:
+            return 1
+
+        assert self.type == ShardingSpecType.OTHER
+        ret = np.prod(self.tile_assignment_dimensions)
+        if self.replicate_on_last_tile_dim:
+            ret /= self.tile_assignment_dimensions[-1]
+        return ret
+
     @staticmethod
     def tile(shape, tensor_dims, mesh_dims, cluster_env):
         assert len(tensor_dims) == len(mesh_dims)
@@ -412,33 +422,27 @@ class HloElementwise(HloInstruction):
         super().__init__(op_code, operands[0].shape, operands)
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
-        self.follow_ins = self.operands[0]
+        follow = self.operands[0]
+        self.follow_ins = follow
 
-        for i in range(len(self.shape)):
-            for j in range(len(cluster_env.device_mesh.shape)):
-                if cluster_env.device_mesh.shape[j] == 1:
-                    continue
+        for sid in range(len(follow.strategies)):
+            output_spec = follow.strategies[sid].output_spec
 
-                name = f"S{i} @ {j}"
-                self.strategies.append(InstructionStrategy(name,
-                    ShardingSpec.tile(self.shape, [i], [j], cluster_env)))
-                self.compute_costs.append(0)
-                self.communication_costs.append(0)
-                self.memory_costs.append(compute_bytes(self.shape) / cluster_env.device_mesh.shape[j])
-                self.resharding_costs.append([
-                    resharding_cost_vector(cluster_env, self.operands[k],
-                                           ShardingSpec.tile(self.operands[k].shape, [i], [j], cluster_env))
-                    for k in range(len(self.operands))
-                ])
+            #name = f"follow {follow.strategies[sid].name}"
+            name = f"follow"
+            self.strategies.append(InstructionStrategy(name, output_spec))
+            self.compute_costs.append(0)
+            self.communication_costs.append(0)
+            self.memory_costs.append(compute_bytes(self.shape) / output_spec.num_tile_devices())
 
-        self.strategies.append(InstructionStrategy("R", ShardingSpec.replicated(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(cluster_env, self.operands[k], ShardingSpec.replicated(cluster_env))
-            for k in range(len(self.operands))
-        ])
+            assert follow == self.operands[0]
+            resharding_cost_lhs = [1e10] * len(follow.strategies)
+            resharding_cost_lhs[sid] = 0
+            self.resharding_costs.append([
+              resharding_cost_lhs,
+              resharding_cost_vector(cluster_env, self.operands[1], output_spec)
+            ])
+
 
     def __str__(self):
         fun_name = str(self.op_code)[7:].lower()
@@ -503,58 +507,67 @@ class HloSelect(HloElementwise):
 
 class HloReduce(HloInstruction):
     def __init__(self, operand, dimensions):
-        new_shape = [operand.shape[i] for i in range(len(operand.shape)) if i not in dimensions]
+        new_shape = tuple(operand.shape[i] for i in range(len(operand.shape)) if i not in dimensions)
         super().__init__(OpCode.REDUCE, new_shape, [operand])
         self.dimensions = dimensions
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
-        raise NotImplementedError
-        self.follow_ins = self.operands[0]
+        operand = self.operands[0]
+        self.follow_ins = operand
 
-        dim_mapping = {}
+        # Map old dims to new dim
+        old_dim_to_new_dim = []
         pt = 0
-        for i in range(len(self.operands[0].shape)):
-            if i in self.dimensions:
-                continue
-            dim_mapping[pt] = i
-            pt += 1
+        for old_dim in range(len(operand.shape)):
+            if old_dim in self.dimensions:
+                old_dim_to_new_dim.append(None)
+            else:
+                old_dim_to_new_dim.append(pt)
+                pt += 1
 
-        for i in range(len(self.shape)):
-            name = f"S{i}"
-            self.strategies.append(InstructionStrategy(name, ShardingSpec.split(self.shape, i, cluster_env)))
+        # Create follow strategies
+        for sid in range(len(operand.strategies)):
+            tensor_dim_to_mesh = cluster_env.get_tensor_dim_to_mesh_dim(
+                operand.shape, operand.strategies[sid].output_spec)
+
+            tile_tensor_dims = []
+            tile_mesh_dims = []
+            all_reduce_dims = []
+
+            for tensor_dim in range(len(operand.shape)):
+                mesh_dim = tensor_dim_to_mesh[tensor_dim]
+                if tensor_dim in self.dimensions:
+                    if mesh_dim == -1:  # reduce on a replicated dim
+                        continue
+                    else:               # reduce on a split dim
+                        all_reduce_dims.append(mesh_dim)
+                else:
+                    if mesh_dim == -1: # follow replicated dim
+                        pass
+                    else:              # follow split dim
+                        tile_tensor_dims.append(old_dim_to_new_dim[tensor_dim])
+                        tile_mesh_dims.append(mesh_dim)
+
+            output_spec = ShardingSpec.tile(self.shape, tile_tensor_dims, tile_mesh_dims, cluster_env)
+
+            mem_cost = compute_bytes(self.shape) / output_spec.num_tile_devices()
+            comm_cost = 0
+            for mesh_dim in all_reduce_dims:
+                comm_cost += cluster_env.all_reduce_cost(mem_cost, mesh_dim)
+
+            reduce_dims_str = "".join([str(x) for x in all_reduce_dims])
+            name = f"follow (all-reduce @ {reduce_dims_str})"
+
+            self.strategies.append(InstructionStrategy(name, output_spec))
             self.compute_costs.append(0)
-            self.communication_costs.append(0)
-            self.memory_costs.append(compute_bytes(self.shape) / cluster_env.num_devices)
-
-            orignal_dim = dim_mapping[i]
-            self.resharding_costs.append([
-                resharding_cost_vector(self.operands[0],
-                    ShardingSpec.split(self.operands[0].shape, orignal_dim, cluster_env), cluster_env),
-            ])
-
-        for i in range(len(self.dimensions)):
-            name = f"R (all-reduce)"
-            self.strategies.append(InstructionStrategy(name, ShardingSpec.replicated(cluster_env)))
-            self.compute_costs.append(0)
-            self.communication_costs.append(cluster_env.all_reduce_cost(compute_bytes(self.shape)))
-            self.memory_costs.append(compute_bytes(self.shape))
-
-            dim = self.dimensions[i]
-            self.resharding_costs.append([
-                resharding_cost_vector(self.operands[0],
-                    ShardingSpec.split(self.operands[0].shape, dim, cluster_env), cluster_env),
-            ])
-
-        self.strategies.append(InstructionStrategy("R", ShardingSpec.replicated(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(self.operands[0], ShardingSpec.replicated(cluster_env), cluster_env),
-        ])
+            self.communication_costs.append(comm_cost)
+            self.memory_costs.append(mem_cost)
+            resharding_cost_vector = [1e10] * len(operand.strategies)
+            resharding_cost_vector[sid] = 0
+            self.resharding_costs.append([resharding_cost_vector])
 
     def __str__(self):
-        return f"{self.name} {self.shape} = transpose({self.operands[0].name}) " +\
+        return f"{self.name} {self.shape} = reduce({self.operands[0].name}) " +\
                f"dimensions={self.dimensions}"
 
 

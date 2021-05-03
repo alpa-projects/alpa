@@ -273,7 +273,7 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
 
     # Simplify the graph by merging nodes
     cost_graph = CostGraph(s_len, E, r, follow_pair)
-    cost_graph.simplify()
+    #cost_graph.simplify()
     s_follow, E, r, reindexing_vector = cost_graph.export_result()
 
     for src, dst in enumerate(s_follow):

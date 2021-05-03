@@ -51,7 +51,10 @@ class ClusterEnvironment:
                 self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes +
                 0.001) + self.reduce_scatter_penalty
 
-    def _get_tensor_dim_to_mesh_dim(self, spec):
+    def get_tensor_dim_to_mesh_dim(self, shape, spec):
+        if spec.type == ShardingSpecType.REPLICATED:
+            spec = ShardingSpec.tile(shape, [], [], self)
+
         if spec.replicate_on_last_tile_dim:
             tensor_dim_len = len(spec.tile_assignment_dimensions) - 1
         else:
@@ -78,17 +81,8 @@ class ClusterEnvironment:
         if src_spec == dst_spec:
             return 0
 
-        if src_spec.type == ShardingSpecType.REPLICATED:
-            src_spec = ShardingSpec.tile(shape, [], [], self)
-
-        if dst_spec.type == ShardingSpecType.REPLICATED:
-            dst_spec = ShardingSpec.tile(shape, [], [], self)
-
-        assert src_spec.type == ShardingSpecType.OTHER and\
-               dst_spec.type == ShardingSpecType.OTHER
-
-        src_tensor_dim_to_mesh_dim = self._get_tensor_dim_to_mesh_dim(src_spec)
-        dst_tensor_dim_to_mesh_dim = self._get_tensor_dim_to_mesh_dim(dst_spec)
+        src_tensor_dim_to_mesh_dim = self.get_tensor_dim_to_mesh_dim(shape, src_spec)
+        dst_tensor_dim_to_mesh_dim = self.get_tensor_dim_to_mesh_dim(shape, dst_spec)
 
         cost = 0
         for i in range(len(shape)):

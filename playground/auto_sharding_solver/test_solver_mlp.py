@@ -41,11 +41,11 @@ def get_mlp_2_layer_computation(batch_size, input_dim, hidden_dim, output_dim):
                          lhs_contracting_dims=(0,),
                          rhs_contracting_dims=(0,),)
         new_w2 = HloSubtract(w2, grad_w2)
-        grad_h2 = HloDot(grad_loss, w2,
+        grad_h1 = HloDot(grad_loss, w2,
                          lhs_contracting_dims=(1,),
                          rhs_contracting_dims=(1,),)
 
-        grad_w1 = HloDot(x, grad_h2,
+        grad_w1 = HloDot(x, grad_h1,
                          lhs_contracting_dims=(0,),
                          rhs_contracting_dims=(0,),)
         new_w1 = HloSubtract(w1, grad_w1)
@@ -72,6 +72,60 @@ def get_mlp_2_layer_computation(batch_size, input_dim, hidden_dim, output_dim):
         14: subtract.2 (1024, 1024) = subtract(parameter.2, dot.4)
         15: tuple.0 () = tuple('subtract.2', 'subtract.1') 
         """
+    return computation
+
+
+def get_mlp_2_layer_bias_computation(batch_size, input_dim, hidden_dim, output_dim):
+    computation = HloComputation()
+    with computation:
+        x = HloParameter((batch_size, input_dim))
+        y = HloParameter((batch_size, output_dim))
+        w1 = HloParameter((input_dim, hidden_dim))
+        w2 = HloParameter((hidden_dim, output_dim))
+        b1 = HloParameter((hidden_dim,))
+        b2 = HloParameter((output_dim,))
+
+        ## forward
+        h1 = HloDot(x, w1)
+        bb1 = HloBroadcast(b1, (batch_size, hidden_dim), dimensions=(1,))
+        h1_add = HloAdd(h1, bb1)
+
+        h2 = HloDot(h1_add, w2)
+        bb2 = HloBroadcast(b2, (batch_size, output_dim), dimensions=(1,))
+        h2_add = HloAdd(h2, bb2)
+
+        loss = HloSubtract(h2_add, y)
+
+        ## backward
+        coef = HloConstant(2 / batch_size / output_dim)
+        coef = HloBroadcast(coef, (batch_size, output_dim))
+        grad_loss = HloMutiply(loss, coef)
+
+        grad_w2 = HloDot(h1_add, grad_loss,
+                         lhs_contracting_dims=(0,),
+                         rhs_contracting_dims=(0,),)
+        new_w2 = HloSubtract(w2, grad_w2)
+
+        grad_h1 = HloDot(grad_loss, w2,
+                         lhs_contracting_dims=(1,),
+                         rhs_contracting_dims=(1,),)
+
+        grad_w1 = HloDot(x, grad_h1,
+                         lhs_contracting_dims=(0,),
+                         rhs_contracting_dims=(0,),)
+        new_w1 = HloSubtract(w1, grad_w1)
+
+        grad_b1 = HloReduce(grad_h1, dimensions=[0])
+        new_b1 = HloSubtract(b1, grad_b1)
+
+        grad_b2 = HloReduce(grad_loss, dimensions=[0])
+        new_b2 = HloSubtract(b2, grad_b2)
+
+        out = HloTuple((new_w1, new_w2, new_b1, new_b2))
+
+        ## alias
+        #computation.set_alias([(w1, new_w1), (w2, new_w2)])
+
     return computation
 
 
@@ -138,6 +192,25 @@ def get_mlp_n_layer_computation(num_layers, batch_size, input_dim, hidden_dim, o
 
 
 class MLPSolverTest(unittest.TestCase):
+    def test_mlp_2_layer_data_parallel(self):
+        # Build Hlo Computation
+        batch_size = 1024
+        hidden_dim = 128
+
+        computation = get_mlp_2_layer_computation(batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        # Test different device meshes
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
+                                             memory_per_device=1000 * MB)
+            objective = solve_auto_sharding(computation, cluster_env)
+
+            # The expecte cost is always two all-reduce on weights
+            expected = 2 * cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, i)
+            assert_close(objective, expected)
+
     def test_mlp_2_layer_model_parallel(self):
         # Build Hlo Computation
         batch_size = 128
@@ -157,12 +230,13 @@ class MLPSolverTest(unittest.TestCase):
             expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
 
-    def test_mlp_2_layer_data_parallel(self):
+    def test_mlp_n_layer_data_parallel(self):
         # Build Hlo Computation
+        num_layers = 12
         batch_size = 1024
         hidden_dim = 128
 
-        computation = get_mlp_2_layer_computation(batch_size, hidden_dim,
+        computation = get_mlp_n_layer_computation(num_layers, batch_size, hidden_dim,
             hidden_dim, hidden_dim)
 
         # Test different device meshes
@@ -172,8 +246,8 @@ class MLPSolverTest(unittest.TestCase):
                                              memory_per_device=1000 * MB)
             objective = solve_auto_sharding(computation, cluster_env)
 
-            # The expecte cost is always two all-reduce on weights
-            expected = 2 * cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, i)
+            expected = num_layers *\
+                       cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, i)
             assert_close(objective, expected)
 
     def test_mlp_n_layer_model_parallel(self):
@@ -196,27 +270,6 @@ class MLPSolverTest(unittest.TestCase):
                        cluster_env.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
 
-
-    def test_mlp_n_layer_data_parallel(self):
-        # Build Hlo Computation
-        num_layers = 12
-        batch_size = 1024
-        hidden_dim = 128
-
-        computation = get_mlp_n_layer_computation(num_layers, batch_size, hidden_dim,
-            hidden_dim, hidden_dim)
-
-        # Test different device meshes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
-            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
-            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
-                                             memory_per_device=1000 * MB)
-            objective = solve_auto_sharding(computation, cluster_env)
-
-            expected = num_layers *\
-                       cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, i)
-            assert_close(objective, expected)
-
     def test_mlp_2_layer_2d_parallel(self):
         # Build Hlo Computation
         batch_size = 1024
@@ -225,6 +278,7 @@ class MLPSolverTest(unittest.TestCase):
         computation = get_mlp_2_layer_computation(batch_size, hidden_dim,
             hidden_dim, hidden_dim)
 
+        # Test different device meshes
         for mesh_shape in [(4, 8), (8, 4), (3, 4)]:
             device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
             cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 0.01],
@@ -259,15 +313,79 @@ class MLPSolverTest(unittest.TestCase):
                    batch_size * hidden_dim * 4 / mesh_shape[0], 1)
             assert_close(objective, expected)
 
+    def test_mlp_2_layer_bias_data_parallel(self):
+        # Build Hlo Computation
+        batch_size = 1024
+        hidden_dim = 128
+
+        computation = get_mlp_2_layer_bias_computation(batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        # Test different device meshes
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
+                                             memory_per_device=1000 * MB)
+            objective = solve_auto_sharding(computation, cluster_env)
+
+            expected = \
+                cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, i) * 2 +\
+                cluster_env.all_reduce_cost(hidden_dim * 4, i) * 2
+            assert_close(objective, expected)
+
+    def test_mlp_2_layer_bias_model_parallel(self):
+        # Build Hlo Computation
+        batch_size = 128
+        hidden_dim = 1024
+
+        computation = get_mlp_2_layer_bias_computation(batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        # Test different device meshes
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
+                                             memory_per_device=1000 * MB)
+            objective = solve_auto_sharding(computation, cluster_env)
+
+            expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4, i)
+            assert_close(objective, expected)
+
+    def test_mlp_2_layer_bias_2d_parallel(self):
+        # Build Hlo Computation
+        batch_size = 1024
+        hidden_dim = 128
+
+        computation = get_mlp_2_layer_bias_computation(batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        # Test different device meshes
+        for mesh_shape in [(4, 8), (8, 4), (3, 4)]:
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 0.01],
+                                             memory_per_device=1000 * MB)
+            objective = solve_auto_sharding(computation, cluster_env)
+
+            expected = \
+                cluster_env.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1) +\
+                cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) * 2 +\
+                cluster_env.all_reduce_cost(hidden_dim * 4, 0) +\
+                cluster_env.all_reduce_cost(hidden_dim * 4 / mesh_shape[1], 0)
+            assert_close(objective, expected)
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(MLPSolverTest('test_mlp_2_layer_model_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_data_parallel'))
-    suite.addTest(MLPSolverTest('test_mlp_n_layer_model_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_model_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_data_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_n_layer_model_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_2d_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_2d_parallel'))
+
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_data_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_model_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_2d_parallel'))
 
     return suite
 

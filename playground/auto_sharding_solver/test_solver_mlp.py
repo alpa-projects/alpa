@@ -239,7 +239,7 @@ class MLPSolverTest(unittest.TestCase):
 
     def test_mlp_n_layer_2d_parallel(self):
         # Build Hlo Computation
-        num_layers = 4
+        num_layers = 12
         batch_size = 1024
         hidden_dim = 128
 

@@ -333,8 +333,8 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
                             f"{instructions[i].strategies[stra_idx].name}] "
             #print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name} Spec: {spec}")
             print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
-            if follow_map:
-                print(follow_map)
+            #if follow_map:
+            #    print(follow_map)
 
         # Print edge cost
         for (idx, (i, j)) in enumerate(E):

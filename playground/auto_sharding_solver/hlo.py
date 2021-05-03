@@ -184,7 +184,7 @@ class HloParameter(HloInstruction):
                 self.memory_costs.append(compute_bytes(self.shape) / cluster_env.device_mesh.shape[j])
 
         self.strategies.append(InstructionStrategy("R", ShardingSpec.replicated(cluster_env)))
-        self.compute_costs.append(1)
+        self.compute_costs.append(2)
         self.communication_costs.append(0)
         self.memory_costs.append(compute_bytes(self.shape))
 

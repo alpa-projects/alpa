@@ -147,11 +147,8 @@ class MLPSolverTest(unittest.TestCase):
             hidden_dim, hidden_dim)
 
         # Test different device meshes
-        device_ids = np.arange(4)
-        for i, device_mesh in enumerate([
-                device_ids.reshape(4, 1),
-                device_ids.reshape(1, 4)]):
-
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
             cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
                                              memory_per_device=1000 * MB)
             objective = solve_auto_sharding(computation, cluster_env)
@@ -169,11 +166,8 @@ class MLPSolverTest(unittest.TestCase):
             hidden_dim, hidden_dim)
 
         # Test different device meshes
-        device_ids = np.arange(4)
-        for i, device_mesh in enumerate([
-                device_ids.reshape(4, 1),
-                device_ids.reshape(1, 4)]):
-
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
             cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
                                              memory_per_device=1000 * MB)
             objective = solve_auto_sharding(computation, cluster_env)
@@ -192,11 +186,8 @@ class MLPSolverTest(unittest.TestCase):
             hidden_dim, hidden_dim)
 
         # Test different device meshes
-        device_ids = np.arange(4)
-        for i, device_mesh in enumerate([
-                device_ids.reshape(4, 1),
-                device_ids.reshape(1, 4)]):
-
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
             cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
                                              memory_per_device=1000 * MB)
             objective = solve_auto_sharding(computation, cluster_env)
@@ -216,11 +207,8 @@ class MLPSolverTest(unittest.TestCase):
             hidden_dim, hidden_dim)
 
         # Test different device meshes
-        device_ids = np.arange(4)
-        for i, device_mesh in enumerate([
-                device_ids.reshape(4, 1),
-                device_ids.reshape(1, 4)]):
-
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
             cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
                                              memory_per_device=1000 * MB)
             objective = solve_auto_sharding(computation, cluster_env)
@@ -229,6 +217,49 @@ class MLPSolverTest(unittest.TestCase):
                        cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, i)
             assert_close(objective, expected)
 
+    def test_mlp_2_layer_2d_parallel(self):
+        # Build Hlo Computation
+        batch_size = 1024
+        hidden_dim = 128
+
+        computation = get_mlp_2_layer_computation(batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        for mesh_shape in [(4, 8), (8, 4), (3, 4)]:
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 0.01],
+                                             memory_per_device=1000 * MB)
+            objective = solve_auto_sharding(computation, cluster_env)
+
+            expected =\
+                2 * cluster_env.all_reduce_cost(
+                    hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) +\
+               cluster_env.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
+            assert_close(objective, expected)
+
+    def test_mlp_n_layer_2d_parallel(self):
+        # Build Hlo Computation
+        num_layers = 4
+        batch_size = 1024
+        hidden_dim = 128
+
+        computation = get_mlp_n_layer_computation(num_layers, batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        for mesh_shape in [(4, 8), (8, 4), (3, 4)]:
+            device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+            cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 0.01],
+                                             memory_per_device=1000 * MB)
+            objective = solve_auto_sharding(computation, cluster_env)
+
+            expected = \
+                num_layers * cluster_env.all_reduce_cost(
+                    hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) +\
+                (num_layers - 1)  * cluster_env.all_reduce_cost(
+                   batch_size * hidden_dim * 4 / mesh_shape[0], 1)
+            assert_close(objective, expected)
+
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -236,9 +267,10 @@ def suite():
     suite.addTest(MLPSolverTest('test_mlp_2_layer_data_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_model_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_data_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_2d_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_n_layer_2d_parallel'))
 
     return suite
-
 
 if __name__ == '__main__':
     runner = unittest.TextTestRunner()

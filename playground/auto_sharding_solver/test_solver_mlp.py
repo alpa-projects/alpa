@@ -260,7 +260,6 @@ class MLPSolverTest(unittest.TestCase):
             assert_close(objective, expected)
 
 
-
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(MLPSolverTest('test_mlp_2_layer_model_parallel'))

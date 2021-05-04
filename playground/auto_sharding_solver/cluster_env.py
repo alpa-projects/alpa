@@ -56,27 +56,25 @@ class ClusterEnvironment:
                 0.001) + self.reduce_scatter_penalty
 
     def get_tensor_dim_to_mesh_dim(self, shape, spec):
+        """Map the tensor dimention to mesh dimension, -1 means replicated"""
         if spec.type == ShardingSpecType.REPLICATED:
             spec = ShardingSpec.tile(shape, [], [], self)
 
-        if spec.replicate_on_last_tile_dim:
-            tensor_dim_len = len(spec.tile_assignment_dimensions) - 1
-        else:
-            tensor_dim_len = len(spec.tile_assignment_dimensions)
+        tensor_dim_vals = []
+        for i in range(len(shape)):
+            tensor_dim_vals.append(get_dim_last_value(
+                spec.tile_assignment_devices, spec.tile_assignment_dimensions, i))
 
-        spec_devices = np.array(spec.tile_assignment_devices).\
-            reshape(spec.tile_assignment_dimensions)
+        mesh_dim_vals = []
+        for j in range(len(self.device_mesh.shape)):
+            mesh_dim_vals.append(get_dim_last_value(
+                self.device_mesh, self.device_mesh.shape, j))
 
-        ret = [-1] * tensor_dim_len
-        for i in range(tensor_dim_len):
+        ret = [-1] * len(shape)
+        for i in range(len(shape)):
             if spec.tile_assignment_dimensions[i] != 1:
                 for j in range(len(self.device_mesh.shape)):
-                    # compare tensor_dim i and mesh_dim j
-                    # todo: move this out
-                    tensor_dim_val = get_dim_last_value(spec_devices, i)
-                    mesh_dim_val = get_dim_last_value(self.device_mesh, j)
-
-                    if tensor_dim_val == mesh_dim_val:
+                    if tensor_dim_vals[i] == mesh_dim_vals[j]:
                         ret[i] = j
 
         return ret

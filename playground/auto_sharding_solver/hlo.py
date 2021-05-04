@@ -249,7 +249,8 @@ class HloParameter(HloInstruction):
     def build_strategy_and_cost(self, cluster_env, solver_option):
         for i in range(len(self.shape)):
             for j in range(len(cluster_env.device_mesh.shape)):
-                if cluster_env.device_mesh.shape[j] == 1:
+                if (cluster_env.device_mesh.shape[j] == 1 or
+                    self.shape[i] < cluster_env.device_mesh.shape[j]):
                     continue
 
                 name = f"S{i} @ {j}"
@@ -773,11 +774,11 @@ class HloDot(HloInstruction):
             if len(self.lhs_batch_dims) == 2 and cluster_env.device_mesh.shape[0] > 1\
                     and cluster_env.device_mesh.shape[1] > 1:
 
-                #self.strategies = []
-                #self.compute_costs = []
-                #self.communication_costs = []
-                #self.memory_costs = []
-                #self.resharding_costs = []
+                self.strategies = []
+                self.compute_costs = []
+                self.communication_costs = []
+                self.memory_costs = []
+                self.resharding_costs = []
 
                 # Split both batch dims
                 self.strategies.append(InstructionStrategy("Sb = Sb x Sb @ {0,1}",

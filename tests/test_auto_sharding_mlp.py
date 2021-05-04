@@ -35,7 +35,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim)(x)
                 return x
 
-        @parallelize(memory_budget_per_device=30 * (1 << 20),
+        @parallelize(memory_budget_per_device=50 * (1 << 20),
                      devices=self.devices)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
@@ -65,6 +65,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Check sharding strategy
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
+
         # The function should contain only one communication primitive,
         # which is an all-reduce
         assert hlo_ir.count("channel_id") == 1, hlo_ir.count("channel_id")
@@ -107,7 +108,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim)(x)
                 return x
 
-        @parallelize(memory_budget_per_device=50 * (1 << 20),
+        @parallelize(memory_budget_per_device=100 * (1 << 20),
                      devices=devices)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):

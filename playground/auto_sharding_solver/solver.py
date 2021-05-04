@@ -67,7 +67,7 @@ class CostGraph:
         for i in range(len(node_lens)):
             self.adjacency[i] = set()
 
-        # for redundant edges, we will overwrite the results with
+        # For redundant edges, we will overwrite the results with
         # the last value
         for ((i, j), cost) in zip(edges, edge_costs):
             cost = np.reshape(cost, (self.node_lens[i], self.node_lens[j]))
@@ -213,6 +213,7 @@ class SolverOption:
         self.force_data_parallel = False
         self.forward_backward_sep_id = None
         self.force_all_reduce_cost = None
+        self.force_all_gather_cost = None
         self.force_reduce_scatter_cost = None
 
 
@@ -229,7 +230,6 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
 
     if solver_option is None:
         solver_option = SolverOption()
-
 
     # Build strategies and costs
     computation.build_strategy_and_cost(cluster_env, solver_option)
@@ -296,17 +296,21 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
             reindexing_a = reindexing_vector[idx_a]
             idx_a = s_follow[idx_a]
         else:
-            reindexing_a = None
+            reindexing_a = range(len(ins_a.strategies))
 
         if s_follow[idx_b] >= 0:
             reindexing_b = reindexing_vector[idx_b]
             idx_b = s_follow[idx_b]
         else:
-            reindexing_b = None
+            reindexing_b = range(len(ins_b.strategies))
 
         if idx_a != idx_b:
             A.append((idx_a, idx_b))
-            v.append(cost_vector[reindexing_a,reindexing_b].flatten())
+            new_cost_vector = []
+            for i in reindexing_a:
+                for j in reindexing_b:
+                    new_cost_vector.append(cost_vector[i, j])
+            v.append(new_cost_vector)
 
     s_val, e_val, objective, status = call_solver(N, M, s_len, s_follow, E, A, L,
                                                   c, d, m, r, v, s_init=None)
@@ -320,16 +324,19 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
                 stra_idx = s_val[i]
                 name = instructions[i].strategies[stra_idx].name
                 follow_map = ""
+                spec = instructions[i].strategies[stra_idx].output_spec
             else:
                 dst = s_follow[i]
                 stra_idx = reindexing_vector[i][s_val[i]]
                 name = instructions[i].strategies[stra_idx].name + f" follow {dst}"
+                spec = instructions[i].strategies[stra_idx].output_spec
 
                 follow_map = ""
                 for idx in range(len(reindexing_vector[i])):
                     stra_idx = reindexing_vector[i][idx]
                     follow_map += f"[{instructions[dst].strategies[idx].name} -> "\
                             f"{instructions[i].strategies[stra_idx].name}] "
+            #print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name} Spec: {spec}")
             print(f"Time {i:2d}: {computation.instructions[i]}  Strategy: {name}")
             #if follow_map:
             #    print(follow_map)

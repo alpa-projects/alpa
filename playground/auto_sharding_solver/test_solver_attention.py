@@ -29,7 +29,7 @@ def solve_without_all_gather(computation, mesh_shape):
     return objective, cluster_env
 
 
-def get_attention_forward_computation(batch_size, seq_len, hidden_dim, num_head):
+def get_attention_forward_computation(batch_size, seq_len, hidden_dim, num_head, force_replicated_output):
     per_head = hidden_dim // num_head
     computation = HloComputation()
 
@@ -141,7 +141,8 @@ def get_attention_forward_computation(batch_size, seq_len, hidden_dim, num_head)
         bias_out_dense_ = HloBroadcast(bias_out_dense, (batch_size, seq_len, hidden_dim), dimensions=(2,))
         out = HloAdd(out, bias_out_dense_)
 
-        out = HloForceReplicated(out)
+        if force_replicated_output:
+            out = HloForceReplicated(out)
 
         out = HloTuple([out,
                         weight_value_dense, bias_value_dense, 
@@ -331,7 +332,8 @@ class AttentionSolverTest(unittest.TestCase):
         hidden_dim = 512
         num_head = 16
 
-        computation = get_attention_forward_computation(batch_size, seq_len, hidden_dim, num_head)
+        computation = get_attention_forward_computation(
+            batch_size, seq_len, hidden_dim, num_head, True)
 
         # Solve
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -346,19 +348,21 @@ class AttentionSolverTest(unittest.TestCase):
         # Build Hlo Computation
         batch_size = 4
         seq_len = 128
-        hidden_dim = 512
+        hidden_dim = 2048
         num_head = 16
 
-        computation = get_attention_forward_computation(batch_size, seq_len, hidden_dim, num_head)
+        computation = get_attention_forward_computation(
+            batch_size, seq_len, hidden_dim, num_head, False)
 
         # Solve
         mesh_shape = [4, 4]
         objective, cluster_env = solve_without_all_gather(computation, mesh_shape)
 
-        #expected = cluster_env.all_reduce_cost(batch_size * seq_len * hidden_dim * 4, 1)
-        #print("Objective:", objective)
-        #print("Expected:", expected)
-        #assert_close(objective, expected)
+        expected = cluster_env.all_reduce_cost(
+            batch_size * seq_len * hidden_dim * 4 / mesh_shape[0], 1)
+        print("Objective:", objective)
+        print("Expected:", expected)
+        assert_close(objective, expected)
 
 
 def suite():
@@ -370,7 +374,7 @@ def suite():
     suite.addTest(AttentionSolverTest('test_allreduce_simplification'))
     suite.addTest(AttentionSolverTest('test_allreduce_simplification_out_reuse'))
     suite.addTest(AttentionSolverTest('test_attention_forward'))
-    #suite.addTest(AttentionSolverTest('test_attention_forward_2d_mesh'))
+    suite.addTest(AttentionSolverTest('test_attention_forward_2d_mesh'))
     return suite
 
 

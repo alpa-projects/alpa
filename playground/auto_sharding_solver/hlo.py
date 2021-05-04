@@ -5,7 +5,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-from common import compute_bytes, get_flatten_elements
+from common import compute_bytes, get_flatten_elements, transpose_flatten, reshape_flatten
 
 
 class ShardingSpecType(Enum):
@@ -14,6 +14,9 @@ class ShardingSpecType(Enum):
     OTHER = auto()
     TUPLE = auto()
     PARTIAL_REDUCTION = auto()
+
+
+INF_COST = 1e10  # infinity cost
 
 
 class ShardingSpec:
@@ -33,6 +36,27 @@ class ShardingSpec:
         if self.replicate_on_last_tile_dim:
             ret /= self.tile_assignment_dimensions[-1]
         return ret
+
+    def transpose(self, dimensions):
+        if self.type == ShardingSpecType.REPLICATED:
+            return self
+        else:
+            assert self.type == ShardingSpecType.OTHER
+
+            spec_trans_dims = list(dimensions)
+            if self.replicate_on_last_tile_dim:
+                spec_trans_dims.append(len(dimensions))
+
+            tile_assignment_dimensions = [self.tile_assignment_dimensions[i]
+                for i in spec_trans_dims]
+            tile_assignment_devices = transpose_flatten(self.tile_assignment_devices,
+                self.tile_assignment_dimensions, spec_trans_dims)
+
+            ret = ShardingSpec(self.type,
+                               tile_assignment_dimensions,
+                               tile_assignment_devices,
+                               self.replicate_on_last_tile_dim)
+            return ret
 
     @staticmethod
     def tile(shape, tensor_dims, mesh_dims, cluster_env):
@@ -78,6 +102,15 @@ class ShardingSpec:
                             tile_assignment_dimensions, tile_assignment_devices,
                             replicate_on_last_tile_dim)
 
+    def is_replicated(self):
+        if self.type == ShardingSpecType.REPLICATED:
+            return True
+        if self.type == ShardingSpecType.OTHER:
+            return (self.replicate_on_last_tile_dim == True and
+                    self.tile_assignment_dimensions[-1] == np.prod(self.tile_assignment_dimensions))
+        return False
+    
+
     @staticmethod
     def replicated(cluster_env):
         tile_assignment_devices = range(cluster_env.num_devices)
@@ -108,6 +141,9 @@ class ShardingSpec:
                f"{list(self.tile_assignment_devices)}"
 
     def __eq__(self, other):
+        if self.is_replicated() and other.is_replicated():
+            return True
+
         return (self.type == other.type and
                 self.tile_assignment_dimensions == other.tile_assignment_dimensions and
                 self.tile_assignment_devices == other.tile_assignment_devices and
@@ -120,6 +156,12 @@ def resharding_cost_vector(cluster_env, source_ins, required_spec):
         cost_vector.append(cluster_env.resharding_cost(source_ins.shape,
             strategy.output_spec, required_spec))
     return cost_vector
+
+
+def follow_ins_cost_vecotr(source_ins, index):
+    ret = [INF_COST] * len(source_ins.strategies)
+    ret[index] = 0
+    return ret
 
 
 class InstructionStrategy:
@@ -167,6 +209,7 @@ class HloInstruction:
         self.memory_costs = []
         self.resharding_costs = []
         self.follow_ins = None
+        self.depth = None
 
         # The index in HloComputation
         self.index = HloComputation.cur_env.append(self)
@@ -288,11 +331,12 @@ class HloReshape(HloInstruction):
         self.new_shape = new_shape
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
-        self.follow_ins = self.operands[0]
+        follow = self.operands[0]
+        self.follow_ins = follow
         old_shape = self.operands[0].shape
         new_shape = self.new_shape
 
-        # Construct a map that maps a new dimension to its corresponding old dimension
+        # Construct a map that maps an old dimension to its corresponding new dimension
         dim_mapping = {}
         new_pt = -1
         old_pt = -1
@@ -303,7 +347,7 @@ class HloReshape(HloInstruction):
             move_old = False
 
             if new_prod == old_prod:
-                dim_mapping[new_pt + 1] = old_pt + 1
+                dim_mapping[old_pt + 1] = new_pt + 1
                 move_new = move_old = True
             elif new_prod < old_prod:
                 move_new = True
@@ -323,42 +367,57 @@ class HloReshape(HloInstruction):
                 else:
                     break
 
-        for i in range(len(new_shape)):
-            for j in range(len(cluster_env.device_mesh.shape)):
-                if cluster_env.device_mesh.shape[j] == 1:
+        for sid in range(len(follow.strategies)):
+            input_spec = follow.strategies[sid].output_spec
+
+            if input_spec.type == ShardingSpecType.REPLICATED:
+                output_spec = input_spec
+            else:
+                assert input_spec.type == ShardingSpecType.OTHER
+
+                tile_assignment_dimensions = []
+                cur_prod = 1
+                state = 1  # 0: start  1: middle
+                i = 0
+
+                failed = False
+                while i < len(old_shape) and not failed:
+                    if state == 0:
+                        assert i in dim_mapping
+                        while len(tile_assignment_dimensions) < dim_mapping[i]:
+                            tile_assignment_dimensions.append(1)
+                        tile_assignment_dimensions.append(
+                            input_spec.tile_assignment_dimensions[i])
+                        state = 1
+                        i += 1
+                    elif state == 1:
+                        if i in dim_mapping:
+                            state = 0
+                        else:
+                            if input_spec.tile_assignment_dimensions[i] == 1:
+                                i += 1
+                            else:
+                                failed = True
+
+                if failed:
                     continue
-
-                name = f"S{i} @ {j}"
-                self.strategies.append(InstructionStrategy(name,
-                    ShardingSpec.tile(self.shape, [i], [j], cluster_env)))
-                self.compute_costs.append(0)
-                self.communication_costs.append(0)
-                self.memory_costs.append(compute_bytes(self.shape) / cluster_env.device_mesh.shape[j])
-                if i in dim_mapping:
-                    before_spec = ShardingSpec.tile(
-                        self.operands[0].shape, [dim_mapping[i]], [j], cluster_env)
                 else:
-                    before_spec = ShardingSpec.replicated(cluster_env)
-                self.resharding_costs.append([
-                    resharding_cost_vector(cluster_env, self.operands[0], before_spec),
-                ])
+                    while len(tile_assignment_dimensions) < len(new_shape):
+                        tile_assignment_dimensions.append(1)
 
-        self.strategies.append(InstructionStrategy("P",
-            ShardingSpec.partial_reduction(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(cluster_env, self.operands[0], ShardingSpec.partial_reduction(cluster_env))
-        ])
+                    if input_spec.replicate_on_last_tile_dim:
+                        tile_assignment_dimensions.append(input_spec.tile_assignment_dimensions[-1])
+                    output_spec = ShardingSpec(input_spec.type,
+                                               tile_assignment_dimensions,
+                                               input_spec.tile_assignment_devices,
+                                               input_spec.replicate_on_last_tile_dim)
 
-        self.strategies.append(InstructionStrategy("R", ShardingSpec.replicated(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(cluster_env, self.operands[0], ShardingSpec.replicated(cluster_env))
-        ])
+            name = f"{output_spec.tile_assignment_dimensions}"
+            self.strategies.append(InstructionStrategy(name, output_spec))
+            self.compute_costs.append(0)
+            self.communication_costs.append(0)
+            self.memory_costs.append(compute_bytes(self.shape) / output_spec.num_tile_devices())
+            self.resharding_costs.append([follow_ins_cost_vecotr(follow, sid)])
 
     def __str__(self):
         return f"{self.name} {self.shape} = reshape({self.operands[0].name})"
@@ -372,43 +431,17 @@ class HloTranspose(HloInstruction):
         self.dimensions = dimensions
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
-        self.follow_ins = self.operands[0]
+        follow = self.operands[0]
+        self.follow_ins = follow
 
-        for i in range(len(self.shape)):
-            for j in range(len(cluster_env.device_mesh.shape)):
-                if cluster_env.device_mesh.shape[j] == 1:
-                    continue
-
-                name = f"S{i} @ {j}"
-                self.strategies.append(InstructionStrategy(name,
-                    ShardingSpec.tile(self.shape, [i], [j], cluster_env)))
-                self.compute_costs.append(0)
-                self.communication_costs.append(0)
-                self.memory_costs.append(compute_bytes(self.shape) / cluster_env.device_mesh.shape[j])
-    
-                orignal_dim = self.dimensions[i]
-                self.resharding_costs.append([
-                    resharding_cost_vector(cluster_env, self.operands[0],
-                        ShardingSpec.tile(self.operands[0].shape, [orignal_dim], [j], cluster_env))
-                ])
-
-        self.strategies.append(InstructionStrategy("P", ShardingSpec.partial_reduction(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(cluster_env, self.operands[0],
-                ShardingSpec.partial_reduction(cluster_env))
-        ])
-
-        self.strategies.append(InstructionStrategy("R", ShardingSpec.replicated(cluster_env)))
-        self.compute_costs.append(0)
-        self.communication_costs.append(0)
-        self.memory_costs.append(compute_bytes(self.shape))
-        self.resharding_costs.append([
-            resharding_cost_vector(cluster_env, self.operands[0],
-                ShardingSpec.replicated(cluster_env))
-        ])
+        for sid in range(len(follow.strategies)):
+            output_spec = follow.strategies[sid].output_spec.transpose(self.dimensions)
+            name = f"{output_spec.tile_assignment_dimensions}"
+            self.strategies.append(InstructionStrategy(name, output_spec))
+            self.compute_costs.append(0)
+            self.communication_costs.append(0)
+            self.memory_costs.append(compute_bytes(self.shape) / output_spec.num_tile_devices())
+            self.resharding_costs.append([follow_ins_cost_vecotr(follow, sid)])
 
     def __str__(self):
         return f"{self.name} {self.shape} = transpose({self.operands[0].name}) " +\
@@ -422,27 +455,30 @@ class HloElementwise(HloInstruction):
         super().__init__(op_code, operands[0].shape, operands)
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
-        follow = self.operands[0]
+        depths = [operand.depth for operand in self.operands]
+        follow_idx = np.argmax(depths)
+
+        follow = self.operands[follow_idx]
         self.follow_ins = follow
 
         for sid in range(len(follow.strategies)):
             output_spec = follow.strategies[sid].output_spec
 
-            #name = f"follow {follow.strategies[sid].name}"
-            name = f"follow"
+            name = f"{output_spec.tile_assignment_dimensions}"
             self.strategies.append(InstructionStrategy(name, output_spec))
             self.compute_costs.append(0)
             self.communication_costs.append(0)
             self.memory_costs.append(compute_bytes(self.shape) / output_spec.num_tile_devices())
 
-            assert follow == self.operands[0]
-            resharding_cost_lhs = [1e10] * len(follow.strategies)
-            resharding_cost_lhs[sid] = 0
-            self.resharding_costs.append([
-              resharding_cost_lhs,
-              resharding_cost_vector(cluster_env, self.operands[1], output_spec)
-            ])
-
+            resharding_costs = []
+            for k in range(len(self.operands)):
+                if k == follow_idx:
+                    resharding_costs.append(
+                        follow_ins_cost_vecotr(follow, sid))
+                else:
+                    resharding_costs.append(
+                    resharding_cost_vector(cluster_env, self.operands[k], output_spec))
+            self.resharding_costs.append(resharding_costs)
 
     def __str__(self):
         fun_name = str(self.op_code)[7:].lower()
@@ -465,14 +501,15 @@ class HloForceReplicated(HloElementwise):
         super().__init__(OpCode.FORCE_REPLICATED, [operand])
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
-        super().build_strategy_and_cost(cluster_env, solver_option)
-
-        assert self.strategies[-1].output_spec.type == ShardingSpecType.REPLICATED
-        self.strategies = self.strategies[-1:]
-        self.compute_costs = self.communication_costs[-1:]
-        self.communication_costs = self.communication_costs[-1:]
-        self.memory_costs = self.memory_costs[-1:]
-        self.resharding_costs = self.resharding_costs[-1:]
+        self.strategies.append(InstructionStrategy("R",
+            ShardingSpec.replicated(cluster_env)))
+        self.compute_costs.append(0)
+        self.communication_costs.append(0)
+        self.memory_costs.append(0)
+        self.resharding_costs.append([
+            resharding_cost_vector(cluster_env, self.operands[0],
+                ShardingSpec.replicated(cluster_env))
+        ])
 
 
 class HloAdd(HloElementwise):
@@ -556,15 +593,16 @@ class HloReduce(HloInstruction):
                 comm_cost += cluster_env.all_reduce_cost(mem_cost, mesh_dim)
 
             reduce_dims_str = "".join([str(x) for x in all_reduce_dims])
-            name = f"follow (all-reduce @ {reduce_dims_str})"
+            if reduce_dims_str:
+                name = f"follow (all-reduce @ {reduce_dims_str})"
+            else:
+                name = f"{output_spec.tile_assignment_dimensions}"
 
             self.strategies.append(InstructionStrategy(name, output_spec))
             self.compute_costs.append(0)
             self.communication_costs.append(comm_cost)
             self.memory_costs.append(mem_cost)
-            resharding_cost_vector = [1e10] * len(operand.strategies)
-            resharding_cost_vector[sid] = 0
-            self.resharding_costs.append([resharding_cost_vector])
+            self.resharding_costs.append([follow_ins_cost_vecotr(operand, sid)])
 
     def __str__(self):
         return f"{self.name} {self.shape} = reduce({self.operands[0].name}) " +\
@@ -710,7 +748,33 @@ class HloDot(HloInstruction):
                         ShardingSpec.tile(rhs.shape, [rhs_con_dim, rhs_space_dim], [1, 0], cluster_env))
                 ])
 
-            if len(self.lhs_batch_dims) == 2:
+            # Split batch dims
+            for i in range(len(self.lhs_batch_dims)):
+                for j in range(len(cluster_env.device_mesh.shape)):
+                    if cluster_env.device_mesh.shape[j] == 1:
+                        continue
+
+                    self.strategies.append(InstructionStrategy(f"Sb_{i} = Sb x Sb @ {j}",
+                        ShardingSpec.tile(self.shape, [i], [j], cluster_env)))
+                    self.compute_costs.append(0)
+                    self.communication_costs.append(0)
+                    self.memory_costs.append(compute_bytes(self.shape) / cluster_env.num_devices)
+                    self.resharding_costs.append([
+                        resharding_cost_vector(cluster_env, lhs,
+                            ShardingSpec.tile(lhs.shape, [lhs_batch_dims[i]], [j], cluster_env)),
+                        resharding_cost_vector(cluster_env, rhs,
+                            ShardingSpec.tile(rhs.shape, [rhs_batch_dims[i]], [j], cluster_env))
+                    ])
+
+            if len(self.lhs_batch_dims) == 2 and cluster_env.device_mesh.shape[0] > 1\
+                    and cluster_env.device_mesh.shape[1] > 1:
+
+                #self.strategies = []
+                #self.compute_costs = []
+                #self.communication_costs = []
+                #self.memory_costs = []
+                #self.resharding_costs = []
+
                 # Split both batch dims
                 self.strategies.append(InstructionStrategy("Sb = Sb x Sb @ {0,1}",
                     ShardingSpec.tile(self.shape, [0, 1], [0, 1], cluster_env)))
@@ -846,6 +910,41 @@ class HloComputation:
 
         return sep_id
 
+    def depth_analysis(self):
+        frontier_list = []
+        edge_dict = defaultdict(list)
+
+        degree = defaultdict(lambda : 0)
+        for ins in self.instructions:
+            for operand in ins.operands:
+                degree[ins] += 1
+                edge_dict[operand].append(ins)
+
+        # Init frontier
+        collected = 0
+        current_frontier = []
+        for ins in self.instructions:
+            if degree[ins] == 0:
+                current_frontier.append(ins)
+                collected += 1
+        frontier_list.append(current_frontier)
+
+        # Push forward frontier
+        while collected < len(self.instructions):
+            current_frontier = frontier_list[-1]
+            next_frontier = []
+            for ins in current_frontier:
+                for node in edge_dict[ins]:
+                    degree[node] -= 1
+                    if degree[node] == 0:
+                        next_frontier.append(node)
+                        collected += 1
+            frontier_list.append(next_frontier)
+
+        for i, frontier in enumerate(frontier_list):
+            for ins in frontier:
+                ins.depth = i
+
     def build_strategy_and_cost(self, cluster_env, solver_option):
         if self.strategy_built:
             for ins in self.instructions:
@@ -860,6 +959,9 @@ class HloComputation:
 
         if solver_option.force_data_parallel:
             solver_option.forward_backward_sep_id = self.forward_backward_analysis()
+
+        # Analyze depth for all instructions
+        self.depth_analysis()
 
         # Build strategies and costs for each instruction
         for ins in self.instructions:

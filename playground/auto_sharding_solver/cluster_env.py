@@ -14,16 +14,18 @@ class ClusterEnvironment:
         assert len(self.mesh_beta) == len(self.device_mesh.shape)
         self.memory_per_device = memory_per_device
         self.all_reduce_penalty = 0
-        self.all_gather_penalty = 1e10
+        self.all_gather_penalty = 0
         self.reduce_scatter_penalty = 0
         self.partial_reduction_penalty = 10
         self.num_devices = np.prod(self.device_mesh.shape)
 
         self.force_all_reduce_cost = None
+        self.force_all_gather_cost = None
         self.force_reduce_scatter_cost = None
 
         if solver_option:
             self.force_all_reduce_cost = solver_option.force_all_reduce_cost
+            self.force_all_gather_cost = solver_option.force_all_gather_cost
             self.force_reduce_scatter_cost = solver_option.force_reduce_scatter_cost
 
     def all_reduce_cost(self, num_bytes, mesh_dim):
@@ -36,8 +38,10 @@ class ClusterEnvironment:
                 0.1) + self.all_reduce_penalty
 
     def all_gather_cost(self, num_bytes, mesh_dim):
-        num_devices = self.device_mesh.shape[mesh_dim]
+        if self.force_all_gather_cost:
+            return self.force_all_gather_cost
 
+        num_devices = self.device_mesh.shape[mesh_dim]
         return (self.mesh_alpha[mesh_dim] +
                 self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes +
                 0.01) + self.all_gather_penalty

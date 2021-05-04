@@ -124,7 +124,7 @@ def get_mlp_2_layer_bias_computation(batch_size, input_dim, hidden_dim, output_d
         out = HloTuple((new_w1, new_w2, new_b1, new_b2))
 
         ## alias
-        #computation.set_alias([(w1, new_w1), (w2, new_w2)])
+        computation.set_alias([(w1, new_w1), (w2, new_w2)])
 
     return computation
 
@@ -270,7 +270,7 @@ class MLPSolverTest(unittest.TestCase):
                        cluster_env.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
 
-    def test_mlp_2_layer_2d_parallel(self):
+    def test_mlp_2_layer_2d_mesh(self):
         # Build Hlo Computation
         batch_size = 1024
         hidden_dim = 128
@@ -291,7 +291,7 @@ class MLPSolverTest(unittest.TestCase):
                cluster_env.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
             assert_close(objective, expected)
 
-    def test_mlp_n_layer_2d_parallel(self):
+    def test_mlp_n_layer_2d_mesh(self):
         # Build Hlo Computation
         num_layers = 12
         batch_size = 1024
@@ -351,7 +351,7 @@ class MLPSolverTest(unittest.TestCase):
             expected = cluster_env.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
 
-    def test_mlp_2_layer_bias_2d_parallel(self):
+    def test_mlp_2_layer_bias_2d_mesh(self):
         # Build Hlo Computation
         batch_size = 1024
         hidden_dim = 128
@@ -380,12 +380,13 @@ def suite():
     suite.addTest(MLPSolverTest('test_mlp_2_layer_model_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_data_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_n_layer_model_parallel'))
-    suite.addTest(MLPSolverTest('test_mlp_2_layer_2d_parallel'))
-    suite.addTest(MLPSolverTest('test_mlp_n_layer_2d_parallel'))
+
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_2d_mesh'))
+    suite.addTest(MLPSolverTest('test_mlp_n_layer_2d_mesh'))
 
     suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_data_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_model_parallel'))
-    suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_2d_parallel'))
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_2d_mesh'))
 
     return suite
 

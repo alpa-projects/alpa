@@ -213,6 +213,7 @@ class SolverOption:
         self.force_data_parallel = False
         self.forward_backward_sep_id = None
         self.force_all_reduce_cost = None
+        self.force_all_gather_cost = None
         self.force_reduce_scatter_cost = None
 
 

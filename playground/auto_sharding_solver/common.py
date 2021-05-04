@@ -18,16 +18,28 @@ def append_elements(result, array, indices, cur_depth, cur_indices):
             cur_indices[next_depth] = index
             append_elements(result, array, indices, next_depth, cur_indices)
 
+
 def get_flatten_elements(array, indices):
     result = []
     cur_indices = [None] * len(array.shape)
     append_elements(result, array, indices, -1, cur_indices)
     return result
 
+
 def get_dim_last_value(array, dim):
     indices = [0] * len(array.shape)
     indices[dim] = -1
     return array[tuple(indices)]
+
+
+def transpose_flatten(array, shape, dimensions):
+    array = np.array(array)
+    return np.array(np.transpose(array.reshape(shape), dimensions)).flatten()
+
+
+def reshape_flatten(array, shape, new_shape):
+    array = np.array(array)
+    return np.array(array.reshape(shape)).flatten()
 
 
 def compute_bytes(shape):

@@ -67,7 +67,7 @@ class CostGraph:
         for i in range(len(node_lens)):
             self.adjacency[i] = set()
 
-        # for redundant edges, we will overwrite the results with
+        # For redundant edges, we will overwrite the results with
         # the last value
         for ((i, j), cost) in zip(edges, edge_costs):
             cost = np.reshape(cost, (self.node_lens[i], self.node_lens[j]))
@@ -274,7 +274,7 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
 
     # Simplify the graph by merging nodes
     cost_graph = CostGraph(s_len, E, r, follow_pair)
-    #cost_graph.simplify()
+    cost_graph.simplify()
     s_follow, E, r, reindexing_vector = cost_graph.export_result()
 
     for src, dst in enumerate(s_follow):
@@ -296,17 +296,21 @@ def solve_auto_sharding(computation, cluster_env, solver_option=None):
             reindexing_a = reindexing_vector[idx_a]
             idx_a = s_follow[idx_a]
         else:
-            reindexing_a = None
+            reindexing_a = range(len(ins_a.strategies))
 
         if s_follow[idx_b] >= 0:
             reindexing_b = reindexing_vector[idx_b]
             idx_b = s_follow[idx_b]
         else:
-            reindexing_b = None
+            reindexing_b = range(len(ins_b.strategies))
 
         if idx_a != idx_b:
             A.append((idx_a, idx_b))
-            v.append(cost_vector[reindexing_a,reindexing_b].flatten())
+            new_cost_vector = []
+            for i in reindexing_a:
+                for j in reindexing_b:
+                    new_cost_vector.append(cost_vector[i, j])
+            v.append(new_cost_vector)
 
     s_val, e_val, objective, status = call_solver(N, M, s_len, s_follow, E, A, L,
                                                   c, d, m, r, v, s_init=None)

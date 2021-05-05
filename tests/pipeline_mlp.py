@@ -1,16 +1,12 @@
-import numpy as np
-
-import unittest
-
-import ray
-
 import jax
 import jax.numpy as jnp
-from jax.experimental.maps import FrozenDict as FrozenDictJax
-from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
-
+import numpy as np
+import os
+import ray
 from flax import linen as nn
 from flax import optim
+from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
+from jax.experimental.maps import FrozenDict as FrozenDictJax
 
 from parax import parallelize, mark_pipeline
 

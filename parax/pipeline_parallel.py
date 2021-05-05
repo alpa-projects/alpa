@@ -1,4 +1,6 @@
 """gshard based hybrid parallel"""
+import cloudpickle
+
 import jax
 from jax import jit
 from jax import linear_util as lu
@@ -13,7 +15,7 @@ from parax.pipeline_primitive_def import *
 
 # Note: import after the above lines
 from parax.pipe import JaxPipeline
-from parax.pipeline_stage import PipelineStage
+from parax.pipeline_stage import PipelineStage, PicklableStage
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
     # We assume the closed_jaxpr includes pipeline start and end markers. Also,
@@ -135,6 +137,13 @@ def pipeline_parallel_callable(
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    # pickable_pipeline_stages = []
+    # for stage in pipeline_stages:
+    #     # pickable_stage = PicklableStage.from_pipeline_stage(stage)
+    #     # pickle and unpickle
+    #     # picked_stage = cloudpickle.dumps(pickable_stage)
+    #     # new_pickable_stage = cloudpickle.loads(picked_stage)
+    #     pickable_pipeline_stages.append(pickable_stage)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     return local_pipeline_runtime(pipeline_stages, global_invars, global_outvars)

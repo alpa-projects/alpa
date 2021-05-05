@@ -13,6 +13,53 @@ import ray
 logger = logging.getLogger(__name__)
 
 
+
+class RunnerV2:
+    def __init__(self,
+                 *,
+                 name,
+                 forward_runnable=None,
+                 backward_runnable=None,
+                 forward_closed_jaxpr=None,
+                 backward_closed_jaxpr=None):
+        self.name = name
+        self.forward_runnable = forward_runnable
+        self.backward_runnable = backward_runnable
+        self.forward_closed_jaxpr = forward_closed_jaxpr
+        self.backward_closed_jaxpr = backward_closed_jaxpr
+
+    def compute(self, input_ref, is_forward=True):
+        """
+        Args:
+            input_ref (OrderedDict): with key being `var` and value being its reference.
+        """
+        runnable = self.forward_runnable if is_forward else self.backward_runnable
+        closed_jaxpr = self.forward_closed_jaxpr if is_forward else self.backward_closed_jaxpr
+        # sanity check
+        inputs = []
+        for var in closed_jaxpr.jaxpr.invars:
+            key = repr(var)
+            val_ref = input_ref[key]
+            if val_ref:
+                inputs.append(ray.get(val_ref))
+            else:
+                inputs.append(self.env[var])
+
+        print(inputs)
+
+        # for var, val_ref in input_ref.items():
+        #     if val_ref:
+        #         # communication
+        #         inputs.append(ray.get(val_ref))
+        #     else:
+        #         inputs.append(self.env[var])
+        # print(inputs[0].shape, inputs[1].shape)
+        # Now run
+        # print(xla.translations[pipeline_p])  # miss
+        outputs = runnable(*inputs)
+        return outputs
+
+
 class Runner:
     def __init__(self,
                  *,
@@ -43,8 +90,10 @@ class Runner:
         from jax.interpreters.xla import backend_specific_translations, translations, \
             translations_with_avals, initial_style_translations, parallel_translations, \
             call_translations
+        all_primitives = []
         unknown_primitives = []
         for eqn in self.forward_closed_jaxpr.jaxpr.eqns:
+            all_primitives.append(eqn.primitive)
             if eqn.primitive in backend_specific_translations["gpu"]:
                 continue
             elif eqn.primitive in translations:
@@ -59,7 +108,8 @@ class Runner:
                 continue
             else:
                 unknown_primitives.append(eqn.primitive)
-        print(unknown_primitives)
+        print("all primitives: ", all_primitives)
+        print("unknown primitives: ", unknown_primitives)
         primitives = []
         for up in unknown_primitives:
             if repr(up) == "pipeline":
@@ -204,7 +254,8 @@ class JaxPipeline:
 
         # init actors
         self.workers = dict()
-        self._create_workers()
+        # self._create_workers()
+        self._create_workers_v2()
 
         # inputs and outputs
         self.stage_inputs = self._init_stage_inputs()
@@ -280,6 +331,22 @@ class JaxPipeline:
             worker = remote_runner.remote(name=stage_name,
                                           forward_stage=f_stage,
                                           backward_stage=b_stage)
+            self.workers[stage_name] = worker
+
+    def _create_workers_v2(self):
+        remote_runner = ray.remote(num_cpus=1, num_gpus=1)(RunnerV2)
+        for stage_name in self.stage_names:
+            forward_stage = self.forward_stages[stage_name]
+            backward_stage = self.backward_stages[stage_name]
+            forward_closed_jaxpr = forward_stage.closed_jaxpr()
+            backward_closed_jaxpr = backward_stage.closed_jaxpr()
+            forward_runnable = jit(jaxpr_as_fun(forward_closed_jaxpr))
+            backward_runnable = jit(jaxpr_as_fun(backward_closed_jaxpr))
+            worker = remote_runner.remote(name=stage_name,
+                                          forward_runnable=forward_runnable,
+                                          backward_runnable=backward_runnable,
+                                          forward_closed_jaxpr=forward_closed_jaxpr,
+                                          backward_closed_jaxpr=backward_closed_jaxpr)
             self.workers[stage_name] = worker
 
     def _identify_stage_inputs(self, stage_idx, batch_idx, clock):

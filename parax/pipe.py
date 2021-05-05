@@ -13,6 +13,12 @@ import ray
 logger = logging.getLogger(__name__)
 
 
+def ref_to_array(array_ref):
+    """Ray does not understand DeviceArray."""
+    numpy_array = ray.get(array_ref)
+    device_array = jax.numpy.asarray(numpy_array)
+    return device_array
+
 
 class RunnerV2:
     def __init__(self,
@@ -78,102 +84,111 @@ class Runner:
         self.compile()
         self.env = dict()
 
-        # pipeline_p = Primitive('pipeline')
-        print(xla.translations[pipeline_p])
+        # # pipeline_p = Primitive('pipeline')
+        # for key in xla.translations:
+        #     if repr(key) == "pipeline":
+        #         print(key.__hash__())
+        #         new_primitive = Primitive("pipeline")
+        #         print(new_primitive.__hash__())
+        #         bool_var = key.__hash__() == new_primitive.__hash__()
+        #         print(bool_var)
+        #         bool_var = new_primitive in xla.translations
+        #         print(bool_var)
 
     def compile(self):
         # gen forward runnable
         self.forward_runnable = jit(jaxpr_as_fun(self.forward_closed_jaxpr))
         self.backward_runnable = jit(jaxpr_as_fun(self.backward_closed_jaxpr))
 
-        # this is trcck to workaround the "pipeline primitive not found" issue.
-        from jax.interpreters.xla import backend_specific_translations, translations, \
-            translations_with_avals, initial_style_translations, parallel_translations, \
-            call_translations
-        all_primitives = []
-        unknown_primitives = []
-        for eqn in self.forward_closed_jaxpr.jaxpr.eqns:
-            all_primitives.append(eqn.primitive)
-            if eqn.primitive in backend_specific_translations["gpu"]:
-                continue
-            elif eqn.primitive in translations:
-                continue
-            elif eqn.primitive in translations_with_avals:
-                continue
-            elif eqn.primitive in initial_style_translations:
-                continue
-            elif eqn.primitive in parallel_translations:
-                continue
-            elif eqn.primitive in call_translations:
-                continue
-            else:
-                unknown_primitives.append(eqn.primitive)
-        print("all primitives: ", all_primitives)
-        print("unknown primitives: ", unknown_primitives)
-        primitives = []
-        for up in unknown_primitives:
-            if repr(up) == "pipeline":
-                primitives.append(up)
-        print(primitives)
-        bool_var = primitives[0] == primitives[1]
-        print(bool_var)
-        self._register_custom_primitive(primitives[0])
+        # # this is trcck to workaround the "pipeline primitive not found" issue.
+        # from jax.interpreters.xla import backend_specific_translations, translations, \
+        #     translations_with_avals, initial_style_translations, parallel_translations, \
+        #     call_translations
+        # all_primitives = []
+        # unknown_primitives = []
+        # for eqn in self.forward_closed_jaxpr.jaxpr.eqns:
+        #     all_primitives.append(eqn.primitive)
+        #     if eqn.primitive in backend_specific_translations["gpu"]:
+        #         continue
+        #     elif eqn.primitive in translations:
+        #         continue
+        #     elif eqn.primitive in translations_with_avals:
+        #         continue
+        #     elif eqn.primitive in initial_style_translations:
+        #         continue
+        #     elif eqn.primitive in parallel_translations:
+        #         continue
+        #     elif eqn.primitive in call_translations:
+        #         continue
+        #     else:
+        #         unknown_primitives.append(eqn.primitive)
+        # print("all primitives: ", all_primitives)
+        # print("unknown primitives: ", unknown_primitives)
+        # primitives = []
+        # for up in unknown_primitives:
+        #     if repr(up) == "pipeline":
+        #         primitives.append(up)
+        # print(primitives)
+        # bool_var = primitives[0] == primitives[1]
+        # print(bool_var)
+        # self._register_custom_primitive(primitives[0])
 
-    def _register_custom_primitive(self, pipeline_p):
-        from jax.core import Primitive, abstract_unit
-        from jax.interpreters import xla, ad
-        from jax.lib import xla_client as xc
-        pipeline_p.multiple_results = True
-
-        def mark_pipeline(*args, name, mark_type):
-            if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
-                raise ValueError('Unknown mark type: %s' % mark_type)
-            return pipeline_p.bind(*args, name=name, mark_type=mark_type)
-
-        def _pipeline_impl(*args, **kwargs):
-            # The pipeline marker acts as an identity function
-            return args if len(args) > 0 else (None,)
-
-        def _pipeline_abstract_eval(*args, **kwargs):
-            return args if len(args) > 0 else (abstract_unit,)
-
-        def _pipeline_xla_translation(c, *args, **kwargs):
-            return xc.ops.Tuple(c, args) if len(args) > 0 else xc.ops.Tuple(c, (xc.ops.Constant(c, np.float32(0.0)),))
-
-        def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
-            primal_outs = mark_pipeline(*arg_values, name=name, mark_type=mark_type)
-            # TODO(zhuohan): Check the semantics here works for higher order gradients.
-            if mark_type == "start" or mark_type == "jvp_start":
-                tangent_mark_type = "jvp_start"
-            elif mark_type == "end" or mark_type == "jvp_end":
-                tangent_mark_type = "jvp_end"
-            else:
-                raise ValueError("Invalid mark_type")
-            tangent_outs = mark_pipeline(*arg_tangents, name=name, mark_type=tangent_mark_type)
-            return primal_outs, tangent_outs
-
-        def _pipeline_transpose(ct, *args, name, mark_type):
-            # TODO(zhuohan): Check the semantics here works for higher order gradients.
-            if mark_type == "start" or mark_type == "jvp_start":
-                transposed_mark_type = "end"
-            elif mark_type == "end" or mark_type == "jvp_end":
-                transposed_mark_type = "start"
-            else:
-                raise ValueError("Invalid mark_type")
-            res = mark_pipeline(*ct, name=name, mark_type=transposed_mark_type)
-            return res
-
-        pipeline_p.def_impl(_pipeline_impl)
-        pipeline_p.def_abstract_eval(_pipeline_abstract_eval)
-        xla.translations[pipeline_p] = _pipeline_xla_translation
-        ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
-        ad.primitive_transposes[pipeline_p] = _pipeline_transpose
+    # def _register_custom_primitive(self, pipeline_p):
+    #     from jax.core import Primitive, abstract_unit
+    #     from jax.interpreters import xla, ad
+    #     from jax.lib import xla_client as xc
+    #     pipeline_p.multiple_results = True
+    #
+    #     def mark_pipeline(*args, name, mark_type):
+    #         if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
+    #             raise ValueError('Unknown mark type: %s' % mark_type)
+    #         return pipeline_p.bind(*args, name=name, mark_type=mark_type)
+    #
+    #     def _pipeline_impl(*args, **kwargs):
+    #         # The pipeline marker acts as an identity function
+    #         return args if len(args) > 0 else (None,)
+    #
+    #     def _pipeline_abstract_eval(*args, **kwargs):
+    #         return args if len(args) > 0 else (abstract_unit,)
+    #
+    #     def _pipeline_xla_translation(c, *args, **kwargs):
+    #         return xc.ops.Tuple(c, args) if len(args) > 0 else xc.ops.Tuple(c, (xc.ops.Constant(c, np.float32(0.0)),))
+    #
+    #     def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
+    #         primal_outs = mark_pipeline(*arg_values, name=name, mark_type=mark_type)
+    #         # TODO(zhuohan): Check the semantics here works for higher order gradients.
+    #         if mark_type == "start" or mark_type == "jvp_start":
+    #             tangent_mark_type = "jvp_start"
+    #         elif mark_type == "end" or mark_type == "jvp_end":
+    #             tangent_mark_type = "jvp_end"
+    #         else:
+    #             raise ValueError("Invalid mark_type")
+    #         tangent_outs = mark_pipeline(*arg_tangents, name=name, mark_type=tangent_mark_type)
+    #         return primal_outs, tangent_outs
+    #
+    #     def _pipeline_transpose(ct, *args, name, mark_type):
+    #         # TODO(zhuohan): Check the semantics here works for higher order gradients.
+    #         if mark_type == "start" or mark_type == "jvp_start":
+    #             transposed_mark_type = "end"
+    #         elif mark_type == "end" or mark_type == "jvp_end":
+    #             transposed_mark_type = "start"
+    #         else:
+    #             raise ValueError("Invalid mark_type")
+    #         res = mark_pipeline(*ct, name=name, mark_type=transposed_mark_type)
+    #         return res
+    #
+    #     pipeline_p.def_impl(_pipeline_impl)
+    #     pipeline_p.def_abstract_eval(_pipeline_abstract_eval)
+    #     xla.translations[pipeline_p] = _pipeline_xla_translation
+    #     ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
+    #     ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 
     def compute(self, input_ref, is_forward=True):
         """
         Args:
             input_ref (OrderedDict): with key being `var` and value being its reference.
         """
+        # check gpu devices
         program = self.forward_stage if is_forward else self.backward_stage
         runnable = self.forward_runnable if is_forward else self.backward_runnable
         closed_jaxpr = self.forward_closed_jaxpr if is_forward else self.backward_closed_jaxpr
@@ -183,12 +198,14 @@ class Runner:
             key = repr(var)
             val_ref = input_ref[key]
             if val_ref:
-                inputs.append(ray.get(val_ref))
+                inputs.append(ref_to_array(val_ref))
             else:
                 inputs.append(self.env[var])
 
-        print(inputs)
-
+        # for input in inputs:
+        #     print(input)
+        #     print(input.device_buffer.device())
+        #     print(type(input))
         # for var, val_ref in input_ref.items():
         #     if val_ref:
         #         # communication
@@ -198,6 +215,11 @@ class Runner:
         # print(inputs[0].shape, inputs[1].shape)
         # Now run
         # print(xla.translations[pipeline_p])  # miss
+        # print("123")
+        # m = jax.numpy.matmul(inputs[0], inputs[1])
+        # print("456")
+        # print(m)
+        # print(type(m))
         outputs = runnable(*inputs)
 
         assert (len(outputs) == len(closed_jaxpr.outvars))
@@ -254,8 +276,8 @@ class JaxPipeline:
 
         # init actors
         self.workers = dict()
-        # self._create_workers()
-        self._create_workers_v2()
+        self._create_workers()
+        # self._create_workers_v2()
 
         # inputs and outputs
         self.stage_inputs = self._init_stage_inputs()

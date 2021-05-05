@@ -20,6 +20,11 @@ assert len(jax.local_devices()) >= num_gpus
 devices = tuple(jax.local_devices()[:num_gpus])
 
 
+# in order for ray to work we have to set this
+# so the driver program and actor program can share GPUs...
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+
+
 def is_sequence(x):
     try:
         iter(x)
@@ -101,6 +106,12 @@ optimizer = optim.GradientDescent(1e-2).create(params)
 gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
 strategy = "distributed_pipeline_parallel"
 # strategy = "pipeline_parallel"
+# import cloudpickle as pickle
+# m = pickle.dumps(train_step)
+# new_train_step = pickle.loads(m)
+# print("OK")
+# new_gradients = new_train_step(optimizer, {"x": x, "y": y}, model.apply)
+assert_allclose(x, y)
 pipelined_train_step = parallelize(donate_argnums=(), devices=devices, strategy=strategy)(train_step)
 gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
 assert_allclose(gradients, gradients_with_pipeline)

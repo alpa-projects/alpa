@@ -1,6 +1,6 @@
 """gshard based hybrid parallel"""
 from dataclasses import dataclass, field
-from typing import List, Set, Any, Dict
+from typing import Sequence, List, Set, Any, Dict
 
 import numpy as np
 
@@ -86,6 +86,27 @@ class PipelineStage:
         )
         closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
         return closed_jaxpr
+
+
+@dataclass
+class CompiledPipelineStage:
+    compield_function: Any
+    invars: Sequence[Var]
+    outvars: Sequence[Var]
+    # invars
+    pipeline_invars: Set[Var] = field(default_factory=set)
+    global_invars: Set[Var] = field(default_factory=set)
+    local_invars: Set[Var] = field(default_factory=set)
+    # outvars
+    pipeline_outvars: Set[Var] = field(default_factory=set)
+    global_outvars: Set[Var] = field(default_factory=set)
+    local_outvars: Set[Var] = field(default_factory=set)
+
+    @classmethod
+    def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
+        closed_jaxpr = pipeline_stage.closed_jaxpr()
+        tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+        nreps=1
 
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
@@ -210,4 +231,6 @@ def pipeline_parallel_callable(
     pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
+    print("avals", avals)
+    compiled_stages = [CompiledPipelineStage.from_pipeline_stage(stage) for stage in pipeline_stages]
     return local_pipeline_runtime(pipeline_stages, global_invars, global_outvars)

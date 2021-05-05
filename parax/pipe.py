@@ -198,7 +198,7 @@ class JaxPipeline:
             print("At clock {}, working on {} at backward phase.".format(clock, sched))
             for i, j in sched:
                 inputs = self._identify_stage_inputs(j, i, clock, is_forward=False)
-                stage_name = str(j+1)
+                stage_name = str(j + 1)
                 results_ref = self.workers[stage_name].compute.remote(inputs, is_forward=False)
                 pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
                 print(pipeline_outputs_dict)
@@ -246,7 +246,7 @@ class JaxPipeline:
             # b_stage = self.backward_stages[stage_name]
             f_stage = PicklableStage.from_pipeline_stage(self.forward_stages[stage_name])
             b_stage = PicklableStage.from_pipeline_stage(self.backward_stages[stage_name])
-            print("f_stage order at actor creation: {}".format(f_stage.closed_jaxpr().jaxpr.invars))
+            # print("f_stage order at actor creation: {}".format(f_stage.closed_jaxpr().jaxpr.invars))
             worker = remote_runner.remote(name=stage_name,
                                           forward_stage=f_stage,
                                           backward_stage=b_stage)
@@ -279,7 +279,7 @@ class JaxPipeline:
             stage = self.backward_stages[stage_name]
         closed_jaxpr = stage.closed_jaxpr()
 
-        print("f_stage order at identify_stage_inputs: {}".format(closed_jaxpr.jaxpr.invars))
+        # print("f_stage order at identify_stage_inputs: {}".format(closed_jaxpr.jaxpr.invars))
         for var in closed_jaxpr.jaxpr.invars:
             key = repr(var)
             if var in stage.pipeline_invars:

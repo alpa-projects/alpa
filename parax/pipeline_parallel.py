@@ -1,4 +1,5 @@
-"""gshard based hybrid parallel"""
+"""pipeline parallel on a single device"""
+import itertools as it
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
 
@@ -9,8 +10,8 @@ from jax import jit
 from jax import linear_util as lu
 from jax.core import Atom, Var, DropVar, JaxprEqn, Jaxpr, ClosedJaxpr, Primitive, Literal, abstract_unit, jaxpr_as_fun
 from jax.interpreters import xla, ad, partial_eval as pe
-from jax.lib import xla_client as xc
-from jax._src.util import safe_map
+from jax.lib import xla_client as xc, xla_bridge as xb
+from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -105,8 +106,37 @@ class CompiledPipelineStage:
     @classmethod
     def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
         closed_jaxpr = pipeline_stage.closed_jaxpr()
-        tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
-        nreps=1
+        in_avals = (var.aval for var in closed_jaxpr.jaxpr.invars)
+        out_avals = (var.aval for var in closed_jaxpr.jaxpr.outvars)
+        consts = closed_jaxpr.consts
+        map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+
+        nreps = 1
+        backend = 'gpu'
+        device = xb.get_backend(backend).get_default_device_assignment(1)[0]
+        result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
+        tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
+
+        c = xb.make_computation_builder("pipeline_stage_{}".format(pipeline_stage.name))
+        xla_consts = xla._xla_consts(c, consts)
+        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
+        axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
+        out_nodes = xla.jaxpr_subcomp(
+            c, closed_jaxpr.jaxpr, backend, axis_env, xla_consts,
+            extend_name_stack(wrap_name(pipeline_stage.name, 'stage')), *xla_args)
+        out_tuple = xc.ops.Tuple(c, out_nodes)
+        backend = xb.get_backend(backend)
+        built = c.build(out_tuple)
+        options = xb.get_compile_options(
+            num_replicas=nreps,
+            num_partitions=1,
+            device_assignment=(device.id,) if device else None)
+        options.parameter_is_tupled_arguments = tuple_args
+        compiled = backend.compile(built, compile_options=options)
+
+        return compiled
+
+
 
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
@@ -231,6 +261,5 @@ def pipeline_parallel_callable(
     pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    print("avals", avals)
     compiled_stages = [CompiledPipelineStage.from_pipeline_stage(stage) for stage in pipeline_stages]
     return local_pipeline_runtime(pipeline_stages, global_invars, global_outvars)

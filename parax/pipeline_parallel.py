@@ -1,9 +1,4 @@
 """gshard based hybrid parallel"""
-from dataclasses import dataclass, field
-from typing import List, Set, Any, Dict
-
-import numpy as np
-
 import jax
 from jax import jit
 from jax import linear_util as lu
@@ -14,79 +9,11 @@ from jax._src.util import safe_map
 
 unsafe_map, map = map, safe_map  # type: ignore
 
-pipeline_p = Primitive('pipeline')
-pipeline_p.multiple_results = True
+from parax.pipeline_primitive_def import *
 
-def mark_pipeline(*args, name, mark_type):
-    if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
-        raise ValueError('Unknown mark type: %s' % mark_type)
-    return pipeline_p.bind(*args, name=name, mark_type=mark_type)
-
-def _pipeline_impl(*args, **kwargs):
-    # The pipeline marker acts as an identity function
-    return args if len(args) > 0 else (None, )
-
-def _pipeline_abstract_eval(*args, **kwargs):
-    return args if len(args) > 0 else (abstract_unit, )
-
-def _pipeline_xla_translation(c, *args, **kwargs):
-    return xc.ops.Tuple(c, args) if len(args) > 0 else xc.ops.Tuple(c, (xc.ops.Constant(c, np.float32(0.0)), ))
-
-def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
-    primal_outs = mark_pipeline(*arg_values, name=name, mark_type=mark_type)
-    # TODO(zhuohan): Check the semantics here works for higher order gradients.
-    if mark_type == "start" or mark_type == "jvp_start":
-        tangent_mark_type = "jvp_start"
-    elif mark_type == "end" or mark_type == "jvp_end":
-        tangent_mark_type = "jvp_end"
-    else:
-        raise ValueError("Invalid mark_type")
-    tangent_outs = mark_pipeline(*arg_tangents, name=name, mark_type=tangent_mark_type)
-    return primal_outs, tangent_outs
-
-def _pipeline_transpose(ct, *args, name, mark_type):
-    # TODO(zhuohan): Check the semantics here works for higher order gradients.
-    if mark_type == "start" or mark_type == "jvp_start":
-        transposed_mark_type = "end"
-    elif mark_type == "end" or mark_type == "jvp_end":
-        transposed_mark_type = "start"
-    else:
-        raise ValueError("Invalid mark_type")
-    res = mark_pipeline(*ct, name=name, mark_type=transposed_mark_type)
-    return res
-
-pipeline_p.def_impl(_pipeline_impl)
-pipeline_p.def_abstract_eval(_pipeline_abstract_eval)
-xla.translations[pipeline_p] = _pipeline_xla_translation
-ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
-ad.primitive_transposes[pipeline_p] = _pipeline_transpose
-
-@dataclass
-class PipelineStage:
-    name: str
-    eqns: List[JaxprEqn] = field(default_factory=list)
-    consts_dir: Dict[Atom, Any] = field(default_factory=dict)
-    # invars
-    pipeline_invars: Set[Var] = field(default_factory=set)
-    global_invars: Set[Var] = field(default_factory=set)
-    local_invars: Set[Var] = field(default_factory=set)
-    # outvars
-    pipeline_outvars: Set[Var] = field(default_factory=set)
-    global_outvars: Set[Var] = field(default_factory=set)
-    local_outvars: Set[Var] = field(default_factory=set)
-    # intermediate vars
-    intermediate_vars: Set[Var] = field(default_factory=set)
-
-    def closed_jaxpr(self):
-        jaxpr = Jaxpr(
-            constvars=self.consts_dir.keys(),
-            invars=list(self.pipeline_invars | self.global_invars | self.local_invars),
-            outvars=list(self.pipeline_outvars | self.global_outvars | self.local_outvars),
-            eqns=self.eqns,
-        )
-        closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
-        return closed_jaxpr
-
+# Note: import after the above lines
+from parax.pipe import JaxPipeline
+from parax.pipeline_stage import PipelineStage
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
     # We assume the closed_jaxpr includes pipeline start and end markers. Also,
@@ -211,3 +138,20 @@ def pipeline_parallel_callable(
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     return local_pipeline_runtime(pipeline_stages, global_invars, global_outvars)
+
+@lu.cache
+def distributed_pipeline_parallel_callable(
+    fun: lu.WrappedFun,
+    *avals
+):
+
+    with jax.disable_jit():
+        jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    global_invars = closed_jaxpr.jaxpr.invars
+    global_outvars = closed_jaxpr.jaxpr.outvars
+    jp = JaxPipeline(pipeline_stages=pipeline_stages,
+                     global_invars=global_invars,
+                     global_outvars=global_outvars)
+    return lambda *args, **kwargs: jp.run(*args, **kwargs)

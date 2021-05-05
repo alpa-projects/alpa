@@ -1,0 +1,326 @@
+import logging
+from collections import OrderedDict
+
+import jax
+from jax import jit
+from jax.core import jaxpr_as_fun
+
+from parax.pipeline_stage import PicklableStage
+from parax.pipeline_primitive_def import *
+
+import ray
+
+logger = logging.getLogger(__name__)
+
+
+class Runner:
+    def __init__(self,
+                 *,
+                 name,
+                 forward_stage=None,
+                 backward_stage=None):
+        self.name = name
+        # Note 0: TypeError: cannot pickle 'jaxlib.xla_extension.Traceback' object
+        # Note 1: We don't have to distinguish forward and backward program.
+        self.forward_stage = forward_stage
+        self.backward_stage = backward_stage
+        self.forward_closed_jaxpr = self.forward_stage.closed_jaxpr()
+        self.backward_closed_jaxpr = self.backward_stage.closed_jaxpr()
+        self.forward_runnable = None
+        self.backward_runnable = None
+        self.compile()
+        self.env = dict()
+
+        # pipeline_p = Primitive('pipeline')
+        print(xla.translations[pipeline_p])
+
+    def compile(self):
+        # gen forward runnable
+        self.forward_runnable = jit(jaxpr_as_fun(self.forward_closed_jaxpr))
+        self.backward_runnable = jit(jaxpr_as_fun(self.backward_closed_jaxpr))
+
+        # this is trcck to workaround the "pipeline primitive not found" issue.
+        from jax.interpreters.xla import backend_specific_translations, translations, \
+            translations_with_avals, initial_style_translations, parallel_translations, \
+            call_translations
+        unknown_primitives = []
+        for eqn in self.forward_closed_jaxpr.jaxpr.eqns:
+            if eqn.primitive in backend_specific_translations["gpu"]:
+                continue
+            elif eqn.primitive in translations:
+                continue
+            elif eqn.primitive in translations_with_avals:
+                continue
+            elif eqn.primitive in initial_style_translations:
+                continue
+            elif eqn.primitive in parallel_translations:
+                continue
+            elif eqn.primitive in call_translations:
+                continue
+            else:
+                unknown_primitives.append(eqn.primitive)
+        print(unknown_primitives)
+        primitives = []
+        for up in unknown_primitives:
+            if repr(up) == "pipeline":
+                primitives.append(up)
+        print(primitives)
+        bool_var = primitives[0] == primitives[1]
+        print(bool_var)
+        self._register_custom_primitive(primitives[0])
+
+    def _register_custom_primitive(self, pipeline_p):
+        from jax.core import Primitive, abstract_unit
+        from jax.interpreters import xla, ad
+        from jax.lib import xla_client as xc
+        pipeline_p.multiple_results = True
+
+        def mark_pipeline(*args, name, mark_type):
+            if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
+                raise ValueError('Unknown mark type: %s' % mark_type)
+            return pipeline_p.bind(*args, name=name, mark_type=mark_type)
+
+        def _pipeline_impl(*args, **kwargs):
+            # The pipeline marker acts as an identity function
+            return args if len(args) > 0 else (None,)
+
+        def _pipeline_abstract_eval(*args, **kwargs):
+            return args if len(args) > 0 else (abstract_unit,)
+
+        def _pipeline_xla_translation(c, *args, **kwargs):
+            return xc.ops.Tuple(c, args) if len(args) > 0 else xc.ops.Tuple(c, (xc.ops.Constant(c, np.float32(0.0)),))
+
+        def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
+            primal_outs = mark_pipeline(*arg_values, name=name, mark_type=mark_type)
+            # TODO(zhuohan): Check the semantics here works for higher order gradients.
+            if mark_type == "start" or mark_type == "jvp_start":
+                tangent_mark_type = "jvp_start"
+            elif mark_type == "end" or mark_type == "jvp_end":
+                tangent_mark_type = "jvp_end"
+            else:
+                raise ValueError("Invalid mark_type")
+            tangent_outs = mark_pipeline(*arg_tangents, name=name, mark_type=tangent_mark_type)
+            return primal_outs, tangent_outs
+
+        def _pipeline_transpose(ct, *args, name, mark_type):
+            # TODO(zhuohan): Check the semantics here works for higher order gradients.
+            if mark_type == "start" or mark_type == "jvp_start":
+                transposed_mark_type = "end"
+            elif mark_type == "end" or mark_type == "jvp_end":
+                transposed_mark_type = "start"
+            else:
+                raise ValueError("Invalid mark_type")
+            res = mark_pipeline(*ct, name=name, mark_type=transposed_mark_type)
+            return res
+
+        pipeline_p.def_impl(_pipeline_impl)
+        pipeline_p.def_abstract_eval(_pipeline_abstract_eval)
+        xla.translations[pipeline_p] = _pipeline_xla_translation
+        ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
+        ad.primitive_transposes[pipeline_p] = _pipeline_transpose
+
+    def compute(self, input_ref, is_forward=True):
+        """
+        Args:
+            input_ref (OrderedDict): with key being `var` and value being its reference.
+        """
+        program = self.forward_stage if is_forward else self.backward_stage
+        runnable = self.forward_runnable if is_forward else self.backward_runnable
+        closed_jaxpr = self.forward_closed_jaxpr if is_forward else self.backward_closed_jaxpr
+        # sanity check
+        inputs = []
+        for var in closed_jaxpr.jaxpr.invars:
+            key = repr(var)
+            val_ref = input_ref[key]
+            if val_ref:
+                inputs.append(ray.get(val_ref))
+            else:
+                inputs.append(self.env[var])
+
+        print(inputs)
+
+        # for var, val_ref in input_ref.items():
+        #     if val_ref:
+        #         # communication
+        #         inputs.append(ray.get(val_ref))
+        #     else:
+        #         inputs.append(self.env[var])
+        # print(inputs[0].shape, inputs[1].shape)
+        # Now run
+        # print(xla.translations[pipeline_p])  # miss
+        outputs = runnable(*inputs)
+
+        assert (len(outputs) == len(closed_jaxpr.outvars))
+        outputs_dict = {var: val for var, val in zip(closed_jaxpr.jaxpr.outvars, outputs)}
+        # now split the outputs_dict
+        pipeline_outputs_dict = dict()
+        global_outputs_dict = dict()
+        for var, val in outputs_dict.items():
+            if var in program.local_outvars:
+                self.env.update({var: val})
+            if var in program.pipeline_outvars:
+                pipeline_outputs_dict[var] = ray.put(val)
+            if var in program.global_outvars:
+                global_outputs_dict[var] = ray.put(val)
+        return pipeline_outputs_dict, global_outputs_dict
+
+
+class JaxPipeline:
+    def __init__(self,
+                 *,
+                 pipeline_stages,
+                 global_invars,
+                 global_outvars,
+                 num_batches=1,
+                 schedules=None):
+        assert (len(pipeline_stages) % 2 == 0)
+        self.stage_names = []
+        self.stages = pipeline_stages
+        self.stages_closed_jaxpr = []
+
+        self.forward_stages = dict()
+        self.backward_stages = dict()
+        for stage in pipeline_stages:
+            # assuming first scan through all fwd stages, then backward.
+            self.stages_closed_jaxpr.append(stage.closed_jaxpr())
+            if not stage.name in self.stage_names:
+                self.stage_names.append(stage.name)
+                self.forward_stages[stage.name] = stage
+                continue
+            if stage.name in self.stage_names:
+                self.backward_stages[stage.name] = stage
+        self.num_stages = len(self.stage_names)
+
+        # invars and outvars symbols
+        self.global_invars = global_invars
+        self.global_outvars = global_outvars
+
+        self.num_batches = num_batches
+
+        self.schedules = schedules
+        # tuple(List, List)
+        if not self.schedules:
+            self.schedules = gen_gpipe_schedule(self.num_batches, self.num_stages)
+
+        # init actors
+        self.workers = dict()
+        self._create_workers()
+
+        # inputs and outputs
+        self.stage_inputs = self._init_stage_inputs()
+        # processed at self.run() call.
+        self.microbatches = None
+
+    def run(self, *args, **kwargs):
+        assert not kwargs, "kwargs not supported"
+        self.microbatches = self._make_microbatches(*args)
+
+        global_output_refs = {}
+        # forward
+        for clock, sched in enumerate(self.schedules[0]):
+            # submit work in parallel
+            print("At clock {}, working on {} at forward phase.".format(clock, sched))
+            for i, j in sched:
+                # i is micro-batch idx
+                # j is stage idx
+                inputs = self._identify_stage_inputs(j, i, clock)
+                # TODO(Hao): this mapping is too simple, make it more complex
+                stage_name = str(j + 1)
+                results_ref = self.workers[stage_name].compute.remote(inputs)
+                # put results in the stage_inputs
+                pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
+                global_output_refs.update(stage_global_outputs_dict)
+                next_stage = j + 1
+                next_clock = clock + 1
+                self.stage_inputs[next_clock][next_stage].update(pipeline_outputs_dict)
+
+        # backward
+        for clock, sched in enumerate(self.schedules[1]):
+            # TODO (Hao): finish backward
+            pass
+
+    def _init_stage_inputs(self):
+        """Construct the batch_ref matrix,
+
+        Batch_ref store ray refs to data, it implicitly captures the
+        input-output dependency of pipelining.
+        """
+        S = self.num_stages
+        C = len(self.schedules)  # num_clock
+        # batch_ref is C by S
+        # batch_refs[i][j]: dict() is the input dict for stage j at clock i
+        batch_refs = [[dict() for _ in range(S)] for _ in range(C)]
+        return batch_refs
+
+    def _make_microbatches(self, *inputs, batch_dim=0, batch_size=128):
+        assert (len(inputs) == len(self.global_invars))
+        microbatches = [dict() for _ in range(self.num_batches)]
+        for i, var in enumerate(self.global_invars):
+            array = inputs[i]
+            if not array.shape or array.shape[batch_dim] != batch_size:
+                # empty shape means it is not the input batch
+                # no need to split
+                ref = ray.put(inputs[i])
+                for b in range(self.num_batches):
+                    microbatches[b][var] = ref
+            else:
+                splits = jax.numpy.split(array, self.num_batches, axis=batch_dim)
+                for b, split in enumerate(splits):
+                    microbatches[b][var] = ray.put(split)
+        return microbatches
+
+    def _create_workers(self):
+        remote_runner = ray.remote(num_cpus=1, num_gpus=1)(Runner)
+        for stage_name in self.stage_names:
+            # f_stage = self.forward_stages[stage_name]
+            # b_stage = self.backward_stages[stage_name]
+            f_stage = PicklableStage.from_pipeline_stage(self.forward_stages[stage_name])
+            b_stage = PicklableStage.from_pipeline_stage(self.backward_stages[stage_name])
+            print("f_stage order at actor creation: {}".format(f_stage.closed_jaxpr().jaxpr.invars))
+            worker = remote_runner.remote(name=stage_name,
+                                          forward_stage=f_stage,
+                                          backward_stage=b_stage)
+            self.workers[stage_name] = worker
+
+    def _identify_stage_inputs(self, stage_idx, batch_idx, clock):
+        # stage_input is a dict: var_name -> array ref
+        stage_inputs = OrderedDict()
+        stage = self.stages[stage_idx]
+        closed_jaxpr = self.stages_closed_jaxpr[stage_idx]
+
+        print("f_stage order at identify_stage_inputs: {}".format(closed_jaxpr.jaxpr.invars))
+        for var in closed_jaxpr.jaxpr.invars:
+            key = repr(var)
+            if var in stage.pipeline_invars:
+                if stage_idx == 0:
+                    stage_inputs[key] = self.microbatches[batch_idx][var]
+                else:
+                    stage_inputs[key] = self.stage_inputs[clock][stage_idx][var]
+            elif var in self.global_invars:
+                stage_inputs[key] = self.microbatches[batch_idx][var]
+            else:
+                assert var in stage.local_invars
+                stage_inputs[key] = None
+        return stage_inputs
+
+
+def gen_gpipe_schedule(m, n):
+    # m: number of micro-batches
+    # n: number of partitions
+    # i: index of micro-batch
+    # j: index of partition/device
+    # k: clock number
+    #
+    # k (i,j) (i,j) (i,j)
+    # - ----- ----- -----
+    # 0 (0,0)
+    # 1 (1,0) (0,1)
+    # 2 (2,0) (1,1) (0,2)
+    # 3       (2,1) (1,2)
+    # 4             (2,2)
+    # 5 reverse...
+    forward_schedules = []
+    for k in range(m + n - 1):
+        forward_schedules.append([(k - j, j) for j in range(max(1 + k - m, 0), min(1 + k, n))])
+    backward_schedules = forward_schedules[::-1]
+    return forward_schedules, backward_schedules

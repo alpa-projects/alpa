@@ -226,7 +226,7 @@ class LocalPipelineRunner:
         self.global_invals = global_invals
 
     def run_stage(self, stage, prev_stage_pipeline_outvals=None):
-        runnable, invars, outvars = stage.create_runnable()
+        runnable, invars, outvars = stage.get_runnable()
         invals_list = []
         for var in invars:
             if var in stage.pipeline_invars:

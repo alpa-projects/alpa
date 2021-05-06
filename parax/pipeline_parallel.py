@@ -90,8 +90,8 @@ class PipelineStage:
 
 
 @dataclass
-class CompiledPipelineStage:
-    compield_function: Any
+class XlaPipelineStage:
+    hlo_proto: bytes
     invars: Sequence[Var]
     outvars: Sequence[Var]
     # invars
@@ -113,8 +113,6 @@ class CompiledPipelineStage:
 
         nreps = 1
         backend = 'gpu'
-        device = xb.get_backend(backend).get_default_device_assignment(1)[0]
-        result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
         tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
 
         c = xb.make_computation_builder("pipeline_stage_{}".format(pipeline_stage.name))
@@ -125,18 +123,36 @@ class CompiledPipelineStage:
             c, closed_jaxpr.jaxpr, backend, axis_env, xla_consts,
             extend_name_stack(wrap_name(pipeline_stage.name, 'stage')), *xla_args)
         out_tuple = xc.ops.Tuple(c, out_nodes)
-        backend = xb.get_backend(backend)
         built = c.build(out_tuple)
-        options = xb.get_compile_options(
-            num_replicas=nreps,
-            num_partitions=1,
-            device_assignment=(device.id,) if device else None)
-        options.parameter_is_tupled_arguments = tuple_args
-        compiled = backend.compile(built, compile_options=options)
 
-        return compiled
+        return cls(
+            hlo_proto=built.as_serialized_hlo_module_proto(),
+            invars=closed_jaxpr.jaxpr.invars,
+            outvars=closed_jaxpr.jaxpr.outvars,
+            pipeline_invars=pipeline_stage.pipeline_invars,
+            global_invars=pipeline_stage.global_invars,
+            local_invars=pipeline_stage.local_invars,
+            pipeline_outvars=pipeline_stage.pipeline_outvars,
+            global_outvars=pipeline_stage.global_outvars,
+            local_outvars=pipeline_stage.local_outvars,
+        )
 
 
+def compile_hlo_graph(hlo_proto):
+    xla_computation = xc.XlaComputation(hlo_proto)
+    print(xla_computation)
+    import ipdb; ipdb.set_trace()
+    nreps = 1
+    backend = 'gpu'
+    device = xb.get_backend(backend).get_default_device_assignment(1)[0]
+    backend = xb.get_backend(backend)
+    options = xb.get_compile_options(
+        num_replicas=nreps,
+        num_partitions=1,
+        device_assignment=(device.id,) if device else None)
+    options.parameter_is_tupled_arguments = tuple_args
+    compiled = backend.compile(graph, compile_options=options)
+    result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
 
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
@@ -261,5 +277,6 @@ def pipeline_parallel_callable(
     pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    compiled_stages = [CompiledPipelineStage.from_pipeline_stage(stage) for stage in pipeline_stages]
+    xla_stages = [XlaPipelineStage.from_pipeline_stage(stage) for stage in pipeline_stages]
+    compiled_0 = compile_hlo_graph(xla_stages[0].hlo_proto)
     return local_pipeline_runtime(pipeline_stages, global_invars, global_outvars)

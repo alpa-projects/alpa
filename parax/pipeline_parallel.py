@@ -100,7 +100,7 @@ class JaxPipelineStage(PipelineStage):
         return closed_jaxpr
 
     def get_runnable(self):
-        closed_jaxpr = self.get_closed_jaxpr()
+        closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
 
 @dataclass
@@ -108,7 +108,7 @@ class XlaPipelineStage(PipelineStage):
     hlo_proto: bytes = field(default_factory=b"")
 
     @classmethod
-    def from_jax_pipeline_stage(cls, pipeline_stage: PipelineStage):
+    def from_jax_pipeline_stage(cls, pipeline_stage: JaxPipelineStage):
         closed_jaxpr = pipeline_stage.closed_jaxpr()
         in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
         consts = closed_jaxpr.consts
@@ -130,8 +130,8 @@ class XlaPipelineStage(PipelineStage):
         return cls(
             name=pipeline_stage.name,
             hlo_proto=built.as_serialized_hlo_module_proto(),
-            invars=closed_jaxpr.jaxpr.invars,
-            outvars=closed_jaxpr.jaxpr.outvars,
+            invars=pipeline_stage.invars,
+            outvars=pipeline_stage.outvars,
             pipeline_invars=pipeline_stage.pipeline_invars,
             global_invars=pipeline_stage.global_invars,
             local_invars=pipeline_stage.local_invars,

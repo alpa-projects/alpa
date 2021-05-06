@@ -16,16 +16,26 @@ from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
 
 unsafe_map, map = map, safe_map  # type: ignore
 
+# Define a Jax primitive to mark start/end of a pipeline stage.
 pipeline_p = Primitive('pipeline')
 pipeline_p.multiple_results = True
 
-def mark_pipeline(*args, name, mark_type):
+def mark_pipeline(*args, name: str, mark_type: str):
+    """Mark the start/end of a pipeline stage.
+
+    Args:
+        *args: represents the pipeline input/output of a pipeline stage.
+        name (str): Name of the pipeline stage.
+        mark_type (str): start or end of a pipeline stage, can be "start",
+            "end", "jvp_start", or "jvp_end". The latter two are used for
+            backward pass.
+    """
     if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
         raise ValueError('Unknown mark type: %s' % mark_type)
     return pipeline_p.bind(*args, name=name, mark_type=mark_type)
 
 def _pipeline_impl(*args, **kwargs):
-    # The pipeline marker acts as an identity function
+    # The pipeline marker acts as an identity function.
     return args if len(args) > 0 else (None, )
 
 def _pipeline_abstract_eval(*args, **kwargs):
@@ -63,8 +73,31 @@ xla.translations[pipeline_p] = _pipeline_xla_translation
 ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
 ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 
+
 @dataclass
 class PipelineStage(ABC):
+    """Base class of pipeline stages.
+
+    Attributes:
+        name (str): The name of the pipeline stage.
+        invars (Sequence[Var]): The list of input variables, corresponding to
+            the order of the runnable inputs.
+        pipeline_invars (Set[Var]): The set of input variables receiving from
+            the previous pipeline stage.
+        global_invars (Set[Var]): The set of input variables from driver
+            function inputs.
+        local_invars (Set[Var]): The set of input variables from previous
+            stages running on the same device.
+        outvars (Sequence[Var]): The list of output variables, corresponding to
+            the order of the runnable outputs.
+        pipeline_outvars (Set[Var]): The set of output variables sending to
+            the next pipeline stage.
+        global_outvars (Set[Var]): The set of output variables that will be
+            used as driver function outputs.
+        local_outvars (Set[Var]): The set of output variables that will be used
+            by future stages running on the same device.
+    """
+
     name: str
     # invars
     invars: Sequence[Var] = field(default_factory=list)
@@ -86,10 +119,23 @@ class PipelineStage(ABC):
 
 @dataclass
 class JaxPipelineStage(PipelineStage):
+    """Pipeline stage with JaxPr.
+
+    Attributes:
+        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
+        consts_dir: Dict[Atom, Any]: All the constants used in the pipeline
+            stage.
+    """
+
     eqns: List[JaxprEqn] = field(default_factory=list)
     consts_dir: Dict[Atom, Any] = field(default_factory=dict)
 
-    def closed_jaxpr(self):
+    def closed_jaxpr(self) -> ClosedJaxpr:
+        """Get the closed Jaxpr of the pipeline stage.
+
+        Returns:
+            ClosedJaxpr: The result ClosedJaxpr.
+        """
         jaxpr = Jaxpr(
             constvars=self.consts_dir.keys(),
             invars=self.invars,
@@ -100,15 +146,30 @@ class JaxPipelineStage(PipelineStage):
         return closed_jaxpr
 
     def get_runnable(self):
+        """Return a JIT callable of the pipeline stage."""
         closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
 
+
 @dataclass
 class XlaPipelineStage(PipelineStage):
+    """Pipeline stage with XLA HLO protos.
+
+    Attributes:
+        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
+        consts_dir: Dict[Atom, Any]: All the constants used in the pipeline
+            stage.
+    """
+
     hlo_proto: bytes = field(default_factory=b"")
 
     @classmethod
     def from_jax_pipeline_stage(cls, jax_pipeline_stage: JaxPipelineStage):
+        """Construct a XlaPipelineStage from a JaxPipelineStage.
+
+        Args:
+            jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
+        """
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
         in_avals = [var.aval for var in jax_pipeline_stage.invars]
         consts = closed_jaxpr.consts
@@ -141,6 +202,7 @@ class XlaPipelineStage(PipelineStage):
         )
 
     def get_runnable(self):
+        """Return a callable of the pipeline stage."""
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
         tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
@@ -158,11 +220,20 @@ class XlaPipelineStage(PipelineStage):
         return partial(xla._execute_compiled, compiled, out_avals, result_handlers)
 
 
-def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
-    # We assume the closed_jaxpr includes pipeline start and end markers. Also,
-    # the variables in the markers represents the variables being sent
-    # through the network. While other input variables must be directly from
-    # the invars.
+def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:
+    """Slice a Jaxpr into multiple pipeline stages.
+
+    We assume the closed_jaxpr includes pipeline start and end markers. Also,
+    the variables in the markers represents the variables being sent
+    through the network. While other input variables must be directly from
+    the invars.
+
+    Args:
+        closed_jaxpr (ClosedJaxpr): the input Jaxpr.
+
+    Returns:
+        Sequence[JaxPipelineStage]: A list of sliced pipeline stages.
+    """
     global_invars = set(closed_jaxpr.jaxpr.invars)
     global_outvars = set(var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
     global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
@@ -223,13 +294,26 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
 
     return result_stages
 
+
 class LocalPipelineRunner:
     def __init__(self, name, global_invals):
         self.name = name
         self.env = {}
         self.global_invals = global_invals
 
-    def run_stage(self, stage: PipelineStage, prev_stage_pipeline_outvals=None):
+    def run_stage(self, stage: PipelineStage, prev_stage_pipeline_outvals: Set[Var]=None):
+        """Run a pipeline stage.
+
+        Args:
+            stage (PipelineStage): The pipeline stage to run.
+            prev_stage_pipeline_outvals (Set[Var], optional): Results from
+                the previous pipeline stage. When set to None, we'll fetch
+                the values of pipeline input variables from global input
+                variables, which is used for the very first pipeline stage.
+
+        Returns:
+            Two dictionaries with values of pipeline & global output variables.
+        """
         runnable = stage.get_runnable()
         invals_list = []
         for var in stage.invars:
@@ -252,7 +336,15 @@ class LocalPipelineRunner:
         return pipeline_outvals, global_outvals
 
 
-def local_pipeline_runtime(pipeline_stages, global_invars, global_outvars):
+def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage], global_invars: Sequence[Var], global_outvars: Sequence[Var]):
+    """Return a callable that runs all pipeline stages on a single local device.
+
+    Args:
+        pipeline_stages (Sequence[PipelineStage]): the pipeline stages to be
+            executed.
+        global_invars (Sequence[Var]): Global input variables.
+        global_outvars (Sequence[Var]): Global output variables.
+    """
     def ret_func(*args, **kwargs):
         assert not kwargs, "kwargs not supported"
         global_invals = dict(zip(global_invars, args))
@@ -273,6 +365,7 @@ def local_pipeline_runtime(pipeline_stages, global_invars, global_outvars):
         return global_outvals_list
 
     return ret_func
+
 
 @lu.cache
 def pipeline_parallel_callable(

@@ -215,7 +215,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
             assert current_stage.name == eqn.params['name'], "Ending a pipeline stage different from its start."
             current_stage.pipeline_outvars = set(var for var in eqn.outvars if not isinstance(var, DropVar))
             current_stage.invars = list(current_stage.pipeline_invars | current_stage.global_invars | current_stage.local_invars)
-            current_stage.outvars = list(current_stage.pipeline_invars | current_stage.global_invars | current_stage.local_invars)
+            current_stage.outvars = list(current_stage.pipeline_outvars | current_stage.global_outvars | current_stage.local_outvars)
             result_stages.append(current_stage)
             current_stage = None
     return result_stages

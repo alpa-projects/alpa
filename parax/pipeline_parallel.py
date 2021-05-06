@@ -2,6 +2,7 @@
 import itertools as it
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
+from abc import ABC, abstract_method
 
 import numpy as np
 
@@ -63,25 +64,35 @@ ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
 ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 
 @dataclass
-class PipelineStage:
+class PipelineStage(ABC):
     name: str
-    eqns: List[JaxprEqn] = field(default_factory=list)
-    consts_dir: Dict[Atom, Any] = field(default_factory=dict)
     # invars
+    invars: Sequence[Var] = field(default_factory=[])
     pipeline_invars: Set[Var] = field(default_factory=set)
     global_invars: Set[Var] = field(default_factory=set)
     local_invars: Set[Var] = field(default_factory=set)
     # outvars
+    outvars: Sequence[Var] = field(default_factory=[])
     pipeline_outvars: Set[Var] = field(default_factory=set)
     global_outvars: Set[Var] = field(default_factory=set)
     local_outvars: Set[Var] = field(default_factory=set)
     # intermediate vars
     intermediate_vars: Set[Var] = field(default_factory=set)
 
+    @abstract_method
+    def get_runnable(self):
+        pass
+
+
+@dataclass
+class JaxPipelineStage(PipelineStage):
+    eqns: List[JaxprEqn] = field(default_factory=list)
+    consts_dir: Dict[Atom, Any] = field(default_factory=dict)
+
     def closed_jaxpr(self):
         jaxpr = Jaxpr(
             constvars=self.consts_dir.keys(),
-            invars=list(self.pipeline_invars | self.global_invars | self.local_invars),
+            invars=,
             outvars=list(self.pipeline_outvars | self.global_outvars | self.local_outvars),
             eqns=self.eqns,
         )
@@ -92,24 +103,12 @@ class PipelineStage:
         closed_jaxpr = self.get_closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr)), closed_jaxpr.jaxpr.invars, closed_jaxpr.jaxpr.outvars
 
-
 @dataclass
-class XlaPipelineStage:
-    name: str
-    hlo_proto: bytes
-    invars: Sequence[Var]
-    outvars: Sequence[Var]
-    # invars
-    pipeline_invars: Set[Var] = field(default_factory=set)
-    global_invars: Set[Var] = field(default_factory=set)
-    local_invars: Set[Var] = field(default_factory=set)
-    # outvars
-    pipeline_outvars: Set[Var] = field(default_factory=set)
-    global_outvars: Set[Var] = field(default_factory=set)
-    local_outvars: Set[Var] = field(default_factory=set)
+class XlaPipelineStage(PipelineStage):
+    hlo_proto: bytes = field(default_factory=b"")
 
     @classmethod
-    def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
+    def from_jax_pipeline_stage(cls, pipeline_stage: PipelineStage):
         closed_jaxpr = pipeline_stage.closed_jaxpr()
         in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
         consts = closed_jaxpr.consts
@@ -175,7 +174,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage = PipelineStage(name=eqn.params['name'])
+            current_stage = JaxPipelineStage(name=eqn.params['name'])
             for var in eqn.invars:
                 if not isinstance(var, Literal):
                     current_stage.pipeline_invars.add(var)
@@ -215,6 +214,8 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
             assert current_stage is not None, "Ending a pipeline stage before its start."
             assert current_stage.name == eqn.params['name'], "Ending a pipeline stage different from its start."
             current_stage.pipeline_outvars = set(var for var in eqn.outvars if not isinstance(var, DropVar))
+            current_stage.invars = list(current_stage.pipeline_invars | current_stage.global_invars | current_stage.local_invars)
+            current_stage.outvars = list(current_stage.pipeline_invars | current_stage.global_invars | current_stage.local_invars)
             result_stages.append(current_stage)
             current_stage = None
     return result_stages
@@ -281,5 +282,5 @@ def pipeline_parallel_callable(
     pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    xla_pipeline_stages = [XlaPipelineStage.from_pipeline_stage(stage) for stage in pipeline_stages]
+    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage) for stage in pipeline_stages]
     return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)

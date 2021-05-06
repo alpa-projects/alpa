@@ -374,6 +374,30 @@ class MLPSolverTest(unittest.TestCase):
             assert_close(objective, expected)
 
 
+    def test_mlp_2_layer_force_data_parallel(self):
+        # Build Hlo Computation
+        batch_size = 128
+        hidden_dim = 1024
+
+        computation = get_mlp_2_layer_computation(batch_size, hidden_dim,
+            hidden_dim, hidden_dim)
+
+        # Test different device meshes
+        mesh_shape = [4, 1]
+        device_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+        solver_option = SolverOption()
+        solver_option.force_batch_dim_to_mesh_dim = 0
+        solver_option.force_all_gather_cost = 1e10
+        cluster_env = ClusterEnvironment(device_mesh, [1, 1], [1, 1],
+                                         memory_per_device=1000 * MB,
+                                         solver_option=solver_option)
+        objective = solve_auto_sharding(computation, cluster_env, solver_option)
+
+        # The expecte cost is always one all-reduce on activations
+        expected = 2 * cluster_env.all_reduce_cost(hidden_dim * hidden_dim * 4, 0)
+        assert_close(objective, expected)
+
+
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(MLPSolverTest('test_mlp_2_layer_data_parallel'))
@@ -387,6 +411,8 @@ def suite():
     suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_data_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_model_parallel'))
     suite.addTest(MLPSolverTest('test_mlp_2_layer_bias_2d_mesh'))
+
+    suite.addTest(MLPSolverTest('test_mlp_2_layer_force_data_parallel'))
 
     return suite
 

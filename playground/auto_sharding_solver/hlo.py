@@ -236,8 +236,12 @@ class HloInstruction:
 
         # The index in HloComputation
         self.index = HloComputation.cur_env.append(self)
+        self.batch_dim = None
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
+        raise NotImplementedError(f"{self.op_code}")
+
+    def propagate_batch_dim(self, operand):
         raise NotImplementedError(f"{self.op_code}")
 
 
@@ -484,6 +488,10 @@ class HloElementwise(HloInstruction):
                     resharding_costs.append(
                     resharding_cost_vector(cluster_env, self.operands[k], output_spec))
             self.resharding_costs.append(resharding_costs)
+
+    def propagate_batch_dim(self, ins):
+        self.batch_dim = ins.batch_dim
+        return True
 
     def __str__(self):
         fun_name = str(self.op_code)[7:].lower()
@@ -793,6 +801,45 @@ class HloDot(HloInstruction):
                         ShardingSpec.tile(rhs.shape, [rhs_batch_dims[0], rhs_batch_dims[1]], [0, 1], cluster_env))
                 ])
 
+            # If force batch dim to a mesh dim, filter out invalid strategies
+            if solver_option.force_batch_dim_to_mesh_dim is not None and self.batch_dim is not None:
+                filter_indices = []
+                for i in range(len(self.strategies)):
+                    tensor_dim_to_mesh_dim = cluster_env.get_tensor_dim_to_mesh_dim(
+                        self.shape, self.strategies[i].output_spec)
+                    if tensor_dim_to_mesh_dim[self.batch_dim] == solver_option.force_batch_dim_to_mesh_dim:
+                        filter_indices.append(i)
+
+                self.strategies = [self.strategies[i] for i in filter_indices]
+                self.compute_costs = [self.compute_costs[i] for i in filter_indices]
+                self.communication_costs = [self.communication_costs[i] for i in filter_indices]
+                self.memory_costs = [self.memory_costs[i] for i in filter_indices]
+                self.resharding_costs = [self.resharding_costs[i] for i in filter_indices]
+
+    def propagate_batch_dim(self, operand):
+        index = self.operands.index(operand)
+
+        if index == 0:
+            for i in range(len(self.lhs_batch_dims)):
+                if operand.batch_dim == self.lhs_batch_dims[i]:
+                    self.batch_dim = i
+                    return True
+            if operand.batch_dim == self.lhs_space_dims[0]:
+                self.batch_dim = len(self.lhs_batch_dims)
+                return True
+            if operand.batch_dim in self.lhs_contracting_dims:
+                return False
+        else:
+            for i in range(len(self.rhs_batch_dims)):
+                if operand.batch_dim == self.rhs_batch_dims[i]:
+                    self.batch_dim = i
+                    return True
+            if operand.batch_dim == self.rhs_space_dims[0]:
+                self.batch_dim = len(self.rhs_batch_dims)
+                return True
+            if operand.batch_dim in self.rhs_contracting_dims:
+                return False
+
     def __str__(self):
         return f"{self.name} {self.shape} = dot({self.lhs.name}, {self.rhs.name}) "\
                f" lhs_con_dim={self.lhs_contracting_dims},"\
@@ -915,6 +962,42 @@ class HloComputation:
 
         return sep_id
 
+    def batch_dim_analysis(self):
+        # Build used by dict
+        used_by = defaultdict(list)
+        for ins in self.instructions:
+            for operand in ins.operands:
+                used_by[operand].append(ins)
+
+        # Find source.
+        # Rule: The first dim of parameters that are only used once
+        #possible_inputs = []
+        #for param in self.parameters:
+        #    if len(used_by[param]) == 1:
+        #        possible_inputs.append(param)
+        #source = possible_inputs[0]
+        source = self.instructions[0]
+        source.batch_dim = 0
+
+        # Dim propagation
+        queue = [source]
+        visited = set([source])
+
+        while len(queue) > 0:
+            ins = queue.pop(0)
+
+            # Propagate to operand
+
+            # Propagate to used_by
+            for consumer in used_by[ins]:
+                #print(f"Propagate from {ins} to {consumer}")
+                success = consumer.propagate_batch_dim(ins)
+                if not success:
+                    continue
+                if consumer.index not in visited:
+                    visited.add(consumer)
+                    queue.append(consumer)
+
     def depth_analysis(self):
         frontier_list = []
         edge_dict = defaultdict(list)
@@ -962,11 +1045,15 @@ class HloComputation:
 
             self.alias_cost_vector = []
 
-        if solver_option.force_data_parallel:
-            solver_option.forward_backward_sep_id = self.forward_backward_analysis()
-
         # Analyze depth for all instructions
         self.depth_analysis()
+
+        # Analyze batch dim
+        if solver_option.force_batch_dim_to_mesh_dim is not None:
+            batch_dim = self.batch_dim_analysis()
+            print("===== Batch Dim Analysis =====")
+            for i in range(len(self.instructions)):
+                print(f"Time {i:2d}: {self.instructions[i]}  Batch: {self.instructions[i].batch_dim}")
 
         # Build strategies and costs for each instruction
         for ins in self.instructions:

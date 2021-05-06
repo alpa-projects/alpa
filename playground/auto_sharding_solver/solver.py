@@ -210,7 +210,8 @@ class CostGraph:
 
 class SolverOption:
     def __init__(self):
-        self.force_data_parallel = False
+        self.force_batch_dim_to_mesh_dim = None
+
         self.forward_backward_sep_id = None
         self.force_all_reduce_cost = None
         self.force_all_gather_cost = None

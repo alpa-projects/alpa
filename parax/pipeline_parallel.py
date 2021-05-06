@@ -2,7 +2,7 @@
 import itertools as it
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
-from abc import ABC, abstract_method
+from abc import ABC, abstractmethod
 
 import numpy as np
 
@@ -79,7 +79,7 @@ class PipelineStage(ABC):
     # intermediate vars
     intermediate_vars: Set[Var] = field(default_factory=set)
 
-    @abstract_method
+    @abstractmethod
     def get_runnable(self):
         pass
 

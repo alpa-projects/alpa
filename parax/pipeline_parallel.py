@@ -92,8 +92,8 @@ class JaxPipelineStage(PipelineStage):
     def closed_jaxpr(self):
         jaxpr = Jaxpr(
             constvars=self.consts_dir.keys(),
-            invars=,
-            outvars=list(self.pipeline_outvars | self.global_outvars | self.local_outvars),
+            invars=self.invars,
+            outvars=self.outvars,
             eqns=self.eqns,
         )
         closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
@@ -101,7 +101,7 @@ class JaxPipelineStage(PipelineStage):
 
     def get_runnable(self):
         closed_jaxpr = self.get_closed_jaxpr()
-        return jit(jaxpr_as_fun(closed_jaxpr)), closed_jaxpr.jaxpr.invars, closed_jaxpr.jaxpr.outvars
+        return jit(jaxpr_as_fun(closed_jaxpr))
 
 @dataclass
 class XlaPipelineStage(PipelineStage):
@@ -155,7 +155,7 @@ class XlaPipelineStage(PipelineStage):
         options.parameter_is_tupled_arguments = tuple_args
         compiled = backend.compile(xla_computation, compile_options=options)
         result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
-        return partial(xla._execute_compiled, compiled, out_avals, result_handlers), self.invars, self.outvars
+        return partial(xla._execute_compiled, compiled, out_avals, result_handlers)
 
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
@@ -226,10 +226,10 @@ class LocalPipelineRunner:
         self.env = {}
         self.global_invals = global_invals
 
-    def run_stage(self, stage, prev_stage_pipeline_outvals=None):
-        runnable, invars, outvars = stage.get_runnable()
+    def run_stage(self, stage: PipelineStage, prev_stage_pipeline_outvals=None):
+        runnable = stage.get_runnable()
         invals_list = []
-        for var in invars:
+        for var in stage.invars:
             if var in stage.pipeline_invars:
                 if prev_stage_pipeline_outvals is None:
                     invals_list.append(self.global_invals[var])
@@ -241,7 +241,7 @@ class LocalPipelineRunner:
                 assert var in stage.local_invars
                 invals_list.append(self.env[var])
         outvals_list = runnable(*invals_list)
-        outvals = {var: val for var, val in zip(outvars, outvals_list)}
+        outvals = {var: val for var, val in zip(stage.outvars, outvals_list)}
         local_outvals = {var: outvals[var] for var in stage.local_outvars}
         pipeline_outvals = {var: outvals[var] for var in stage.pipeline_outvars}
         global_outvals = {var: outvals[var] for var in stage.global_outvars}

@@ -106,8 +106,8 @@ class XlaPipelineStage:
     @classmethod
     def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
         closed_jaxpr = pipeline_stage.closed_jaxpr()
-        in_avals = (var.aval for var in closed_jaxpr.jaxpr.invars)
-        out_avals = (var.aval for var in closed_jaxpr.jaxpr.outvars)
+        in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
+        out_avals = [var.aval for var in closed_jaxpr.jaxpr.outvars]
         consts = closed_jaxpr.consts
         map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
 

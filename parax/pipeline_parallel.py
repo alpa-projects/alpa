@@ -282,8 +282,8 @@ def pipeline_parallel_callable(
     with jax.disable_jit():
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage) for stage in pipeline_stages]
+    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage) for stage in jax_pipeline_stages]
     return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)

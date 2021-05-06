@@ -88,9 +88,14 @@ class PipelineStage:
         closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
         return closed_jaxpr
 
+    def get_runnable(self):
+        closed_jaxpr = self.get_closed_jaxpr()
+        return jit(jaxpr_as_fun(closed_jaxpr)), closed_jaxpr.jaxpr.invars, closed_jaxpr.jaxpr.outvars
+
 
 @dataclass
 class XlaPipelineStage:
+    name: str
     hlo_proto: bytes
     invars: Sequence[Var]
     outvars: Sequence[Var]
@@ -124,6 +129,7 @@ class XlaPipelineStage:
         built = c.build(out_tuple)
 
         return cls(
+            name=pipeline_stage.name,
             hlo_proto=built.as_serialized_hlo_module_proto(),
             invars=closed_jaxpr.jaxpr.invars,
             outvars=closed_jaxpr.jaxpr.outvars,
@@ -135,7 +141,7 @@ class XlaPipelineStage:
             local_outvars=pipeline_stage.local_outvars,
         )
 
-    def compiled_xla_runnable(self):
+    def get_runnable(self):
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
         tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
@@ -150,7 +156,7 @@ class XlaPipelineStage:
         options.parameter_is_tupled_arguments = tuple_args
         compiled = backend.compile(xla_computation, compile_options=options)
         result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
-        return partial(xla._execute_compiled, compiled, out_avals, result_handlers)
+        return partial(xla._execute_compiled, compiled, out_avals, result_handlers), self.invars, self.outvars
 
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr):
@@ -219,15 +225,8 @@ class LocalPipelineRunner:
         self.env = {}
         self.global_invals = global_invals
 
-    def create_runnable(stage):
-        closed_jaxpr = stage.closed_jaxpr()
-        runnable = jit(jaxpr_as_fun(closed_jaxpr))
-        invars = closed_jaxpr.jaxpr.invars
-        outvars = closed_jaxpr.jaxpr.outvars
-        return runnable, invars, outvars
-
     def run_stage(self, stage, prev_stage_pipeline_outvals=None):
-        runnable, invars, outvars = self.create_runnable(stage)
+        runnable, invars, outvars = stage.create_runnable()
         invals_list = []
         for var in invars:
             if var in stage.pipeline_invars:
@@ -249,15 +248,7 @@ class LocalPipelineRunner:
         return pipeline_outvals, global_outvals
 
 
-class LocalXlaPipelineRunner(LocalPipelineRunner):
-    def create_runnable(stage):
-        runnable = stage.compiled_xla_runnable()
-        invars = stage.invars
-        outvars = stage.outvars
-        return runnable, invars, outvars
-
-
-def local_pipeline_runtime(pipeline_stages, global_invars, global_outvars, RunnerClass=LocalPipelineRunner):
+def local_pipeline_runtime(pipeline_stages, global_invars, global_outvars):
     def ret_func(*args, **kwargs):
         assert not kwargs, "kwargs not supported"
         global_invals = dict(zip(global_invars, args))
@@ -266,7 +257,7 @@ def local_pipeline_runtime(pipeline_stages, global_invars, global_outvars, Runne
         pipeline_outvals = None
         for stage in pipeline_stages:
             if stage.name not in runners:
-                runners[stage.name] = RunnerClass(stage.name, global_invals)
+                runners[stage.name] = LocalPipelineRunner(stage.name, global_invals)
             pipeline_outvals, stage_global_outvals = runners[stage.name].run_stage(stage, pipeline_outvals)
             global_outvals.update(stage_global_outvals)
         global_outvals_list = []
@@ -291,4 +282,4 @@ def pipeline_parallel_callable(
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     xla_pipeline_stages = [XlaPipelineStage.from_pipeline_stage(stage) for stage in pipeline_stages]
-    return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars, RunnerClass=LocalXlaPipelineRunner)
+    return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)

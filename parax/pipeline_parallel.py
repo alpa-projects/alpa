@@ -67,12 +67,12 @@ ad.primitive_transposes[pipeline_p] = _pipeline_transpose
 class PipelineStage(ABC):
     name: str
     # invars
-    invars: Sequence[Var] = field(default_factory=[])
+    invars: Sequence[Var] = field(default_factory=list)
     pipeline_invars: Set[Var] = field(default_factory=set)
     global_invars: Set[Var] = field(default_factory=set)
     local_invars: Set[Var] = field(default_factory=set)
     # outvars
-    outvars: Sequence[Var] = field(default_factory=[])
+    outvars: Sequence[Var] = field(default_factory=list)
     pipeline_outvars: Set[Var] = field(default_factory=set)
     global_outvars: Set[Var] = field(default_factory=set)
     local_outvars: Set[Var] = field(default_factory=set)

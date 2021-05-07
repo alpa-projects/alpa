@@ -119,8 +119,9 @@ def test_mlp_forward():
         x = relu(x)
         x = with_sharding_constraint(x, P('data_parallel', 'model_parallel'))
         x = x @ w2
-        x = relu(x)
-        loss = jnp.mean((x - y) ** 2)
+        loss = x
+        #x = relu(x)
+        #loss = jnp.mean((x - y) ** 2)
         return loss
 
     loss_func_parallel = pjit(
@@ -139,13 +140,12 @@ def test_mlp_forward():
     w1 = np.random.uniform(size=(D, D))
     w2 = np.random.uniform(size=(D, D))
 
-    loss_serial = loss_func((x, y), (w1, w2))
-
     mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
     with mesh(mesh_devices, ('data_parallel', 'model_parallel')):
         loss_parallel = loss_func_parallel((x, y), (w1, w2))
 
-    np.testing.assert_allclose(loss_serial, loss_parallel, rtol=1e-5)
+    #loss_serial = loss_func((x, y), (w1, w2))
+    #np.testing.assert_allclose(loss_serial, loss_parallel, rtol=1e-5)
 
 
 def test_mlp_grad():
@@ -154,16 +154,14 @@ def test_mlp_grad():
         w1, w2 = weights
 
         x = x @ w1
-        x = relu(x)
         x = with_sharding_constraint(x, P('data_parallel', 'model_parallel'))
         x = x @ w2
-        x = relu(x)
         loss = jnp.mean((x - y) ** 2)
         return loss
 
     def step_serial(batch, weights):
         gradients = jax.grad(loss_func, argnums=1)(batch, weights)
-        return tuple(w - g * lr for w, g in zip(weights, gradients))
+        return tuple(w - g for w, g in zip(weights, gradients))
 
     step_parallel = pjit(
         step_serial,
@@ -174,9 +172,9 @@ def test_mlp_grad():
 
     step_serail = jax.jit(step_serial)
 
-    lr = 0.1
-    N = 8
-    D = 128
+    lr = 1
+    N = 256
+    D = 8192
 
     np.random.seed(1)
     x = np.random.uniform(size=(N, D))
@@ -184,22 +182,21 @@ def test_mlp_grad():
     w1 = np.random.uniform(size=(D, D))
     w2 = np.random.uniform(size=(D, D))
 
-    w1_serial, w2_serial = step_serial((x, y), (w1, w2))
-
     mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
     with mesh(mesh_devices, ('data_parallel', 'model_parallel')):
         w1_parallel, w2_parallel = step_parallel((x, y), (w1, w2))
 
-    np.testing.assert_allclose(w1_serial, w1_parallel, rtol=1e-5)
-    np.testing.assert_allclose(w2_serial, w2_parallel, rtol=1e-5)
+    #w1_serial, w2_serial = step_serial((x, y), (w1, w2))
+    #np.testing.assert_allclose(w1_serial, w1_parallel, rtol=1e-5)
+    #np.testing.assert_allclose(w2_serial, w2_parallel, rtol=1e-5)
 
 
 if __name__ == "__main__":
-    test_basic1d()
+    #test_basic1d()
     #test_matmul()
     #test_matmul_speed()
     #test_dict_arg()
 
     #test_mlp_forward()
-    #test_mlp_grad()
+    test_mlp_grad()
 

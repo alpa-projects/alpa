@@ -11,6 +11,7 @@ from parax.pipeline_primitive_def import *
 import ray
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 def ref_to_array(array_ref):
@@ -33,14 +34,9 @@ class RunnerV2:
         self.backward_runnable = backward_runnable
         self.forward_closed_jaxpr = forward_closed_jaxpr
         self.backward_closed_jaxpr = backward_closed_jaxpr
-
         self.env = dict()
 
     def compute(self, input_ref, is_forward=True):
-        """
-        Args:
-            input_ref (OrderedDict): with key being `var` and value being its reference.
-        """
         runnable = self.forward_runnable if is_forward else self.backward_runnable
         closed_jaxpr = self.forward_closed_jaxpr if is_forward else self.backward_closed_jaxpr
         # sanity check

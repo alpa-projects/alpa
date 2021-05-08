@@ -64,7 +64,8 @@ class Model(nn.Module):
         x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
 
         # Hao: relu has a bug...
-        x = nn.leaky_relu(x)
+        # x = nn.leaky_relu(x)
+        x = nn.relu(x)
 
         # x = nn.relu(x)
         x, = mark_pipeline(x, name='1', mark_type='end')

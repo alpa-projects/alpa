@@ -1,168 +1,18 @@
 """pipeline parallel on a single device"""
-import itertools as it
-from dataclasses import dataclass, field
-from typing import Sequence, List, Set, Any, Dict
+from typing import Sequence, Set
 
 import jax
-from abc import ABC, abstractmethod
-from jax import jit
 from jax import linear_util as lu
-from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
-from jax.core import Atom, Var, DropVar, JaxprEqn, Jaxpr, ClosedJaxpr, Literal, jaxpr_as_fun
+from jax._src.util import safe_map
+from jax.core import Var, DropVar, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
-from jax.lib import xla_bridge as xb
+import cloudpickle as pickle
 
 unsafe_map, map = map, safe_map  # type: ignore
 
 from parax.pipeline_primitive_def import *
+from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage
 from parax.pipe import JaxPipeline
-from parax.pipeline_stage import PipelineStage
-
-
-@dataclass
-class PipelineStage(ABC):
-    """Base class of pipeline stages.
-
-    Attributes:
-        name (str): The name of the pipeline stage.
-        invars (Sequence[Var]): The list of input variables, corresponding to
-            the order of the runnable inputs.
-        pipeline_invars (Set[Var]): The set of input variables receiving from
-            the previous pipeline stage.
-        global_invars (Set[Var]): The set of input variables from driver
-            function inputs.
-        local_invars (Set[Var]): The set of input variables from previous
-            stages running on the same device.
-        outvars (Sequence[Var]): The list of output variables, corresponding to
-            the order of the runnable outputs.
-        pipeline_outvars (Set[Var]): The set of output variables sending to
-            the next pipeline stage.
-        global_outvars (Set[Var]): The set of output variables that will be
-            used as driver function outputs.
-        local_outvars (Set[Var]): The set of output variables that will be used
-            by future stages running on the same device.
-    """
-
-    name: str
-    # invars
-    invars: Sequence[Var] = field(default_factory=list)
-    pipeline_invars: Set[Var] = field(default_factory=set)
-    global_invars: Set[Var] = field(default_factory=set)
-    local_invars: Set[Var] = field(default_factory=set)
-    # outvars
-    outvars: Sequence[Var] = field(default_factory=list)
-    pipeline_outvars: Set[Var] = field(default_factory=set)
-    global_outvars: Set[Var] = field(default_factory=set)
-    local_outvars: Set[Var] = field(default_factory=set)
-    # intermediate vars
-    intermediate_vars: Set[Var] = field(default_factory=set)
-
-    @abstractmethod
-    def get_runnable(self):
-        pass
-
-
-@dataclass
-class JaxPipelineStage(PipelineStage):
-    """Pipeline stage with JaxPr.
-
-    Attributes:
-        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
-        consts_dir: Dict[Atom, Any]: All the constants used in the pipeline
-            stage.
-    """
-
-    eqns: List[JaxprEqn] = field(default_factory=list)
-    consts_dir: Dict[Atom, Any] = field(default_factory=dict)
-
-    def closed_jaxpr(self) -> ClosedJaxpr:
-        """Get the closed Jaxpr of the pipeline stage.
-
-        Returns:
-            ClosedJaxpr: The result ClosedJaxpr.
-        """
-        jaxpr = Jaxpr(
-            constvars=self.consts_dir.keys(),
-            invars=self.invars,
-            outvars=self.outvars,
-            eqns=self.eqns,
-        )
-        closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
-        return closed_jaxpr
-
-    def get_runnable(self):
-        """Return a JIT callable of the pipeline stage."""
-        closed_jaxpr = self.closed_jaxpr()
-        return jit(jaxpr_as_fun(closed_jaxpr))
-
-
-@dataclass
-class XlaPipelineStage(PipelineStage):
-    """Pipeline stage with XLA HLO protos.
-
-    Attributes:
-        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
-        consts_dir: Dict[Atom, Any]: All the constants used in the pipeline
-            stage.
-    """
-
-    hlo_proto: bytes = field(default_factory=b"")
-
-    @classmethod
-    def from_jax_pipeline_stage(cls, jax_pipeline_stage: JaxPipelineStage):
-        """Construct a XlaPipelineStage from a JaxPipelineStage.
-
-        Args:
-            jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
-        """
-        closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
-        in_avals = [var.aval for var in jax_pipeline_stage.invars]
-        consts = closed_jaxpr.consts
-        map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
-
-        backend = 'gpu'
-        tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
-
-        c = xb.make_computation_builder("pipeline_stage_{}".format(jax_pipeline_stage.name))
-        xla_consts = xla._xla_consts(c, consts)
-        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
-        axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
-        out_nodes = xla.jaxpr_subcomp(
-            c, closed_jaxpr.jaxpr, backend, axis_env, xla_consts,
-            extend_name_stack(wrap_name(jax_pipeline_stage.name, 'stage')), *xla_args)
-        out_tuple = xc.ops.Tuple(c, out_nodes)
-        built = c.build(out_tuple)
-
-        return cls(
-            name=jax_pipeline_stage.name,
-            hlo_proto=built.as_serialized_hlo_module_proto(),
-            invars=jax_pipeline_stage.invars,
-            pipeline_invars=jax_pipeline_stage.pipeline_invars,
-            global_invars=jax_pipeline_stage.global_invars,
-            local_invars=jax_pipeline_stage.local_invars,
-            outvars=jax_pipeline_stage.outvars,
-            pipeline_outvars=jax_pipeline_stage.pipeline_outvars,
-            global_outvars=jax_pipeline_stage.global_outvars,
-            local_outvars=jax_pipeline_stage.local_outvars,
-        )
-
-    def get_runnable(self):
-        """Return a callable of the pipeline stage."""
-        out_avals = [var.aval for var in self.outvars]
-        xla_computation = xc.XlaComputation(self.hlo_proto)
-        tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
-        nreps = 1
-        backend = 'gpu'
-        backend = xb.get_backend(backend)
-        device = backend.get_default_device_assignment(1)[0]
-        options = xb.get_compile_options(
-            num_replicas=nreps,
-            num_partitions=1,
-            device_assignment=(device.id,) if device else None)
-        options.parameter_is_tupled_arguments = tuple_args
-        compiled = backend.compile(xla_computation, compile_options=options)
-        result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
-        return partial(xla._execute_compiled, compiled, out_avals, result_handlers)
 
 
 def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:
@@ -324,16 +174,17 @@ def pipeline_parallel_callable(
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    # pickable_pipeline_stages = []
-    # for stage in pipeline_stages:
-    #     # pickable_stage = PicklableStage.from_pipeline_stage(stage)
-    #     # pickle and unpickle
-    #     # picked_stage = cloudpickle.dumps(pickable_stage)
-    #     # new_pickable_stage = cloudpickle.loads(picked_stage)
-    #     pickable_pipeline_stages.append(pickable_stage)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage) for stage in jax_pipeline_stages]
+    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage)
+                           for stage in jax_pipeline_stages]
+    # new_xla_pipeline_stages = []
+    # for stage in xla_pipeline_stages:
+    #     # pickable_stage = PicklableStage.from_pipeline_stage(stage)
+    #     # pickle and unpickle
+    #     pickled_stage = pickle.dumps(stage)
+    #     new_stage = pickle.loads(pickled_stage)
+    #     new_xla_pipeline_stages.append(new_stage)
     return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)
 
 
@@ -345,10 +196,12 @@ def distributed_pipeline_parallel_callable(
     with jax.disable_jit():
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    jp = JaxPipeline(pipeline_stages=pipeline_stages,
+    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage)
+                           for stage in jax_pipeline_stages]
+    jp = JaxPipeline(pipeline_stages=xla_pipeline_stages,
                      global_invars=global_invars,
                      global_outvars=global_outvars)
     return lambda *args, **kwargs: jp.run(*args, **kwargs)

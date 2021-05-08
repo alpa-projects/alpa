@@ -39,7 +39,7 @@ class Runner:
         self.runnables = None
         # TODO: we could defer this compile to later.
         self.compile()
-        self.env = dict()
+        self.env = {stage_idx: dict() for stage_idx in self.stages}
 
     def compile(self):
         self.runnables = dict()
@@ -63,8 +63,8 @@ class Runner:
             if val_ref:
                 inputs.append(ref_to_array(val_ref))
             else:
-                assert(var in self.env)
-                inputs.append(self.env[var])
+                assert(var in self.env[stage_idx])
+                inputs.append(self.env[stage_idx][var])
 
         outputs = runnable(*inputs)
         outvals = {var: val for var, val in zip(stage.outvars, outputs)}
@@ -73,12 +73,12 @@ class Runner:
         pipeline_outvals = dict()
         global_outvals = dict()
         logger.debug("all outputs: ", outvals.keys())
-        logger.debug("local_outvars: ",  program.local_outvars)
-        logger.debug("pipeline_outvars: ", program.pipeline_outvars)
-        logger.debug("global outvars: ", program.global_outvars)
+        logger.debug("local_outvars: ",  stage.local_outvars)
+        logger.debug("pipeline_outvars: ", stage.pipeline_outvars)
+        logger.debug("global outvars: ", stage.global_outvars)
         for var, val in outvals.items():
             if var in stage.local_outvars:
-                self.env.update({var: val})
+                self.env[stage_idx].update({var: val})
             if var in stage.pipeline_outvars:
                 pipeline_outvals[var] = ray.put(val)
             if var in stage.global_outvars:

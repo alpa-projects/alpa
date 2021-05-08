@@ -5,7 +5,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-from common import compute_bytes, get_flatten_elements, transpose_flatten, reshape_flatten
+from common import compute_bytes, append_flatten_elements, transpose_flatten, reshape_flatten
 
 
 class ShardingSpecType(Enum):
@@ -102,10 +102,11 @@ class ShardingSpec:
 
         # Map device ids from device_mesh to tile_assignment_devices
         tile_assignment_devices = []
-        def generate_tile_assignment_devices(tensor_dim, dim_value, mesh_indices):
+        tmp_indices = [None] * len(cluster_env.device_mesh.shape)
+        def generate_tile_assignment_devices(tensor_dim, mesh_indices):
             if tensor_dim == len(shape) - 1:
-                tile_assignment_devices.extend(
-                    get_flatten_elements(cluster_env.device_mesh, mesh_indices))
+                append_flatten_elements(tile_assignment_devices, cluster_env.device_mesh,
+                                        mesh_indices, -1, tmp_indices)
             else:
                 next_tensor_dim = tensor_dim + 1
 
@@ -117,9 +118,9 @@ class ShardingSpec:
                 for i in range(tile_assignment_dimensions[next_tensor_dim]):
                     if next_mesh_dim != -1:
                         mesh_indices[next_mesh_dim] = i
-                    generate_tile_assignment_devices(next_tensor_dim, i, mesh_indices)
+                    generate_tile_assignment_devices(next_tensor_dim, mesh_indices)
 
-        generate_tile_assignment_devices(-1, 0, [-1] * len(cluster_env.device_mesh.shape))
+        generate_tile_assignment_devices(-1, [-1] * len(cluster_env.device_mesh.shape))
 
         return ShardingSpec(ShardingSpecType.OTHER,
                             tile_assignment_dimensions, tile_assignment_devices,
@@ -999,7 +1000,6 @@ class HloComputation:
                     queue.append(consumer)
 
     def depth_analysis(self):
-        frontier_list = []
         edge_dict = defaultdict(list)
 
         degree = defaultdict(lambda : 0)
@@ -1013,13 +1013,13 @@ class HloComputation:
         current_frontier = []
         for ins in self.instructions:
             if degree[ins] == 0:
+                ins.depth = 0
                 current_frontier.append(ins)
                 collected += 1
-        frontier_list.append(current_frontier)
 
         # Push forward frontier
+        depth = 0
         while collected < len(self.instructions):
-            current_frontier = frontier_list[-1]
             next_frontier = []
             for ins in current_frontier:
                 for node in edge_dict[ins]:
@@ -1027,11 +1027,11 @@ class HloComputation:
                     if degree[node] == 0:
                         next_frontier.append(node)
                         collected += 1
-            frontier_list.append(next_frontier)
 
-        for i, frontier in enumerate(frontier_list):
-            for ins in frontier:
-                ins.depth = i
+            depth += 1
+            current_frontier = next_frontier
+            for ins in current_frontier:
+                ins.depth = depth
 
     def build_strategy_and_cost(self, cluster_env, solver_option):
         if self.strategy_built:

@@ -60,15 +60,15 @@ class ClusterEnvironment:
         if spec.type == ShardingSpecType.REPLICATED:
             spec = ShardingSpec.tile(shape, [], [], self)
 
-        tensor_dim_vals = []
+        tensor_dim_vals = [0] * len(shape)
         for i in range(len(shape)):
-            tensor_dim_vals.append(get_dim_last_value(
-                spec.tile_assignment_devices, spec.tile_assignment_dimensions, i))
+            tensor_dim_vals[i] = get_dim_last_value(
+                spec.tile_assignment_devices, spec.tile_assignment_dimensions, i)
 
-        mesh_dim_vals = []
+        mesh_dim_vals = [0] * len(self.device_mesh.shape)
         for j in range(len(self.device_mesh.shape)):
-            mesh_dim_vals.append(get_dim_last_value(
-                self.device_mesh, self.device_mesh.shape, j))
+            mesh_dim_vals[j] = get_dim_last_value(
+                self.device_mesh, self.device_mesh.shape, j)
 
         ret = [-1] * len(shape)
         for i in range(len(shape)):

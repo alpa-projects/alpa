@@ -1,4 +1,4 @@
-"""gshard based hybrid parallel"""
+"""Gshard based hybrid parallel"""
 from collections import OrderedDict
 from functools import wraps, partial
 import itertools

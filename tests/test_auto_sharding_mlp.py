@@ -2,14 +2,15 @@ import numpy as np
 
 import unittest
 
+from flax import linen as nn
+from flax import optim
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
-from flax import linen as nn
-from flax import optim
+import numpy as np
 
-from parax import parallelize, global_config, testing
+from parax import parallelize, DeviceMesh, global_config, testing
 
 from test_auto_sharding_basic import assert_close, all_reduce_cost
 
@@ -18,8 +19,12 @@ MB = 1024 ** 2
 class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = tuple(jax.local_devices()[:4])
+        self.devices = jax.local_devices()[:4]
         global_config.shard_parallel_strategy = "auto_sharding"
+
+    def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
+        devices = np.array(self.devices).reshape(shape)
+        return DeviceMesh(devices, mesh_alpha, mesh_beta)
 
     def test_2_layer_mlp(self):
         global_config.auto_sharding_solver_strategy = 'normal'
@@ -35,8 +40,9 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=self.output_dim)(x)
                 return x
 
-        @parallelize(memory_budget_per_device=50 * (1 << 20),
-                     devices=self.devices)
+        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
+
+        @parallelize(devices=device_mesh)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
                 out = apply_fn(params, batch['x'])
@@ -235,8 +241,8 @@ class AutoShardingMLPTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMLPTest('test_2_layer_mlp'))
-    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp'))
-    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_force_data_parallel'))
+    #suite.addTest(AutoShardingMLPTest('test_n_layer_mlp'))
+    #suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_force_data_parallel'))
     return suite
 
 

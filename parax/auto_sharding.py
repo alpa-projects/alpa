@@ -22,6 +22,7 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
+from parax.cluster_config import DeviceMesh
 from parax.global_env import global_config
 from parax.xla_pass_context import XlaPassContext
 
@@ -29,13 +30,11 @@ from parax.xla_pass_context import XlaPassContext
 def auto_sharding_callable(
     fun: lu.WrappedFun,
     out_tree_thunk,
-    devices,
+    device_mesh,
     donated_invars,
     memory_budget_per_device,
     *avals
 ):
-    devices = devices or np.array(jax.devices())
-
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -66,7 +65,7 @@ def auto_sharding_callable(
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
     # Compile
-    device_ids = np.array([x.id for x in devices])
+    device_ids = np.array([x.id for x in device_mesh.flatten_devices])
     num_replicas = 1
     num_partitions = len(device_ids)
     device_assignment = device_ids.reshape((num_replicas, num_partitions))
@@ -81,12 +80,21 @@ def auto_sharding_callable(
     built = c.Build(out_tuple)
 
     if memory_budget_per_device is None:
-        memory_budget_per_device = 1 << 30
+        memory_budget_per_device = 1 << 40
 
     with XlaPassContext({
+        # Solver options
         "auto_sharding::enable": True,
         "auto_sharding::solver_strategy": global_config.auto_sharding_solver_strategy,
         "auto_sharding::memory_budget_per_device": memory_budget_per_device,
+
+        # Device mesh
+        "auto_sharding::device_mesh_ids": tuple(int(x) for x in device_ids),
+        "auto_sharding::device_mesh_shape": tuple(device_mesh.device_mesh.shape),
+        "auto_sharding::device_mesh_alpha": tuple(float(x) for x in device_mesh.mesh_alpha),
+        "auto_sharding::device_mesh_beta": tuple(float(x) for x in device_mesh.mesh_beta),
+
+        # Debug options
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)

@@ -59,8 +59,10 @@ def auto_donate_argnums(args):
 
 
 def run_cmd(cmd):
+    """Run a bash commond"""
     print(cmd)
     os.system(cmd)
+
 
 class FastLookupList:
     def __init__(self, iterable=()):

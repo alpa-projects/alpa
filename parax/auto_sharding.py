@@ -87,6 +87,8 @@ def auto_sharding_callable(
         "auto_sharding::enable": True,
         "auto_sharding::solver_strategy": global_config.auto_sharding_solver_strategy,
         "auto_sharding::memory_budget_per_device": memory_budget_per_device,
+        "auto_sharding::force_all_gather_cost": False,
+        "auto_sharding::all_gather_cost": 1e10,
 
         # Device mesh
         "auto_sharding::device_mesh_ids": tuple(int(x) for x in device_ids),
@@ -125,9 +127,11 @@ def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions):
     sharding = []
     mesh_mapping = []
     if sharding_type == OpSharding.Type.OTHER:
-        for i in range(len(tile_assignment_dimensions)):
+        for i in range(len(aval.shape)):
             sharding.append(pxla.Chunked([tile_assignment_dimensions[i]]))
             mesh_mapping.append(pxla.ShardedAxis(i))
+        if replicate_on_last_tile_dim:
+            mesh_mapping.append(pxla.Replicated(tile_assignment_dimensions[-1]))
     elif sharding_type == OpSharding.Type.REPLICATED:
         sharding = (pxla.NoSharding(),) * len(aval.shape)
         mesh_mapping = (pxla.Replicated(num_partitions),)

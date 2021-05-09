@@ -13,29 +13,20 @@ class ClusterEnvironment:
         assert len(self.mesh_alpha) == len(self.device_mesh.shape)
         assert len(self.mesh_beta) == len(self.device_mesh.shape)
         self.memory_per_device = memory_per_device
-        self.all_reduce_penalty = 0
         self.all_gather_penalty = 0
+        self.all_reduce_penalty = 0
         self.reduce_scatter_penalty = 0
         self.partial_reduction_penalty = 10
         self.num_devices = np.prod(self.device_mesh.shape)
 
-        self.force_all_reduce_cost = None
         self.force_all_gather_cost = None
+        self.force_all_reduce_cost = None
         self.force_reduce_scatter_cost = None
 
         if solver_option:
-            self.force_all_reduce_cost = solver_option.force_all_reduce_cost
             self.force_all_gather_cost = solver_option.force_all_gather_cost
+            self.force_all_reduce_cost = solver_option.force_all_reduce_cost
             self.force_reduce_scatter_cost = solver_option.force_reduce_scatter_cost
-
-    def all_reduce_cost(self, num_bytes, mesh_dim):
-        if self.force_all_reduce_cost:
-            return self.force_all_reduce_cost
-
-        num_devices = self.device_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] +
-                self.mesh_beta[mesh_dim] * 2 * (num_devices - 1) / num_devices * num_bytes +
-                0.1) + self.all_reduce_penalty
 
     def all_gather_cost(self, num_bytes, mesh_dim):
         if self.force_all_gather_cost:
@@ -44,7 +35,16 @@ class ClusterEnvironment:
         num_devices = self.device_mesh.shape[mesh_dim]
         return (self.mesh_alpha[mesh_dim] +
                 self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes +
-                0.01) + self.all_gather_penalty
+                0.1) + self.all_gather_penalty
+
+    def all_reduce_cost(self, num_bytes, mesh_dim):
+        if self.force_all_reduce_cost:
+            return self.force_all_reduce_cost
+
+        num_devices = self.device_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] +
+                self.mesh_beta[mesh_dim] * 2 * (num_devices - 1) / num_devices * num_bytes +
+                0.01) + self.all_reduce_penalty
 
     def reduce_scatter_cost(self, num_bytes, mesh_dim):
         if self.force_reduce_scatter_cost:
@@ -58,7 +58,7 @@ class ClusterEnvironment:
     def get_tensor_dim_to_mesh_dim(self, shape, spec):
         """Map the tensor dimention to mesh dimension, -1 means replicated"""
         if spec.type == ShardingSpecType.REPLICATED:
-            spec = ShardingSpec.tile(shape, [], [], self)
+            return [-1] * len(shape)
 
         tensor_dim_vals = [0] * len(shape)
         for i in range(len(shape)):

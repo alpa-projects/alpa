@@ -4,12 +4,29 @@ from collections import OrderedDict
 import functools
 import jax
 import ray
+from jax.core import Literal
 
 from parax.pipeline_primitive_def import *
 from parax.pipeline_stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+def cached_property(fn, *args, **kwargs):
+    """Decorator to make a function a "cached property".
+
+    This means that it is a property whose return value is cached after the
+    first time it is called.
+
+    Args:
+        fn: The function to be made a cached property
+        *args: Any args for the function
+        **kwargs: Any kwargs for the function
+    Returns:
+        function
+    """
+    return property(functools.lru_cache()(fn, *args, **kwargs))
 
 
 def ref_to_array(array_ref):
@@ -26,6 +43,7 @@ class Runner:
         name (str): The name of this runner
         stages (dict): serializable stages assigned to this runner.
     """
+
     def __init__(self,
                  *,
                  name,
@@ -37,9 +55,9 @@ class Runner:
             self.stages[stage_idx] = StrVarPipelineStage.from_pipeline_stage(stage)
 
         self.runnables = None
-        # TODO: we could defer this compile to later.
+        # TODO: we could defer this compile to later.+
         self.compile()
-        self.env = {stage_idx: dict() for stage_idx in self.stages}
+        self.env = {}
 
     def compile(self):
         self.runnables = dict()
@@ -56,6 +74,9 @@ class Runner:
         runnable = self.runnables[stage_idx]
         stage = self.stages[stage_idx]
 
+        logger.debug("stage invars: {}".format(stage.invars))
+        logger.debug("input refs: {}".format(input_refs.keys()))
+
         # sanity check
         inputs = []
         for var in stage.invars:
@@ -63,8 +84,8 @@ class Runner:
             if val_ref:
                 inputs.append(ref_to_array(val_ref))
             else:
-                assert(var in self.env[stage_idx])
-                inputs.append(self.env[stage_idx][var])
+                assert (var in self.env)
+                inputs.append(self.env[var])
 
         outputs = runnable(*inputs)
         outvals = {var: val for var, val in zip(stage.outvars, outputs)}
@@ -72,19 +93,20 @@ class Runner:
         # now split the outputs_dict
         pipeline_outvals = dict()
         global_outvals = dict()
-        logger.debug("all outputs: ", outvals.keys())
-        logger.debug("local_outvars: ",  stage.local_outvars)
-        logger.debug("pipeline_outvars: ", stage.pipeline_outvars)
-        logger.debug("global outvars: ", stage.global_outvars)
+        logger.debug("all outputs: {}".format(list(outvals.keys())))
+        logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
+        logger.debug("pipeline_outvars: {}".format(list(stage.pipeline_outvars)))
+        logger.debug("global outvars: {}".format(list(stage.global_outvars)))
         for var, val in outvals.items():
             if var in stage.local_outvars:
-                self.env[stage_idx].update({var: val})
+                self.env.update({var: val})
             if var in stage.pipeline_outvars:
                 pipeline_outvals[var] = ray.put(val)
             if var in stage.global_outvars:
                 global_outvals[var] = ray.put(val)
-        logger.debug("pipeline outvals: ", pipeline_outvals)
-        print("global outvals: ", global_outvals)
+        logger.debug("pipeline outvals: {}".format(pipeline_outvals.keys()))
+        logger.debug("global outvals: {}".format(global_outvals.keys()))
+        logger.debug("worker {} env : {}".format(self.name, self.env.keys()))
         return pipeline_outvals, global_outvals
 
 
@@ -115,6 +137,7 @@ class JaxPipeline:
             self.schedule = GpipeSchedule(dependency=self.dependency,
                                           num_batch=self.num_batch,
                                           num_pipeline_worker=self.num_pipeline_worker)
+            logger.debug(self.schedule.pprint_schedule())
 
         self.workers = []
         self._create_workers()
@@ -139,13 +162,25 @@ class JaxPipeline:
                     continue
                 batch_idx, stage_idx = task
                 inputs = self._identify_stage_inputs(clock, stage_idx, batch_idx)
-                results_ref = self.workers[device].compute.remote(inputs)
+                results_ref = self.workers[device].compute.remote(inputs, stage_idx)
                 # put result refs in the stage_outputs
                 pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
-                print(pipeline_outputs_dict)
-                print(stage_global_outputs_dict)
-                global_output_refs.update(stage_global_outputs_dict)
-                self.stage_outputs[clock][stage_idx].update(pipeline_outputs_dict)
+                if stage_global_outputs_dict:
+                    global_output_refs.update(stage_global_outputs_dict)
+                if pipeline_outputs_dict:
+                    self.stage_outputs[clock][stage_idx].update(pipeline_outputs_dict)
+            logger.info("All pipelining jobs done!")
+
+        global_outvals_list = []
+        for var in self.global_outvars:
+            if isinstance(var, Literal):
+                global_outvals_list.append(var.val)
+            else:
+                key = repr(var)
+                assert key in global_output_refs
+                val = ref_to_array(global_output_refs[key])
+                global_outvals_list.append(val)
+        return global_outvals_list
 
     def _init_stage_outputs(self):
         """Construct the output matrix.
@@ -182,11 +217,11 @@ class JaxPipeline:
             stage_assignments = self.schedule.worker_placement(worker_idx)
             for stage_idx in stage_assignments:
                 stages[stage_idx] = self.stages[stage_idx]
-            stage_name = ",".join(str(stage_assignments))
+            stage_name = ",".join([str(s) for s in stage_assignments])
             logger.debug("Launching worker {} with stages {}.".format(
                 worker_idx, stage_name))
             worker = remote_runner.remote(name=stage_name, stages=stages)
-        self.workers.append(worker)
+            self.workers.append(worker)
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
         """Find the input refs based on dependency.
@@ -202,7 +237,8 @@ class JaxPipeline:
         stage_inputs = OrderedDict()
         stage = self.stages[stage_idx]
         # find stages that depend on it
-        ancestors = np.where(self.dependency[stage_idx] == 1)
+        ancestors = list(np.squeeze(
+            np.argwhere(self.dependency[stage_idx] == 1), axis=1))
         for var in stage.invars:
             key = repr(var)
             if var in stage.pipeline_invars:
@@ -210,8 +246,8 @@ class JaxPipeline:
                     stage_inputs[key] = self.microbatches[batch_idx][key]
                 else:
                     for ans in ancestors:
-                        if key in self.stage_outputs[clock][ans]:
-                            stage_inputs[key] = self.stage_outputs[clock][ans][key]
+                        if key in self.stage_outputs[clock - 1][ans]:
+                            stage_inputs[key] = self.stage_outputs[clock - 1][ans][key]
             elif var in stage.global_invars:
                 assert var in self.global_invars
                 stage_inputs[key] = self.microbatches[batch_idx][key]
@@ -221,29 +257,17 @@ class JaxPipeline:
             else:
                 raise RuntimeError("Var `{}` not in any of global, pipeline or local "
                                    "var sets.".format(repr(var)))
+        if len(stage_inputs) != len(stage.invars):
+            raise RuntimeError("Failed to find stage inputs.")
         return stage_inputs
+
 
 def _gen_linear_dependency(num_stage):
     """Generate a linear dependency matrix."""
     d = np.zeros([num_stage, num_stage], dtype=np.int)
     for i in range(num_stage - 1):
-        d[i+1][i] = 1
+        d[i + 1][i] = 1
     return d
-
-
-def cached_property(fn, *args, **kwargs):
-    """
-    Decorator to make a function a "cached property".
-    This means that it is a property whose return value is cached after the
-    first time it is called.
-    Args:
-        fn: The function to be made a cached property
-        *args: Any args for the function
-        **kwargs: Any kwargs for the function
-    Returns:
-        function
-    """
-    return property(functools.lru_cache()(fn, *args, **kwargs))
 
 
 class GpipeSchedule:
@@ -259,34 +283,62 @@ class GpipeSchedule:
         self.num_pipeline_worker = num_pipeline_worker
         self.costs = costs
         self.num_stage = dependency.shape[0]
+        assert (self.num_stage == 2 * self.num_pipeline_worker)
         self._schedules = self._generate_schedule()
 
     def _generate_schedule(self):
-        """This function DOES NOT WORK!!!"""
-        # m: number of micro-batches
-        # n: number of partitions
-        # i: index of micro-batch
-        # j: index of partition/device
-        # k: clock number
-        #
-        # k (i,j) (i,j) (i,j)
-        # - ----- ----- -----
-        # 0 (0,0)
-        # 1 (1,0) (0,1)
-        # 2 (2,0) (1,1) (0,2)
-        # 3       (2,1) (1,2)
-        # 4             (2,2)
-        # 5 reverse...
+        """Generate a Gpipe-like schedule.
+
+        Note that here we always assume num_pipeline_workers = num_stage / 2.
+
+        The schedule will look like below:
+        i: index of micro-batch
+        j: index of partition/device
+        k: clock number
+
+        k (i,j) (i,j) (i,j)
+        - ----- ----- -----
+        0 (0,0)
+        1 (1,0) (0,1)
+        2 (2,0) (1,1) (0,2)
+        3       (2,1) (1,2)
+        4             (2,2)
+        5 reverse...
+        """
         m = self.num_batch
         n = self.num_pipeline_worker
+        num_clock = m + n - 1
         schedules = []
-        # num_clock = m + n - 1
-        # for clock in range(num_clock):
-        #     schedules
-        for k in range(m + n - 1):
-            schedules.append([(k - j, j) for j in range(max(1 + k - m, 0), min(1 + k, n))])
-        # backward_schedules = forward_schedules[::-1]
+        for k in range(num_clock):
+            scheds = [None] * n
+            for d in range(max(1 + k - m, 0), min(1 + k, n)):
+                scheds[d] = (k - d, d)
+            schedules.append(scheds)
+
+        def reverse(scheds):
+            reversed = []
+            for task in scheds:
+                if not task:
+                    reversed.append(None)
+                else:
+                    reversed.append((task[0], 2 * n - 1 - task[1]))
+            return reversed
+
+        # backward schedules
+        for k in range(num_clock):
+            mapped_scheds = schedules[num_clock - k - 1]
+            schedules.append(reverse(mapped_scheds))
         return schedules
+
+    def pprint_schedule(self):
+        printout = "\n"
+        device_str = " ".join(["{:<8}".format("d" + str(d))
+                               for d in range(self.num_pipeline_worker)])
+        printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
+        for clock, scheds in enumerate(self.schedules):
+            sched_str = " ".join(["{:<8}".format(str(sched)) for sched in scheds])
+            printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
+        return printout
 
     @cached_property
     def stage_worker_mapping(self):
@@ -321,12 +373,12 @@ class GpipeSchedule:
         return self.worker_stage_mapping[worker_idx]
 
     @property
-    def schedule(self):
+    def schedules(self):
         return self._schedules
 
     def __len__(self):
-        return len(self.schedule)
+        return len(self._schedules)
 
     @property
     def num_clock(self):
-        return len(self.schedule)
+        return len(self._schedules)

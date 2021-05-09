@@ -21,12 +21,12 @@ INF_COST = 1e10  # infinity cost
 
 class ShardingSpec:
     def __init__(self, type_, tile_assignment_dimensions, tile_assignment_devices,
-                 replicate_on_last_tile_dim, partial_reduce_on_last_tile_dim):
+                 replicate_on_last_tile_dim, partial_reduce_replication):
         self.type = type_
         self.tile_assignment_dimensions = tuple(tile_assignment_dimensions)
         self.tile_assignment_devices = tuple(tile_assignment_devices)
         self.replicate_on_last_tile_dim = replicate_on_last_tile_dim
-        self.partial_reduce_on_last_tile_dim = partial_reduce_on_last_tile_dim
+        self.partial_reduce_replication = partial_reduce_replication
 
     def num_tile_devices(self):
         if self.type == ShardingSpecType.REPLICATED:
@@ -57,7 +57,7 @@ class ShardingSpec:
                            tile_assignment_dimensions,
                            tile_assignment_devices,
                            self.replicate_on_last_tile_dim,
-                           self.partial_reduce_on_last_tile_dim)
+                           self.partial_reduce_replication)
         return ret
 
     def broadcast(self, new_shape, dimensions):
@@ -81,7 +81,7 @@ class ShardingSpec:
                                    tile_assignment_dimensions,
                                    self.tile_assignment_devices,
                                    self.replicate_on_last_tile_dim,
-                                   self.partial_reduce_on_last_tile_dim)
+                                   self.partial_reduce_replication)
         return output_spec
 
     def reshape(self, old_shape, new_shape):
@@ -157,11 +157,11 @@ class ShardingSpec:
                                    tile_assignment_dimensions,
                                    self.tile_assignment_devices,
                                    self.replicate_on_last_tile_dim,
-                                   self.partial_reduce_on_last_tile_dim)
+                                   self.partial_reduce_replication)
         return output_spec
 
     @staticmethod
-    def tile_internal(shape, tensor_dims, mesh_dims, cluster_env, last_dim_choice):
+    def tile_internal(shape, tensor_dims, mesh_dims, cluster_env, partial_reduce_replication):
         assert len(tensor_dims) == len(mesh_dims)
 
         tile_assignment_dimensions = [1] * len(shape)
@@ -210,7 +210,11 @@ class ShardingSpec:
 
     @staticmethod
     def tile(shape, tensor_dims, mesh_dims, cluster_env):
-        return ShardingSpec.tile_internal(shape, tensor_dims, mesh_dims, cluster_env, 'r')
+        return ShardingSpec.tile_internal(shape, tensor_dims, mesh_dims, cluster_env, False)
+
+    @staticmethod
+    def tile_partial_reduce(shape, tensor_dims, mesh_dims, cluster_env):
+        return ShardingSpec.tile_internal(shape, tensor_dims, mesh_dims, cluster_env, True)
 
     @staticmethod
     def replicated(cluster_env):
@@ -225,7 +229,7 @@ class ShardingSpec:
         tile_assignment_devices = range(cluster_env.num_devices)
         return ShardingSpec(ShardingSpecType.OTHER,
                             tile_assignment_dimensions, tile_assignment_devices,
-                            False, Fals)
+                            False, False)
 
     @staticmethod
     def tuple():
@@ -239,7 +243,8 @@ class ShardingSpec:
         return (self.type == other.type and
                 self.tile_assignment_dimensions == other.tile_assignment_dimensions and
                 self.tile_assignment_devices == other.tile_assignment_devices and
-                self.replicate_on_last_tile_dim == other.replicate_on_last_tile_dim)
+                self.replicate_on_last_tile_dim == other.replicate_on_last_tile_dim and
+                self.partial_reduce_replication == other.partial_reduce_replication)
 
 
 def resharding_cost_vector(cluster_env, source_ins, required_spec):
@@ -607,7 +612,7 @@ class HloReduce(HloInstruction):
 
             reduce_dims_str = "".join([str(x) for x in all_reduce_dims])
             if reduce_dims_str:
-                name = f"follow (all-reduce @ {reduce_dims_str})"
+                name = f"follow (allreduce @ {reduce_dims_str})"
             else:
                 name = f"{output_spec.tile_assignment_dimensions}"
 

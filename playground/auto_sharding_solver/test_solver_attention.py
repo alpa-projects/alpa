@@ -367,14 +367,14 @@ class AttentionSolverTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AttentionSolverTest('test_tranpose'))
-    suite.addTest(AttentionSolverTest('test_mulit_tranpose'))
-    suite.addTest(AttentionSolverTest('test_reshape'))
-    suite.addTest(AttentionSolverTest('test_mulit_reshape'))
+    #suite.addTest(AttentionSolverTest('test_tranpose'))
+    #suite.addTest(AttentionSolverTest('test_mulit_tranpose'))
+    #suite.addTest(AttentionSolverTest('test_reshape'))
+    #suite.addTest(AttentionSolverTest('test_mulit_reshape'))
     suite.addTest(AttentionSolverTest('test_allreduce_simplification'))
-    suite.addTest(AttentionSolverTest('test_allreduce_simplification_out_reuse'))
-    suite.addTest(AttentionSolverTest('test_attention_forward'))
-    suite.addTest(AttentionSolverTest('test_attention_forward_2d_mesh'))
+    #suite.addTest(AttentionSolverTest('test_allreduce_simplification_out_reuse'))
+    #suite.addTest(AttentionSolverTest('test_attention_forward'))
+    #suite.addTest(AttentionSolverTest('test_attention_forward_2d_mesh'))
     return suite
 
 

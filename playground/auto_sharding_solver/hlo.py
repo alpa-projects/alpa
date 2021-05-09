@@ -21,11 +21,12 @@ INF_COST = 1e10  # infinity cost
 
 class ShardingSpec:
     def __init__(self, type_, tile_assignment_dimensions, tile_assignment_devices,
-                 replicate_on_last_tile_dim):
+                 replicate_on_last_tile_dim, partial_reduce_on_last_tile_dim):
         self.type = type_
         self.tile_assignment_dimensions = tuple(tile_assignment_dimensions)
         self.tile_assignment_devices = tuple(tile_assignment_devices)
         self.replicate_on_last_tile_dim = replicate_on_last_tile_dim
+        self.partial_reduce_on_last_tile_dim = partial_reduce_on_last_tile_dim
 
     def num_tile_devices(self):
         if self.type == ShardingSpecType.REPLICATED:
@@ -40,49 +41,127 @@ class ShardingSpec:
     def transpose(self, dimensions):
         if self.type == ShardingSpecType.REPLICATED:
             return self
-        else:
-            assert self.type == ShardingSpecType.OTHER
 
-            spec_trans_dims = list(dimensions)
-            if self.replicate_on_last_tile_dim:
-                spec_trans_dims.append(len(dimensions))
+        assert self.type == ShardingSpecType.OTHER
 
-            tile_assignment_dimensions = [self.tile_assignment_dimensions[i]
-                for i in spec_trans_dims]
-            tile_assignment_devices = transpose_flatten(self.tile_assignment_devices,
-                self.tile_assignment_dimensions, spec_trans_dims)
+        spec_trans_dims = list(dimensions)
+        if self.replicate_on_last_tile_dim:
+            spec_trans_dims.append(len(dimensions))
 
-            ret = ShardingSpec(self.type,
-                               tile_assignment_dimensions,
-                               tile_assignment_devices,
-                               self.replicate_on_last_tile_dim)
-            return ret
+        tile_assignment_dimensions = [self.tile_assignment_dimensions[i]
+            for i in spec_trans_dims]
+        tile_assignment_devices = transpose_flatten(self.tile_assignment_devices,
+            self.tile_assignment_dimensions, spec_trans_dims)
+
+        ret = ShardingSpec(self.type,
+                           tile_assignment_dimensions,
+                           tile_assignment_devices,
+                           self.replicate_on_last_tile_dim,
+                           self.partial_reduce_on_last_tile_dim)
+        return ret
 
     def broadcast(self, new_shape, dimensions):
         if self.type == ShardingSpecType.REPLICATED:
             return self
-        else:
-            assert self.type == ShardingSpecType.OTHER
 
-            tile_assignment_dimensions = []
-            for i in range(len(new_shape)):
-                if i in dimensions:
-                    tile_assignment_dimensions.append(
-                        self.tile_assignment_dimensions[dimensions.index(i)])
+        assert self.type == ShardingSpecType.OTHER
+
+        tile_assignment_dimensions = []
+        for i in range(len(new_shape)):
+            if i in dimensions:
+                tile_assignment_dimensions.append(
+                    self.tile_assignment_dimensions[dimensions.index(i)])
+            else:
+                tile_assignment_dimensions.append(1)
+
+        if self.replicate_on_last_tile_dim:
+            tile_assignment_dimensions.append(self.tile_assignment_dimensions[-1])
+
+        output_spec = ShardingSpec(self.type,
+                                   tile_assignment_dimensions,
+                                   self.tile_assignment_devices,
+                                   self.replicate_on_last_tile_dim,
+                                   self.partial_reduce_on_last_tile_dim)
+        return output_spec
+
+    def reshape(self, old_shape, new_shape):
+        if self.type == ShardingSpecType.REPLICATED:
+            return self
+
+        assert self.type == ShardingSpecType.OTHER
+
+        # Construct a map that maps an old dimension to its corresponding new dimension
+        dim_mapping = {}
+        new_pt = -1
+        old_pt = -1
+        old_prod = 1
+        new_prod = 1
+        while True:
+            move_new = False
+            move_old = False
+
+            if new_prod == old_prod:
+                dim_mapping[old_pt + 1] = new_pt + 1
+                move_new = move_old = True
+            elif new_prod < old_prod:
+                move_new = True
+            else:
+                move_old = True
+
+            if move_new:
+                new_pt += 1
+                if new_pt < len(new_shape):
+                    new_prod *= new_shape[new_pt]
                 else:
+                    break
+            if move_old:
+                old_pt += 1
+                if old_pt < len(old_shape):
+                    old_prod *= old_shape[old_pt]
+                else:
+                    break
+
+        tile_assignment_dimensions = []
+        cur_prod = 1
+        state = 1  # 0: start  1: middle
+        i = 0
+
+        failed = False
+        while i < len(old_shape) and not failed:
+            if state == 0:
+                assert i in dim_mapping
+                while len(tile_assignment_dimensions) < dim_mapping[i]:
                     tile_assignment_dimensions.append(1)
+                tile_assignment_dimensions.append(
+                    self.tile_assignment_dimensions[i])
+                state = 1
+                i += 1
+            elif state == 1:
+                if i in dim_mapping:
+                    state = 0
+                else:
+                    if self.tile_assignment_dimensions[i] == 1:
+                        i += 1
+                    else:
+                        failed = True
 
-            if self.replicate_on_last_tile_dim:
-                tile_assignment_dimensions.append(self.tile_assignment_dimensions[-1])
+        if failed:
+            return None
 
-            output_spec = ShardingSpec(self.type,
-                                       tile_assignment_dimensions,
-                                       self.tile_assignment_devices,
-                                       self.replicate_on_last_tile_dim)
+        while len(tile_assignment_dimensions) < len(new_shape):
+            tile_assignment_dimensions.append(1)
+
+        if self.replicate_on_last_tile_dim:
+            tile_assignment_dimensions.append(self.tile_assignment_dimensions[-1])
+        output_spec = ShardingSpec(self.type,
+                                   tile_assignment_dimensions,
+                                   self.tile_assignment_devices,
+                                   self.replicate_on_last_tile_dim,
+                                   self.partial_reduce_on_last_tile_dim)
         return output_spec
 
     @staticmethod
-    def tile(shape, tensor_dims, mesh_dims, cluster_env):
+    def tile_internal(shape, tensor_dims, mesh_dims, cluster_env, last_dim_choice):
         assert len(tensor_dims) == len(mesh_dims)
 
         tile_assignment_dimensions = [1] * len(shape)
@@ -92,6 +171,9 @@ class ShardingSpec:
         for tensor_dim, mesh_dim in zip(tensor_dims, mesh_dims):
             tile_assignment_dimensions[tensor_dim] = cluster_env.device_mesh.shape[mesh_dim]
             split_prod *= cluster_env.device_mesh.shape[mesh_dim]
+
+        if split_prod == 1:
+            return ShardingSpec.replicated(cluster_env)
 
         # Replicate on reminding mesh dimensions
         if split_prod < cluster_env.num_devices:
@@ -123,22 +205,18 @@ class ShardingSpec:
 
         return ShardingSpec(ShardingSpecType.OTHER,
                             tile_assignment_dimensions, tile_assignment_devices,
-                            replicate_on_last_tile_dim)
+                            replicate_on_last_tile_dim,
+                            False)
 
-    def is_replicated(self):
-        if self.type == ShardingSpecType.REPLICATED:
-            return True
-        if self.type == ShardingSpecType.OTHER:
-            return (self.replicate_on_last_tile_dim == True and
-                    self.tile_assignment_dimensions[-1] == np.prod(self.tile_assignment_dimensions))
-        return False
-    
+    @staticmethod
+    def tile(shape, tensor_dims, mesh_dims, cluster_env):
+        return ShardingSpec.tile_internal(shape, tensor_dims, mesh_dims, cluster_env, 'r')
 
     @staticmethod
     def replicated(cluster_env):
         tile_assignment_devices = range(cluster_env.num_devices)
         return ShardingSpec(ShardingSpecType.REPLICATED, (), tile_assignment_devices,
-                            False)
+                            False, False)
 
     @staticmethod
     def split(shape, dim, cluster_env):
@@ -147,26 +225,17 @@ class ShardingSpec:
         tile_assignment_devices = range(cluster_env.num_devices)
         return ShardingSpec(ShardingSpecType.OTHER,
                             tile_assignment_dimensions, tile_assignment_devices,
-                            False)
+                            False, Fals)
 
     @staticmethod
     def tuple():
-        return ShardingSpec(ShardingSpecType.TUPLE, (), (), False)
-
-    @staticmethod
-    def partial_reduction(cluster_env):
-        tile_assignment_devices = range(cluster_env.num_devices)
-        return ShardingSpec(ShardingSpecType.PARTIAL_REDUCTION, (),
-                            tile_assignment_devices, False)
+        return ShardingSpec(ShardingSpecType.TUPLE, (), (), False, False)
 
     def __str__(self):
         return f"{self.tile_assignment_dimensions}"\
                f"{list(self.tile_assignment_devices)}"
 
     def __eq__(self, other):
-        if self.is_replicated() and other.is_replicated():
-            return True
-
         return (self.type == other.type and
                 self.tile_assignment_dimensions == other.tile_assignment_dimensions and
                 self.tile_assignment_devices == other.tile_assignment_devices and
@@ -345,81 +414,11 @@ class HloReshape(HloInstruction):
         old_shape = self.operands[0].shape
         new_shape = self.new_shape
 
-        # Construct a map that maps an old dimension to its corresponding new dimension
-        dim_mapping = {}
-        new_pt = -1
-        old_pt = -1
-        old_prod = 1
-        new_prod = 1
-        while True:
-            move_new = False
-            move_old = False
-
-            if new_prod == old_prod:
-                dim_mapping[old_pt + 1] = new_pt + 1
-                move_new = move_old = True
-            elif new_prod < old_prod:
-                move_new = True
-            else:
-                move_old = True
-
-            if move_new:
-                new_pt += 1
-                if new_pt < len(new_shape):
-                    new_prod *= new_shape[new_pt]
-                else:
-                    break
-            if move_old:
-                old_pt += 1
-                if old_pt < len(old_shape):
-                    old_prod *= old_shape[old_pt]
-                else:
-                    break
-
         for sid in range(len(follow.strategies)):
-            input_spec = follow.strategies[sid].output_spec
-
-            if input_spec.type == ShardingSpecType.REPLICATED:
-                output_spec = input_spec
-            else:
-                assert input_spec.type == ShardingSpecType.OTHER
-
-                tile_assignment_dimensions = []
-                cur_prod = 1
-                state = 1  # 0: start  1: middle
-                i = 0
-
-                failed = False
-                while i < len(old_shape) and not failed:
-                    if state == 0:
-                        assert i in dim_mapping
-                        while len(tile_assignment_dimensions) < dim_mapping[i]:
-                            tile_assignment_dimensions.append(1)
-                        tile_assignment_dimensions.append(
-                            input_spec.tile_assignment_dimensions[i])
-                        state = 1
-                        i += 1
-                    elif state == 1:
-                        if i in dim_mapping:
-                            state = 0
-                        else:
-                            if input_spec.tile_assignment_dimensions[i] == 1:
-                                i += 1
-                            else:
-                                failed = True
-
-                if failed:
-                    continue
-                else:
-                    while len(tile_assignment_dimensions) < len(new_shape):
-                        tile_assignment_dimensions.append(1)
-
-                    if input_spec.replicate_on_last_tile_dim:
-                        tile_assignment_dimensions.append(input_spec.tile_assignment_dimensions[-1])
-                    output_spec = ShardingSpec(input_spec.type,
-                                               tile_assignment_dimensions,
-                                               input_spec.tile_assignment_devices,
-                                               input_spec.replicate_on_last_tile_dim)
+            output_spec = follow.strategies[sid].output_spec.reshape(
+                    follow.shape, self.shape)
+            if output_spec is None:
+                continue
 
             name = f"{output_spec.tile_assignment_dimensions}"
             self.strategies.append(InstructionStrategy(name, output_spec))
@@ -767,7 +766,7 @@ class HloDot(HloInstruction):
                     ShardingSpec.tile(rhs.shape, [rhs_con_dim, rhs_space_dim], [1, 0], cluster_env))
             ])
 
-        # Split batch dims
+        # Split one batch dim
         for i in range(len(self.lhs_batch_dims)):
             for j in range(len(cluster_env.device_mesh.shape)):
                 if (cluster_env.device_mesh.shape[j] == 1 or
@@ -786,6 +785,7 @@ class HloDot(HloInstruction):
                         ShardingSpec.tile(rhs.shape, [rhs_batch_dims[i]], [j], cluster_env))
                 ])
 
+        # Split two batch dims
         if len(self.lhs_batch_dims) == 2 and cluster_env.device_mesh.shape[0] > 1\
                 and cluster_env.device_mesh.shape[1] > 1:
 

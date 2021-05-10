@@ -222,7 +222,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 assert_all_replicated(weight, np.prod(mesh_shape))
 
     def test_bert_layer_model_parallel(self):
-        num_layers = 3
+        num_layers = 2
         batch_size = 8
         seq_len = 8
         hidden_size = 128
@@ -261,7 +261,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                         assert_row_partitioned(weights[j], mesh_shape[i], i)
 
     def test_bert_layer_2d_mesh(self):
-        num_layers = 1
+        num_layers = 2
         batch_size = 8
         seq_len = 8
         hidden_size = 128

@@ -1,4 +1,4 @@
-"""pipeline parallel on a single device"""
+"""pipeline stage definitions."""
 import itertools as it
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
@@ -7,16 +7,17 @@ from abc import ABC, abstractmethod
 from jax import jit
 from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, jaxpr_as_fun
-from jax.lib import xla_bridge as xb
+from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.interpreters import xla
 
+# pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
-
-from parax.pipeline_primitive_def import *
 
 
 @dataclass
 class PipelineStage(ABC):
-    """Base class of pipeline stages.
+    """
+    Base class of pipeline stages.
 
     Attributes:
         name (str): The name of the pipeline stage.
@@ -54,12 +55,14 @@ class PipelineStage(ABC):
 
     @abstractmethod
     def get_runnable(self):
-        pass
+        """Compile the stage and get the runnable."""
+        raise NotImplementedError()
 
 
 @dataclass
 class JaxPipelineStage(PipelineStage):
-    """Pipeline stage with JaxPr.
+    """
+    Pipeline stage with JaxPr.
 
     Attributes:
         eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
@@ -71,7 +74,8 @@ class JaxPipelineStage(PipelineStage):
     consts_dir: Dict[Atom, Any] = field(default_factory=dict)
 
     def closed_jaxpr(self) -> ClosedJaxpr:
-        """Get the closed Jaxpr of the pipeline stage.
+        """
+        Get the closed Jaxpr of the pipeline stage.
 
         Returns:
             ClosedJaxpr: The result ClosedJaxpr.
@@ -93,7 +97,8 @@ class JaxPipelineStage(PipelineStage):
 
 @dataclass
 class XlaPipelineStage(PipelineStage):
-    """Pipeline stage with XLA HLO protos.
+    """
+    Pipeline stage with XLA HLO protos.
 
     Attributes:
         eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
@@ -105,7 +110,8 @@ class XlaPipelineStage(PipelineStage):
 
     @classmethod
     def from_jax_pipeline_stage(cls, jax_pipeline_stage: JaxPipelineStage):
-        """Construct a XlaPipelineStage from a JaxPipelineStage.
+        """
+        Construct a XlaPipelineStage from a JaxPipelineStage.
 
         Args:
             jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
@@ -120,7 +126,7 @@ class XlaPipelineStage(PipelineStage):
 
         c = xb.make_computation_builder("pipeline_stage_{}".format(jax_pipeline_stage.name))
         xla_consts = xla._xla_consts(c, consts)
-        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
+        xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
         axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
         out_nodes = xla.jaxpr_subcomp(
             c, closed_jaxpr.jaxpr, backend, axis_env, xla_consts,
@@ -162,6 +168,8 @@ class XlaPipelineStage(PipelineStage):
 
 @dataclass
 class StrVarPipelineStage:
+    """Stringified stage with all Set/Dict have string keys."""
+
     name: str
     # invars
     invars: Sequence[str]
@@ -176,6 +184,7 @@ class StrVarPipelineStage:
 
     @classmethod
     def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
+        """Construct a StrVarPipelineStage from a PipelineStage."""
         return cls(
             name=pipeline_stage.name,
             invars=[repr(var) for var in pipeline_stage.invars],

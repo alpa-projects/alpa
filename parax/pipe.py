@@ -1,12 +1,13 @@
+"""Distributed JAX pipeline parallelism."""
 import logging
 from collections import OrderedDict
-
 import functools
-import jax
-import ray
-from jax.core import Literal
+import numpy as np
 
-from parax.pipeline_primitive_def import *
+import jax
+from jax.core import Literal
+import ray
+
 from parax.pipeline_stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,8 @@ logger.setLevel(logging.DEBUG)
 
 
 def cached_property(fn, *args, **kwargs):
-    """Decorator to make a function a "cached property".
+    """
+    Decorator to make a function a "cached property".
 
     This means that it is a property whose return value is cached after the
     first time it is called.
@@ -37,7 +39,8 @@ def ref_to_array(array_ref):
 
 
 class Runner:
-    """Pipeline worker.
+    """
+    Distributed pipeline parallelism worker.
 
     Args:
         name (str): The name of this runner
@@ -60,12 +63,14 @@ class Runner:
         self.env = {}
 
     def compile(self):
+        """Compile the HLO and get the runnable."""
         self.runnables = dict()
         for stage_idx, stage in self._raw_stages.items():
             self.runnables[stage_idx] = stage.get_runnable()
 
     def compute(self, input_refs, stage_idx):
-        """Compute on a given stage.
+        """
+        Compute on a given stage.
 
         Args:
             input_refs (OrderedDict): with key being `repr(var)` and value being its reference.
@@ -84,11 +89,11 @@ class Runner:
             if val_ref:
                 inputs.append(ref_to_array(val_ref))
             else:
-                assert (var in self.env)
+                assert var in self.env
                 inputs.append(self.env[var])
 
         outputs = runnable(*inputs)
-        outvals = {var: val for var, val in zip(stage.outvars, outputs)}
+        outvals = dict(zip(stage.outvars, outputs))
 
         # now split the outputs_dict
         pipeline_outvals = dict()
@@ -110,7 +115,23 @@ class Runner:
         return pipeline_outvals, global_outvals
 
 
-class JaxPipeline:
+class JaxPipeline:         # pylint: disable=too-many-instance-attributes
+    """
+    JAX distributed pipeline.
+
+    Args:
+        pipeline_stages (List[PipelineStage]): list of pipleline stage programs.
+        global_invars (List[Var]): input variables.
+        global_outvars (List[Var]): output variables.
+        dependency (np.array): dependency between stages as an adjacency matrix.
+        num_batch (int): number of microbatches.
+        num_pipeline_worker (int): number of pipelining workers.
+        schedule (): schedule to execute the pipeline.
+
+    Returns:
+        None
+    """
+
     def __init__(self,
                  *,
                  pipeline_stages,
@@ -148,6 +169,8 @@ class JaxPipeline:
         self.stage_outputs = self._init_stage_outputs()
 
     def run(self, *args, **kwargs):
+        """Run the training with pipelining."""
+        # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
         self.microbatches = self._make_microbatches(*args)
 
@@ -183,7 +206,8 @@ class JaxPipeline:
         return global_outvals_list
 
     def _init_stage_outputs(self):
-        """Construct the output matrix.
+        """
+        Construct the output matrix.
 
         it is a C by S matrix where C is the #clocks and S is #stages.
         """
@@ -192,7 +216,7 @@ class JaxPipeline:
         return stage_outputs
 
     def _make_microbatches(self, *inputs, batch_dim=0, batch_size=128):
-        assert (len(inputs) == len(self.global_invars))
+        assert len(inputs) == len(self.global_invars)
         microbatches = [dict() for _ in range(self.num_batch)]
         for i, var in enumerate(self.global_invars):
             key = repr(var)
@@ -224,7 +248,8 @@ class JaxPipeline:
             self.workers.append(worker)
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
-        """Find the input refs based on dependency.
+        """
+        Find the input refs based on dependency.
 
         Args:
             clock (int):
@@ -271,6 +296,19 @@ def _gen_linear_dependency(num_stage):
 
 
 class GpipeSchedule:
+    """
+    Construct a Gpipe-like schedule.
+
+    Args:
+        dependency (np.array): dependency adjacency matrix.
+        num_batch (int): number of microbatches.
+        num_pipeline_worker (int): number of pipelining workers.
+        costs (List[int]): running costs of each stage
+
+    Returns:
+        None
+    """
+
     def __init__(self,
                  *,
                  dependency,
@@ -283,11 +321,13 @@ class GpipeSchedule:
         self.num_pipeline_worker = num_pipeline_worker
         self.costs = costs
         self.num_stage = dependency.shape[0]
-        assert (self.num_stage == 2 * self.num_pipeline_worker)
+        if self.num_stage != 2 * self.num_pipeline_worker:
+            raise RuntimeError("Gpipe schedule requires #stages being twice of #workers.")
         self._schedules = self._generate_schedule()
 
     def _generate_schedule(self):
-        """Generate a Gpipe-like schedule.
+        """
+        Generate a Gpipe-like schedule.
 
         Note that here we always assume num_pipeline_workers = num_stage / 2.
 
@@ -316,13 +356,13 @@ class GpipeSchedule:
             schedules.append(scheds)
 
         def reverse(scheds):
-            reversed = []
+            rev = []
             for task in scheds:
                 if not task:
-                    reversed.append(None)
+                    rev.append(None)
                 else:
-                    reversed.append((task[0], 2 * n - 1 - task[1]))
-            return reversed
+                    rev.append((task[0], 2 * n - 1 - task[1]))
+            return rev
 
         # backward schedules
         for k in range(num_clock):
@@ -331,6 +371,7 @@ class GpipeSchedule:
         return schedules
 
     def pprint_schedule(self):
+        """Pretty print the schedule."""
         printout = "\n"
         device_str = " ".join(["{:<8}".format("d" + str(d))
                                for d in range(self.num_pipeline_worker)])
@@ -342,11 +383,12 @@ class GpipeSchedule:
 
     @cached_property
     def stage_worker_mapping(self):
+        """Generate a stage-worker mapping according to the schedule."""
         placements = dict()
-        for clock, tasks in enumerate(self._schedules):
+        for tasks in self._schedules:
             for worker_idx, task in enumerate(tasks):
                 if task:
-                    batch_idx, stage_idx = task
+                    _, stage_idx = task
                     if stage_idx not in placements:
                         placements[stage_idx] = set()
                     if worker_idx not in placements[stage_idx]:
@@ -355,11 +397,12 @@ class GpipeSchedule:
 
     @cached_property
     def worker_stage_mapping(self):
+        """Generate a worker-stage mapping according to the schedule."""
         ownership = dict()
-        for clock, tasks in enumerate(self._schedules):
+        for tasks in self._schedules:
             for worker_idx, task in enumerate(tasks):
                 if task:
-                    batch_idx, stage_idx = task
+                    _, stage_idx = task
                     if worker_idx not in ownership:
                         ownership[worker_idx] = set()
                     if stage_idx not in ownership[worker_idx]:
@@ -367,13 +410,16 @@ class GpipeSchedule:
         return ownership
 
     def stage_placement(self, stage_idx):
+        """Query the placement of a stage given its stage index."""
         return self.stage_worker_mapping[stage_idx]
 
     def worker_placement(self, worker_idx):
+        """Query the responsible stages of a worker given a worker index."""
         return self.worker_stage_mapping[worker_idx]
 
     @property
     def schedules(self):
+        """Return the schedules as a matrix."""
         return self._schedules
 
     def __len__(self):
@@ -381,4 +427,5 @@ class GpipeSchedule:
 
     @property
     def num_clock(self):
+        """Return the number of clocks in the schedule."""
         return len(self._schedules)

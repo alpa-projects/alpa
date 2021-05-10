@@ -1,4 +1,4 @@
-"""pipeline parallel on a single device"""
+"""pipeline parallel on a single device."""
 from typing import Sequence, Set
 
 import jax
@@ -6,16 +6,16 @@ from jax import linear_util as lu
 from jax._src.util import safe_map
 from jax.core import Var, DropVar, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
-import cloudpickle as pickle
 
-unsafe_map, map = map, safe_map  # type: ignore
-
-from parax.pipeline_primitive_def import *
+from parax.pipeline_primitive_def import pipeline_p
 from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage
 from parax.pipe import JaxPipeline
 
+# pylint: disable=redefined-builtin
+unsafe_map, map = map, safe_map  # type: ignore
 
-def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:
+
+def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]: # noqa MC0001
     """Slice a Jaxpr into multiple pipeline stages.
 
     We assume the closed_jaxpr includes pipeline start and end markers. Also,
@@ -50,7 +50,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
             if isinstance(var, Literal) or (var in current_stage.pipeline_invars) or (
                     var in current_stage.intermediate_vars):
                 continue
-            elif var in global_consts_dir:
+            if var in global_consts_dir:
                 if var not in current_stage.consts_dir:
                     current_stage.consts_dir[var] = global_consts_dir[var]
             elif var in global_invars:
@@ -92,13 +92,25 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
 
 
 class LocalPipelineRunner:
+    """
+    Single-node local pipeline runner.
+
+    Args:
+        name (str): pipeline runner name.
+        global_invals (List[DeviceArrays]): input device arrays to the stage.
+
+    Returns:
+        None
+    """
+
     def __init__(self, name, global_invals):
         self.name = name
         self.env = {}
         self.global_invals = global_invals
 
     def run_stage(self, stage: PipelineStage, prev_stage_pipeline_outvals: Set[Var] = None):
-        """Run a pipeline stage.
+        """
+        Run a pipeline stage.
 
         Args:
             stage (PipelineStage): The pipeline stage to run.
@@ -124,7 +136,7 @@ class LocalPipelineRunner:
                 assert var in stage.local_invars
                 invals_list.append(self.env[var])
         outvals_list = runnable(*invals_list)
-        outvals = {var: val for var, val in zip(stage.outvars, outvals_list)}
+        outvals = dict(zip(stage.outvars, outvals_list))
         local_outvals = {var: outvals[var] for var in stage.local_outvars}
         pipeline_outvals = {var: outvals[var] for var in stage.pipeline_outvars}
         global_outvals = {var: outvals[var] for var in stage.global_outvars}
@@ -134,13 +146,17 @@ class LocalPipelineRunner:
 
 def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage], global_invars: Sequence[Var],
                            global_outvars: Sequence[Var]):
-    """Return a callable that runs all pipeline stages on a single local device.
+    """
+    Return a callable that runs all pipeline stages on a single local device.
 
     Args:
         pipeline_stages (Sequence[PipelineStage]): the pipeline stages to be
             executed.
         global_invars (Sequence[Var]): Global input variables.
         global_outvars (Sequence[Var]): Global output variables.
+
+    Returns:
+        ret_func (function): the returned function.
     """
 
     def ret_func(*args, **kwargs):
@@ -170,21 +186,15 @@ def pipeline_parallel_callable(
         fun: lu.WrappedFun,
         *avals
 ):
+    """Pipeline parallel callable."""
     with jax.disable_jit():
-        jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
+        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage)
                            for stage in jax_pipeline_stages]
-    # new_xla_pipeline_stages = []
-    # for stage in xla_pipeline_stages:
-    #     # pickable_stage = PicklableStage.from_pipeline_stage(stage)
-    #     # pickle and unpickle
-    #     pickled_stage = pickle.dumps(stage)
-    #     new_stage = pickle.loads(pickled_stage)
-    #     new_xla_pipeline_stages.append(new_stage)
     return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)
 
 
@@ -193,8 +203,9 @@ def distributed_pipeline_parallel_callable(
         fun: lu.WrappedFun,
         *avals
 ):
+    """Distributed pipeline parallel callable."""
     with jax.disable_jit():
-        jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
+        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
@@ -204,4 +215,4 @@ def distributed_pipeline_parallel_callable(
     jp = JaxPipeline(pipeline_stages=xla_pipeline_stages,
                      global_invars=global_invars,
                      global_outvars=global_outvars)
-    return lambda *args, **kwargs: jp.run(*args, **kwargs)
+    return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda

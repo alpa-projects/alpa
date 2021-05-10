@@ -11,7 +11,8 @@ pipeline_p.multiple_results = True
 
 
 def mark_pipeline(*args, name: str, mark_type: str):
-    """Mark the start/end of a pipeline stage.
+    """
+    Mark the start/end of a pipeline stage.
 
     Args:
         *args: represents the pipeline input/output of a pipeline stage.
@@ -41,9 +42,9 @@ def _pipeline_xla_translation(c, *args, **kwargs):
 def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
     primal_outs = mark_pipeline(*arg_values, name=name, mark_type=mark_type)
     # TODO(zhuohan): Check the semantics here works for higher order gradients.
-    if mark_type == "start" or mark_type == "jvp_start":
+    if mark_type in ("start", "jvp_start"):
         tangent_mark_type = "jvp_start"
-    elif mark_type == "end" or mark_type == "jvp_end":
+    elif mark_type in ("end", "jvp_end"):
         tangent_mark_type = "jvp_end"
     else:
         raise ValueError("Invalid mark_type")
@@ -53,9 +54,9 @@ def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
 
 def _pipeline_transpose(ct, *args, name, mark_type):
     # TODO(zhuohan): Check the semantics here works for higher order gradients.
-    if mark_type == "start" or mark_type == "jvp_start":
+    if mark_type in ("start", "jvp_start"):
         transposed_mark_type = "end"
-    elif mark_type == "end" or mark_type == "jvp_end":
+    elif mark_type in ("end", "jvp_end"):
         transposed_mark_type = "start"
     else:
         raise ValueError("Invalid mark_type")

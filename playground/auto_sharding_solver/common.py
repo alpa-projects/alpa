@@ -3,7 +3,7 @@
 import numpy as np
 
 
-def append_elements(result, array, indices, cur_depth, cur_indices):
+def append_flatten_elements(result, array, indices, cur_depth, cur_indices):
     """Append elements of `array` to `result`. The `indices` is a generalized
        multi-dimensional index that can index a whole row (use -1 to indicate this)"""
     if cur_depth == len(array.shape) - 1:
@@ -15,27 +15,16 @@ def append_elements(result, array, indices, cur_depth, cur_indices):
         if index == -1:
             for i in range(array.shape[next_depth]):
                 cur_indices[next_depth] = i
-                append_elements(result, array, indices, next_depth, cur_indices)
+                append_flatten_elements(result, array, indices, next_depth, cur_indices)
         else:
             cur_indices[next_depth] = index
-            append_elements(result, array, indices, next_depth, cur_indices)
+            append_flatten_elements(result, array, indices, next_depth, cur_indices)
 
 
-def get_flatten_elements(array, indices):
-    """Load elements of `array` to a flatten list. The `indices` is a generalized
-       multi-dimensional index that can index a whole row (use -1 to indicate this)"""
-    result = []
-    cur_indices = [None] * len(array.shape)
-    append_elements(result, array, indices, -1, cur_indices)
-    return result
-
-
-def get_dim_last_value(array, shape, dim):
-    """Get the value of the last elements in a dimension"""
-    array = np.array(array).reshape(shape)
-    indices = [0] * len(shape)
-    indices[dim] = -1
-    return array[tuple(indices)]
+def get_dim_last_value(array, dim):
+    """Get the value of the last element in a dimension"""
+    indices = tuple(0 if i != dim else array.shape[dim] - 1 for i in range(len(array.shape)))
+    return array[indices]
 
 
 def transpose_flatten(array, shape, dimensions):

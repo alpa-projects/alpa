@@ -1,4 +1,4 @@
-from hlo import ShardingSpec
+from hlo import ShardingSpec, ShardingSpecType
 from cluster_env import ClusterEnvironment
 from common import compute_bytes
 
@@ -65,9 +65,7 @@ def test_tile2():
     assert sharding.replicate_on_last_tile_dim == False
 
     sharding = ShardingSpec.tile((12, 12), [1], [0], cluster_env)
-    assert sharding.tile_assignment_dimensions == (1, 1, 4)
-    assert sharding.tile_assignment_devices == (0, 1, 2, 3)
-    assert sharding.replicate_on_last_tile_dim == True
+    assert sharding.type == ShardingSpecType.REPLICATED
 
     cluster_env = ClusterEnvironment([[0], [1], [2], [3]], [1,1], [1,1], None)
     sharding = ShardingSpec.tile((12, 12), [1], [0], cluster_env)
@@ -76,9 +74,7 @@ def test_tile2():
     assert sharding.replicate_on_last_tile_dim == False
 
     sharding = ShardingSpec.tile((12, 12), [1], [1], cluster_env)
-    assert sharding.tile_assignment_dimensions == (1, 1, 4)
-    assert sharding.tile_assignment_devices == (0, 1, 2, 3)
-    assert sharding.replicate_on_last_tile_dim == True
+    assert sharding.type == ShardingSpecType.REPLICATED
 
 
 def test_tile3():

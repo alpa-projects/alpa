@@ -11,6 +11,8 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_map, HashableFunction
 
 from parax import util
+from parax.cluster_config import DeviceMesh
+from parax.pipeline_parallel import pipeline_parallel_callable
 from parax.pmap_data_parallel import pmap_data_parallel_callable
 from parax.shard_parallel import shard_parallel_callable
 from parax.pipeline_parallel import pipeline_parallel_callable, \
@@ -19,11 +21,13 @@ from parax.pipeline_parallel import pipeline_parallel_callable, \
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
 
-
 # pylint: disable=too-many-arguments
-def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", devices=None,
-                memory_budget_per_device=None, strategy="shard_parallel"):
-    """User interface."""
+def parallelize(fun=None,
+                donate_argnums="auto",
+                static_argnums="auto",
+                devices=None,
+                memory_budget_per_device=None,
+                strategy="shard_parallel"):
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):
@@ -118,4 +122,5 @@ def auto_parallel_callable(
     elif strategy == "distributed_pipeline_parallel":
         return distributed_pipeline_parallel_callable(fun, *avals)
     else:
-        raise ValueError("Invalid parallel strategy")
+        raise ValueError("Invalid parallel strategy: " + strategy)
+

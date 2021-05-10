@@ -1,3 +1,4 @@
+"""Experimental code to generate a Gpipe clock-cycle schedule."""
 def generate_schedule(m, n):
     num_clock = m + n - 1
     schedules = []

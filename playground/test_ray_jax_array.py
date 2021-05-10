@@ -1,7 +1,8 @@
 # check gpu devices
+import os
+
 import jax.numpy as jnp
 import ray
-import os
 
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
@@ -11,9 +12,6 @@ ray.init(num_gpus=2, num_cpus=4)
 @ray.remote(num_gpus=1, num_cpus=2)
 class Runner:
     def __init__(self, name):
-        # import os
-        # os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-        # os.environ["CUDA_VISIBLE_DEVICES"]="1"
         print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
         print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
         self.name = name
@@ -38,15 +36,7 @@ class Runner:
         # print(b)
         # print(type(b))
         self.b = jnp.asarray(arrays[1])
-#
-#
-# m = jnp.ones(3)
-# print(m.device_buffer.device())
-#
-# m_ref = ray.put(m)
-#
-# new_m = ray.get(m_ref)
-# print(new_m)
+
 
 workers = []
 workers.append(Runner.remote(name="0"))

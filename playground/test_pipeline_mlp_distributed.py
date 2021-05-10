@@ -62,12 +62,7 @@ class Model(nn.Module):
         #                  be generated.
         x, = mark_pipeline(x, name='1', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
-
-        # Hao: relu has a bug...
-        # x = nn.leaky_relu(x)
         x = nn.relu(x)
-
-        # x = nn.relu(x)
         x, = mark_pipeline(x, name='1', mark_type='end')
         x, = mark_pipeline(x, name='2', mark_type='start')
         x = nn.Dense(features=self.output_dim, use_bias=False)(x)

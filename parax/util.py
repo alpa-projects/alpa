@@ -59,8 +59,16 @@ def auto_donate_argnums(args):
 
 
 def run_cmd(cmd):
+    """Run a bash commond"""
     print(cmd)
     os.system(cmd)
+
+
+def get_dim_last_value(array, dim):
+    """Get the value of the last element in a dimension"""
+    indices = tuple(0 if i != dim else array.shape[dim] - 1 for i in range(len(array.shape)))
+    return array[indices]
+
 
 class FastLookupList:
     def __init__(self, iterable=()):

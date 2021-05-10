@@ -7,20 +7,13 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis
+from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 
 from parax import parallelize, global_config, testing
 
+from test_auto_sharding_mlp import assert_close, all_reduce_cost
 
 MB = 1024 ** 2
-
-def assert_close(x, y):
-    assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"
-
-
-def all_reduce_cost(num_devices, num_bytes):
-    return 2.0 * (num_devices - 1) / num_devices * num_bytes
-
 
 class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
@@ -37,7 +30,7 @@ class AutoShardingBasicTest(unittest.TestCase):
             x = x + 1
             return x
 
-        a = jnp.ones((1024, 1024))
+        a = jnp.ones((128, 128))
         b = add_one(a)
 
         # Check sharding strategy
@@ -46,15 +39,15 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         # Assert b is sharded
         assert b.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([1]), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1))) or\
+            sharding=(NoSharding(), Chunked([4])),
+            mesh_mapping=(Replicated(1), ShardedAxis(0))) or\
                b.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([4]), Chunked([1])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)))
+            sharding=(Chunked([4]), NoSharding()),
+            mesh_mapping=(Replicated(1), ShardedAxis(0)))
 
     def test_dot_reshape_transpose(self):
-        dim_0 = 128
-        dim_1 = 2048
+        dim_0 = 64
+        dim_1 = 1024
 
         def func(a, b):
             a = jnp.reshape(a, (dim_0, dim_1))
@@ -63,7 +56,7 @@ class AutoShardingBasicTest(unittest.TestCase):
             out = -out
             return out
 
-        para_func = parallelize(memory_budget_per_device=2 * MB, devices=self.devices)(func)
+        para_func = parallelize(memory_budget_per_device=1 * MB, devices=self.devices)(func)
 
         a = jnp.ones((dim_0, 4, dim_1 // 4))
         b = jnp.ones((dim_1, dim_0 // 4, 4))
@@ -74,6 +67,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         np.testing.assert_allclose(expected, actual)
 
     def test_all_reduce_simplification(self):
+        # This test is deprecated.
+        # This requires partial_reduction, which is not in our current plan
+        return
+
         dim_0 = 128
         dim_1 = 2048
 
@@ -104,6 +101,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert_close(testing.last_compiled_auto_sharding_objective, expected)
 
     def test_all_reduce_simplification_out_reuse(self):
+        # This test is deprecated.
+        # This requires partial_reduction, which is not in our current plan
+        return
+
         dim_0 = 128
         dim_1 = 2048
 

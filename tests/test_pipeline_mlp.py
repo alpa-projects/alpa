@@ -43,7 +43,7 @@ def assert_allclose(x, y):
     else:
       raise TypeError((type(x), type(y)))
 
-class AutoShardingMLPTest(unittest.TestCase):
+class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
@@ -99,7 +99,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp'))
+    suite.addTest(PipelineMLPTest('test_2_layer_mlp'))
     return suite
 
 

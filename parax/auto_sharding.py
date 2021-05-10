@@ -22,6 +22,7 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
+from parax.cluster_config import DeviceMesh
 from parax.global_env import global_config
 from parax.xla_pass_context import XlaPassContext
 
@@ -34,7 +35,11 @@ def auto_sharding_callable(
     memory_budget_per_device,
     *avals
 ):
-    devices = devices or np.array(jax.devices())
+    if isinstance(devices, DeviceMesh):
+        device_mesh = devices
+    else:
+        devices = np.array(devices).reshape(-1, len(devices))
+        device_mesh = DeviceMesh(devices, [1, 1], [1, 1])
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
@@ -66,7 +71,7 @@ def auto_sharding_callable(
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
     # Compile
-    device_ids = np.array([x.id for x in devices])
+    device_ids = device_mesh.device_mesh_ids.flatten()
     num_replicas = 1
     num_partitions = len(device_ids)
     device_assignment = device_ids.reshape((num_replicas, num_partitions))
@@ -81,12 +86,24 @@ def auto_sharding_callable(
     built = c.Build(out_tuple)
 
     if memory_budget_per_device is None:
-        memory_budget_per_device = 1 << 30
+        memory_budget_per_device = 1 << 40
 
     with XlaPassContext({
+        # Solver options
         "auto_sharding::enable": True,
         "auto_sharding::solver_strategy": global_config.auto_sharding_solver_strategy,
         "auto_sharding::memory_budget_per_device": memory_budget_per_device,
+        "auto_sharding::force_all_gather_cost": False,
+        "auto_sharding::all_gather_cost": 1e10,
+
+        # Device mesh
+        "auto_sharding::device_mesh_ids": tuple(int(x) for x in device_ids),
+        "auto_sharding::device_mesh_shape": tuple(device_mesh.device_mesh.shape),
+        "auto_sharding::device_mesh_alpha": tuple(float(x) for x in device_mesh.mesh_alpha),
+        "auto_sharding::device_mesh_beta": tuple(float(x) for x in device_mesh.mesh_beta),
+
+        # Debug options
+        "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
@@ -95,50 +112,66 @@ def auto_sharding_callable(
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
-    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, num_partitions)
+    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, device_mesh)
                            for (proto_tuple, aval) in zip(input_shardings, avals)]
     input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                      aval, spec in zip(avals, input_sharding_specs)]
-    handle_args = partial(pxla.shard_args, compiled.local_devices(), input_indices)
+    handle_args = partial(pxla.shard_args, device_mesh.flatten_devices, input_indices)
 
     # Handle output
     output_sharding = compiled.hlo_modules()[0].spmd_output_sharding()
-    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, num_partitions)
+    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, device_mesh)
     handle_outs = pxla.avals_to_results_handler(num_replicas, num_partitions,
                                                 output_sharding_specs, out_avals)
 
     return partial(pxla.execute_replicated, compiled, backend, handle_args, handle_outs)
 
 
-def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions):
+def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh):
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
 
     sharding = []
     mesh_mapping = []
     if sharding_type == OpSharding.Type.OTHER:
-        for i in range(len(tile_assignment_dimensions)):
-            sharding.append(pxla.Chunked([tile_assignment_dimensions[i]]))
-            mesh_mapping.append(pxla.ShardedAxis(i))
+        # try to map dimension between provided mesh and real mesh
+        mesh_mapping = [None] * len(device_mesh.device_mesh.shape)
+        tensor_dim_to_mesh_dim = device_mesh.get_tensor_dim_to_mesh_dim(
+            aval.shape, tile_assignment_dimensions, tile_assignment_devices)
+
+        pt = 0
+        for tensor_dim in range(len(aval.shape)):
+            if tile_assignment_dimensions[tensor_dim] == 1:
+                sharding.append(pxla.NoSharding())
+            else:
+                sharding.append(pxla.Chunked([tile_assignment_dimensions[tensor_dim]]))
+                mesh_dim = tensor_dim_to_mesh_dim[tensor_dim]
+                mesh_mapping[mesh_dim] = pxla.ShardedAxis(pt)
+                pt += 1
+
+        # All other dims are replicated
+        for mesh_dim in range(len(mesh_mapping)):
+            if mesh_mapping[mesh_dim] is None:
+                mesh_mapping[mesh_dim] = pxla.Replicated(device_mesh.device_mesh.shape[mesh_dim])
     elif sharding_type == OpSharding.Type.REPLICATED:
         sharding = (pxla.NoSharding(),) * len(aval.shape)
-        mesh_mapping = (pxla.Replicated(num_partitions),)
+        mesh_mapping = (pxla.Replicated(np.prod(device_mesh.device_mesh.shape)),)
     else:
         raise NotImplementedError("Type: " + str(sharding_type))
 
     return pxla.ShardingSpec(sharding, mesh_mapping)
 
 
-def hlo_sharding_to_sharding_spec(hlo_sharding, aval, num_partitions):
+def hlo_sharding_to_sharding_spec(hlo_sharding, aval, device_mesh):
     proto_tuple = hlo_sharding.proto_tuple()
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
-        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, num_partitions)
+        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, device_mesh)
                 for (shard, aval) in zip(tuple_shardings, avals)]
     else:
-        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, num_partitions)
+        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh)
 
 
 def call_solver_serialized_args(*args):

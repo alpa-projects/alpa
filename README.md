@@ -63,3 +63,15 @@ Organization
 - `playground`: private experimental scripts
 - `tests`: unit tests
 
+
+Linting
+============
+Install prospector via:
+```python
+pip install prospector
+```
+
+Then use prospector to run linting for the folder ``parax/``:
+```python
+prospector parax/
+```

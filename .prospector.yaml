@@ -1,0 +1,70 @@
+---
+strictness: high
+test-warnings: true
+doc-warnings: true
+member-warnings: false
+
+ignore-paths:
+  - benchmark
+  - playground
+  - tests
+  - analysis
+
+ignore-patterns:
+  - setup.py
+
+pep8:
+  options:
+    max-line-length: 120
+
+pylint:
+  run: true
+  enable:
+    - duplicate-code
+  disable:
+    # Libraries aren't installed during linting
+    - import-error
+    - wrong-import-error
+    - cyclic-import
+    - invalid-name  # e.g. o and df are not allowed
+    # Most of our logs don't need lazy interpolation
+    - logging-format-interpolation
+    - logging-fstring-interpolation
+    - missing-docstring
+    - unused-argument
+    - too-few-public-methods
+    - not-context-manager
+    - no-else-return
+    - protected-access
+  options:
+    max-line-length: 120
+    ignored-argument-names: arg|args|kwargs
+    max-attributes: 10
+    docstring-min-length: 5
+
+dodgy:
+  run: true
+
+pep257:
+  disable:
+    # - D102  # Missing doctring in public method
+    # - D103  # Missing doctring in public method
+    - D104  # Missing doctring in public package
+    - D105  # Missing doctring in magic method
+    - D107  # Missing docstring in __init__
+    - D203  # Blank line before class docstring
+    - D212  # Multi-line docstring should start at first line
+    - D406  # Section name should end with newline
+    - D407  # Missing dashed underline after section
+    - D413  # Missing blank line after last section
+
+mccabe:
+  run: true
+
+mypy:
+  run: false
+  options:
+    ignore-missing-imports: true
+
+pyflakes:
+  run: false

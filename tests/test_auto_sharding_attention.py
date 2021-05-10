@@ -285,7 +285,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # Check sharding specification
         for k in range(num_layers):
-            params = optimizer.target["params"][str(i)]
+            params = optimizer.target["params"][str(k)]
             weights = [
                 params["attention"]["self"]["qvk_combined"]["kernel"],
                 params["attention"]["output"]["dense"]["kernel"],

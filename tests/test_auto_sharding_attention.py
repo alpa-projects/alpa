@@ -18,7 +18,9 @@ from flax import optim
 from parax import parallelize, global_config, testing, DeviceMesh
 
 from bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
-from test_auto_sharding_basic import assert_close, all_reduce_cost, map_to_shape
+from test_auto_sharding_mlp import (assert_close, all_reduce_cost, map_to_shape,
+    assert_all_replicated, assert_column_partitioned, assert_row_partitioned,
+    assert_replicated_column_partitioned, assert_replicated_row_partitioned)
 
 MB = 1024 ** 2
 
@@ -139,8 +141,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
             # Check sharding specification
             weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
             weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
-            assert weight0.sharding_spec.mesh_mapping == (Replicated(np.prod(mesh_shape)),)
-            assert weight1.sharding_spec.mesh_mapping == (Replicated(np.prod(mesh_shape)),)
+            assert_all_replicated(weight0, np.prod(mesh_shape))
+            assert_all_replicated(weight1, np.prod(mesh_shape))
 
     def test_attention_model_parallel(self):
         batch_size = 8
@@ -166,16 +168,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
             # Check sharding specification
             weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
             weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
-            # Column partitioned
-            assert weight0.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
-                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-            )
-            # Row partitioned
-            assert weight1.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
-                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-            )
+            assert_column_partitioned(weight0, mesh_shape[i], i)
+            assert_row_partitioned(weight1, mesh_shape[i], i)
 
     def test_attention_2d_mesh(self):
         batch_size = 8
@@ -198,20 +192,10 @@ class AutoShardingAttentionTest(unittest.TestCase):
         assert_close(objective, expected)
 
         # Check sharding specification
-        #weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
-        #weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
-        #print(weight0.sharding_spec)
-        #print(weight1.sharding_spec)
-        ## Column partitioned
-        #assert weight0.sharding_spec == pxla.ShardingSpec(
-        #    sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
-        #    mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ),
-        #)
-        ## Row partitioned
-        #assert weight1.sharding_spec == pxla.ShardingSpec(
-        #    sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
-        #    mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-        #)
+        weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
+        weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
+        assert_replicated_column_partitioned(weight0, mesh_shape)
+        assert_replicated_row_partitioned(weight1, mesh_shape)
 
     def test_bert_layer_data_parallel(self):
         num_layers = 2
@@ -234,8 +218,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
                            for x in params)
             assert_close(objective, expected)
 
-            for x in params:
-                assert x.sharding_spec.mesh_mapping == (Replicated(np.prod(mesh_shape)),)
+            for weight in params:
+                assert_all_replicated(weight, np.prod(mesh_shape))
 
     def test_bert_layer_model_parallel(self):
         num_layers = 3
@@ -261,8 +245,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert hlo_ir.count("all-reduce(") == num_layers * 4 - 1
 
             # Check sharding specification
-            for i in range(num_layers):
-                params = optimizer.target["params"][str(i)]
+            for k in range(num_layers):
+                params = optimizer.target["params"][str(k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],
@@ -272,17 +256,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
                 for j in range(len(weights)):
                     if j % 2 == 0:
-                        # Column partitioned
-                        assert weights[j].sharding_spec == pxla.ShardingSpec(
-                            sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
-                            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-                        )
+                        assert_column_partitioned(weights[j], mesh_shape[i], i)
                     else:
-                        # Row partitioned
-                        assert weights[j].sharding_spec == pxla.ShardingSpec(
-                            sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
-                            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-                        )
+                        assert_row_partitioned(weights[j], mesh_shape[i], i)
 
     def test_bert_layer_2d_mesh(self):
         num_layers = 1
@@ -307,30 +283,21 @@ class AutoShardingAttentionTest(unittest.TestCase):
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
 
-        ## Check sharding specification
-        #for i in range(num_layers):
-        #    params = optimizer.target["params"][str(i)]
-        #    weights = [
-        #        params["attention"]["self"]["qvk_combined"]["kernel"],
-        #        params["attention"]["output"]["dense"]["kernel"],
-        #        params["intermediate"]["dense"]["kernel"],
-        #        params["output"]["dense"]["kernel"],
-        #    ]
+        # Check sharding specification
+        for k in range(num_layers):
+            params = optimizer.target["params"][str(i)]
+            weights = [
+                params["attention"]["self"]["qvk_combined"]["kernel"],
+                params["attention"]["output"]["dense"]["kernel"],
+                params["intermediate"]["dense"]["kernel"],
+                params["output"]["dense"]["kernel"],
+            ]
 
-        #    for j in range(len(weights)):
-        #        if j % 2 == 0:
-        #            # Column partitioned
-        #            assert weights[j].sharding_spec == pxla.ShardingSpec(
-        #                sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
-        #                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-        #            )
-        #        else:
-        #            # Row partitioned
-        #            assert weights[j].sharding_spec == pxla.ShardingSpec(
-        #                sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
-        #                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-        #            )
-
+            for j in range(len(weights)):
+                if j % 2 == 0:
+                    assert_replicated_column_partitioned(weights[j], mesh_shape)
+                else:
+                    assert_replicated_row_partitioned(weights[j], mesh_shape)
 
 def suite():
     suite = unittest.TestSuite()

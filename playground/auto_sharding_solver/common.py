@@ -21,12 +21,10 @@ def append_flatten_elements(result, array, indices, cur_depth, cur_indices):
             append_flatten_elements(result, array, indices, next_depth, cur_indices)
 
 
-def get_dim_last_value(array, shape, dim):
+def get_dim_last_value(array, dim):
     """Get the value of the last element in a dimension"""
-    array = np.array(array).reshape(shape)
-    indices = [0] * len(shape)
-    indices[dim] = shape[dim] - 1
-    return array[tuple(indices)]
+    indices = tuple(0 if i != dim else array.shape[dim] - 1 for i in range(len(array.shape)))
+    return array[indices]
 
 
 def transpose_flatten(array, shape, dimensions):

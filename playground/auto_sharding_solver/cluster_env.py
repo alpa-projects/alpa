@@ -60,22 +60,24 @@ class ClusterEnvironment:
         if spec.type == ShardingSpecType.REPLICATED:
             return [-1] * len(shape)
 
-        tensor_dim_vals = [0] * len(shape)
-        for i in range(len(shape)):
-            tensor_dim_vals[i] = get_dim_last_value(
-                spec.tile_assignment_devices, spec.tile_assignment_dimensions, i)
+        tile_assignment = np.array(spec.tile_assignment_devices).\
+            reshape(spec.tile_assignment_dimensions)
 
-        mesh_dim_vals = [0] * len(self.device_mesh.shape)
-        for j in range(len(self.device_mesh.shape)):
-            mesh_dim_vals[j] = get_dim_last_value(
-                self.device_mesh, self.device_mesh.shape, j)
+        tensor_dim_vals = tuple(get_dim_last_value(tile_assignment, i)
+            for i in range(len(shape)))
+
+        mesh_dim_vals = tuple(get_dim_last_value(self.device_mesh, j)
+            for j in range(len(self.device_mesh.shape)))
 
         ret = [-1] * len(shape)
         for i in range(len(shape)):
             if spec.tile_assignment_dimensions[i] != 1:
+                found = False
                 for j in range(len(self.device_mesh.shape)):
                     if tensor_dim_vals[i] == mesh_dim_vals[j]:
                         ret[i] = j
+                        found = True
+                assert found
 
         return ret
 

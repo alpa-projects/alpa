@@ -7,24 +7,13 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis
+from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 
 from parax import parallelize, global_config, testing
 
+from test_auto_sharding_mlp import assert_close, all_reduce_cost
 
 MB = 1024 ** 2
-
-def assert_close(x, y):
-    assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"
-
-
-def all_reduce_cost(num_devices, num_bytes):
-    return 2.0 * (num_devices - 1) / num_devices * num_bytes
-
-
-def map_to_shape(array_pytree):
-    return jax.tree_util.tree_map(lambda x: x.shape, array_pytree)
-
 
 class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
@@ -50,11 +39,11 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         # Assert b is sharded
         assert b.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([1]), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1))) or\
+            sharding=(NoSharding(), Chunked([4])),
+            mesh_mapping=(Replicated(1), ShardedAxis(0))) or\
                b.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([4]), Chunked([1])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)))
+            sharding=(Chunked([4]), NoSharding()),
+            mesh_mapping=(Replicated(1), ShardedAxis(0)))
 
     def test_dot_reshape_transpose(self):
         dim_0 = 64

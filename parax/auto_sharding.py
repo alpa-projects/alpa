@@ -30,11 +30,17 @@ from parax.xla_pass_context import XlaPassContext
 def auto_sharding_callable(
     fun: lu.WrappedFun,
     out_tree_thunk,
-    device_mesh,
+    devices,
     donated_invars,
     memory_budget_per_device,
     *avals
 ):
+    if isinstance(devices, DeviceMesh):
+        device_mesh = devices
+    else:
+        devices = np.array(devices).reshape(-1, len(devices))
+        device_mesh = DeviceMesh(devices, [1, 1], [1, 1])
+
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -97,6 +103,7 @@ def auto_sharding_callable(
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in device_mesh.mesh_beta),
 
         # Debug options
+        "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)

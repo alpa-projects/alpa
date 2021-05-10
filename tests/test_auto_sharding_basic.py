@@ -22,6 +22,10 @@ def all_reduce_cost(num_devices, num_bytes):
     return 2.0 * (num_devices - 1) / num_devices * num_bytes
 
 
+def map_to_shape(array_pytree):
+    return jax.tree_util.tree_map(lambda x: x.shape, array_pytree)
+
+
 class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
@@ -37,7 +41,7 @@ class AutoShardingBasicTest(unittest.TestCase):
             x = x + 1
             return x
 
-        a = jnp.ones((1024, 1024))
+        a = jnp.ones((128, 128))
         b = add_one(a)
 
         # Check sharding strategy
@@ -53,8 +57,8 @@ class AutoShardingBasicTest(unittest.TestCase):
             mesh_mapping=(ShardedAxis(0), ShardedAxis(1)))
 
     def test_dot_reshape_transpose(self):
-        dim_0 = 128
-        dim_1 = 2048
+        dim_0 = 64
+        dim_1 = 1024
 
         def func(a, b):
             a = jnp.reshape(a, (dim_0, dim_1))
@@ -63,7 +67,7 @@ class AutoShardingBasicTest(unittest.TestCase):
             out = -out
             return out
 
-        para_func = parallelize(memory_budget_per_device=2 * MB, devices=self.devices)(func)
+        para_func = parallelize(memory_budget_per_device=1 * MB, devices=self.devices)(func)
 
         a = jnp.ones((dim_0, 4, dim_1 // 4))
         b = jnp.ones((dim_1, dim_0 // 4, 4))
@@ -74,6 +78,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         np.testing.assert_allclose(expected, actual)
 
     def test_all_reduce_simplification(self):
+        # This test is deprecated.
+        # This requires partial_reduction, which is not in our current plan
+        return
+
         dim_0 = 128
         dim_1 = 2048
 
@@ -104,6 +112,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert_close(testing.last_compiled_auto_sharding_objective, expected)
 
     def test_all_reduce_simplification_out_reuse(self):
+        # This test is deprecated.
+        # This requires partial_reduction, which is not in our current plan
+        return
+
         dim_0 = 128
         dim_1 = 2048
 

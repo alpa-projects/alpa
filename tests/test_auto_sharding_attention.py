@@ -11,14 +11,14 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis
+from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 from flax import linen as nn
 from flax import optim
-from transformers.models.bert.modeling_flax_bert import FlaxBertAttention, FlaxBertLayer
 
-from parax import parallelize, global_config, testing
+from parax import parallelize, global_config, testing, DeviceMesh
 
-from test_auto_sharding_basic import assert_close, all_reduce_cost
+from bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
+from test_auto_sharding_basic import assert_close, all_reduce_cost, map_to_shape
 
 MB = 1024 ** 2
 
@@ -28,58 +28,36 @@ class AutoShardingAttentionTest(unittest.TestCase):
         self.devices = tuple(jax.local_devices()[:4])
         global_config.shard_parallel_strategy = 'auto_sharding'
 
-    def test_attention(self):
-        global_config.auto_sharding_solver_strategy = 'normal'
+    def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
+        devices = np.array(self.devices).reshape(shape)
+        return DeviceMesh(devices, mesh_alpha, mesh_beta)
 
-        class Model(nn.Module):
-            num_heads: int
-            head_size: int
-            kernel_init_scale: float = 0.2
-            dropout_rate: float = 0.0
-            dtype: jnp.dtype = jnp.float32
-
-            @nn.compact
-            def __call__(self, hidden_states, attention_mask, deterministic: bool=True):
-                attention = FlaxBertAttention(
-                    self.num_heads,
-                    self.head_size,
-                    kernel_init_scale=self.kernel_init_scale,
-                    dropout_rate=self.dropout_rate,
-                    name="attention",
-                    dtype=self.dtype,
-                )(hidden_states, attention_mask, deterministic=deterministic)
-                return attention
-
-        @parallelize(memory_budget_per_device=100 * (1 << 20),
-                     devices=self.devices)
+    def run_attention(self, batch_size, seq_len, hidden_size, num_heads,
+                      dropout_rate, device_mesh):
+        @parallelize(devices=device_mesh)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
                 rngs = {"dropout": batch['rng']}
-                out = apply_fn(params, batch['hidden_states'],
-                               batch['attention_mask'], deterministic,
-                               rngs=rngs)
+                out = apply_fn(params,
+                               batch['hidden_states'], batch['attention_mask'],
+                               rngs=rngs)[0]
                 return jnp.mean((out - batch['label']) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        batch_size = 4
-        seq_len = 128
-        hidden_dim = 2048
-        num_heads = 16
-        per_head = hidden_dim // num_heads
-        dropout_rate = 0.0
-        deterministic = False
-
-        hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        hidden_states = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-        label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
 
         # Init model and optimizer
-        model = Model(num_heads=num_heads, head_size=hidden_dim, dropout_rate=dropout_rate)
+        model = FlaxBertAttention(BertConfig(
+            hidden_size=hidden_size,
+            num_attention_heads=num_heads,
+            attention_probs_dropout_prob=0))
         rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, hidden_states, attention_mask, deterministic)
+        params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         # JIT compile
@@ -90,81 +68,39 @@ class AutoShardingAttentionTest(unittest.TestCase):
                                 "rng": rngkey},
                                model.apply)
 
-        # Check sharding strategy
+        # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
 
-        # The function should contain only one communication primitive,
-        # which is an all-reduce
-        assert hlo_ir.count("channel_id") == 1
-        assert hlo_ir.count("all-reduce(") == 1
-        expected = all_reduce_cost(len(self.devices), batch_size * seq_len * hidden_dim * 4)
-        assert_close(testing.last_compiled_auto_sharding_objective, expected)
+        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
-        # All weight tensors should be split over the head dimension
-        for name in ["query", "key", "value"]:
-            weight_q = optimizer.target["params"]["attention"]["self"][name]["kernel"]
-            assert weight_q.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([1]), Chunked([4]), Chunked([1])),
-                mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ShardedAxis(2)),
-            )
-
-
-    def test_bert_layer(self):
-        global_config.auto_sharding_solver_strategy = 'normal'
-
-        class Model(nn.Module):
-            num_heads: int
-            head_size: int
-            intermediate_size: int
-            dropout_rate: float = 0.0
-            kernel_init_scale: float = 0.2
-            dtype: jnp.dtype = jnp.float32
-
-            @nn.compact
-            def __call__(self, hidden_states, attention_mask, deterministic: bool=True):
-                attention = FlaxBertLayer(
-                    self.num_heads,
-                    self.head_size,
-                    self.intermediate_size,
-                    dropout_rate=self.dropout_rate,
-                    kernel_init_scale=self.kernel_init_scale,
-                    dtype=self.dtype,
-                )(hidden_states, attention_mask, deterministic=deterministic)
-                return attention
-
-        @parallelize(memory_budget_per_device=160 * (1 << 20),
-                     devices=self.devices)
+    def run_bert_layers(self, num_layers, batch_size, seq_len, hidden_size,
+                        num_heads, dropout_rate, device_mesh):
+        @parallelize(devices=device_mesh)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
                 rngs = {"dropout": batch['rng']}
-                out = apply_fn(params, batch['hidden_states'],
-                               batch['attention_mask'], deterministic,
-                               rngs=rngs)
+                out = apply_fn(params,
+                               batch['hidden_states'], batch['attention_mask'],
+                               rngs=rngs)[0]
                 return jnp.mean((out - batch['label']) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        batch_size = 4
-        seq_len = 128
-        hidden_dim = 2048
-        intermediate_size = hidden_dim * 4
-        num_heads = 16
-        per_head = hidden_dim // num_heads
-        dropout_rate = 0.0
-        deterministic = False
-
-        hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        hidden_states = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-        label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
 
         # Init model and optimizer
-        model = Model(num_heads=num_heads, head_size=hidden_dim,
-                      intermediate_size=intermediate_size, dropout_rate=dropout_rate)
+        model = FlaxBertLayerCollection(BertConfig(
+            num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            num_attention_heads=num_heads,
+            attention_probs_dropout_prob=0))
         rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, hidden_states, attention_mask, deterministic)
+        params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         # JIT compile
@@ -175,226 +111,237 @@ class AutoShardingAttentionTest(unittest.TestCase):
                                 "rng": rngkey},
                                model.apply)
 
-        # Check sharding strategy
+        # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
 
-        assert hlo_ir.count("channel_id") == 3
-        assert hlo_ir.count("all-reduce(") == 3
+        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
-        expected = 3 * all_reduce_cost(len(self.devices), batch_size * seq_len * hidden_dim * 4)
-        assert_close(testing.last_compiled_auto_sharding_objective, expected)
-
-        # All weight tensors should be split over the head dimension
-        for name in ["query", "key", "value"]:
-            weight_q = optimizer.target["params"]["FlaxBertLayer_0"]["attention"]["self"][name]["kernel"]
-            assert weight_q.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([1]), Chunked([4]), Chunked([1])),
-                mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ShardedAxis(2)),
-            )
-        weight0 = optimizer.target["params"]["FlaxBertLayer_0"]["intermediate"]["dense"]["kernel"]
-        weight1 = optimizer.target["params"]["FlaxBertLayer_0"]["output"]["dense"]["kernel"]
-        # Column partitioned
-        assert weight0.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([1]), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-        )
-        # Row partitioned
-        assert weight1.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([4]), Chunked([1])),
-            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
-        )
-
-
-    def test_n_bert_layer(self):
-        global_config.auto_sharding_solver_strategy = 'normal'
-
-        class Model(nn.Module):
-            num_layers: int
-            num_heads: int
-            head_size: int
-            intermediate_size: int
-            dropout_rate: float = 0.0
-            kernel_init_scale: float = 0.2
-            dtype: jnp.dtype = jnp.float32
-
-            @nn.compact
-            def __call__(self, hidden_states, attention_mask, deterministic: bool=True):
-                for i in range(self.num_layers):
-                    hidden_states = FlaxBertLayer(
-                        self.num_heads,
-                        self.head_size,
-                        self.intermediate_size,
-                        dropout_rate=self.dropout_rate,
-                        kernel_init_scale=self.kernel_init_scale,
-                        dtype=self.dtype,
-                    )(hidden_states, attention_mask, deterministic=deterministic)
-                return hidden_states
-
-        @parallelize(memory_budget_per_device=370 * (1 << 20),
-                     devices=self.devices)
-        def train_step(optimizer, batch, apply_fn):
-            def loss_func(params):
-                rngs = {"dropout": batch['rng']}
-                out = apply_fn(params, batch['hidden_states'],
-                               batch['attention_mask'], deterministic,
-                               rngs=rngs)
-                return jnp.mean((out - batch['label']) ** 2)
-
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
-
-        batch_size = 4
-        seq_len = 128
-        num_layers = 2
-        hidden_dim = 2304
-        intermediate_size = hidden_dim * 4
-        num_heads = 24
-        per_head = hidden_dim // num_heads
+    def test_attention_data_parallel(self):
+        batch_size = 32
+        seq_len = 32
+        hidden_size = 64
+        num_heads = 8
         dropout_rate = 0.0
-        deterministic = False
 
-        hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-        label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            optimizer, hlo_ir, objective = self.run_attention(
+                batch_size, seq_len, hidden_size, num_heads, dropout_rate, device_mesh)
 
-        # Init model and optimizer
-        model = Model(num_layers=num_layers,
-                      num_heads=num_heads, head_size=hidden_dim,
-                      intermediate_size=intermediate_size, dropout_rate=dropout_rate)
-        rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, hidden_states, attention_mask, deterministic)
-        optimizer = optim.GradientDescent(1e-2).create(params)
+            # Check communication cost
+            params = jax.tree_util.tree_leaves(optimizer.target)
+            expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
+                           for x in params)
+            assert_close(objective, expected)
 
-        # JIT compile
-        optimizer = train_step(optimizer,
-                               {"hidden_states": hidden_states,
-                                "attention_mask": attention_mask,
-                                "label": label,
-                                "rng": rngkey},
-                               model.apply)
+            # Check sharding specification
+            weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
+            weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
+            assert weight0.sharding_spec.mesh_mapping == (Replicated(np.prod(mesh_shape)),)
+            assert weight1.sharding_spec.mesh_mapping == (Replicated(np.prod(mesh_shape)),)
 
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+    def test_attention_model_parallel(self):
+        batch_size = 8
+        seq_len = 8
+        hidden_size = 256
+        num_heads = 8
+        dropout_rate = 0.0
 
-        # Check sharding strategy
-        expected = 7 * all_reduce_cost(len(self.devices), batch_size * seq_len * hidden_dim * 4)
-        assert_close(testing.last_compiled_auto_sharding_objective, expected)
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            optimizer, hlo_ir, objective = self.run_attention(
+                batch_size, seq_len, hidden_size, num_heads, dropout_rate, device_mesh)
 
-        assert hlo_ir.count("channel_id") == 7
-        assert hlo_ir.count("all-reduce(") == 7
+            # Check communication cost
+            expected = device_mesh.all_reduce_cost(
+                batch_size * seq_len * hidden_size * 4, i)
+            assert_close(objective, expected)
 
-        # All weight tensors should be split over the head dimension
-        for i in range(num_layers):
-            layer_name = f"FlaxBertLayer_{i}"
-            for name in ["query", "key", "value"]:
-                weight_q = optimizer.target["params"][layer_name]["attention"]\
-                                           ["self"][name]["kernel"]
-                assert weight_q.sharding_spec == pxla.ShardingSpec(
-                    sharding=(Chunked([1]), Chunked([4]), Chunked([1])),
-                    mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ShardedAxis(2)),
-                )
-            weight0 = optimizer.target["params"][layer_name]["attention"]["self"]["out"]["kernel"]
-            weight1 = optimizer.target["params"][layer_name]["intermediate"]["dense"]["kernel"]
-            weight2 = optimizer.target["params"][layer_name]["output"]["dense"]["kernel"]
-            # Row partitioned
-            assert weight0.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([4]), Chunked([1]), Chunked([1])),
-                mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ShardedAxis(2)),
-            )
+            assert hlo_ir.count("channel_id") == 1
+            assert hlo_ir.count("all-reduce(") == 1
+
+            # Check sharding specification
+            weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
+            weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
             # Column partitioned
-            assert weight1.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([1]), Chunked([4])),
+            assert weight0.sharding_spec == pxla.ShardingSpec(
+                sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
                 mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
             )
             # Row partitioned
-            assert weight2.sharding_spec == pxla.ShardingSpec(
-                sharding=(Chunked([4]), Chunked([1])),
+            assert weight1.sharding_spec == pxla.ShardingSpec(
+                sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
                 mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
             )
 
-
-    def test_bert_layer_force_data_parallel(self):
-        global_config.auto_sharding_solver_strategy = 'force_data_parallel'
-
-        class Model(nn.Module):
-            num_heads: int
-            head_size: int
-            intermediate_size: int
-            dropout_rate: float = 0.0
-            kernel_init_scale: float = 0.2
-            dtype: jnp.dtype = jnp.float32
-
-            @nn.compact
-            def __call__(self, hidden_states, attention_mask, deterministic: bool=True):
-                attention = FlaxBertLayer(
-                    self.num_heads,
-                    self.head_size,
-                    self.intermediate_size,
-                    dropout_rate=self.dropout_rate,
-                    kernel_init_scale=self.kernel_init_scale,
-                    dtype=self.dtype,
-                )(hidden_states, attention_mask, deterministic=deterministic)
-                return attention
-
-        @parallelize(memory_budget_per_device=1000 * (1 << 20),
-                     devices=self.devices)
-        def train_step(optimizer, batch, apply_fn):
-            def loss_func(params):
-                rngs = {"dropout": batch['rng']}
-                out = apply_fn(params, batch['hidden_states'],
-                               batch['attention_mask'], deterministic,
-                               rngs=rngs)
-                return jnp.mean((out - batch['label']) ** 2)
-
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
-
-        batch_size = 4
-        seq_len = 128
-        hidden_dim = 2048
-        intermediate_size = hidden_dim * 4
-        num_heads = 16
-        per_head = hidden_dim // num_heads
+    def test_attention_2d_mesh(self):
+        batch_size = 8
+        seq_len = 8
+        hidden_size = 128
+        num_heads = 8
         dropout_rate = 0.0
-        deterministic = False
 
-        hidden_states = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-        label = jnp.ones((batch_size, seq_len, hidden_dim), dtype=jnp.float32)
+        mesh_shape = [2, 2]
+        device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.01])
+        optimizer, hlo_ir, objective = self.run_attention(
+            batch_size, seq_len, hidden_size, num_heads, dropout_rate, device_mesh)
 
-        # Init model and optimizer
-        model = Model(num_heads=num_heads, head_size=hidden_dim,
-                      intermediate_size=intermediate_size, dropout_rate=dropout_rate)
-        rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, hidden_states, attention_mask, deterministic)
-        optimizer = optim.GradientDescent(1e-2).create(params)
+        # Check communication cost
+        params = jax.tree_util.tree_leaves(optimizer.target)
+        expected = sum(device_mesh.all_reduce_cost(
+            np.prod(x.shape) * 4 / mesh_shape[1], 0) for x in params) +\
+            device_mesh.all_reduce_cost(
+            batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
+        assert_close(objective, expected)
 
-        # JIT compile
-        optimizer = train_step(optimizer,
-                               {"hidden_states": hidden_states,
-                                "attention_mask": attention_mask,
-                                "label": label,
-                                "rng": rngkey},
-                               model.apply)
+        # Check sharding specification
+        #weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
+        #weight1 = optimizer.target["params"]["output"]["dense"]["kernel"]
+        #print(weight0.sharding_spec)
+        #print(weight1.sharding_spec)
+        ## Column partitioned
+        #assert weight0.sharding_spec == pxla.ShardingSpec(
+        #    sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
+        #    mesh_mapping=(ShardedAxis(0), ShardedAxis(1), ),
+        #)
+        ## Row partitioned
+        #assert weight1.sharding_spec == pxla.ShardingSpec(
+        #    sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
+        #    mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+        #)
 
-        # Check sharding strategy
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+    def test_bert_layer_data_parallel(self):
+        num_layers = 2
+        batch_size = 64
+        seq_len = 64
+        hidden_size = 32
+        num_heads = 8
+        dropout_rate = 0.0
 
-        forced_all_reduce_cost = 1000
-        num_weight_tensors = len(jax.tree_util.tree_leaves(params))
-        expected = forced_all_reduce_cost * num_weight_tensors
-        assert_close(testing.last_compiled_auto_sharding_objective, expected)
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            optimizer, hlo_ir, objective = self.run_bert_layers(
+                num_layers, batch_size, seq_len, hidden_size,
+                num_heads, dropout_rate, device_mesh)
+
+            # Check communication cost
+            params = jax.tree_util.tree_leaves(optimizer.target)
+            expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
+                           for x in params)
+            assert_close(objective, expected)
+
+            for x in params:
+                assert x.sharding_spec.mesh_mapping == (Replicated(np.prod(mesh_shape)),)
+
+    def test_bert_layer_model_parallel(self):
+        num_layers = 3
+        batch_size = 8
+        seq_len = 8
+        hidden_size = 128
+        num_heads = 8
+        dropout_rate = 0.0
+
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            optimizer, hlo_ir, objective = self.run_bert_layers(
+                num_layers, batch_size, seq_len, hidden_size,
+                num_heads, dropout_rate, device_mesh)
+
+            # Check communication cost
+            expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
+                batch_size * seq_len * hidden_size * 4, i)
+            assert_close(objective, expected)
+
+            assert hlo_ir.count("channel_id") == num_layers * 4 - 1
+            assert hlo_ir.count("all-reduce(") == num_layers * 4 - 1
+
+            # Check sharding specification
+            for i in range(num_layers):
+                params = optimizer.target["params"][str(i)]
+                weights = [
+                    params["attention"]["self"]["qvk_combined"]["kernel"],
+                    params["attention"]["output"]["dense"]["kernel"],
+                    params["intermediate"]["dense"]["kernel"],
+                    params["output"]["dense"]["kernel"],
+                ]
+
+                for j in range(len(weights)):
+                    if j % 2 == 0:
+                        # Column partitioned
+                        assert weights[j].sharding_spec == pxla.ShardingSpec(
+                            sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
+                            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+                        )
+                    else:
+                        # Row partitioned
+                        assert weights[j].sharding_spec == pxla.ShardingSpec(
+                            sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
+                            mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+                        )
+
+    def test_bert_layer_2d_mesh(self):
+        num_layers = 1
+        batch_size = 8
+        seq_len = 8
+        hidden_size = 128
+        num_heads = 8
+        dropout_rate = 0.0
+
+        # Test on different device meshes
+        mesh_shape = [2, 2]
+        device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.01])
+        optimizer, hlo_ir, objective = self.run_bert_layers(
+            num_layers, batch_size, seq_len, hidden_size,
+            num_heads, dropout_rate, device_mesh)
+
+        # Check communication cost
+        params = jax.tree_util.tree_leaves(optimizer.target)
+        expected = sum(device_mesh.all_reduce_cost(
+            np.prod(x.shape) * 4 / mesh_shape[1], 0) for x in params) +\
+            device_mesh.all_reduce_cost(
+            batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
+        assert_close(objective, expected)
+
+        ## Check sharding specification
+        #for i in range(num_layers):
+        #    params = optimizer.target["params"][str(i)]
+        #    weights = [
+        #        params["attention"]["self"]["qvk_combined"]["kernel"],
+        #        params["attention"]["output"]["dense"]["kernel"],
+        #        params["intermediate"]["dense"]["kernel"],
+        #        params["output"]["dense"]["kernel"],
+        #    ]
+
+        #    for j in range(len(weights)):
+        #        if j % 2 == 0:
+        #            # Column partitioned
+        #            assert weights[j].sharding_spec == pxla.ShardingSpec(
+        #                sharding=(Chunked([1]), Chunked([np.prod(mesh_shape)])),
+        #                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+        #            )
+        #        else:
+        #            # Row partitioned
+        #            assert weights[j].sharding_spec == pxla.ShardingSpec(
+        #                sharding=(Chunked([np.prod(mesh_shape)]), Chunked([1])),
+        #                mesh_mapping=(ShardedAxis(0), ShardedAxis(1)),
+        #            )
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingAttentionTest('test_attention'))
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer'))
-    suite.addTest(AutoShardingAttentionTest('test_n_bert_layer'))
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_force_data_parallel'))
+    suite.addTest(AutoShardingAttentionTest('test_attention_data_parallel'))
+    suite.addTest(AutoShardingAttentionTest('test_attention_model_parallel'))
+    suite.addTest(AutoShardingAttentionTest('test_attention_2d_mesh'))
+
+    suite.addTest(AutoShardingAttentionTest('test_bert_layer_data_parallel'))
+    suite.addTest(AutoShardingAttentionTest('test_bert_layer_model_parallel'))
+    suite.addTest(AutoShardingAttentionTest('test_bert_layer_2d_mesh'))
+
     return suite
 
 

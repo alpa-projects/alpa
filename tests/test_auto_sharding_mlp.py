@@ -65,6 +65,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
+
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
     def run_n_layer_mlp(self, num_layers, batch_size,
@@ -111,8 +112,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
     def test_2_layer_mlp_data_parallel(self):
-        batch_size = 1024
-        hidden_dim = 128
+        batch_size = 512
+        hidden_dim = 64
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -132,20 +133,18 @@ class AutoShardingMLPTest(unittest.TestCase):
             # Weights are replicated
             weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
             weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-            assert isinstance(weight0, pxla.ShardedDeviceArray)
-            assert isinstance(weight1, pxla.ShardedDeviceArray)
             assert weight0.sharding_spec == pxla.ShardingSpec(
                 sharding=(NoSharding(), NoSharding()),
-                mesh_mapping=(Replicated(4),),
+                mesh_mapping=(Replicated(np.prod(mesh_shape)),),
             )
             assert weight1.sharding_spec == pxla.ShardingSpec(
                 sharding=(NoSharding(), NoSharding()),
-                mesh_mapping=(Replicated(4),),
+                mesh_mapping=(Replicated(np.prod(mesh_shape)),),
             )
 
     def test_2_layer_mlp_model_parallel(self):
-        batch_size = 128
-        hidden_dim = 1024
+        batch_size = 64
+        hidden_dim = 512
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -161,8 +160,6 @@ class AutoShardingMLPTest(unittest.TestCase):
             # Check sharding specification
             weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
             weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-            assert isinstance(weight0, pxla.ShardedDeviceArray)
-            assert isinstance(weight1, pxla.ShardedDeviceArray)
             # Column partitioned
             assert weight0.sharding_spec == pxla.ShardingSpec(
                 sharding=(Chunked([1]), Chunked([4])),
@@ -176,8 +173,8 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def test_n_layer_mlp_data_parallel(self):
         num_layers = 6
-        batch_size = 1024
-        hidden_dim = 128
+        batch_size = 512
+        hidden_dim = 64
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -196,16 +193,15 @@ class AutoShardingMLPTest(unittest.TestCase):
             # Weights are replicated
             for i in range(num_layers):
                 weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
-                assert isinstance(weight, pxla.ShardedDeviceArray)
                 assert weight.sharding_spec == pxla.ShardingSpec(
                     sharding=(NoSharding(), NoSharding()),
-                    mesh_mapping=(Replicated(4),),
+                    mesh_mapping=(Replicated(np.prod(mesh_shape)),),
                 )
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
-        batch_size = 128
-        hidden_dim = 1024
+        batch_size = 64
+        hidden_dim = 512
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -222,7 +218,6 @@ class AutoShardingMLPTest(unittest.TestCase):
             # Check sharding specification
             for i in range(num_layers):
                 weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
-                assert isinstance(weight, pxla.ShardedDeviceArray)
                 if i % 2 == 0:
                     # Column partitioned
                     assert weight.sharding_spec == pxla.ShardingSpec(
@@ -237,8 +232,8 @@ class AutoShardingMLPTest(unittest.TestCase):
                     )
 
     def test_2_layer_mlp_2d_mesh(self):
-        batch_size = 1024
-        hidden_dim = 128
+        batch_size = 512
+        hidden_dim = 64
 
         # Test on different device meshes
         mesh_shape = [2, 2]
@@ -257,8 +252,6 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Check sharding specification
         weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
         weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-        assert isinstance(weight0, pxla.ShardedDeviceArray)
-        assert isinstance(weight1, pxla.ShardedDeviceArray)
         # Column partitioned
         assert weight0.sharding_spec == pxla.ShardingSpec(
             sharding=(Chunked([1]), Chunked([mesh_shape[1]])),
@@ -272,8 +265,8 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def test_n_layer_mlp_2d_mesh(self):
         num_layers = 6
-        batch_size = 1024
-        hidden_dim = 128
+        batch_size = 512
+        hidden_dim = 64
 
         # Test on different device meshes
         mesh_shape = [2, 2]
@@ -293,7 +286,6 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Check sharding specification
         for i in range(num_layers):
             weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
-            assert isinstance(weight, pxla.ShardedDeviceArray)
             if i % 2 == 0:
                 # Column partitioned
                 assert weight.sharding_spec == pxla.ShardingSpec(

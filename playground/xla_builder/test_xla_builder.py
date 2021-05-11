@@ -2,9 +2,8 @@ from functools import partial
 
 import numpy as np
 import jax
-from jax.lib import xla_client
 import jax.numpy as jnp
-from jax.lib import xla_bridge
+from jax.lib import xla_client, xla_bridge
 
 ops = xla_client.ops
 

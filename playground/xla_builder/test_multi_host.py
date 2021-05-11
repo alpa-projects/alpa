@@ -1,10 +1,11 @@
 from functools import partial
+import time
 
 import numpy as np
 import jax
-from jax.lib import xla_client
 import jax.numpy as jnp
-from jax.lib import xla_bridge
+from jax.lib import xla_client, xla_bridge
+import ray
 
 ops = xla_client.ops
 
@@ -33,42 +34,80 @@ def all_reduce(builder, operand, reduce_op, replica_groups):
             None, None)
 
 
-def test_manual_construct_replica():
-    c = xla_client.XlaBuilder("shard")
-    x = parameter(c, 0, (2, 2), np.float32)
-    y = ops.Constant(c, np.float32(1))
-    z = ops.Broadcast(y, (2, 2))
-    z = ops.Add(x, z)
-    z = all_reduce(c, z, 'add', ((0, 1,),))
+@ray.remote
+class Server:
+    def __init__(self, port, num_nodes):
+        self.server = xla_client._xla.get_distributed_runtime_service(f"[::0]:{port}", num_nodes)
 
-    c = c.build(ops.Tuple(c, [z]))
-    print(c.as_hlo_text())
 
-    num_replicas = 2
-    num_partitions = 1
-    device_assignment = xla_client.DeviceAssignment.create([[0], [1]])
-    use_spmd_partitioning = False
+@ray.remote(num_gpus=1)
+class Worker:
+    def __init__(self, port, node_id):
+        self.node_id = 0
+        self.client = xla_client._xla.get_distributed_runtime_client(f"dns:///localhost:{port}", node_id)
+        self.client.connect()
+        self.backend = xla_client._gpu_backend_factory(self.client, node_id=node_id)   # PyClient
 
-    compile_options = xla_client.CompileOptions()
-    build_options = compile_options.executable_build_options
-    build_options.num_replicas = num_replicas
-    build_options.num_partitions = num_partitions
-    build_options.use_spmd_partitioning = use_spmd_partitioning
-    build_options.device_assignment = device_assignment
+    def compile(self):
+        c = xla_client.XlaBuilder("shard")
+        x = parameter(c, 0, (5,), np.float32)
+        z = all_reduce(c, x, 'add', (()))
+        c = c.build(ops.Tuple(c, [z]))
 
-    backend = xla_client.get_local_backend("gpu")
-    compiled_computation = backend.compile(c, compile_options)
+        backend = self.backend
+        local_devices = backend.local_devices()
+        global_devices = backend.devices()
+        local_device_ids = np.array([x.id for x in local_devices])
+        global_device_ids = np.array([x.id for x in global_devices])
 
-    host_input = np.ones((2,2), dtype=np.float32)
-    device_inputs = [[
-        backend.buffer_from_pyval(host_input, backend.devices()[i])
-        for i in range(num_replicas)
-    ]]
+        num_replicas = len(global_device_ids)
+        num_partitions = 1
+        device_assignment = global_device_ids.reshape((num_replicas, num_partitions))
+        device_assignment = xla_client.DeviceAssignment.create(device_assignment)
+        use_spmd_partitioning = False
+    
+        compile_options = xla_client.CompileOptions()
+        build_options = compile_options.executable_build_options
+        build_options.num_replicas = num_replicas
+        build_options.num_partitions = num_partitions
+        build_options.use_spmd_partitioning = use_spmd_partitioning
+        build_options.device_assignment = device_assignment
+    
+        compiled_computation = backend.compile(c, compile_options)
+        hlo_module = compiled_computation.hlo_modules()[0]
+        hlo_ir = hlo_module.to_string()
+        #print(hlo_ir, flush=True)
+    
+        host_input = np.ones((5,), dtype=np.float32)
+        device_inputs = [[
+            backend.buffer_from_pyval(host_input, local_devices[i])
+            for i in range(len(local_devices))
+        ]]
+        print("device_inputs:", device_inputs[0], flush=True)
+    
+        device_outs = compiled_computation.execute_sharded_on_local_devices(device_inputs)
+        for x in device_outs[0]:
+            print("device_outs:", x, flush=True)
 
-    device_outs = compiled_computation.execute_sharded_on_local_devices(device_inputs)
-    for x in device_outs[0]:
-        print(x)
+
+def test_multi_host():
+    ray.init()
+
+    port = 8485
+    num_nodes = 2
+
+    server = Server.remote(port, num_nodes)
+    workers = []
+    for i in range(num_nodes):
+        workers.append(Worker.remote(port, i))
+
+    tasks = []
+    for i in range(len(workers)):
+        tasks.append((workers[i].compile.remote()))
+
+    ray.wait(tasks)
+
 
 if __name__ == "__main__":
-    test_manual_construct_replica()
+    test_multi_host()
 

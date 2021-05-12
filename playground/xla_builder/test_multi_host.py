@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jax.lib import xla_client, xla_bridge
 import ray
 
-from parax import DeviceMesh, XlaPassContext
+from parax import LogicalDeviceMesh, XlaPassContext
 
 ops = xla_client.ops
 
@@ -110,9 +110,6 @@ class XlaHostWorker:
         compiled_computation = backend.compile(computation, compile_options)
         self.compiled_computation = compiled_computation
 
-    def sync(self):
-        return
-   
     def execute(self, device_inputs):
         local_devices = self.backend.local_devices()
 
@@ -129,8 +126,11 @@ class XlaHostWorker:
         for x in device_outs[0]:
             print("device_outs:", x, flush=True)
 
+    def sync(self):
+        return
 
-class DeviceMesh:
+
+class MultiHostDeviceMesh:
     def __init__(self, host_ids, host_info, num_devices_per_host, head_ip):
         self.host_ids = host_ids
         self.num_devices_per_host = num_devices_per_host
@@ -148,6 +148,11 @@ class DeviceMesh:
             cls = ray.remote(num_gpus=self.num_devices_per_host, resources={})(XlaHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
 
+    def get_logical_device_mesh(self):
+        device_id_mesh = np.arange(len(self.host_ids) * self.num_devices_per_host).\
+            reshape(len(host_ids), self.num_devices_per_host)
+        return LogicalDeviceMesh(device_id_mesh, [1, 1], [1, 0.01])
+
     def compile_hlo_module(self, hlo_module):
         for w in self.workers:
             w.compile.remote(hlo_module.as_serialized_hlo_module_proto())
@@ -160,7 +165,7 @@ class DeviceMesh:
         ray.wait([w.sync.remote() for w in self.workers])
 
 
-def test_multi_host():
+def test_multi_host_all_reduce():
     device_cluster = DeviceCluster()
 
     print("Device mesh")
@@ -210,6 +215,36 @@ def test_multi_host():
     device_mesh.sync_workers()
 
 
+def test_multi_host_auto_sharding():
+    device_cluster = DeviceCluster()
+
+    print("Device mesh")
+    device_mesh = device_cluster.get_device_mesh()
+
+    def get_hlo_module_proto():
+        @parallelize(devices=device_mesh)
+        def add_one(x):
+            x = x + 1
+            return x
+
+
+    # Prepare inputs. shape: (num_hosts, num_args, num_devices)
+    dtype = np.float32
+    host_inputs = [   
+        [[np.ones(5, dtype=dtype), np.ones(5, dtype=dtype)]],
+        [[np.ones(5, dtype=dtype), np.ones(5, dtype=dtype)]],
+    ]
+
+    # Compile and run
+    hlo_module = get_hlo_module_proto()
+    device_mesh.launch_distributed_xla_service()
+    device_mesh.compile_hlo_module(hlo_module)
+    device_mesh.execute(host_inputs)
+    device_mesh.sync_workers()
+
+
 if __name__ == "__main__":
-    test_multi_host()
+    #test_multi_host_all_reduce()
+    test_multi_host_auto_sharding()
+
 

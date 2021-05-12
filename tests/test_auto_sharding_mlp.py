@@ -10,7 +10,7 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
 
-from parax import parallelize, DeviceMesh, global_config, testing
+from parax import parallelize, LogicalDeviceMesh, global_config, testing
 
 MB = 1024 ** 2
 

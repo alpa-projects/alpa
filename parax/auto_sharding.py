@@ -22,7 +22,7 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.cluster_config import DeviceMesh
+from parax.cluster_config import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.xla_pass_context import XlaPassContext
 
@@ -38,8 +38,9 @@ def auto_sharding_callable(
     if isinstance(devices, DeviceMesh):
         device_mesh = devices
     else:
-        devices = np.array(devices).reshape(-1, len(devices))
-        device_mesh = DeviceMesh(devices, [1, 1], [1, 1])
+        device_id_mesh = [x.id for x in devices]
+        device_id_mesh = np.array(id_mesh).reshape(-1, len(devices))
+        device_mesh = LogicalDeviceMesh(device_id_mesh, [1, 1], [1, 1])
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)

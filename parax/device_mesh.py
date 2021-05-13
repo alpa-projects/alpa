@@ -157,6 +157,7 @@ class MeshHostWorker:
         self.client = xla_client._xla.get_distributed_runtime_client(server_address, node_id)
         self.client.connect()
         self.backend = xla_client._gpu_backend_factory(self.client, node_id=node_id)
+        self.compiled_computation = None
 
     def compile_hlo_module(self,
                            hlo_proto,

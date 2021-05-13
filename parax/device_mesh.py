@@ -79,7 +79,7 @@ class LogicalDeviceMesh:
 
 
 class SingleHostDeviceMesh:
-    """A physical device mesh to present devices on a single node"""
+    """A physical device mesh that presents devices on a single node"""
     def __init__(self, devices):
         self.devices = devices
 
@@ -89,14 +89,16 @@ class SingleHostDeviceMesh:
         device_ids = device_ids.reshape(mesh_shape)
         return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
 
+    def get_default_logical_mesh(self):
+        return self.get_logical_mesh((1, len(devices)), [1, 1], [1, 1])
+
 
 class MultiHostDeviceMesh:
-    """A physical device mesh to present a device mesh on multipe nodes"""
+    """A physical device mesh that presents a device mesh on multipe nodes"""
     def __init__(self, host_ids, host_info, num_devices_per_host, head_ip):
         self.host_ids = host_ids
         self.host_info = host_info
         self.num_devices_per_host = num_devices_per_host
-        self.num_devices = len(self.host_ids) * num_devices_per_host
         self.head_ip = head_ip
 
         self.server_address = f"{self.head_ip}:12345"
@@ -112,11 +114,15 @@ class MultiHostDeviceMesh:
                              resources={node_resource:1e-3})(MeshHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
 
-    def get_default_logical_mesh(self):
-        """Get a mapping to logoical mesh"""
+    def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
+        """Get a logoical mesh"""
         id_mesh = np.arange(len(self.host_ids) * self.num_devices_per_host).\
-            reshape(len(self.host_ids), self.num_devices_per_host)
-        return LogicalDeviceMesh(self, id_mesh, [1, 1], [1, 0.01])
+            reshape(mesh_shape)
+        return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
+
+    def get_default_logical_mesh(self):
+        return self.get_logical_mesh((len(self.host_ids), self.num_devices_per_host),
+            [1, 1], [1, 0.01])
 
     def compile_hlo_module(self,
                            hlo_proto,
@@ -139,7 +145,7 @@ class MultiHostDeviceMesh:
 
 
 class MeshHostWorker:
-    """A ray actor to manage the xla computation on a single node"""
+    """A ray actor to manage the xla computation on a single host"""
     def __init__(self, server_address, node_id):
         self.node_id = 0
         self.client = xla_client._xla.get_distributed_runtime_client(server_address, node_id)
@@ -182,7 +188,6 @@ class MeshHostWorker:
             compiled_computation = backend.compile(computation, compile_options)
 
         hlo_module = compiled_computation.hlo_modules()[0]
-        print(hlo_module.to_string())
 
         self.compiled_computation = compiled_computation
 
@@ -199,8 +204,6 @@ class MeshHostWorker:
 
         device_outs = self.compiled_computation.\
             execute_sharded_on_local_devices(device_inputs)
-        for x in device_outs[0]:
-            print("device_outs:", x, flush=True)
 
     def sync(self):
         return
@@ -225,13 +228,6 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.num_devices.append(int(number))
-
-    def is_homogeneous(self, host_ids):
-        """Check whether the some hosts are homoteneous"""
-        for i in range(1, len(host_ids)):
-            if self.num_devices[host_ids[0]] != self.num_devices[host_ids[i]]:
-                return False
-        return True
 
     def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
         """Slice a subset of hosts and devices to form a physical device mesh.

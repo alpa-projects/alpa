@@ -91,9 +91,11 @@ def test_multi_host_auto_sharding():
     global_config.shard_parallel_strategy = "auto_sharding"
 
     device_cluster = DeviceCluster()
-    device_mesh = device_cluster.get_physical_mesh()
+    physical_mesh = device_cluster.get_physical_mesh()
+    num_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
+    logical_mesh = physical_mesh.get_logical_mesh([1, num_devices], [1, 1], [1, 1])
 
-    @parallelize(devices=device_mesh)
+    @parallelize(devices=logical_mesh)
     def add_one(x):
         x = x + 1
         return x
@@ -105,6 +107,5 @@ def test_multi_host_auto_sharding():
 
 
 if __name__ == "__main__":
-    #test_multi_host_all_reduce()
     test_multi_host_auto_sharding()
 

@@ -35,23 +35,25 @@ def auto_sharding_callable(
     memory_budget_per_device,
     *avals
 ):
-    # Check the type of devices
+    # Get physical and logical device mesh according to the arguments
     distributed_compilation_head = False
     distributed_compilation_worker = False
 
-    if isinstance(devices, LogicalDeviceMesh):
-        device_mesh = devices
+    if isinstance(devices, (list, tuple)):
+        physical_mesh = SingleHostDeviceMesh(devices)
+        logical_mesh = device_mesh.get_default_logical_mesh()
     elif isinstance(devices, MultiHostDeviceMesh):
         physical_mesh = devices
-        device_mesh = devices.get_default_logical_mesh()
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, LogicalDeviceMesh):
+        logical_mesh = devices
+        physical_mesh = logical_mesh.physical_mesh
+
+    if isinstance(physical_mesh, MultiHostDeviceMesh):
         distributed_compilation_head = True
-    else:
-        device_mesh = SingleHostDeviceMesh(devices)
-        device_mesh = device_mesh.get_logical_mesh((1, len(devices)), [1, 1], [1, 1])
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-
     tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
     # Make xla arguments
@@ -80,7 +82,7 @@ def auto_sharding_callable(
 
     # Compile
     built = c.Build(out_tuple)
-    device_ids = np.array(device_mesh.flatten_ids)
+    device_ids = np.array(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
         num_replicas=1,
         num_partitions=len(device_ids),
@@ -104,9 +106,9 @@ def auto_sharding_callable(
 
         # Device mesh
         "auto_sharding::device_mesh_ids": tuple(int(x) for x in device_ids),
-        "auto_sharding::device_mesh_shape": tuple(device_mesh.id_mesh.shape),
-        "auto_sharding::device_mesh_alpha": tuple(float(x) for x in device_mesh.mesh_alpha),
-        "auto_sharding::device_mesh_beta": tuple(float(x) for x in device_mesh.mesh_beta),
+        "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
+        "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
+        "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
 
         # Distributed compilation
         "build_option::pass_through_device_assignment": pass_through_device_assignment,
@@ -122,32 +124,33 @@ def auto_sharding_callable(
     if distributed_compilation_head:
         hlo_proto=built.as_serialized_hlo_module_proto()
         physical_mesh.launch_distributed_xla_service()
-        physical_mesh.compile_hlo_module(hlo_proto, device_mesh.id_mesh.shape,
+        physical_mesh.compile_hlo_module(hlo_proto, logical_mesh.id_mesh.shape,
             last_s_val, tuple_args)
         physical_mesh.sync_workers()
 
-    return lambda x: [0]
+        # TODO: support distributed array here
 
+        return lambda x: [0]
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
-    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, device_mesh)
+    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
                            for (proto_tuple, aval) in zip(input_shardings, avals)]
     input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                      aval, spec in zip(avals, input_sharding_specs)]
-    local_devices = [jax.local_devices()[i] for i in device_mesh.flatten_ids]
+    local_devices = [jax.local_devices()[i] for i in logical_mesh.flatten_ids]
     handle_args = partial(pxla.shard_args, local_devices, input_indices)
 
     # Handle output
     output_sharding = compiled.hlo_modules()[0].spmd_output_sharding()
-    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, device_mesh)
+    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
     handle_outs = pxla.avals_to_results_handler(num_replicas, num_partitions,
                                                 output_sharding_specs, out_avals)
 
     return partial(pxla.execute_replicated, compiled, backend, handle_args, handle_outs)
 
 
-def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh):
+def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
 
@@ -155,8 +158,8 @@ def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh):
     mesh_mapping = []
     if sharding_type == OpSharding.Type.OTHER:
         # try to map dimension between provided mesh and real mesh
-        mesh_mapping = [None] * len(device_mesh.id_mesh.shape)
-        tensor_dim_to_mesh_dim = device_mesh.get_tensor_dim_to_mesh_dim(
+        mesh_mapping = [None] * len(logical_mesh.id_mesh.shape)
+        tensor_dim_to_mesh_dim = logical_mesh.get_tensor_dim_to_mesh_dim(
             aval.shape, tile_assignment_dimensions, tile_assignment_devices)
 
         pt = 0
@@ -172,26 +175,26 @@ def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh):
         # All other dims are replicated
         for mesh_dim in range(len(mesh_mapping)):
             if mesh_mapping[mesh_dim] is None:
-                mesh_mapping[mesh_dim] = pxla.Replicated(device_mesh.id_mesh.shape[mesh_dim])
+                mesh_mapping[mesh_dim] = pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
     elif sharding_type == OpSharding.Type.REPLICATED:
         sharding = (pxla.NoSharding(),) * len(aval.shape)
-        mesh_mapping = (pxla.Replicated(np.prod(device_mesh.id_mesh.shape)),)
+        mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)
     else:
         raise NotImplementedError("Type: " + str(sharding_type))
 
     return pxla.ShardingSpec(sharding, mesh_mapping)
 
 
-def hlo_sharding_to_sharding_spec(hlo_sharding, aval, device_mesh):
+def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh):
     proto_tuple = hlo_sharding.proto_tuple()
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
-        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, device_mesh)
+        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
                 for (shard, aval) in zip(tuple_shardings, avals)]
     else:
-        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh)
+        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh)
 
 
 def call_solver_serialized_args(*args):

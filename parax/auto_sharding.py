@@ -24,6 +24,7 @@ from jaxlib.xla_client import OpSharding
 from parax import testing
 from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, LogicalDeviceMesh
 from parax.global_env import global_config
+from parax.util import to_int_tuple
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -41,7 +42,7 @@ def auto_sharding_callable(
 
     if isinstance(devices, (list, tuple)):
         physical_mesh = SingleHostDeviceMesh(devices)
-        logical_mesh = device_mesh.get_default_logical_mesh()
+        logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, MultiHostDeviceMesh):
         physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()
@@ -82,11 +83,12 @@ def auto_sharding_callable(
 
     # Compile
     built = c.Build(out_tuple)
-    device_ids = np.array(logical_mesh.flatten_ids)
+    num_replicas = 1
+    num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
-        num_replicas=1,
-        num_partitions=len(device_ids),
-        device_assignment=device_ids.reshape((1, len(device_ids))),
+        num_replicas=num_replicas,
+        num_partitions=num_partitions,
+        device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
         use_spmd_partitioning=True,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
@@ -105,7 +107,7 @@ def auto_sharding_callable(
         "auto_sharding::all_gather_cost": 1e10,
 
         # Device mesh
-        "auto_sharding::device_mesh_ids": tuple(int(x) for x in device_ids),
+        "auto_sharding::device_mesh_ids": to_int_tuple(logical_mesh.flatten_ids),
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),

@@ -90,7 +90,7 @@ class SingleHostDeviceMesh:
         return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
-        return self.get_logical_mesh((1, len(devices)), [1, 1], [1, 1])
+        return self.get_logical_mesh((1, len(self.devices)), [1, 1], [1, 1])
 
 
 class MultiHostDeviceMesh:

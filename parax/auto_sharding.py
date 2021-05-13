@@ -212,13 +212,13 @@ def call_solver_serialized_args(*args):
     return ret
 
 
-"""The last solution vector of auto sharding"""
+# The last solution vector of auto sharding
 last_s_val = None
 
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
-    """Call solver with serailized arguments"""
+    """Call solver with serailized arguments."""
     global last_s_val
 
     import pulp
@@ -235,7 +235,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     #              open("args.pkl", "wb"))
 
     def get_non_zero_index(binary_vector):
-        """Get the index of non-zero item in a vector"""
+        """Get the index of non-zero item in a vector."""
         ct = 0
         ret = None
         for i in range(len(binary_vector)):
@@ -383,7 +383,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     for (idx, (i, j)) in enumerate(A):
         R = len(s[i])
         C = len(s[j])
-        if (i,j) in alias_set:
+        if (i, j) in alias_set:
             raise ValueError(f"Duplicated edges: {(i, j)}")
         else:
             alias_set.add((i, j))

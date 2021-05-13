@@ -150,7 +150,8 @@ class MultiHostDeviceMesh:
 
 
 class MeshHostWorker:
-    """A ray actor to manage the xla computation on a single host"""
+    """A ray actor to manage the xla computation on a single host."""
+
     def __init__(self, server_address, node_id):
         self.node_id = 0
         self.client = xla_client._xla.get_distributed_runtime_client(server_address, node_id)
@@ -215,7 +216,8 @@ class MeshHostWorker:
 
 
 class DeviceCluster:
-    """A ray cluster with gpu devices"""
+    """A ray cluster with gpu devices."""
+
     def __init__(self, ray_address='auto'):
         self.head_info = ray.init(address=ray_address)
         self.head_ip = self.head_info['node_ip_address']

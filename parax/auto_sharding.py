@@ -22,7 +22,7 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.cluster_config import SingleHostDeviceMesh, LogicalDeviceMesh
+from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.xla_pass_context import XlaPassContext
 

@@ -10,8 +10,9 @@ class LogicalDeviceMesh:
     Each mesh dimension has its own latency and bandwidth.
     We use alpha-beta model to model the communication cost.
     """
-    def __init__(self, device_id_mesh, mesh_alpha=None, mesh_beta=None, is_multi_host=False):
-        self.id_mesh = device_id_mesh
+    def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
+        self.physical_mesh = physical_mesh
+        self.id_mesh = np.array(id_mesh)
         self.flatten_ids = tuple(self.id_mesh.flatten())
         self.is_multi_host = False
 
@@ -72,4 +73,19 @@ class LogicalDeviceMesh:
                 self.mesh_alpha, self.mesh_beta) ==\
                (other.flatten_ids, other.id_mesh.shape,
                 other.mesh_alpha, other.mesh_beta)
+
+
+class SingleHostDeviceMesh:
+    def __init__(self, devices):
+        self.devices = devices
+
+    def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
+        device_ids = np.array([d.id for d in self.devices])
+        device_ids = device_ids.reshape(mesh_shape)
+        return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
+
+
+class MultiHostDeviceMesh:
+    def __init__(self, devices):
+        pass
 

@@ -15,7 +15,7 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, global_config, testing, DeviceMesh
+from parax import parallelize, SingleHostDeviceMesh, global_config, testing
 
 from bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from test_auto_sharding_mlp import (assert_close, all_reduce_cost, map_to_shape,
@@ -31,8 +31,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
         global_config.shard_parallel_strategy = 'auto_sharding'
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        devices = np.array(self.devices).reshape(shape)
-        return DeviceMesh(devices, mesh_alpha, mesh_beta)
+        device_mesh = SingleHostDeviceMesh(self.devices)
+        return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_attention(self, batch_size, seq_len, hidden_size, num_heads,
                       dropout_rate, device_mesh):

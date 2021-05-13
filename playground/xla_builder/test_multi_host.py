@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jax.lib import xla_client, xla_bridge
 import ray
 
-from parax import DeviceCluster, MultiHostDeviceMesh, XlaPassContext
+from parax import DeviceCluster, XlaPassContext, parallelize, global_config
 
 ops = xla_client.ops
 
@@ -81,47 +81,30 @@ def test_multi_host_all_reduce():
 
     # Compile and run
     hlo_module = get_hlo_module_proto()
-    print("a", flush=True)
     device_mesh.launch_distributed_xla_service()
-    print("b", flush=True)
-    device_mesh.compile_hlo_module(hlo_module)
-    print("c", flush=True)
+    device_mesh.compile_hlo_module(hlo_module, None, None)
     device_mesh.execute(host_inputs)
-    print("d", flush=True)
     device_mesh.sync_workers()
 
 
 def test_multi_host_auto_sharding():
+    global_config.shard_parallel_strategy = "auto_sharding"
+
     device_cluster = DeviceCluster()
+    device_mesh = device_cluster.get_physical_mesh()
 
-    print("Device mesh")
-    device_mesh = device_cluster.get_device_mesh()
-    exit()
+    @parallelize(devices=device_mesh)
+    def add_one(x):
+        x = x + 1
+        return x
 
-    def get_hlo_module_proto():
-        @parallelize(devices=device_mesh)
-        def add_one(x):
-            x = x + 1
-            return x
+    a = np.ones((1000, 1000))
+    out = add_one(a)
 
-
-    # Prepare inputs. shape: (num_hosts, num_args, num_devices)
-    dtype = np.float32
-    host_inputs = [   
-        [[np.ones(5, dtype=dtype), np.ones(5, dtype=dtype)]],
-        [[np.ones(5, dtype=dtype), np.ones(5, dtype=dtype)]],
-    ]
-
-    # Compile and run
-    hlo_module = get_hlo_module_proto()
-    device_mesh.launch_distributed_xla_service()
-    device_mesh.compile_hlo_module(hlo_module)
-    device_mesh.execute(host_inputs)
-    device_mesh.sync_workers()
+    print("Output", out)
 
 
 if __name__ == "__main__":
-    test_multi_host_all_reduce()
-    #test_multi_host_auto_sharding()
-
+    #test_multi_host_all_reduce()
+    test_multi_host_auto_sharding()
 

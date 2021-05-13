@@ -2,13 +2,14 @@
 
 import numpy as np
 import ray
-from jax.lib import xla_client
+from jax.lib import xla_client, xla_bridge
 
-from parax.util import get_dim_last_value
+from parax.util import get_dim_last_value, to_int_tuple
+from parax.xla_pass_context import XlaPassContext
 
 
 class LogicalDeviceMesh:
-    """A multi-dimensional device mesh topology.
+    """A logical multi-dimensional device mesh.
     Each mesh dimension has its own latency and bandwidth.
     We use alpha-beta model to model the communication cost.
     """
@@ -83,6 +84,7 @@ class SingleHostDeviceMesh:
         self.devices = devices
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
+        """Get a mapping to logoical mesh"""
         device_ids = np.array([d.id for d in self.devices])
         device_ids = device_ids.reshape(mesh_shape)
         return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
@@ -109,16 +111,24 @@ class MultiHostDeviceMesh:
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource:1e-3})(MeshHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
-        print("aha")
 
-    def get_logical_device_mesh(self):
-        device_id_mesh = np.arange(len(self.host_ids) * self.num_devices_per_host).\
-            reshape(len(host_ids), self.num_devices_per_host)
-        return LogicalDeviceMesh(device_id_mesh, [1, 1], [1, 0.01])
+    def get_default_logical_mesh(self):
+        """Get a mapping to logoical mesh"""
+        id_mesh = np.arange(len(self.host_ids) * self.num_devices_per_host).\
+            reshape(len(self.host_ids), self.num_devices_per_host)
+        return LogicalDeviceMesh(self, id_mesh, [1, 1], [1, 0.01])
 
-    def compile_hlo_module(self, hlo_module):
+    def compile_hlo_module(self,
+                           hlo_proto,
+                           logical_mesh_shape,
+                           auto_sharding_strategy_vector,
+                           is_tuple_args):
         for w in self.workers:
-            w.compile.remote(hlo_module.as_serialized_hlo_module_proto())
+            w.compile_hlo_module.remote(
+                hlo_proto,
+                logical_mesh_shape,
+                auto_sharding_strategy_vector,
+                is_tuple_args)
 
     def execute(self, host_inputs):
         for i in range(len(self.workers)):
@@ -136,27 +146,44 @@ class MeshHostWorker:
         self.client.connect()
         self.backend = xla_client._gpu_backend_factory(self.client, node_id=node_id)
 
-    def compile(self, hlo_module_proto):
+    def compile_hlo_module(self,
+                           hlo_proto,
+                           logical_mesh_shape,
+                           auto_sharding_strategy_vector,
+                           is_tuple_args):
         backend = self.backend
+        num_devices = np.prod(logical_mesh_shape)
 
-        global_devices = backend.devices()
-        global_device_ids = np.array(tuple(x.id for x in global_devices))
+        assert num_devices == len(backend.devices())
 
-        num_replicas = len(global_device_ids)
-        num_partitions = 1
-        device_assignment = global_device_ids.reshape((num_replicas, num_partitions))
-        device_assignment = xla_client.DeviceAssignment.create(device_assignment)
-        use_spmd_partitioning = False
+        device_ids = np.arange(num_devices)
+        compile_options = xla_bridge.get_compile_options(
+            num_replicas=1,
+            num_partitions=len(device_ids),
+            device_assignment=device_ids.reshape((1, len(device_ids))),
+            use_spmd_partitioning=True,
+        )
+        compile_options.parameter_is_tupled_arguments = is_tuple_args
 
-        compile_options = xla_client.CompileOptions()
-        build_options = compile_options.executable_build_options
-        build_options.num_replicas = num_replicas
-        build_options.num_partitions = num_partitions
-        build_options.use_spmd_partitioning = use_spmd_partitioning
-        build_options.device_assignment = device_assignment
+        computation = xla_client.XlaComputation(hlo_proto)
+        with XlaPassContext({
+            "auto_sharding::enable": True,
+            "auto_sharding::load_strategy": True,
+            "auto_sharding::strategy_vector": to_int_tuple(auto_sharding_strategy_vector),
 
-        computation = xla_client.XlaComputation(hlo_module_proto)
-        compiled_computation = backend.compile(computation, compile_options)
+            # Device mesh
+            "auto_sharding::device_mesh_ids": to_int_tuple(device_ids),
+            "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
+
+            # Other useless but required arguments
+            "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
+            "auto_sharding::device_mesh_beta": (1.0,) * len(logical_mesh_shape),
+        }):
+            compiled_computation = backend.compile(computation, compile_options)
+
+        hlo_module = compiled_computation.hlo_modules()[0]
+        print(hlo_module.to_string())
+
         self.compiled_computation = compiled_computation
 
     def execute(self, device_inputs):
@@ -185,10 +212,9 @@ class DeviceCluster:
         self.head_info = ray.init(address=ray_address)
         self.head_ip = self.head_info['node_ip_address']
 
-        # Gather hosts ids
+        # Gather host ids
         self.host_info = []
         for node in ray.nodes():
-            found = False
             for key in node["Resources"]:
                 if key.startswith("node:"):
                     self.host_info.append(node)
@@ -201,16 +227,30 @@ class DeviceCluster:
             self.num_devices.append(int(number))
 
     def is_homogeneous(self, host_ids):
+        """Check whether the some hosts are homoteneous"""
         for i in range(1, len(host_ids)):
             if self.num_devices[host_ids[0]] != self.num_devices[host_ids[i]]:
                 return False
         return True
 
-    def get_physical_mesh(self, host_ids=None):
+    def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
+        """Slice a subset of hosts and devices to form a physical device mesh.
+
+        Args:
+            host_ids: List[int]. The index of host nodes.
+                'None' means using all hosts
+            num_devices_per_host: int. The number of devices per host.
+                'None' means using all devices
+
+        Return:
+            A physical multi-host device mesh
+        """
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
-        assert self.is_homogeneous(host_ids)
+        num_devices_per_host = num_devices_per_host or self.num_devices[host_ids[0]]
+        for host_id in host_ids:
+            assert self.num_devices[host_id] >= num_devices_per_host
 
-        return MultiHostDeviceMesh(host_ids, host_info, self.num_devices[host_ids[0]], self.head_ip)
+        return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
 

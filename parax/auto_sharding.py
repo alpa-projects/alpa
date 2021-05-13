@@ -35,8 +35,16 @@ def auto_sharding_callable(
     memory_budget_per_device,
     *avals
 ):
+    # Check the type of devices
+    distributed_compilation_head = False
+    distributed_compilation_worker = False
+
     if isinstance(devices, LogicalDeviceMesh):
         device_mesh = devices
+    elif isinstance(devices, MultiHostDeviceMesh):
+        physical_mesh = devices
+        device_mesh = devices.get_default_logical_mesh()
+        distributed_compilation_head = True
     else:
         device_mesh = SingleHostDeviceMesh(devices)
         device_mesh = device_mesh.get_logical_mesh((1, len(devices)), [1, 1], [1, 1])
@@ -71,27 +79,25 @@ def auto_sharding_callable(
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
     # Compile
+    built = c.Build(out_tuple)
     device_ids = np.array(device_mesh.flatten_ids)
-    num_replicas = 1
-    num_partitions = len(device_ids)
-    device_assignment = device_ids.reshape((num_replicas, num_partitions))
-    spmd_lowering = True
     compile_options = xb.get_compile_options(
-        num_replicas=num_replicas,
-        num_partitions=num_partitions,
-        device_assignment=device_assignment,
-        use_spmd_partitioning=spmd_lowering,
+        num_replicas=1,
+        num_partitions=len(device_ids),
+        device_assignment=device_ids.reshape((1, len(device_ids))),
+        use_spmd_partitioning=True,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
-    built = c.Build(out_tuple)
 
     if memory_budget_per_device is None:
         memory_budget_per_device = 1 << 40
+    pass_through_device_assignment = False
+    if distributed_compilation_head:
+        pass_through_device_assignment = True
 
     with XlaPassContext({
         # Solver options
         "auto_sharding::enable": True,
-        "auto_sharding::solver_strategy": global_config.auto_sharding_solver_strategy,
         "auto_sharding::memory_budget_per_device": memory_budget_per_device,
         "auto_sharding::force_all_gather_cost": False,
         "auto_sharding::all_gather_cost": 1e10,
@@ -102,13 +108,26 @@ def auto_sharding_callable(
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in device_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in device_mesh.mesh_beta),
 
+        # Distributed compilation
+        "build_option::pass_through_device_assignment": pass_through_device_assignment,
+
         # Debug options
         "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
-
     testing.last_compiled_executable = compiled
+
+    # Send code and sharding strategy to host workers
+    if distributed_compilation_head:
+        hlo_proto=built.as_serialized_hlo_module_proto()
+        physical_mesh.launch_distributed_xla_service()
+        physical_mesh.compile_hlo_module(hlo_proto, device_mesh.id_mesh.shape,
+            last_s_val, tuple_args)
+        physical_mesh.sync_workers()
+
+    return lambda x: [0]
+
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
@@ -191,9 +210,15 @@ def call_solver_serialized_args(*args):
     return ret
 
 
+"""The last solution vector of auto sharding"""
+last_s_val = None
+
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
+    """Call solver with serailized arguments"""
+    global last_s_val
+
     import pulp
     from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
     tic = time.time()
@@ -404,5 +429,6 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             print(f"Edge cost {(i, j)} : {r[idx][e_val[idx]]}")
 
     testing.last_compiled_auto_sharding_objective = objective
+    last_s_val = s_val
     return s_val, e_val, objective, status
 

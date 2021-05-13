@@ -31,7 +31,7 @@ def freeze_dict(pytree):
 
 
 def auto_static_argnums(args):
-    """Return the indices of static arguments"""
+    """Return the indices of static arguments according to heuristic rules"""
     def is_static_arg(x):
         """Return whether an argument is a static argument according to heuristic rules"""
         if isinstance(x, flax.optim.base.Optimizer):
@@ -49,7 +49,7 @@ def auto_static_argnums(args):
 
 
 def auto_donate_argnums(args):
-    """Return the indices of donated arguments"""
+    """Return the indices of donated arguments according to heuristic rules"""
     def should_donate(x):
         # Always donate optimizer
         if isinstance(x, flax.optim.base.Optimizer):
@@ -62,6 +62,10 @@ def run_cmd(cmd):
     """Run a bash commond"""
     print(cmd)
     os.system(cmd)
+
+
+def to_int_tuple(array):
+    return tuple(int(x) for x in array)
 
 
 def get_dim_last_value(array, dim):
@@ -87,3 +91,4 @@ class FastLookupList:
     def append(self, element):
         self.elements.append(element)
         self.elements_set.add(element)
+

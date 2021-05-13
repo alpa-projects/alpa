@@ -1,15 +1,15 @@
+"""Common utilities."""
 import os
 
 import flax
-import jax
+import numpy as np
 from jax.api_util import shaped_abstractify
 from jax.tree_util import tree_map, tree_flatten
 from jax.experimental.maps import FrozenDict
-import numpy as np
 
 
 def compute_bytes(pytree):
-    """Compute the total bytes of arrays in a pytree"""
+    """Compute the total bytes of arrays in a pytree."""
     flatten_args, _ = tree_flatten(pytree)
     ret = 0
     for x in flatten_args:
@@ -19,25 +19,26 @@ def compute_bytes(pytree):
 
 
 def freeze_dict(pytree):
-    """Convert a pytree to a FrozenDict"""
+    """Convert a pytree to a FrozenDict."""
     def is_leaf(x):
         return isinstance(x, dict)
 
     def freeze(x):
         if isinstance(x, dict):
             return FrozenDict(x)
+        return x
 
     return tree_map(freeze, pytree, is_leaf)
 
 
 def auto_static_argnums(args):
-    """Return the indices of static arguments"""
-    def is_static_arg(x):
-        """Return whether an argument is a static argument according to heuristic rules"""
-        if isinstance(x, flax.optim.base.Optimizer):
+    """Return the indices of static arguments according to heuristic rules."""
+    def is_static_arg(arg):
+        """Return whether an argument is a static argument according to heuristic rules."""
+        if isinstance(arg, flax.optim.base.Optimizer):
             return False
 
-        xs, _ = tree_flatten(x)
+        xs, _ = tree_flatten(arg)
         for x in xs:
             try:
                 x = shaped_abstractify(x)
@@ -49,23 +50,28 @@ def auto_static_argnums(args):
 
 
 def auto_donate_argnums(args):
-    """Return the indices of donated arguments"""
+    """Return the indices of donated arguments according to heuristic rules."""
     def should_donate(x):
         # Always donate optimizer
         if isinstance(x, flax.optim.base.Optimizer):
             return True
+        return False
 
     return [i for i in range(len(args)) if should_donate(args[i])]
 
 
 def run_cmd(cmd):
-    """Run a bash commond"""
+    """Run a bash commond."""
     print(cmd)
     os.system(cmd)
 
 
+def to_int_tuple(array):
+    return tuple(int(x) for x in array)
+
+
 def get_dim_last_value(array, dim):
-    """Get the value of the last element in a dimension"""
+    """Get the value of the last element in a dimension."""
     indices = tuple(0 if i != dim else array.shape[dim] - 1 for i in range(len(array.shape)))
     return array[indices]
 

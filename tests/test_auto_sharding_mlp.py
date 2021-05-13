@@ -10,7 +10,7 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
 
-from parax import parallelize, DeviceMesh, global_config, testing
+from parax import parallelize, SingleHostDeviceMesh, global_config, testing
 
 MB = 1024 ** 2
 
@@ -61,8 +61,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         global_config.shard_parallel_strategy = "auto_sharding"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        devices = np.array(self.devices).reshape(shape)
-        return DeviceMesh(devices, mesh_alpha, mesh_beta)
+        device_mesh = SingleHostDeviceMesh(self.devices)
+        return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_2_layer_mlp(self, batch_size, input_dim, output_dim, hidden_dim,
                         device_mesh):

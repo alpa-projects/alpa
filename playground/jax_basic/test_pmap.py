@@ -44,11 +44,12 @@ def test_allreduce_sum():
     def normalize(x):
         return x / lax.psum(x, 'i')
 
-    print(normalize(jnp.arange(4.)))
+    print(normalize(jnp.arange(2)))
+
 
 if __name__ == "__main__":
-    debug_pmap()
-
+    #debug_pmap()
     #test_nested_pmap()
-    #test_allreduce_sum()
+
+    test_allreduce_sum()
 

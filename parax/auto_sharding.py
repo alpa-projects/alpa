@@ -1,9 +1,6 @@
-"""Use the auto sharding pass in XLA"""
+"""Use the auto sharding pass in XLA."""
 
-from functools import partial
-import multiprocessing
 import pickle
-import sys
 import time
 import traceback
 from warnings import warn
@@ -22,8 +19,9 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.cluster_config import DeviceMesh
+from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, LogicalDeviceMesh
 from parax.global_env import global_config
+from parax.util import to_int_tuple
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -35,15 +33,25 @@ def auto_sharding_callable(
     memory_budget_per_device,
     *avals
 ):
-    if isinstance(devices, DeviceMesh):
-        device_mesh = devices
-    else:
-        devices = np.array(devices).reshape(-1, len(devices))
-        device_mesh = DeviceMesh(devices, [1, 1], [1, 1])
+    # Get physical and logical device mesh according to the arguments
+    distributed_compilation_head = False
+    distributed_compilation_worker = False
+
+    if isinstance(devices, (list, tuple)):
+        physical_mesh = SingleHostDeviceMesh(devices)
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, MultiHostDeviceMesh):
+        physical_mesh = devices
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, LogicalDeviceMesh):
+        logical_mesh = devices
+        physical_mesh = logical_mesh.physical_mesh
+
+    if isinstance(physical_mesh, MultiHostDeviceMesh):
+        distributed_compilation_head = True
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-
     tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
     # Make xla arguments
@@ -71,72 +79,86 @@ def auto_sharding_callable(
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
     # Compile
-    device_ids = device_mesh.device_mesh_ids.flatten()
+    built = c.Build(out_tuple)
     num_replicas = 1
-    num_partitions = len(device_ids)
-    device_assignment = device_ids.reshape((num_replicas, num_partitions))
-    spmd_lowering = True
+    num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
-        device_assignment=device_assignment,
-        use_spmd_partitioning=spmd_lowering,
+        device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
+        use_spmd_partitioning=True,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
-    built = c.Build(out_tuple)
 
     if memory_budget_per_device is None:
         memory_budget_per_device = 1 << 40
+    pass_through_device_assignment = False
+    if distributed_compilation_head:
+        pass_through_device_assignment = True
 
     with XlaPassContext({
         # Solver options
         "auto_sharding::enable": True,
-        "auto_sharding::solver_strategy": global_config.auto_sharding_solver_strategy,
         "auto_sharding::memory_budget_per_device": memory_budget_per_device,
         "auto_sharding::force_all_gather_cost": False,
         "auto_sharding::all_gather_cost": 1e10,
 
         # Device mesh
-        "auto_sharding::device_mesh_ids": tuple(int(x) for x in device_ids),
-        "auto_sharding::device_mesh_shape": tuple(device_mesh.device_mesh.shape),
-        "auto_sharding::device_mesh_alpha": tuple(float(x) for x in device_mesh.mesh_alpha),
-        "auto_sharding::device_mesh_beta": tuple(float(x) for x in device_mesh.mesh_beta),
+        "auto_sharding::device_mesh_ids": to_int_tuple(logical_mesh.flatten_ids),
+        "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
+        "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
+        "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
+
+        # Distributed compilation
+        "build_option::pass_through_device_assignment": pass_through_device_assignment,
 
         # Debug options
         "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
-
     testing.last_compiled_executable = compiled
+
+    # Send code and sharding strategy to host workers
+    if distributed_compilation_head:
+        hlo_proto = built.as_serialized_hlo_module_proto()
+        physical_mesh.launch_distributed_xla_service()
+        physical_mesh.compile_hlo_module(hlo_proto, logical_mesh.id_mesh.shape,
+            last_s_val, tuple_args)
+        physical_mesh.sync_workers()
+
+        # TODO: support distributed array here
+
+        return lambda x: [0]
 
     # Handle args (re-shard if the layout is not the same)
     input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
-    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, device_mesh)
+    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
                            for (proto_tuple, aval) in zip(input_shardings, avals)]
     input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                      aval, spec in zip(avals, input_sharding_specs)]
-    handle_args = partial(pxla.shard_args, device_mesh.flatten_devices, input_indices)
+    local_devices = [jax.local_devices()[i] for i in logical_mesh.flatten_ids]
+    handle_args = partial(pxla.shard_args, local_devices, input_indices)
 
     # Handle output
     output_sharding = compiled.hlo_modules()[0].spmd_output_sharding()
-    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, device_mesh)
+    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
     handle_outs = pxla.avals_to_results_handler(num_replicas, num_partitions,
                                                 output_sharding_specs, out_avals)
 
     return partial(pxla.execute_replicated, compiled, backend, handle_args, handle_outs)
 
 
-def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh):
+def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
-        tuple_shardings, replicate_on_last_tile_dim = proto_tuple
+        _, replicate_on_last_tile_dim = proto_tuple
 
     sharding = []
     mesh_mapping = []
     if sharding_type == OpSharding.Type.OTHER:
         # try to map dimension between provided mesh and real mesh
-        mesh_mapping = [None] * len(device_mesh.device_mesh.shape)
-        tensor_dim_to_mesh_dim = device_mesh.get_tensor_dim_to_mesh_dim(
+        mesh_mapping = [None] * len(logical_mesh.id_mesh.shape)
+        tensor_dim_to_mesh_dim = logical_mesh.get_tensor_dim_to_mesh_dim(
             aval.shape, tile_assignment_dimensions, tile_assignment_devices)
 
         pt = 0
@@ -152,26 +174,26 @@ def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh):
         # All other dims are replicated
         for mesh_dim in range(len(mesh_mapping)):
             if mesh_mapping[mesh_dim] is None:
-                mesh_mapping[mesh_dim] = pxla.Replicated(device_mesh.device_mesh.shape[mesh_dim])
+                mesh_mapping[mesh_dim] = pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
     elif sharding_type == OpSharding.Type.REPLICATED:
         sharding = (pxla.NoSharding(),) * len(aval.shape)
-        mesh_mapping = (pxla.Replicated(np.prod(device_mesh.device_mesh.shape)),)
+        mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)
     else:
         raise NotImplementedError("Type: " + str(sharding_type))
 
     return pxla.ShardingSpec(sharding, mesh_mapping)
 
 
-def hlo_sharding_to_sharding_spec(hlo_sharding, aval, device_mesh):
+def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh):
     proto_tuple = hlo_sharding.proto_tuple()
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
-        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, device_mesh)
+        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
                 for (shard, aval) in zip(tuple_shardings, avals)]
     else:
-        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, device_mesh)
+        return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh)
 
 
 def call_solver_serialized_args(*args):
@@ -190,9 +212,15 @@ def call_solver_serialized_args(*args):
     return ret
 
 
+# The last solution vector of auto sharding
+last_s_val = None
+
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
+    """Call solver with serailized arguments."""
+    global last_s_val
+
     import pulp
     from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
     tic = time.time()
@@ -207,7 +235,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     #              open("args.pkl", "wb"))
 
     def get_non_zero_index(binary_vector):
-        """Get the index of non-zero item in a vector"""
+        """Get the index of non-zero item in a vector."""
         ct = 0
         ret = None
         for i in range(len(binary_vector)):
@@ -355,7 +383,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     for (idx, (i, j)) in enumerate(A):
         R = len(s[i])
         C = len(s[j])
-        if (i,j) in alias_set:
+        if (i, j) in alias_set:
             raise ValueError(f"Duplicated edges: {(i, j)}")
         else:
             alias_set.add((i, j))
@@ -373,7 +401,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     #solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
     #                       threads=multiprocessing.cpu_count())
     solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
-    result = prob.solve(solver)
+    prob.solve(solver)
 
     verbose = False
     objective = float(pulp.value(prob.objective))
@@ -403,5 +431,5 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             print(f"Edge cost {(i, j)} : {r[idx][e_val[idx]]}")
 
     testing.last_compiled_auto_sharding_objective = objective
+    last_s_val = s_val
     return s_val, e_val, objective, status
-

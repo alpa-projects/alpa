@@ -1,6 +1,6 @@
-""" Monkey patch other python libraries """
+"""Monkey patch other python libraries."""
 
-import flax
+#import flax
 
 # DEPRECATED!
 # Patch __eq__ and __hash__ function for OptimizerDef in flax

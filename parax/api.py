@@ -27,6 +27,8 @@ def parallelize(fun=None,
                 devices=None,
                 memory_budget_per_device=None,
                 strategy="shard_parallel"):
+    """Automatically parallelize a jax function."""
+
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):

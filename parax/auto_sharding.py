@@ -1,9 +1,6 @@
-"""Use the auto sharding pass in XLA"""
+"""Use the auto sharding pass in XLA."""
 
-from functools import partial
-import multiprocessing
 import pickle
-import sys
 import time
 import traceback
 from warnings import warn
@@ -124,7 +121,7 @@ def auto_sharding_callable(
 
     # Send code and sharding strategy to host workers
     if distributed_compilation_head:
-        hlo_proto=built.as_serialized_hlo_module_proto()
+        hlo_proto = built.as_serialized_hlo_module_proto()
         physical_mesh.launch_distributed_xla_service()
         physical_mesh.compile_hlo_module(hlo_proto, logical_mesh.id_mesh.shape,
             last_s_val, tuple_args)
@@ -154,7 +151,7 @@ def auto_sharding_callable(
 
 def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
-        tuple_shardings, replicate_on_last_tile_dim = proto_tuple
+        _, replicate_on_last_tile_dim = proto_tuple
 
     sharding = []
     mesh_mapping = []
@@ -404,7 +401,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     #solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
     #                       threads=multiprocessing.cpu_count())
     solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
-    result = prob.solve(solver)
+    prob.solve(solver)
 
     verbose = False
     objective = float(pulp.value(prob.objective))
@@ -436,4 +433,3 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     testing.last_compiled_auto_sharding_objective = objective
     last_s_val = s_val
     return s_val, e_val, objective, status
-

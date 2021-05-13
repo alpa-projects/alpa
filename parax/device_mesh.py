@@ -1,4 +1,4 @@
-""" Cluster related configurations (e.g., topology) """
+"""Cluster related configurations (e.g., topology)."""
 
 import numpy as np
 import ray
@@ -9,10 +9,13 @@ from parax.xla_pass_context import XlaPassContext
 
 
 class LogicalDeviceMesh:
-    """A logical multi-dimensional device mesh.
+    """
+    A logical multi-dimensional device mesh.
+
     Each mesh dimension has its own latency and bandwidth.
     We use alpha-beta model to model the communication cost.
     """
+
     def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
         self.physical_mesh = physical_mesh
         self.id_mesh = np.array(id_mesh)
@@ -79,12 +82,13 @@ class LogicalDeviceMesh:
 
 
 class SingleHostDeviceMesh:
-    """A physical device mesh that presents devices on a single node"""
+    """A physical device mesh that presents devices on a single node."""
+
     def __init__(self, devices):
         self.devices = devices
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
-        """Get a mapping to logoical mesh"""
+        """Get a mapping to logoical mesh."""
         device_ids = np.array([d.id for d in self.devices])
         device_ids = device_ids.reshape(mesh_shape)
         return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
@@ -94,7 +98,8 @@ class SingleHostDeviceMesh:
 
 
 class MultiHostDeviceMesh:
-    """A physical device mesh that presents a device mesh on multipe nodes"""
+    """A physical device mesh that presents a device mesh on multipe nodes."""
+
     def __init__(self, host_ids, host_info, num_devices_per_host, head_ip):
         self.host_ids = host_ids
         self.host_info = host_info
@@ -111,11 +116,11 @@ class MultiHostDeviceMesh:
         for i in range(len(self.host_ids)):
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
-                             resources={node_resource:1e-3})(MeshHostWorker)
+                             resources={node_resource: 1e-3})(MeshHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
-        """Get a logoical mesh"""
+        """Get a mapping to logoical mesh."""
         id_mesh = np.arange(len(self.host_ids) * self.num_devices_per_host).\
             reshape(mesh_shape)
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
@@ -187,7 +192,7 @@ class MeshHostWorker:
         }):
             compiled_computation = backend.compile(computation, compile_options)
 
-        hlo_module = compiled_computation.hlo_modules()[0]
+        #hlo_module = compiled_computation.hlo_modules()[0]
 
         self.compiled_computation = compiled_computation
 
@@ -230,7 +235,8 @@ class DeviceCluster:
             self.num_devices.append(int(number))
 
     def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
-        """Slice a subset of hosts and devices to form a physical device mesh.
+        """
+        Slice a subset of hosts and devices to form a physical device mesh.
 
         Args:
             host_ids: List[int]. The index of host nodes.
@@ -249,4 +255,3 @@ class DeviceCluster:
             assert self.num_devices[host_id] >= num_devices_per_host
 
         return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
-

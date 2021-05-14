@@ -27,8 +27,9 @@ class DeviceMeshTest(unittest.TestCase):
 
         a = jnp.ones((1000, 1000))
         out = add_one(a)
+        out = add_one(out)
 
-        np.testing.assert_allclose(out._value, np.ones_like(a) + 1)
+        np.testing.assert_allclose(out._value, np.ones_like(a) + 2)
 
 
 def suite():

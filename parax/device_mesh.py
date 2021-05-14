@@ -1,14 +1,16 @@
 """Cluster related configurations (e.g., topology)."""
 from itertools import count
+from operator import attrgetter
 
 import numpy as np
 import ray
-import jax
+from jax import xla
+from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
-from jax.lib import xla_client, xla_bridge
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
     ShardedAxis, _as_slice_indices, _hashable_index)
+from jax.lib import xla_client, xla_bridge
 from jax._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                            extend_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, curry)
@@ -133,7 +135,7 @@ class SingleHostDeviceMesh:
         outs_handler = pxla.avals_to_results_handler(1, len(self.devices),
                                                      output_sharding_specs, out_avals)
  
-        return partial(SingleHostDeviceMesh.execute_with_handler,
+        return partial(SingleHostDeviceMesh._execute_with_handler,
             compiled, args_handler, outs_handler)
 
     @staticmethod
@@ -145,14 +147,14 @@ class SingleHostDeviceMesh:
 
 class RemoteBufferRef:
     """A refernece to a remote device buffer."""
-
-    ct = count()
+    ct = 0
 
     def __init__(self, device_mesh, host_id, device_id):
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
-        self.uuid = next(RemoteBufferRef.ct)
+        self.uuid = RemoteBufferRef.ct
+        RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
 
     def __repr__(self):
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
@@ -203,8 +205,12 @@ class DistributedArray:
     def __str__(self):
         return str(self._value)
 
+xla.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
+xla.canonicalize_dtype_handlers[DistributedArray] = lambda x : x
+
 
 def get_uuid_np_array(array):
+    """Convert a np array of RemoteBufferRef to a np array of UUID (int64)"""
     ret = np.empty(array.shape, dtype=np.int64)
     for i in range(array.shape[0]):
         for j in range(array.shape[1]):
@@ -288,25 +294,13 @@ class MultiHostDeviceMesh:
     def _shard_args(self, arg_indices, args):
         input_bufs = []
         for arg, indices in zip(args, arg_indices):
-            assert isinstance(arg, jax.xla.DeviceArray)
-
-            # Create shards according to indices
-            start_indices, limit_indices, removed_dims = map(tuple, unzip3(
-                _as_slice_indices(arg, idx) for idx in indices))
-            shards = arg._multi_slice(start_indices, limit_indices, removed_dims)
-
-            # Put shards to devices
-            buf_refs = []
-            pt = 0
-            for host_id in range(self.num_hosts):
-                for device_id in range(self.num_devices_per_host):
-                    buf_ref = RemoteBufferRef(self, host_id, device_id)
-                    self.workers[host_id].put_buffer.remote(
-                        buf_ref.uuid, device_id, shards[pt])
-                    buf_refs.append(buf_ref)
-                    pt += 1
-
-            input_bufs.append(buf_refs)
+            # Fast path for DistributedArray
+            if isinstance(arg, DistributedArray) and arg.indices == indices:
+                return arg.remote_buffers
+            else: # Slow path
+                arg = xla.canonicalize_dtype(arg)
+                buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
+                input_bufs.append(buf_refs)
 
         return input_bufs
 
@@ -477,3 +471,47 @@ class DeviceCluster:
             assert self.num_devices[host_id] >= num_devices_per_host
 
         return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
+
+    def __del__(self):
+        ray.shutdown()
+
+
+########################################
+# Register ShardArg Handler
+########################################
+def _device_mesh_put(device_mesh, shards):
+    # Put shards to the distributed device
+    buf_refs = []
+    pt = 0
+    for host_id in range(device_mesh.num_hosts):
+        for device_id in range(device_mesh.num_devices_per_host):
+            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
+            device_mesh.workers[host_id].put_buffer.remote(
+                buf_ref.uuid, device_id, shards[pt])
+            buf_refs.append(buf_ref)
+            pt += 1
+    return buf_refs
+
+def _shard_array(x, device_mesh, indices):
+    return _device_mesh_put(device_mesh, [x[i] for i in indices])
+
+def _shard_device_array(array, device_mesh, indices):
+    # Create shards according to indices
+    start_indices, limit_indices, removed_dims = map(tuple, unzip3(
+        _as_slice_indices(array, idx) for idx in indices))
+    shards = array._multi_slice(start_indices, limit_indices, removed_dims)
+
+    return _device_mesh_put(device_mesh, shards)
+
+def _shard_distributed_array(array, device_mesh, indices):
+    return shard_arg_handlers[type(array._value)](array._value, device_mesh, indices)
+
+shard_arg_handlers = {}  # Shard an argument to a distributed device mesh
+for t in array_types:
+    shard_arg_handlers[t] = _shard_array
+shard_arg_handlers[xla._DeviceArray] = _shard_device_array
+shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
+shard_arg_handlers[DistributedArray] = _shard_distributed_array
+shard_arg_handlers[pxla.ShardedDeviceArray] = _shard_distributed_array
+
+

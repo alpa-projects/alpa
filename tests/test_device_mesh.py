@@ -1,4 +1,4 @@
-"""Test distributed device mesh"""
+"""Test distributed mulit-host device mesh."""
 
 from functools import partial
 import unittest
@@ -15,7 +15,7 @@ class DeviceMeshTest(unittest.TestCase):
         global_config.shard_parallel_strategy = "auto_sharding"
         self.device_cluster = DeviceCluster()
 
-    def test_auto_sharding_compilation(self):
+    def test_add_one(self):
         physical_mesh = self.device_cluster.get_physical_mesh()
         total_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
         logical_mesh = physical_mesh.get_logical_mesh([1, total_devices], [1, 1], [1, 1])
@@ -25,13 +25,15 @@ class DeviceMeshTest(unittest.TestCase):
             x = x + 1
             return x
 
-        a = np.ones((1000, 1000))
+        a = jnp.ones((1000, 1000))
         out = add_one(a)
+
+        np.testing.assert_allclose(out._value, np.ones_like(a) + 1)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DeviceMeshTest('test_auto_sharding_compilation'))
+    suite.addTest(DeviceMeshTest('test_add_one'))
 
     return suite
 

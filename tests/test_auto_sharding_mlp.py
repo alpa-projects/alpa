@@ -1,3 +1,4 @@
+"""Test auto sharding with MLP."""
 import numpy as np
 
 import unittest

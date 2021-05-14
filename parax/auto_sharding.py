@@ -104,7 +104,7 @@ def auto_sharding_callable(
         "auto_sharding::all_gather_cost": 1e10,
 
         # Device mesh
-        "auto_sharding::device_mesh_ids": to_int_tuple(logical_mesh.flatten_ids),
+        "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
@@ -118,6 +118,7 @@ def auto_sharding_callable(
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
     testing.last_compiled_executable = compiled
+    hlo_module = compiled.hlo_modules()[0]
 
     # Send code and sharding strategy to host workers
     if distributed_compilation_head:
@@ -125,28 +126,17 @@ def auto_sharding_callable(
         physical_mesh.launch_distributed_xla_service()
         physical_mesh.compile_hlo_module(hlo_proto, logical_mesh.id_mesh.shape,
             last_s_val, tuple_args)
-        physical_mesh.sync_workers()
 
-        # TODO: support distributed array here
-
-        return lambda x: [0]
-
-    # Handle args (re-shard if the layout is not the same)
-    input_shardings = compiled.hlo_modules()[0].spmd_parameters_shardings()
+    # Read HloSharding from HloModule and convert them to ShardingSpec
+    input_shardings = hlo_module.spmd_parameters_shardings()
     input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
                            for (proto_tuple, aval) in zip(input_shardings, avals)]
-    input_indices = [pxla.spec_to_indices(aval.shape, spec) for
-                     aval, spec in zip(avals, input_sharding_specs)]
-    local_devices = [jax.local_devices()[i] for i in logical_mesh.flatten_ids]
-    handle_args = partial(pxla.shard_args, local_devices, input_indices)
-
-    # Handle output
-    output_sharding = compiled.hlo_modules()[0].spmd_output_sharding()
+    output_sharding = hlo_module.spmd_output_sharding()
     output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
-    handle_outs = pxla.avals_to_results_handler(num_replicas, num_partitions,
-                                                output_sharding_specs, out_avals)
 
-    return partial(pxla.execute_replicated, compiled, backend, handle_args, handle_outs)
+    # Return the final callable
+    return physical_mesh.get_final_callable(compiled, avals, out_avals,
+        input_sharding_specs, output_sharding_specs)
 
 
 def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):

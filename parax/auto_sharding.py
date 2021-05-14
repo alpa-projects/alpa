@@ -8,7 +8,6 @@ from warnings import warn
 
 import numpy as np
 
-import jax
 from jax import linear_util as lu
 from jax.interpreters import xla, pxla, partial_eval as pe
 from jax.lib import xla_bridge as xb
@@ -35,7 +34,6 @@ def auto_sharding_callable(
 ):
     # Get physical and logical device mesh according to the arguments
     distributed_compilation_head = False
-    distributed_compilation_worker = False
 
     if isinstance(devices, (list, tuple)):
         physical_mesh = SingleHostDeviceMesh(devices)
@@ -139,9 +137,9 @@ def auto_sharding_callable(
         input_sharding_specs, output_sharding_specs)
 
 
-def hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
+def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
-        _, replicate_on_last_tile_dim = proto_tuple
+        _, _ = proto_tuple
 
     sharding = []
     mesh_mapping = []
@@ -180,7 +178,7 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh):
         tuple_shardings, replicate_on_last_tile_dim = proto_tuple
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
-        return [hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
+        return [_hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
                 for (shard, aval) in zip(tuple_shardings, avals)]
     else:
         return hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh)

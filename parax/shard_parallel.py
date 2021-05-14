@@ -147,4 +147,3 @@ def shard_parallel_callable(
         return compiled_func
     else:
         raise ValueError("Invalid strategy: " + strategy)
-

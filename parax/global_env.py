@@ -2,7 +2,7 @@
 
 
 class GlobalConfig:
-    """Global configuration of parax"""
+    """Global configuration of parax."""
 
     def __init__(self):
         # choices: {'data_parallel', 'auto_sharding'}

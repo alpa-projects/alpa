@@ -5,9 +5,8 @@ import flax
 import numpy as np
 from jax.api_util import shaped_abstractify
 from jax.experimental.maps import FrozenDict
-from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
-    ShardedAxis)
 from jax.tree_util import tree_map, tree_flatten
+
 
 ########################################
 ##### API Utilities
@@ -54,9 +53,6 @@ def auto_donate_argnums(args):
 
     return [i for i in range(len(args)) if should_donate(args[i])]
 
-########################################
-##### ShardingSpec Utilities
-########################################
 
 ########################################
 ##### Other Utilities
@@ -77,11 +73,13 @@ def compute_bytes(pytree):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
 
+
 ########################################
 ##### Data Structure Utilities
 ########################################
 
 def to_int_tuple(array):
+    """Convert a numpy array to int tuple."""
     return tuple(int(x) for x in array)
 
 
@@ -108,4 +106,3 @@ class FastLookupList:
     def append(self, element):
         self.elements.append(element)
         self.elements_set.add(element)
-

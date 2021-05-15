@@ -287,22 +287,26 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     s = []
     e = []
 
+    num_nodes = 0
     for i in range(N):
         if s_follow[i] < 0:
             if s_len[i] == 1:
                 s.append([1])
             else:
+                num_nodes += 1
                 s.append(LpVariable.matrix(f"s[{i}]",
                     (range(s_len[i]),), cat="Binary"))
         else:
             s.append(s[s_follow[i]])
 
+    num_edges = 0
     for (idx, (i, j)) in enumerate(E):
         if len(s[i]) == 1:
             e.append(s[j])
         elif len(s[j]) == 1:
             e.append(s[i])
         else:
+            num_edges += 1
             e.append(LpVariable.matrix(f"e[{i},{j}]",
                 (range(len(s[i]) * len(s[j])),), cat="Binary"))
         assert len(e[idx]) == len(r[idx])
@@ -315,7 +319,6 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                 s[idx][i].setInitialValue(i == value)
                 if fix:
                     s[idx][i].fixValue()
-        # todo: set edge value
 
     # 3. Objective
     prob = LpProblem("myProblem", LpMinimize)
@@ -396,6 +399,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     if verbose:
         print(f"ILP Status: {LpStatus[status]}\tObjective: {objective}\t"
               f"Time: {time.time() - tic}")
+        print(f"#nodes: {num_nodes},  #edges: {num_edges}")
 
     if prob.status in [pulp.LpStatusInfeasible]:
         raise RuntimeError(

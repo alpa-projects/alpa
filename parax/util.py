@@ -34,7 +34,10 @@ def auto_static_argnums(args):
 
         xs, _ = tree_flatten(arg)
         for x in xs:
-            x = shaped_abstractify(x)
+            try:
+                x = shaped_abstractify(x)
+            except TypeError:
+                return True
         return False
 
     return [i for i in range(len(args)) if is_static_arg(args[i])]

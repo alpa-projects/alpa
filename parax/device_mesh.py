@@ -117,14 +117,16 @@ class SingleHostDeviceMesh:
     def __init__(self, devices):
         self.devices = devices
 
-    def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
+    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Get a mapping to logoical mesh."""
         device_ids = np.array([d.id for d in self.devices])
         device_ids = device_ids.reshape(mesh_shape)
+        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
+        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
         return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
-        return self.get_logical_mesh((1, len(self.devices)), [1, 1], [1, 1])
+        return self.get_logical_mesh((1, len(self.devices)))
 
     def get_callable_with_arg_handler(self, compiled, avals, out_avals,
             input_sharding_specs, output_sharding_specs):
@@ -260,10 +262,12 @@ class MultiHostDeviceMesh:
                              resources={node_resource: 1e-3})(MeshHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
 
-    def get_logical_mesh(self, mesh_shape, mesh_alpha, mesh_beta):
+    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Get a mapping to logoical mesh."""
         id_mesh = np.arange(self.num_hosts * self.num_devices_per_host).\
             reshape(mesh_shape)
+        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
+        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):

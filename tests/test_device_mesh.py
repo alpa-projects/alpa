@@ -18,7 +18,7 @@ class DeviceMeshTest(unittest.TestCase):
     def test_add_one(self):
         physical_mesh = self.device_cluster.get_physical_mesh()
         total_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
-        logical_mesh = physical_mesh.get_logical_mesh([1, total_devices], [1, 1], [1, 1])
+        logical_mesh = physical_mesh.get_logical_mesh([1, total_devices])
 
         @parallelize(devices=logical_mesh)
         def add_one(x):

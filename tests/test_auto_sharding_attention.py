@@ -1,4 +1,6 @@
 """
+Test auto sharding with attention and transformer layers.
+
 Usage:
 python3 -m unittest -bv test_auto_sharding_attention.py
 """

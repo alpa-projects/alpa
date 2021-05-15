@@ -1,9 +1,11 @@
-"""A global context to pass arguments from python to XLA c++ passes."""
+"""A global context for passing arguments from python to XLA c++ passes."""
 
 from jax.lib import xla_extension as _xla
 
 
 class XlaPassContext:
+    """A global context for passing arguments from python to XLA c++ passes."""
+
     current = None
 
     def __init__(self, value_dict):

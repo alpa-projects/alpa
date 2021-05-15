@@ -4,19 +4,13 @@ import os
 import flax
 import numpy as np
 from jax.api_util import shaped_abstractify
-from jax.tree_util import tree_map, tree_flatten
 from jax.experimental.maps import FrozenDict
+from jax.tree_util import tree_map, tree_flatten
 
 
-def compute_bytes(pytree):
-    """Compute the total bytes of arrays in a pytree."""
-    flatten_args, _ = tree_flatten(pytree)
-    ret = 0
-    for x in flatten_args:
-        if hasattr(x, "shape"):
-            ret += np.prod(x.shape) * x.dtype.itemsize
-    return ret
-
+########################################
+##### API Utilities
+########################################
 
 def freeze_dict(pytree):
     """Convert a pytree to a FrozenDict."""
@@ -60,13 +54,32 @@ def auto_donate_argnums(args):
     return [i for i in range(len(args)) if should_donate(args[i])]
 
 
+########################################
+##### Other Utilities
+########################################
+
 def run_cmd(cmd):
     """Run a bash commond."""
     print(cmd)
     os.system(cmd)
 
 
+def compute_bytes(pytree):
+    """Compute the total bytes of arrays in a pytree."""
+    flatten_args, _ = tree_flatten(pytree)
+    ret = 0
+    for x in flatten_args:
+        if hasattr(x, "shape"):
+            ret += np.prod(x.shape) * x.dtype.itemsize
+    return ret
+
+
+########################################
+##### Data Structure Utilities
+########################################
+
 def to_int_tuple(array):
+    """Convert a numpy array to int tuple."""
     return tuple(int(x) for x in array)
 
 

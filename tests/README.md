@@ -11,5 +11,5 @@ ray start --head
 ```
 2. Run all tests
 ```
-bash run_all.sh
+python3 run_all.py
 ```

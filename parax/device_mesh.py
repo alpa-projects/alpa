@@ -422,6 +422,7 @@ class MeshHostWorker:
             del self.local_buffers[uuids]
 
     def delete_executable(self, uuid):
+        self.executable[uuid].delete()
         del self.executable[uuid]
 
     def compile_executable(self,

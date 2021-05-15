@@ -163,7 +163,8 @@ class XlaPipelineStage(PipelineStage):
         options.parameter_is_tupled_arguments = tuple_args
         compiled = backend.compile(xla_computation, compile_options=options)
         result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
-        return partial(xla._execute_compiled, compiled, out_avals, result_handlers)
+        kept_var_idx = range(len(self.invars))
+        return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
 
 
 @dataclass

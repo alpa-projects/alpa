@@ -17,7 +17,6 @@ from jax.api_util import (
     flatten_fun_nokwargs,
     argnums_partial,
 )
-from jax.config import flags, config, bool_env
 from jax.core import ShapedArray
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit

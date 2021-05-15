@@ -1,9 +1,10 @@
 """Cluster related configurations (e.g., topology)."""
+from collections.abc import Iterable
 from operator import attrgetter
 
 import numpy as np
 import ray
-from jax import xla
+from jax import xla, core
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
@@ -125,7 +126,7 @@ class SingleHostDeviceMesh:
     def get_default_logical_mesh(self):
         return self.get_logical_mesh((1, len(self.devices)), [1, 1], [1, 1])
 
-    def get_final_callable(self, compiled, avals, out_avals,
+    def get_callable_with_arg_handler(self, compiled, avals, out_avals,
             input_sharding_specs, output_sharding_specs):
         input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                          aval, spec in zip(avals, input_sharding_specs)]
@@ -141,6 +142,23 @@ class SingleHostDeviceMesh:
         input_bufs = args_handler(args)
         out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
         return outs_handler(out_bufs)
+
+
+class RemoteExecutableRef:
+    """A reference to a remote compiled XLA executable binary"""
+
+    ct = 0
+
+    def __init__(self, device_mesh):
+        self.device_mesh = device_mesh
+        self.uuid = RemoteExecutableRef.ct
+        RemoteExecutableRef.ct = (RemoteExecutableRef.ct + 1) % (1 << 60)
+
+    def __repr__(self):
+        return f"RemoteExecutableRef(uuid = {self.uuid})"
+
+    def __del__(self):
+        self.device_mesh.delete_remote_executable(self)
 
 
 class RemoteBufferRef:
@@ -159,7 +177,7 @@ class RemoteBufferRef:
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
 
     def __del__(self):
-        self.device_mesh.delete_remote_buffer(self)
+        self.device_mesh.delete_remote_buffers((self,))
 
 
 class DistributedArray:
@@ -205,6 +223,7 @@ class DistributedArray:
         return str(self._value)
 
 
+core.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
 xla.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
 xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
 
@@ -229,13 +248,12 @@ class MultiHostDeviceMesh:
         self.head_ip = head_ip
         self.total_devices = self.num_hosts * self.num_devices_per_host
 
+        # Launch distributed xla runtime
         self.server_address = f"{self.head_ip}:12345"
         self.service_server = None
-        self.workers = []
-
-    def launch_distributed_xla_service(self):
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
+        self.workers = []
         for i in range(self.num_hosts):
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
@@ -252,25 +270,41 @@ class MultiHostDeviceMesh:
         return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
             [1, 1], [1, 0.01])
 
-    def compile_hlo_module(self,
-                           hlo_proto,
-                           logical_mesh_shape,
-                           auto_sharding_strategy_vector,
-                           is_tuple_args):
+    def compile_remote_executable(self,
+                                  hlo_proto,
+                                  logical_mesh_shape,
+                                  auto_sharding_strategy_vector,
+                                  is_tuple_args):
+        executable = RemoteExecutableRef(self)
         for w in self.workers:
-            w.compile_hlo_module.remote(
+            w.compile_executable.remote(
+                executable.uuid,
                 hlo_proto,
                 logical_mesh_shape,
                 auto_sharding_strategy_vector,
                 is_tuple_args)
+        return executable
 
-    def delete_remote_buffer(self, buf_ref):
-        self.workers[buf_ref.host_id].delete_buffer.remote(buf_ref.uuid)
+    def get_remote_buffers(self, buf_refs):
+        obj_refs = []
+        for buf_ref in buf_refs:
+            obj_refs.append(self.workers[buf_ref.host_id].
+                get_buffers.remote(buf_ref.uuid))
+
+        return ray.get(obj_refs)
+
+    def delete_remote_buffers(self, buf_refs):
+        for buf_ref in buf_refs:
+            self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
+
+    def delete_remote_executable(self, exe_ref):
+        for i in range(self.num_hosts):
+            self.workers[i].delete_executable.remote(exe_ref.uuid)
 
     def sync_workers(self):
         ray.wait([w.sync.remote() for w in self.workers])
 
-    def get_final_callable(self, compiled, avals, out_avals,
+    def get_callable_with_arg_handler(self, remote_executable, avals, out_avals,
             input_sharding_specs, output_sharding_specs):
         input_indices = [pxla.spec_to_indices(aval.shape, spec) for
                          aval, spec in zip(avals, input_sharding_specs)]
@@ -281,15 +315,7 @@ class MultiHostDeviceMesh:
 
         outs_handler = partial(self._gather_outs, out_avals, output_sharding_specs, output_indices)
         return partial(self._execute_with_handler,
-            compiled, args_handler, outs_handler, len(out_avals))
-
-    def get_remote_buffers(self, buf_refs):
-        obj_refs = []
-        for buf_ref in buf_refs:
-            obj_refs.append(self.workers[buf_ref.host_id].
-                get_buffer.remote(buf_ref.uuid))
-
-        return ray.get(obj_refs)
+            remote_executable, args_handler, outs_handler, len(out_avals))
 
     def _shard_args(self, arg_indices, args):
         input_bufs = []
@@ -318,7 +344,7 @@ class MultiHostDeviceMesh:
 
         return ret
 
-    def _execute_with_handler(self, compiled, args_handler, outs_handler, num_outs, *args):
+    def _execute_with_handler(self, remote_executable, args_handler, outs_handler, num_outs, *args):
         num_args = len(args)
 
         # Shape: (num_args, total_devices)
@@ -342,7 +368,7 @@ class MultiHostDeviceMesh:
         for i in range(self.num_hosts):
             host_inputs = get_uuid_np_array(input_bufs[i])
             host_outputs = get_uuid_np_array(output_bufs[i])
-            self.workers[i].execute.remote(host_inputs, host_outputs)
+            self.workers[i].execute.remote(remote_executable.uuid, host_inputs, host_outputs)
 
         # Gather outputs
         # Shape: (num_outs, total_devices)
@@ -354,26 +380,38 @@ class MeshHostWorker:
     """A ray actor to manage the xla computation on a single host."""
 
     def __init__(self, server_address, node_id):
-        self.node_id = 0
-        self.client = xla_client._xla.get_distributed_runtime_client(server_address, node_id)
-        self.client.connect()
-        self.backend = xla_client._gpu_backend_factory(self.client, node_id=node_id)
-        self.compiled_computation = None
+        self.node_id = node_id
+        self.distributed_client = \
+                xla_client._xla.get_distributed_runtime_client(server_address, node_id)
+        self.distributed_client.connect()
+        self.backend = xla_client._gpu_backend_factory(
+                self.distributed_client, node_id=node_id)
 
-        self.devices = self.backend.local_devices()
-        self.device_buffers = {}
+        self.local_devices = self.backend.local_devices()
+        self.local_buffers = {}    # Dict[uuid -> DeviceArray]
+        self.executable = {}       # Dict[uuid -> Executable]
 
     def put_buffer(self, uuid, device_id, data):
-        self.device_buffers[uuid] = \
-            self.backend.buffer_from_pyval(data, self.devices[device_id])
+        self.local_buffers[uuid] = \
+            self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
-    def get_buffer(self, uuid):
-        return self.device_buffers[uuid]
+    def get_buffers(self, uuids):
+        if isinstance(uuids, Iterable):
+            return [self.local_buffers[uuid] for uuid in uuids]
+        return self.local_buffers[uuids]
 
-    def delete_buffer(self, uuid):
-        del self.device_buffers[uuid]
+    def delete_buffers(self, uuids):
+        if isinstance(uuids, Iterable):
+            for uuid in uuids:
+                del self.local_buffers[uuid]
+        else:
+            del self.local_buffers[uuids]
 
-    def compile_hlo_module(self,
+    def delete_executable(self, uuid):
+        del self.executable[uuid]
+
+    def compile_executable(self,
+                           uuid,
                            hlo_proto,
                            logical_mesh_shape,
                            auto_sharding_strategy_vector,
@@ -407,23 +445,24 @@ class MeshHostWorker:
         }):
             compiled_computation = backend.compile(computation, compile_options)
 
-        self.compiled_computation = compiled_computation
+        self.executable[uuid] = compiled_computation
 
-    def execute(self, input_uuids, output_uuids):
-        # Map uuid to input buffers
+    def execute(self, executable_uuid, input_uuids, output_uuids):
+        # Map uuids to input buffers
         device_inputs = [[None for _ in range(input_uuids.shape[1])]
             for _ in range(input_uuids.shape[0])]
         for i in range(input_uuids.shape[0]):
             for j in range(input_uuids.shape[1]):
-                device_inputs[i][j] = self.device_buffers[input_uuids[i][j]]
+                device_inputs[i][j] = self.local_buffers[input_uuids[i][j]]
 
-        # Execute binary
-        device_outs = self.compiled_computation.execute_sharded_on_local_devices(device_inputs)
+        # Execute the executable
+        device_outs = self.executable[executable_uuid].\
+            execute_sharded_on_local_devices(device_inputs)
 
         # Store output buffers
         for i in range(output_uuids.shape[0]):
             for j in range(output_uuids.shape[1]):
-                self.device_buffers[output_uuids[i][j]] = device_outs[i][j]
+                self.local_buffers[output_uuids[i][j]] = device_outs[i][j]
 
     def sync(self):
         return

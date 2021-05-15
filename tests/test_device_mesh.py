@@ -25,16 +25,25 @@ class DeviceMeshTest(unittest.TestCase):
             x = x + 1
             return x
 
+        @parallelize(devices=logical_mesh)
+        def multiply_two(x):
+            x = x * 2
+            return x
+
         a = jnp.ones((1000, 1000))
         out = add_one(a)
-        out = add_one(out)
+        out = multiply_two(out)
 
-        np.testing.assert_allclose(out._value, np.ones_like(a) + 2)
+        np.testing.assert_allclose(out._value, (np.ones_like(a) + 1) * 2)
+
+    def test_mlp(self):
+        pass
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(DeviceMeshTest('test_add_one'))
+    #suite.addTest(DeviceMeshTest('test_mlp'))
 
     return suite
 

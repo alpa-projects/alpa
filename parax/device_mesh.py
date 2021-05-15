@@ -1,5 +1,6 @@
 """Cluster related configurations (e.g., topology)."""
 from collections.abc import Iterable
+import os
 from operator import attrgetter
 
 import numpy as np
@@ -221,6 +222,9 @@ class DistributedArray:
             self._npy_value = npy_value
         return self._npy_value
 
+    def __array__(self, dtype=None, context=None):
+        return np.asarray(self._value, dtype=dtype)
+
     def __str__(self):
         return str(self._value)
 
@@ -378,6 +382,12 @@ class MultiHostDeviceMesh:
         # Shape: (num_outs, total_devices)
         output_bufs = output_bufs.transpose([1, 0, 2]).reshape((num_outs, self.total_devices))
         return outs_handler(output_bufs)
+
+    def __del__(self):
+        self.sync_workers()
+        for worker in self.workers:
+            ray.kill(worker)
+        del self.workers
 
 
 class MeshHostWorker:

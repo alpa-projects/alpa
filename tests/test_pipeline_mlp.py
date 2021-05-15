@@ -1,52 +1,22 @@
-import numpy as np
-
 import unittest
 
-import jax
-import jax.numpy as jnp
-from jax.experimental.maps import FrozenDict as FrozenDictJax
-from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
-
+import numpy as np
 from flax import linen as nn
 from flax import optim
+import jax
+import jax.numpy as jnp
+import ray
 
 from parax import parallelize, mark_pipeline
+from parax.testing import assert_allclose
 
 MB = 1024 ** 2
-
-def is_sequence(x):
-  try:
-    iter(x)
-  except TypeError:
-    return False
-  else:
-    return True
-
-def assert_allclose(x, y):
-    if isinstance(x, dict) or isinstance(x, FrozenDictJax) or isinstance(x, FrozenDictFlax):
-        assert isinstance(y, dict) or isinstance(y, FrozenDictJax) or isinstance(x, FrozenDictFlax)
-        assert set(x.keys()) == set(y.keys())
-        for k in x.keys():
-            assert_allclose(x[k], y[k])
-    elif is_sequence(x) and not hasattr(x, '__array__'):
-      assert is_sequence(y) and not hasattr(y, '__array__')
-      assert len(x) == len(y)
-      for x_elt, y_elt in zip(x, y):
-          assert_allclose(x_elt, y_elt)
-    elif hasattr(x, '__array__') or np.isscalar(x):
-      assert hasattr(y, '__array__') or np.isscalar(y)
-      x = np.asarray(x)
-      y = np.asarray(y)
-      assert np.allclose(x, y)
-    elif x == y:
-      return
-    else:
-      raise TypeError((type(x), type(y)))
 
 class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
+        ray.init(address='auto')
 
     def test_2_layer_mlp(self):
         class Model(nn.Module):

@@ -1,13 +1,12 @@
 """Use the auto sharding pass in XLA."""
 
+import multiprocessing
 import pickle
 import time
 import traceback
 from warnings import warn
 
-
 import numpy as np
-
 from jax import linear_util as lu
 from jax.interpreters import xla, pxla, partial_eval as pe
 from jax.lib import xla_bridge as xb
@@ -50,7 +49,8 @@ def auto_sharding_callable(
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+    #tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+    tuple_args = False
 
     # Make xla arguments
     c = xb.make_computation_builder(f"auto_shard_{fun.__name__}")
@@ -89,7 +89,7 @@ def auto_sharding_callable(
     compile_options.parameter_is_tupled_arguments = tuple_args
 
     if memory_budget_per_device is None:
-        memory_budget_per_device = 1 << 40
+        memory_budget_per_device = -1
     pass_through_device_assignment = False
     if distributed_compilation_head:
         pass_through_device_assignment = True
@@ -342,11 +342,12 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             prob += lpSum(s[i]) == 1
 
     # (c)
-    for t in range(N):
-        mem = 0
-        for i in L[t]:
-            mem += lpSum(s[i][j] * m[i][j] for j in range(len(s[i])))
-        prob += mem <= M
+    if M > 0:
+        for t in range(N):
+            mem = 0
+            for i in L[t]:
+                mem += lpSum(s[i][j] * m[i][j] for j in range(len(s[i])))
+            prob += mem <= M
 
     # (d). specified by `cat="Binary"`
 
@@ -383,17 +384,17 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             for col in range(len(s[j])):
                 if v[idx][row * C + col] > 0.5:
                     prob += s[i][row] + s[j][col] <= 1
+    verbose = False
 
-    msg = False
+    msg = verbose
     time_limit = 2000
     assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), \
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
-    #solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
-    #                       threads=multiprocessing.cpu_count())
-    solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
+    solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
+                           threads=multiprocessing.cpu_count())
+    #solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     prob.solve(solver)
 
-    verbose = False
     objective = float(pulp.value(prob.objective))
     status = prob.status
     if verbose:

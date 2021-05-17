@@ -18,8 +18,8 @@ from flax import linen as nn
 from flax import optim
 
 from parax import parallelize, SingleHostDeviceMesh, global_config, testing
+from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 
-from bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from test_auto_sharding_mlp import (assert_close, all_reduce_cost, map_to_shape,
     assert_all_replicated, assert_column_partitioned, assert_row_partitioned,
     assert_replicated_column_partitioned, assert_replicated_row_partitioned)

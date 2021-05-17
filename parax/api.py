@@ -27,13 +27,21 @@ def parallelize(fun=None,
                 devices=None,
                 memory_budget_per_device=None,
                 strategy="shard_parallel"):
-    """Automatically parallelize a jax function."""
+    """Automatically parallelize a jax function.
+    
+    Args:
+        donate_argnums: The same as the donated_argnums in jax.jit. If is "auto",
+          parax uses heuristic rules to infer this.
+        static_argnums: The same as the donated_argnums in jax.jit. If is "auto",
+          parax uses heuristic rules to infer this.
+    """
 
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):
             # pylint: disable=too-many-locals
-            assert not kwargs, "kwargs not supported"
+            shard_args_only_mode = kwargs.pop("__shard_args_only_mode", False)
+            assert not kwargs, "kwargs is not supported"
 
             f = lu.wrap_init(fun)
 
@@ -78,10 +86,24 @@ def parallelize(fun=None,
                 f, in_tree, out_tree_hashable, devices, donated_invars,
                 memory_budget_per_device, strategy, *abstract_args
             )
-            out = compiled_func(*args_flat)
 
-            return tree_unflatten(out_tree(), out)
+            if shard_args_only_mode:
+                # In this mode, this function returns sharded arguments without executing
+                # the computation. This is used to prepare sharded arguments
+                # for benchmark purposes, so we can exclude the time for sharding arguments.
+                sharded_args = compiled_func.shard_args_only(*args_flat)
+                return tree_unflatten(in_tree, sharded_args)
+            else:
+                # Execute the compiled func and return results
+                out = compiled_func(*args_flat)
+                return tree_unflatten(out_tree(), out)
 
+        @wraps(fun)
+        def preshard_dynamic_args(*args, **kwargs):
+            kwargs['__shard_args_only_mode'] = True
+            return ret_func(*args, **kwargs)
+
+        ret_func.preshard_dynamic_args = preshard_dynamic_args
         return ret_func
 
     if fun is None:

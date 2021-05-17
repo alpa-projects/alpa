@@ -5,11 +5,12 @@ from operator import attrgetter
 
 import numpy as np
 import ray
-from jax import xla, core
+from jax import core, pmap, tree_util, xla
+from jax import numpy as jnp
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
-    ShardedAxis, _as_slice_indices, _hashable_index)
+    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
 from jax.lib import xla_client, xla_bridge
 from jax._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                            extend_name_stack, wrap_name, assert_unreachable,
@@ -137,8 +138,25 @@ class SingleHostDeviceMesh:
         outs_handler = pxla.avals_to_results_handler(1, len(self.devices),
                                                      output_sharding_specs, out_avals)
 
-        return partial(SingleHostDeviceMesh._execute_with_handler,
+        ret = partial(SingleHostDeviceMesh._execute_with_handler,
             compiled, args_handler, outs_handler)
+        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
+            input_sharding_specs, input_indices)
+        return ret
+
+    def preshard_args(self, handler, avals, sharding_specs, indices, *args):
+        input_bufs = handler(args)
+
+        sharded_args = []
+        for i in range(len(args)):
+            sharded_args.append(ShardedDeviceArray(
+                avals[i],
+                sharding_specs[i],
+                input_bufs[i],
+                indices[i],
+            ))
+
+        return sharded_args
 
     @staticmethod
     def _execute_with_handler(compiled, args_handler, outs_handler, *args):
@@ -566,4 +584,4 @@ for t in array_types:
 shard_arg_handlers[xla._DeviceArray] = _shard_device_array
 shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 shard_arg_handlers[DistributedArray] = _shard_distributed_array
-shard_arg_handlers[pxla.ShardedDeviceArray] = _shard_distributed_array
+shard_arg_handlers[ShardedDeviceArray] = _shard_distributed_array

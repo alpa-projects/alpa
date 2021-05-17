@@ -1,13 +1,12 @@
 """Use the auto sharding pass in XLA."""
 
+import multiprocessing
 import pickle
 import time
 import traceback
 from warnings import warn
 
-
 import numpy as np
-
 from jax import linear_util as lu
 from jax.interpreters import xla, pxla, partial_eval as pe
 from jax.lib import xla_bridge as xb
@@ -26,6 +25,7 @@ from parax.xla_pass_context import XlaPassContext
 
 def auto_sharding_callable(
     fun: lu.WrappedFun,
+    in_tree,
     out_tree_thunk,
     devices,
     donated_invars,
@@ -37,6 +37,9 @@ def auto_sharding_callable(
 
     if isinstance(devices, (list, tuple)):
         physical_mesh = SingleHostDeviceMesh(devices)
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, SingleHostDeviceMesh):
+        physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, MultiHostDeviceMesh):
         physical_mesh = devices
@@ -50,7 +53,8 @@ def auto_sharding_callable(
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+    #tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+    tuple_args = False
 
     # Make xla arguments
     c = xb.make_computation_builder(f"auto_shard_{fun.__name__}")
@@ -89,7 +93,7 @@ def auto_sharding_callable(
     compile_options.parameter_is_tupled_arguments = tuple_args
 
     if memory_budget_per_device is None:
-        memory_budget_per_device = 1 << 40
+        memory_budget_per_device = -1
     pass_through_device_assignment = False
     if distributed_compilation_head:
         pass_through_device_assignment = True
@@ -287,22 +291,26 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     s = []
     e = []
 
+    num_nodes = 0
     for i in range(N):
         if s_follow[i] < 0:
             if s_len[i] == 1:
                 s.append([1])
             else:
+                num_nodes += 1
                 s.append(LpVariable.matrix(f"s[{i}]",
                     (range(s_len[i]),), cat="Binary"))
         else:
             s.append(s[s_follow[i]])
 
+    num_edges = 0
     for (idx, (i, j)) in enumerate(E):
         if len(s[i]) == 1:
             e.append(s[j])
         elif len(s[j]) == 1:
             e.append(s[i])
         else:
+            num_edges += 1
             e.append(LpVariable.matrix(f"e[{i},{j}]",
                 (range(len(s[i]) * len(s[j])),), cat="Binary"))
         assert len(e[idx]) == len(r[idx])
@@ -315,7 +323,6 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                 s[idx][i].setInitialValue(i == value)
                 if fix:
                     s[idx][i].fixValue()
-        # todo: set edge value
 
     # 3. Objective
     prob = LpProblem("myProblem", LpMinimize)
@@ -339,11 +346,12 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             prob += lpSum(s[i]) == 1
 
     # (c)
-    for t in range(N):
-        mem = 0
-        for i in L[t]:
-            mem += lpSum(s[i][j] * m[i][j] for j in range(len(s[i])))
-        prob += mem <= M
+    if M > 0:
+        for t in range(N):
+            mem = 0
+            for i in L[t]:
+                mem += lpSum(s[i][j] * m[i][j] for j in range(len(s[i])))
+            prob += mem <= M
 
     # (d). specified by `cat="Binary"`
 
@@ -380,22 +388,23 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             for col in range(len(s[j])):
                 if v[idx][row * C + col] > 0.5:
                     prob += s[i][row] + s[j][col] <= 1
+    verbose = False
 
-    msg = False
+    msg = verbose
     time_limit = 2000
     assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), \
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
-    #solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
-    #                       threads=multiprocessing.cpu_count())
-    solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
+    solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
+                           threads=multiprocessing.cpu_count())
+    #solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     prob.solve(solver)
 
-    verbose = False
     objective = float(pulp.value(prob.objective))
     status = prob.status
     if verbose:
         print(f"ILP Status: {LpStatus[status]}\tObjective: {objective}\t"
               f"Time: {time.time() - tic}")
+        print(f"#nodes: {num_nodes},  #edges: {num_edges}")
 
     if prob.status in [pulp.LpStatusInfeasible]:
         raise RuntimeError(

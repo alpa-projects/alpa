@@ -19,16 +19,19 @@ def test_simple_graph():
     z = ops.Add(z, y)
 
     c = c.build(z)
+    print("=" * 60)
     print(c.as_hlo_text())
 
     compiled_c = backend.compile(c)
 
+    print("=" * 60)
     print(compiled_c.hlo_modules()[0].to_string())
 
     x = backend.buffer_from_pyval(np.ones((10, 8), dtype=np.float32))
     y = backend.buffer_from_pyval(np.ones((10, 8), dtype=np.float32))
     ans, = compiled_c.execute([x, y])
 
+    print("=" * 60)
     print("ans", ans)
 
 

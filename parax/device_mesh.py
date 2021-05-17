@@ -165,7 +165,7 @@ class RemoteExecutableRef:
 
 
 class RemoteBufferRef:
-    """A refernece to a remote device buffer."""
+    """A reference to a remote device buffer."""
 
     ct = 0
 
@@ -244,7 +244,7 @@ def get_uuid_np_array(array):
 
 
 class MultiHostDeviceMesh:
-    """A physical device mesh that presents a device mesh on multipe nodes."""
+    """A physical device mesh that presents a device mesh on multiple nodes."""
 
     def __init__(self, host_ids, host_info, num_devices_per_host, head_ip):
         self.host_ids = host_ids

@@ -79,9 +79,9 @@ def benchmark_mlp_one_case(benchmark_case):
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
-    #model = torchDDP(model, device_ids=[i], output_device=i,
-    #                 process_group=mpu.get_data_parallel_group())
-    model = LocalDDP(model, False, True)
+    model = torchDDP(model, device_ids=[i], output_device=i,
+                     process_group=mpu.get_data_parallel_group())
+    #model = LocalDDP(model, False, True)
 
     if rank == 0:
         print(model)
@@ -96,17 +96,24 @@ def benchmark_mlp_one_case(benchmark_case):
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 
     def func(record_peak=False):
-        torch.distributed.barrier()
+        if isinstance(model, LocalDDP):
+            model.zero_grad_buffer()
+        else:
+            optimizer.zero_grad()
 
-        optimizer.zero_grad()
         output = model(x)
         loss = ((output - y) ** 2)
         loss = loss.mean()
         if record_peak:
             before_backward_mem[0] = get_memory_usage()
         loss.backward()
+
         if isinstance(model, LocalDDP):
             model.allreduce_gradients()
+            for param_group in optimizer.param_groups:
+                for param in param_group['params']:
+                    param.grad = param.main_grad
+
         optimizer.step()
 
         torch.distributed.barrier()

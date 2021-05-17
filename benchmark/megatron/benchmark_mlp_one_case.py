@@ -79,9 +79,9 @@ def benchmark_mlp_one_case(benchmark_case):
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
-    model = torchDDP(model, device_ids=[i], output_device=i,
-                     process_group=mpu.get_data_parallel_group())
-    #model = LocalDDP(model, False, False)
+    #model = torchDDP(model, device_ids=[i], output_device=i,
+    #                 process_group=mpu.get_data_parallel_group())
+    model = LocalDDP(model, False, True)
 
     if rank == 0:
         print(model)

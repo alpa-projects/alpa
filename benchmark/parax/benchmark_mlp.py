@@ -93,16 +93,15 @@ def benchmark_mlp_one_case(benchmark_case):
     objective = testing.last_compiled_auto_sharding_objective
     print("===== HLO =====")
     print(hlo_ir)
-    print(f"objective: {objective}")
 
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     line = f"Case: {benchmark_case}\t"\
            f"PeakMem: {real_mem/MB:.2f}\t"\
-           f"Objective: {objective:.2f}\t"\
            f"Mean Time: {np.mean(costs):.2f}\t"\
-           f"Std Time: {np.std(costs):.2f}"
+           f"Std Time: {np.std(costs):.2f}\t"\
+           f"Objective: {objective:.2f}\t"
 
     print(line)
     with open("results.tsv", "a") as fout:
@@ -110,15 +109,15 @@ def benchmark_mlp_one_case(benchmark_case):
 
 
 benchmark_suits = [
-    ## Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    #(16,          1024,    2304,        4,          2304//96,  4,       1),
-    #(16,          1024,    2304,        4,          2304//96,  2,       2),
-    #(16,          1024,    2304,        4,          2304//96,  1,       4),
+    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
+    (16,          1024,    2304,        4,          2304//96,  4,       1),
+    (16,          1024,    2304,        4,          2304//96,  2,       2),
+    (16,          1024,    2304,        4,          2304//96,  1,       4),
 
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           128,     4608,        4,          4608//96,  4,       1),
-    (8,           128,     4608,        4,          4608//96,  2,       2),
-    (8,           128,     4608,        4,          4608//96,  1,       4),
+    (8,           256,     2304,        4,          2304//96,  4,       1),
+    (8,           256,     2304,        4,          2304//96,  2,       2),
+    (8,           256,     2304,        4,          2304//96,  1,       4),
 ]
 
 

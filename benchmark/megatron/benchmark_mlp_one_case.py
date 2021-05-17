@@ -3,11 +3,15 @@ import os
 import sys
 import timeit
 
+
 import numpy as np
 from megatron.model.transformer import ParallelTransformerLayer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
+from megatron.model import DistributedDataParallel as LocalDDP
 from megatron import mpu, initialize_megatron, get_args
 import torch
+from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
+
 
 from timeit_v2 import py_benchmark
 
@@ -41,7 +45,8 @@ class MultiLayerMLP(torch.nn.Module):
     def forward(self, x):
         out = x
         for i in range(self.num_layers):
-            out = getattr(self, f"layer_{i}")(out)[0]
+            out, out_bias = getattr(self, f"layer_{i}")(out)
+            out = out + out_bias
         return out
 
 
@@ -71,7 +76,13 @@ def benchmark_mlp_one_case(benchmark_case):
 
     # Build model and input batch
     model = MultiLayerMLP(num_layers)
-    model.cuda()
+    model.cuda(torch.cuda.current_device())
+
+    i = torch.cuda.current_device()
+    model = torchDDP(model, device_ids=[i], output_device=i,
+                     process_group=mpu.get_data_parallel_group())
+    #model = LocalDDP(model, False, False)
+
     if rank == 0:
         print(model)
 
@@ -86,14 +97,18 @@ def benchmark_mlp_one_case(benchmark_case):
 
     def func(record_peak=False):
         torch.distributed.barrier()
+
         optimizer.zero_grad()
-        output = model(x)[0]
+        output = model(x)
         loss = ((output - y) ** 2)
         loss = loss.mean()
         if record_peak:
             before_backward_mem[0] = get_memory_usage()
         loss.backward()
+        if isinstance(model, LocalDDP):
+            model.allreduce_gradients()
         optimizer.step()
+
         torch.distributed.barrier()
 
     # Record peak memory

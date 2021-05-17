@@ -20,7 +20,7 @@ echo 'export PYTHONPATH=$PYTHONPATH:~/Megatron-LM' >> ~/.bashrc
 ## With nvprof
 - Megatron-LM
 ```
-nvprof --profile-child-processes python3 -m torch.distributed.launch --nproc_per_node 4 benchmark_megatron.py &> megatron.nvprof
+nvprof --profile-child-processes python3 benchmark_mlp.py &> megatron.nvprof
 ```
 - Parax
 ```

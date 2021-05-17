@@ -12,7 +12,8 @@ MB = 1024 ** 2
 
 
 def block_until_ready(x):
-    jax.tree_util.tree_leaves(x)[-1].block_until_ready()
+    for leaf in jax.tree_util.tree_leaves(x):
+        leaf.block_until_ready()
 
 
 def compute_bytes(param_tree):
@@ -35,9 +36,9 @@ def benchmark_mlp_one_case(benchmark_case):
         @nn.compact
         def __call__(self, x):
             for i in range(self.num_layers):
-                x = nn.Dense(features=self.hidden_size * 4, use_bias=False)(x)
+                x = nn.Dense(features=self.hidden_size * 4)(x)
                 x = nn.gelu(x)
-                x = nn.Dense(features=self.hidden_size, use_bias=False)(x)
+                x = nn.Dense(features=self.hidden_size)(x)
             return x
 
     # Mesh configs
@@ -71,7 +72,6 @@ def benchmark_mlp_one_case(benchmark_case):
     def func():
         optimizer = closure[0]
 
-        block_until_ready(optimizer)
         optimizer = train_step(optimizer, batch, model.apply)
         block_until_ready(optimizer)
 

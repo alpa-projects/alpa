@@ -37,6 +37,9 @@ def auto_sharding_callable(
     if isinstance(devices, (list, tuple)):
         physical_mesh = SingleHostDeviceMesh(devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, SingleHostDeviceMesh):
+        physical_mesh = devices
+        logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, MultiHostDeviceMesh):
         physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()

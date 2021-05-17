@@ -5,7 +5,8 @@ from operator import attrgetter
 
 import numpy as np
 import ray
-from jax import xla, core
+from jax import xla, core, pmap
+from jax import numpy as jnp
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
@@ -139,6 +140,14 @@ class SingleHostDeviceMesh:
 
         return partial(SingleHostDeviceMesh._execute_with_handler,
             compiled, args_handler, outs_handler)
+
+    def put_replicated(self, array):
+        """Replicate an array on all devices"""
+        array = pmap(lambda x, y: x,
+                     in_axes=(None, 0),
+                     out_axes=None,
+                     devices=self.devices)(array, jnp.ones(len(self.devices)))
+        return array
 
     @staticmethod
     def _execute_with_handler(compiled, args_handler, outs_handler, *args):

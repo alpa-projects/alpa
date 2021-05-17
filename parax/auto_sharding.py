@@ -25,6 +25,7 @@ from parax.xla_pass_context import XlaPassContext
 
 def auto_sharding_callable(
     fun: lu.WrappedFun,
+    in_tree,
     out_tree_thunk,
     devices,
     donated_invars,
@@ -115,7 +116,7 @@ def auto_sharding_callable(
 
         # Debug options
         "auto_sharding::simplify_graph": True,
-        "auto_sharding::print_strategy": False,
+        "auto_sharding::print_strategy": True,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
     testing.last_compiled_executable = compiled
@@ -387,7 +388,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             for col in range(len(s[j])):
                 if v[idx][row * C + col] > 0.5:
                     prob += s[i][row] + s[j][col] <= 1
-    verbose = False
+    verbose = True
 
     msg = verbose
     time_limit = 2000

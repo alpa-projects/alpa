@@ -10,10 +10,12 @@ benchmark_suits = [
     #(16,          1024,    2304,        4,          2304//96,  2,       2),
     #(16,          1024,    2304,        4,          2304//96,  1,       4),
 
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           128,     4608,        4,          4608//96,  4,       1),
+    ## Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
+    #(8,           128,     4608,        4,          4608//96,  4,       1),
+    #(8,           128,     4608,        4,          4608//96,  2,       2),
+    #(8,           128,     4608,        4,          4608//96,  1,       4),
+
     (8,           128,     4608,        4,          4608//96,  2,       2),
-    (8,           128,     4608,        4,          4608//96,  1,       4),
 ]
 
 def benchmark_mlp():

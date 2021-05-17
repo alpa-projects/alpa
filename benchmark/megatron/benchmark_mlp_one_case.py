@@ -104,7 +104,7 @@ def benchmark_mlp_one_case(benchmark_case):
     # Benchmark time cost
     stmt = "func()"
     repeat = 2
-    number = 4
+    number = 10
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
 

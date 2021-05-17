@@ -6,15 +6,9 @@ import jax.numpy as jnp
 
 from parax import parallelize, global_config, testing, SingleHostDeviceMesh
 
-from timeit import timeit
+import timeit
 
 MB = 1024 ** 2
-
-
-def replicate(a, devices):
-    a = jax.pmap(lambda x, y: x, in_axes=(None, 0), out_axes=None, devices=devices)\
-                (a, jnp.ones(len(devices)))
-    return a
 
 
 def block_until_ready(x):
@@ -29,7 +23,11 @@ def compute_bytes(param_tree):
     return total
 
 
-def benchmark_mlp():
+def benchmark_mlp_one_case(benchmark_case):
+    # Model configs
+    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
+        benchmark_case
+
     class Model(nn.Module):
         hidden_size: int
         num_layers: int
@@ -37,14 +35,17 @@ def benchmark_mlp():
         @nn.compact
         def __call__(self, x):
             for i in range(self.num_layers):
-                x = nn.Dense(features=self.hidden_dim * 4)(x)
+                x = nn.Dense(features=self.hidden_size * 4, use_bias=False)(x)
                 x = nn.gelu(x)
-                x = nn.Dense(features=self.hidden_dim)(x)
+                x = nn.Dense(features=self.hidden_size, use_bias=False)(x)
             return x
 
-    device_mesh = SingleHostDeviceMesh(jax.devices()[:4])
+    # Mesh configs
+    num_devices = dp_size * tensor_mp_size
+    device_mesh = SingleHostDeviceMesh(jax.devices()[:num_devices])
+    logical_mesh = device_mesh.get_logical_mesh([dp_size, tensor_mp_size])
 
-    @parallelize(devices=device_mesh)
+    @parallelize(devices=logical_mesh)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])
@@ -54,38 +55,26 @@ def benchmark_mlp():
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
 
-    # Model configs
-    batch_size = 16
-    hidden_size = 2304
-    seq_length = 1024
-    num_layers = 4
-    num_attention_heads = hidden_size // 96
-
-    # Prepare input
-    x = jnp.ones((batch_size, seq_length, hidden_size))
-    y = jnp.ones((batch_size, seq_length, hidden_size))
-    x = device_mesh.put_replicated(x)
-    y = device_mesh.put_replicated(y)
-
-    print(x.sharding_spec)
-    exit()
-
-    # Initialize model
-    model = Model(hidden_dim=hidden_dim)
+    # Prepare model and input
+    batch = {
+        "x": jnp.ones((batch_size, seq_len, hidden_size)),
+        "y": jnp.ones((batch_size, seq_len, hidden_size)),
+    }
+    model = Model(hidden_size=hidden_size, num_layers=num_layers)
     rngkey = jax.random.PRNGKey(0)
-    params = model.init(rngkey, x)
-    optimizer = optim.SGD(1e-2).create(params)
-    optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
+    params = model.init(rngkey, batch["x"])
+    optimizer = optim.GradientDescent(1e-2).create(params)
+    optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
 
     # Define benchmark function
     closure = [optimizer]
     def func():
         optimizer = closure[0]
+
         block_until_ready(optimizer)
-        optimizer = train_step(optimizer,
-                               {"x": x, "y": y},
-                               model.apply)
+        optimizer = train_step(optimizer, batch, model.apply)
         block_until_ready(optimizer)
+
         closure[0] = optimizer
 
     # Benchmark time cost
@@ -93,24 +82,51 @@ def benchmark_mlp():
     func()
     stmt = "func()"
     repeat = 2
-    number = 4
+    number = 10
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
     real_mem = testing.last_compiled_executable.total_allocation_size()
 
-    ## Check sharding strategy
+    # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
     objective = testing.last_compiled_auto_sharding_objective
+    print("===== HLO =====")
+    print(hlo_ir)
+    print(f"objective: {objective}")
 
-    optimizer = closure[0]
-    sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
-    #print(hlo_ir)
-    #print(sharding_specs)
+    #optimizer = closure[0]
+    #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
-    return real_mem, cost, objective
+    line = f"Case: {benchmark_case}\t"\
+           f"PeakMem: {real_mem/MB:.2f}\t"\
+           f"Objective: {objective:.2f}\t"\
+           f"Mean Time: {np.mean(costs):.2f}\t"\
+           f"Std Time: {np.std(costs):.2f}"
+
+    print(line)
+    with open("results.tsv", "a") as fout:
+        fout.write(line + "\n")
 
 
-if __name__ == '__main__':
+benchmark_suits = [
+    ## Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
+    #(16,          1024,    2304,        4,          2304//96,  4,       1),
+    #(16,          1024,    2304,        4,          2304//96,  2,       2),
+    #(16,          1024,    2304,        4,          2304//96,  1,       4),
+
+    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
+    (8,           128,     4608,        4,          4608//96,  4,       1),
+    (8,           128,     4608,        4,          4608//96,  2,       2),
+    (8,           128,     4608,        4,          4608//96,  1,       4),
+]
+
+
+def benchmark_mlp():
+    for case in benchmark_suits:
+        benchmark_mlp_one_case(case)
+
+
+if __name__ == "__main__":
     benchmark_mlp()
 

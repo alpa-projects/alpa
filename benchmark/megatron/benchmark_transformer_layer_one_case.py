@@ -30,30 +30,10 @@ def get_memory_usage(print_info=False):
     return allocated
 
 
-class MultiLayerMLP(torch.nn.Module):
-    def __init__(self, num_layers):
-        super().__init__()
-
-        self.num_layers = num_layers
-
-        init_method_std = 0.02
-        init_method = init_method_normal(init_method_std)
-        scaled_init_method = scaled_init_method_normal(init_method_std, num_layers)
-        for i in range(self.num_layers):
-            setattr(self, f"layer_{i}", ParallelMLP(init_method, scaled_init_method))
-
-    def forward(self, x):
-        out = x
-        for i in range(self.num_layers):
-            out, out_bias = getattr(self, f"layer_{i}")(out)
-            out = out + out_bias
-        return out
-
-
-def benchmark_mlp_one_case(benchmark_case):
+def benchmark_transfomer_one_case(benchmark_case):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
-        benchmark_case
+    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size,\
+        ddp_impl = benchmark_case
 
     # Parallel configs
     micro_batch_size = batch_size // dp_size
@@ -75,13 +55,20 @@ def benchmark_mlp_one_case(benchmark_case):
     assert tensor_mp_size == mpu.get_tensor_model_parallel_world_size()
 
     # Build model and input batch
-    model = MultiLayerMLP(num_layers)
+    init_method_std = 0.02
+    init_method = init_method_normal(init_method_std)
+    scaled_init_method = scaled_init_method_normal(init_method_std, num_layers)
+    model = ParallelTransformerLayer(init_method, scaled_init_method, 0)
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
-    model = torchDDP(model, device_ids=[i], output_device=i,
-                     process_group=mpu.get_data_parallel_group())
-    #model = LocalDDP(model, False, True)
+    if ddp_impl == 0:
+        model = torchDDP(model, device_ids=[i], output_device=i,
+                         process_group=mpu.get_data_parallel_group())
+    elif ddp_impl == 1:
+        model = LocalDDP(model, False, True)
+    else:
+        raise ValueError(f"Invalid ddp implementation: {ddp_impl}")
 
     if rank == 0:
         print(model)
@@ -90,23 +77,31 @@ def benchmark_mlp_one_case(benchmark_case):
 
     x = torch.randn(micro_batch_size, seq_len, hidden_size).cuda()
     y = torch.randn(micro_batch_size, seq_len, hidden_size).cuda()
+    attention_mask = torch.ones(seq_len,
+                                num_heads // tensor_mp_size,
+                                micro_batch_size,
+                                micro_batch_size).to(torch.bool).cuda()
 
     input_mem = get_memory_usage() - weight_mem
-    before_backward_mem = [None]
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    act_mem = [None]
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
 
-    def func(record_peak=False):
+    def func(record_act_mem=False):
         if isinstance(model, LocalDDP):
             model.zero_grad_buffer()
         else:
             optimizer.zero_grad()
 
-        output = model(x)
+        output = model(x, attention_mask)
         loss = ((output - y) ** 2)
         loss = loss.mean()
-        if record_peak:
-            before_backward_mem[0] = get_memory_usage()
-        loss.backward()
+
+        if record_act_mem:
+            before_backward_mem = get_memory_usage()
+            loss.backward()
+            act_mem[0] = before_backward_mem - get_memory_usage()
+        else:
+            loss.backward()
 
         if isinstance(model, LocalDDP):
             model.allreduce_gradients()
@@ -121,33 +116,35 @@ def benchmark_mlp_one_case(benchmark_case):
     # Record peak memory
     func(True)
     func(True)
-    before_backward_mem = before_backward_mem[0]
+    peak_mem = torch.cuda.max_memory_allocated(0) - input_mem - weight_mem
 
     # Benchmark time cost
     stmt = "func()"
-    repeat = 2
-    number = 10
+    repeat = 3
+    number = 4
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
 
     # Print results
     if rank == 0:
-        peak_mem = torch.cuda.max_memory_allocated(0)
-        line = f"Type: mlp\t"\
-               f"Case: {benchmark_case}\t"\
-               f"WeightMem: {weight_mem/MB:.2f}\t"\
-               f"PeakMem: {peak_mem/MB:.2f}\t"\
-               f"BackwardMem: {before_backward_mem/MB:.2f}\t"\
-               f"Mean Time: {np.mean(costs):.2f}\t"\
-               f"Std Time: {np.std(costs):.2f}"
+        heads = ["Type", "Case", "WeightMem", "PeakMem", "ActMem",
+                "Mean Time", "Std Time"]
+        values = ["transformer-layer", str(benchmark_case),
+                 f"{weight_mem/MB:.2f}", f"{peak_mem/MB:.2f}",
+                 f"{act_mem[0]/MB:.2f}",
+                 f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
 
+        line = ""
+        for i in range(len(heads)):
+            line += heads[i] + ": " + values[i] + "  "
         print(line)
+
         with open("results.tsv", "a") as fout:
-            fout.write(line + "\n")
+            fout.write("\t".join(values) + "\n")
 
 
 if __name__ == "__main__":
     case = eval(sys.argv[-1])
     del sys.argv[-1]
-    benchmark_mlp_one_case(case)
+    benchmark_transfomer_one_case(case)
 

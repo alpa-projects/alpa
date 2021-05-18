@@ -8,7 +8,7 @@ void pipelineMarker(cudaStream_t stream, void **buffers, const char *opaque, siz
     for (size_t i = 0; i < n_inputs; i++) {
         const float *input = reinterpret_cast<const float *>(buffers[i]);
         float *output = reinterpret_cast<float *>(buffers[i + n_inputs]);
-        cudaMemcpy(output, input, sizes[i], cudaMemcpyDeviceToDevice)
+        cudaMemcpy(output, input, sizes[i], cudaMemcpyDeviceToDevice);
     }
 }
 };  //end namespace kernel

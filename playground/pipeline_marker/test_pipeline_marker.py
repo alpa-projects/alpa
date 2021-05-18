@@ -22,7 +22,7 @@ def test_simple_graph():
     z = ops.Add(x, y)
     z = ops.Add(z, y)
     out_shape = xla_client.Shape.array_shape(np.dtype(np.float32), (1,), (0,))
-    z = xla_client.ops.CustomCall(z,
+    z = xla_client.ops.CustomCall(c,
         b'pipeline_marker',
         operands=(z,),
         shape=out_shape,

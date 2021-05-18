@@ -28,7 +28,9 @@ def freeze_dict(pytree):
 def auto_static_argnums(args):
     """Return the indices of static arguments according to heuristic rules."""
     def is_static_arg(arg):
-        """Return whether an argument is a static argument according to heuristic rules."""
+        if isinstance(arg, (bool, int, float, str)):
+            return True
+
         if isinstance(arg, flax.optim.base.Optimizer):
             return False
 

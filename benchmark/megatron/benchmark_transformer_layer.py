@@ -1,8 +1,10 @@
 import os
 
+
 def run_cmd(cmd):
     print(cmd)
     return os.system(cmd)
+
 
 benchmark_suits = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size, ddp_impl
@@ -23,6 +25,7 @@ benchmark_suits = [
     (8,           256,     4608,        6,          4608//96,  1,       4,              1,),
 ]
 
+
 def benchmark_all():
     for case in benchmark_suits:
         nproc_per_node = 4
@@ -33,6 +36,7 @@ def benchmark_all():
                      f'"{case_str}"')
         if ret != 0:
             return
+
 
 if __name__ == "__main__":
     benchmark_all()

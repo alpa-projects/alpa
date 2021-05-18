@@ -11,25 +11,28 @@ import gpu_custom_call_test
 xla_client.register_custom_call_target(b'pipeline_marker',
     gpu_custom_call_test.pipeline_marker(), platform='gpu')
 
-def flattened_shape_byte_sizes(shape):
-    if shape.is_tuple():
-        res = []
-        for sub_shape in shape.tuple_shapes():
-            res += flattened_shape_byte_sizes(sub_shape)
-        return res
-    else:
-        return [shape.numpy_dtype().itemsize * np.prod(shape.dimensions())]
+def flatten_shape_byte_sizes(shape):
+    def _flatten_shape_byte_sizes(shape):
+        if shape.is_tuple():
+            res = []
+            for sub_shape in shape.tuple_shapes():
+                res += _flatten_shape_byte_sizes(sub_shape)
+            return res
+        else:
+            return [shape.numpy_dtype().itemsize * np.prod(shape.dimensions())]
+    res = _flatten_shape_byte_sizes(shape)
+    return np.array(res, dtype=np.int64)
 
 
 def mark_pipeline_xla(c, *args):
     input_params = ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
-    print("flattened_shape_byte_sizes(input_shape)", flattened_shape_byte_sizes(input_shape))
+    flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     output_tuple = xla_client.ops.CustomCall(c,
         b'pipeline_marker',
         operands=(input_params, ),
         shape=input_shape,
-        opaque=input_shape.to_serialized_proto()
+        opaque=flattened_byte_sizes.tobytes()
         )
     return [ops.GetTupleElement(output_tuple, i) for i in range(len(args))]
 

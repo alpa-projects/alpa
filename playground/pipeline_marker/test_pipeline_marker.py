@@ -7,6 +7,10 @@ from jax.lib import xla_client, xla_bridge
 
 ops = xla_client.ops
 
+import gpu_custom_call_test
+xla_client.register_custom_call_target(b'pipeline_marker',
+    gpu_custom_call_test.pipeline_marker(), platform='gpu')
+
 
 def test_simple_graph():
     c = xla_client.XlaBuilder("simple_graph")
@@ -17,6 +21,13 @@ def test_simple_graph():
 
     z = ops.Add(x, y)
     z = ops.Add(z, y)
+    out_shape = xla_client.Shape.array_shape(np.dtype(np.float32), (1,), (0,))
+    z = xla_client.ops.CustomCall(z,
+        b'pipeline_marker',
+        operands=(z,),
+        shape=out_shape,
+        opaque=b"abc"
+        )
 
     c = c.build(z)
     print("=" * 60)

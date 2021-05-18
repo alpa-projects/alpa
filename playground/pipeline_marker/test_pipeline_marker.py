@@ -18,7 +18,7 @@ def mark_pipeline_xla(c, *args):
         b'pipeline_marker',
         operands=(input_params, ),
         shape=input_shape,
-        opaque=input_shape
+        opaque=input_shape.to_serialized_proto()
         )
     return [ops.GetTupleElement(output_tuple, i) for i in range(len(args))]
 
@@ -31,7 +31,7 @@ def test_simple_graph():
     backend = xla_client.get_local_backend("gpu")
 
     a = ops.Add(x, y)
-    b = ops.Dot(x, y)
+    b = ops.Mul(x, y)
 
     a, b = mark_pipeline_xla(c, a, b)
 

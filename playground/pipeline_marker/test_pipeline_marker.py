@@ -18,7 +18,7 @@ def flattened_shape_byte_sizes(shape):
             res += flattened_shape_byte_sizes(sub_shape)
         return res
     else:
-        return [shape.numpy_dtype().itemsize]
+        return [shape.numpy_dtype().itemsize * np.prod(shape.dimensions())]
 
 
 def mark_pipeline_xla(c, *args):

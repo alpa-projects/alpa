@@ -11,9 +11,20 @@ import gpu_custom_call_test
 xla_client.register_custom_call_target(b'pipeline_marker',
     gpu_custom_call_test.pipeline_marker(), platform='gpu')
 
+def flattened_shape_byte_sizes(shape):
+    if shape.is_tuple():
+        res = []
+        for sub_shape in shape:
+            res += flattened_shape_byte_sizes(sub_shape)
+        return res
+    else:
+        return [shape.numpy_dtype().itemsize]
+
+
 def mark_pipeline_xla(c, *args):
     input_params = ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
+    print("flattened_shape_byte_sizes(input_shape)", flattened_shape_byte_sizes(input_shape))
     output_tuple = xla_client.ops.CustomCall(c,
         b'pipeline_marker',
         operands=(input_params, ),

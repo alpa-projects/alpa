@@ -11,6 +11,17 @@ import gpu_custom_call_test
 xla_client.register_custom_call_target(b'pipeline_marker',
     gpu_custom_call_test.pipeline_marker(), platform='gpu')
 
+def mark_pipeline_xla(c, *args):
+    input_params = ops.Tuple(c, args)
+    input_shape = c.get_shape(input_params)
+    output_tuple = xla_client.ops.CustomCall(c,
+        b'pipeline_marker',
+        operands=(input_params, ),
+        shape=input_shape,
+        opaque=input_shape
+        )
+    return [ops.GetTupleElement(output_tuple, i) for i in range(len(args))]
+
 
 def test_simple_graph():
     c = xla_client.XlaBuilder("simple_graph")
@@ -19,15 +30,12 @@ def test_simple_graph():
 
     backend = xla_client.get_local_backend("gpu")
 
-    z = ops.Add(x, y)
-    z = ops.Add(z, y)
-    out_shape = xla_client.Shape.array_shape(np.dtype(np.float32), (1,), (0,))
-    z = xla_client.ops.CustomCall(c,
-        b'pipeline_marker',
-        operands=(z,),
-        shape=out_shape,
-        opaque=b"abc"
-        )
+    a = ops.Add(x, y)
+    b = ops.Dot(x, y)
+
+    a, b = mark_pipeline_xla(c, a, b)
+
+    z = ops.Add(a, b)
 
     c = c.build(z)
     print("=" * 60)

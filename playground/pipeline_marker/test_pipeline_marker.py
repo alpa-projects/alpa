@@ -14,7 +14,7 @@ xla_client.register_custom_call_target(b'pipeline_marker',
 def flattened_shape_byte_sizes(shape):
     if shape.is_tuple():
         res = []
-        for sub_shape in shape:
+        for sub_shape in shape.tuple_shapes():
             res += flattened_shape_byte_sizes(sub_shape)
         return res
     else:

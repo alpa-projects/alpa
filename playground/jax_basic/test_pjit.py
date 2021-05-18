@@ -239,17 +239,17 @@ def test_dropout():
     model = Model()
 
     @partial(pjit,
-             in_axis_resources=(P('x'), None),
-             out_axis_resources=P('x'))
+             in_axis_resources=(P('x', 'y', None), None),
+             out_axis_resources=P('x', 'y', None))
     def func(inputs, key):
       ret = model.apply({}, inputs, rngs={"dropout": key})
       return ret
 
-    inputs = jnp.ones((4096,))
+    inputs = jnp.ones((512, 512, 16))
     rngkey = jax.random.PRNGKey(0)
 
-    mesh_devices = np.array(jax.devices()[:4])
-    with mesh(mesh_devices, ('x',)):
+    mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
+    with mesh(mesh_devices, ('x', 'y')):
         actual = func(inputs, rngkey)
         print(actual)
 

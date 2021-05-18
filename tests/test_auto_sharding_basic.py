@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
+from flax import linen as nn
+from flax import optim
 
 from parax import parallelize, global_config, testing
 
@@ -22,6 +24,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
         global_config.shard_parallel_strategy = "auto_sharding"
+
 
     def test_donate_buffer(self):
         @parallelize(donate_argnums=(0,),
@@ -45,6 +48,39 @@ class AutoShardingBasicTest(unittest.TestCase):
                b.sharding_spec == pxla.ShardingSpec(
             sharding=(Chunked([4]), NoSharding()),
             mesh_mapping=(Replicated(1), ShardedAxis(0)))
+
+
+    def test_dropout(self):
+        class Model(nn.Module):
+            @nn.compact
+            def __call__(self, x, deterministic):
+                x = nn.Dense(128)(x)
+                x = nn.Dropout(0.1, deterministic=deterministic)(x)
+                return x
+
+        x = jnp.ones((256, 256, 128))
+        y = jnp.ones((256, 256, 128))
+
+        # Init model and optimizer
+        model = Model()
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, x, True)
+        optimizer = optim.GradientDescent(1e-2).create(params)
+
+        @parallelize
+        def func(optimizer, x, y, rngs):
+            def loss_func(params):
+                out = model.apply(params, x, False, rngs=rngs)
+                return jnp.mean((out - y) ** 2)
+            grad = jax.grad(loss_func)(optimizer.target)
+            return grad
+
+        expected = func(optimizer, x, y, {"dropout": rngkey})
+
+        # Check sharding strategy
+        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
+        hlo_ir = hlo_module.to_string()
+
 
     def test_dot_reshape_transpose(self):
         dim_0 = 64
@@ -146,6 +182,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingBasicTest('test_donate_buffer'))
+    suite.addTest(AutoShardingBasicTest('test_dropout'))
     suite.addTest(AutoShardingBasicTest('test_dot_reshape_transpose'))
     suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification'))
     suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification_out_reuse'))

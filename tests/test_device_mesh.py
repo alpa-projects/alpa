@@ -21,7 +21,7 @@ class DeviceMeshTest(unittest.TestCase):
         ray.init(address='auto', ignore_reinit_error=True)
 
     def test_add_one(self):
-        # Launch multi host device mesh
+        # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
         total_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
@@ -48,7 +48,7 @@ class DeviceMeshTest(unittest.TestCase):
         physical_mesh.shutdown()
 
     def test_mlp(self):
-        # Launch multi host device mesh
+        # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
 

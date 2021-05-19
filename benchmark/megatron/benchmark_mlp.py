@@ -16,7 +16,7 @@ benchmark_suits = [
     (8,           256,     2304,        4,          2304//96,  1,       4),
 ]
 
-def benchmark_mlp():
+def benchmark_all():
     for case in benchmark_suits:
         nproc_per_node = 4
         case_str = str(case)
@@ -28,5 +28,5 @@ def benchmark_mlp():
             return
 
 if __name__ == "__main__":
-    benchmark_mlp()
+    benchmark_all()
 

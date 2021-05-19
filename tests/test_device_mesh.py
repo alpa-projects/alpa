@@ -9,6 +9,7 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 import numpy as np
+import ray
 
 from parax import parallelize, DeviceCluster, global_config, testing
 from parax.testing import assert_allclose
@@ -17,11 +18,12 @@ from parax.testing import assert_allclose
 class DeviceMeshTest(unittest.TestCase):
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
-        global_config.shard_parallel_strategy = "auto_sharding"
-        self.device_cluster = DeviceCluster()
+        ray.init(address='auto', ignore_reinit_error=True)
 
     def test_add_one(self):
-        physical_mesh = self.device_cluster.get_physical_mesh()
+        # Launch a multi-host device mesh
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
         total_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
         logical_mesh = physical_mesh.get_logical_mesh([1, total_devices])
 
@@ -35,14 +37,20 @@ class DeviceMeshTest(unittest.TestCase):
             x = x * 2
             return x
 
+        # Run computation
         a = jnp.ones((1000, 1000))
         out = add_one(a)
         out = multiply_two(out)
 
+        # Check results
         assert_allclose(out._value, (np.ones_like(a) + 1) * 2)
 
+        physical_mesh.shutdown()
+
     def test_mlp(self):
-        physical_mesh = self.device_cluster.get_physical_mesh()
+        # Launch a multi-host device mesh
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
 
         class Model(nn.Module):
             hidden_dim: int
@@ -89,6 +97,7 @@ class DeviceMeshTest(unittest.TestCase):
         # Check results
         assert_allclose(optimizer_expected.target, optimizer_actaul.target)
 
+        physical_mesh.shutdown()
 
 def suite():
     suite = unittest.TestSuite()

@@ -35,7 +35,10 @@ def auto_sharding_callable(
     # Get physical and logical device mesh according to the arguments
     distributed_compilation_head = False
 
-    if isinstance(devices, (list, tuple)):
+    if devices is None:
+        physical_mesh = SingleHostDeviceMesh(xb.devices())
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, (list, tuple)):
         physical_mesh = SingleHostDeviceMesh(devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, SingleHostDeviceMesh):
@@ -82,6 +85,8 @@ def auto_sharding_callable(
 
     # Compile
     built = c.Build(out_tuple)
+    #print(built.as_hlo_text())
+    #exit()
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(

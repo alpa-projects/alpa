@@ -5,17 +5,18 @@ import unittest
 
 import jax
 import jax.numpy as jnp
+import ray
 
 from parax import parallelize, DeviceCluster, global_config, testing
 
 
 class DistributedArrayTest(unittest.TestCase):
     def setUp(self):
-        global_config.shard_parallel_strategy = "auto_sharding"
-        self.device_cluster = DeviceCluster()
+        ray.init(address="auto")
 
     def test_distributed_array(self):
-        physical_mesh = self.device_cluster.get_physical_mesh()
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
         logical_mesh = physical_mesh.get_default_logical_mesh()
 
         array = jnp.ones((12, 12))
@@ -23,7 +24,7 @@ class DistributedArrayTest(unittest.TestCase):
         indices = sharding_spec.indices(array.shape).flatten()
         remote_a = physical_mesh._shard_args([indices], (array,))
 
-        physical_mesh.sync_workers()
+        physical_mesh.shutdown()
 
 
 def suite():

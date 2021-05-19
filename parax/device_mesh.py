@@ -2,6 +2,7 @@
 from collections.abc import Iterable
 import os
 from operator import attrgetter
+import time
 
 import numpy as np
 import ray
@@ -273,16 +274,21 @@ class MultiHostDeviceMesh:
         self.total_devices = self.num_hosts * self.num_devices_per_host
 
         # Launch distributed xla runtime
-        self.server_address = f"{self.head_ip}:12345"
+        port = np.random.randint(10000, 11000)
+        self.server_address = f"{self.head_ip}:{port}"
         self.service_server = None
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
+        time.sleep(0.5)
+
+        # Launch workers
         self.workers = []
         for i in range(self.num_hosts):
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
+        self.sync_workers()
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Get a mapping to logoical mesh."""
@@ -320,15 +326,24 @@ class MultiHostDeviceMesh:
         return ray.get(obj_refs)
 
     def delete_remote_buffers(self, buf_refs):
+        if self.workers is None:
+            return
+
         for buf_ref in buf_refs:
             self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
 
     def delete_remote_executable(self, exe_ref):
+        if self.workers is None:
+            return
+
         for i in range(self.num_hosts):
             self.workers[i].delete_executable.remote(exe_ref.uuid)
 
     def sync_workers(self):
-        ray.wait([w.sync.remote() for w in self.workers])
+        ray.get([w.sync.remote() for w in self.workers])
+
+    def shutdown_workers(self):
+        ray.get([w.shutdown.remote() for w in self.workers])
 
     def get_callable_with_arg_handler(self, remote_executable, avals, out_avals,
             input_sharding_specs, output_sharding_specs):
@@ -401,11 +416,11 @@ class MultiHostDeviceMesh:
         output_bufs = output_bufs.transpose([1, 0, 2]).reshape((num_outs, self.total_devices))
         return outs_handler(output_bufs)
 
-    def __del__(self):
-        self.sync_workers()
+    def shutdown(self):
+        self.shutdown_workers()
         for worker in self.workers:
             ray.kill(worker)
-        del self.workers
+        self.workers = None
 
 
 class MeshHostWorker:
@@ -500,12 +515,16 @@ class MeshHostWorker:
     def sync(self):
         return
 
+    def shutdown(self):
+        self.distributed_client.shutdown()
+
 
 class DeviceCluster:
     """A ray cluster with gpu devices."""
 
-    def __init__(self, ray_address='auto'):
-        self.head_info = ray.init(address=ray_address)
+    def __init__(self):
+        from ray.worker import _global_node as ray_global_node
+        self.head_info = ray_global_node.address_info
         self.head_ip = self.head_info['node_ip_address']
 
         # Gather host ids
@@ -543,9 +562,6 @@ class DeviceCluster:
             assert self.num_devices[host_id] >= num_devices_per_host
 
         return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
-
-    def __del__(self):
-        ray.shutdown()
 
 
 ########################################

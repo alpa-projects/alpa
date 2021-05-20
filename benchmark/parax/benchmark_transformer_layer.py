@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from parax import parallelize, global_config, testing, SingleHostDeviceMesh
+from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 
 import timeit
 
@@ -24,22 +25,10 @@ def compute_bytes(param_tree):
     return total
 
 
-def benchmark_mlp_one_case(benchmark_case):
+def benchmark_transformer_one_case(benchmark_case):
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
         benchmark_case
-
-    class Model(nn.Module):
-        hidden_size: int
-        num_layers: int
-
-        @nn.compact
-        def __call__(self, x):
-            for i in range(self.num_layers):
-                x = nn.Dense(features=self.hidden_size * 4)(x)
-                x = nn.gelu(x)
-                x = nn.Dense(features=self.hidden_size)(x)
-            return x
 
     # Mesh configs
     num_devices = dp_size * tensor_mp_size
@@ -49,8 +38,8 @@ def benchmark_mlp_one_case(benchmark_case):
     @parallelize(devices=logical_mesh)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
-            out = apply_fn(params, batch['x'])
-            return jnp.mean((out - batch['y']) ** 2)
+            out = apply_fn(params, batch["hidden_states"], batch["attention_mask"])[0]
+            return jnp.mean((out - batch["label"]) ** 2)
 
         grad = jax.grad(loss_func)(optimizer.target)
         new_optimizer = optimizer.apply_gradient(grad)
@@ -58,13 +47,20 @@ def benchmark_mlp_one_case(benchmark_case):
 
     # Prepare model and input
     batch = {
-        "x": jnp.ones((batch_size, seq_len, hidden_size)),
-        "y": jnp.ones((batch_size, seq_len, hidden_size)),
+        "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
     }
-    model = Model(hidden_size=hidden_size, num_layers=num_layers)
+
+    # Init model and optimizer
+    model = FlaxBertLayerCollection(BertConfig(
+        num_hidden_layers=num_layers,
+        hidden_size=hidden_size,
+        intermediate_size=hidden_size * 4,
+        num_attention_heads=num_heads))
     rngkey = jax.random.PRNGKey(0)
-    params = model.init(rngkey, batch["x"])
-    optimizer = optim.GradientDescent(1e-2).create(params)
+    params = model.init(rngkey, batch["hidden_states"], batch["attention_mask"])
+    optimizer = optim.Adam(1e-2).create(params)
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
 
     # Define benchmark function
@@ -97,33 +93,33 @@ def benchmark_mlp_one_case(benchmark_case):
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
-    line = f"Case: {benchmark_case}\t"\
-           f"PeakMem: {real_mem/MB:.2f}\t"\
-           f"Mean Time: {np.mean(costs):.2f}\t"\
-           f"Std Time: {np.std(costs):.2f}\t"\
-           f"Objective: {objective:.2f}\t"
+    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Mean Time", "Std Time", "Objective"]
+    values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
+             f"{real_mem/MB:.2f}", f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}",
+             f"{objective:.2f}"]
 
+    line = ""
+    for i in range(len(heads)):
+        line += heads[i] + ": " + values[i] + "  "
     print(line)
+
     with open("results.tsv", "a") as fout:
-        fout.write(line + "\n")
+        fout.write("\t".join(values) + "\n")
 
 
 benchmark_suits = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (16,          1024,    2304,        4,          2304//96,  4,       1),
-    (16,          1024,    2304,        4,          2304//96,  2,       2),
-    (16,          1024,    2304,        4,          2304//96,  1,       4),
+    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
+    (16,          1024,    1536,        3,          1536//96,  2,       2),
+    (16,          1024,    1536,        3,          1536//96,  1,       4),
 
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           256,     2304,        4,          2304//96,  4,       1),
-    (8,           256,     2304,        4,          2304//96,  2,       2),
-    (8,           256,     2304,        4,          2304//96,  1,       4),
+    (8,           256,     2304,        3,          2304//96,  2,       2),
+    (8,           256,     2304,        3,          2304//96,  1,       4),
 ]
 
 
 def benchmark_all():
     for case in benchmark_suits:
-        benchmark_mlp_one_case(case)
+        benchmark_transformer_one_case(case)
 
 
 if __name__ == "__main__":

@@ -11,18 +11,14 @@ echo 'export PYTHONPATH=$PYTHONPATH:~/Megatron-LM' >> ~/.bashrc
 ```
 
 ## Instructions
-- Megatron-LM
-  - MLP
-  ```
-  python3 -m torch.distributed.launch --nproc_per_node 4 benchmark_mlp.py
-  ```
+```
+# Transfomer layer
+python3 -m torch.distributed.launch --nproc_per_node 4 benchmark_transformer_layer.py
+# MLP
+python3 -m torch.distributed.launch --nproc_per_node 4 benchmark_mlp.py
+```
 
 ## With nvprof
-- Megatron-LM
 ```
-nvprof --profile-child-processes python3 benchmark_mlp.py &> megatron.nvprof
-```
-- Parax
-```
-nvprof python3 benchmark_parax.py &> parax.nvprof
+nvprof --profile-child-processes python3 benchmark_mlp.py &> megatron.prof
 ```

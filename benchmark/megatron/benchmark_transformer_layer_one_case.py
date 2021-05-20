@@ -5,7 +5,7 @@ import timeit
 
 
 import numpy as np
-from megatron.model.transformer import ParallelTransformerLayer, ParallelMLP
+from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
 from megatron.model import DistributedDataParallel as LocalDDP
 from megatron import mpu, initialize_megatron, get_args
@@ -58,7 +58,8 @@ def benchmark_transfomer_one_case(benchmark_case):
     init_method_std = 0.02
     init_method = init_method_normal(init_method_std)
     scaled_init_method = scaled_init_method_normal(init_method_std, num_layers)
-    model = ParallelTransformerLayer(init_method, scaled_init_method, 0)
+    model = ParallelTransformer(init_method, scaled_init_method, 0,
+                                pre_process=False, post_process=False)
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
@@ -75,12 +76,10 @@ def benchmark_transfomer_one_case(benchmark_case):
 
     weight_mem = get_memory_usage() 
 
-    x = torch.randn(micro_batch_size, seq_len, hidden_size).cuda()
-    y = torch.randn(micro_batch_size, seq_len, hidden_size).cuda()
-    attention_mask = torch.ones(seq_len,
-                                num_heads // tensor_mp_size,
-                                micro_batch_size,
-                                micro_batch_size).to(torch.bool).cuda()
+    x = torch.randn(seq_len, micro_batch_size, hidden_size).cuda(i)
+    y = torch.randn(seq_len, micro_batch_size, hidden_size).cuda(i)
+    attention_mask = torch.ones(micro_batch_size, 1, 1, seq_len).\
+        to(torch.bool).cuda(i)
 
     input_mem = get_memory_usage() - weight_mem
     act_mem = [None]
@@ -92,6 +91,7 @@ def benchmark_transfomer_one_case(benchmark_case):
         else:
             optimizer.zero_grad()
 
+        model.module.set_input_tensor(x)
         output = model(x, attention_mask)
         loss = ((output - y) ** 2)
         loss = loss.mean()
@@ -127,12 +127,13 @@ def benchmark_transfomer_one_case(benchmark_case):
 
     # Print results
     if rank == 0:
-        heads = ["Type", "Case", "WeightMem", "PeakMem", "ActMem",
-                "Mean Time", "Std Time"]
-        values = ["transformer-layer", str(benchmark_case),
-                 f"{weight_mem/MB:.2f}", f"{peak_mem/MB:.2f}",
-                 f"{act_mem[0]/MB:.2f}",
-                 f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
+        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
+                 "Peak Mem", "ActMem", "Mean Time", "Std Time"]
+        values = ["transformer-layer", str(benchmark_case[:-3]),
+                  str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
+                  f"{weight_mem/MB:.2f}", f"{peak_mem/MB:.2f}",
+                  f"{act_mem[0]/MB:.2f}",
+                  f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
 
         line = ""
         for i in range(len(heads)):

@@ -118,6 +118,16 @@ class SingleHostDeviceMesh:
     def __init__(self, devices):
         self.devices = devices
 
+    def slice(self, indices):
+        devices = [self.devices[x] for x in indices]
+        return SingleHostDeviceMesh(devices)
+
+    @classmethod
+    def from_multihost_device_mesh(cls, mesh):
+        """This implementation is unfinished."""
+        assert mesh.num_hosts == 1
+        return cls(mesh.devices)
+
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Get a mapping to logoical mesh."""
         device_ids = np.array([d.id for d in self.devices])
@@ -265,6 +275,12 @@ class MultiHostDeviceMesh:
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
             self.workers.append(cls.remote(self.server_address, i))
+
+    def slice(self, indices, num_devices_per_host=None):
+        host_ids = [self.host_ids[x] for x in indices]
+        host_info = [self.host_info[x] for x in host_ids]
+        num_devices_per_host = num_devices_per_host or self.num_devices_per_host
+        return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Get a mapping to logoical mesh."""

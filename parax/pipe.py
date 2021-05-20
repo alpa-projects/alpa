@@ -7,6 +7,8 @@ import numpy as np
 import jax
 from jax.core import Literal
 import ray
+from parax import MultiHostDeviceMesh, SingleHostDeviceMesh
+from parax.auto_sharding import auto_sharding_callable_internal
 
 from parax.pipeline_stage import StrVarPipelineStage
 
@@ -36,6 +38,105 @@ def ref_to_array(array_ref):
     numpy_array = ray.get(array_ref)
     device_array = jax.numpy.asarray(numpy_array)
     return device_array
+
+
+class MultiHostRunner:
+
+    def __init__(self,
+                 *,
+                 name,
+                 stages,
+                 mesh):
+        self.name = name
+        self._raw_stages = stages
+        self.mesh = mesh
+
+
+class SingleHostRunner:
+    """
+    Distributed pipeline parallelism worker.
+
+    Args:
+        name (str): The name of this runner
+        stages (dict): serializable stages assigned to this runner.
+    """
+
+    def __init__(self,
+                 *,
+                 name,
+                 stages,
+                 mesh,
+                 auto_sharding_args):
+        self.name = name
+        self._raw_stages = stages
+        self.mesh = mesh
+        self.auto_sharding_args = auto_sharding_args
+        self.stages = dict()
+        for stage_idx, stage in self._raw_stages.items():
+            self.stages[stage_idx] = StrVarPipelineStage.from_pipeline_stage(stage)
+
+        self.runnables = None
+        # TODO: we could defer this compile to later.+
+        self.compile()
+        self.env = {}
+
+    def compile(self):
+        """Compile the HLO with auto sharding and get the runnable."""
+        self.runnables = dict()
+        for stage_idx, stage in self._raw_stages.items():
+
+            auto_sharding_callable_internal()
+
+
+            self.runnables[stage_idx] = stage.get_runnable()
+
+    def compute(self, input_refs, stage_idx):
+        """
+        Compute on a given stage.
+
+        Args:
+            input_refs (OrderedDict): with key being `repr(var)` and value being its reference.
+            stage_idx (int): the stage to run.
+        """
+        runnable = self.runnables[stage_idx]
+        stage = self.stages[stage_idx]
+
+        logger.debug("stage invars: {}".format(stage.invars))
+        logger.debug("input refs: {}".format(input_refs.keys()))
+
+        # sanity check
+        inputs = []
+        for var in stage.invars:
+            val_ref = input_refs[var]
+            if val_ref:
+                inputs.append(ref_to_array(val_ref))
+            else:
+                assert var in self.env
+                inputs.append(self.env[var])
+
+        outputs = runnable(*inputs)
+        outvals = dict(zip(stage.outvars, outputs))
+
+        # now split the outputs_dict
+        pipeline_outvals = dict()
+        global_outvals = dict()
+        logger.debug("all outputs: {}".format(list(outvals.keys())))
+        logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
+        logger.debug("pipeline_outvars: {}".format(list(stage.pipeline_outvars)))
+        logger.debug("global outvars: {}".format(list(stage.global_outvars)))
+        for var, val in outvals.items():
+            if var in stage.local_outvars:
+                self.env.update({var: val})
+            if var in stage.pipeline_outvars:
+                pipeline_outvals[var] = ray.put(val)
+            if var in stage.global_outvars:
+                global_outvals[var] = ray.put(val)
+        logger.debug("pipeline outvals: {}".format(pipeline_outvals.keys()))
+        logger.debug("global outvals: {}".format(global_outvals.keys()))
+        logger.debug("worker {} env : {}".format(self.name, self.env.keys()))
+        return pipeline_outvals, global_outvals
+
+
 
 
 class Runner:
@@ -125,7 +226,6 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
         global_outvars (List[Var]): output variables.
         dependency (np.array): dependency between stages as an adjacency matrix.
         num_batch (int): number of microbatches.
-        num_pipeline_worker (int): number of pipelining workers.
         schedule (): schedule to execute the pipeline.
 
     Returns:
@@ -137,28 +237,41 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
                  pipeline_stages,
                  global_invars,
                  global_outvars,
+                 physical_mesh,
+                 logical_mesh,
+                 auto_sharding_callable_args,
+                 sliced_meshes=None,
                  dependency=None,
                  num_batch=1,
-                 num_pipeline_worker=2,
                  schedule=None):
         self.stages = pipeline_stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
         self.num_stage = len(self.stages)
-
+        self.phyiscal_mesh = physical_mesh
+        self.logical_mesh = logical_mesh
+        self.auto_sharding_callable_args = auto_sharding_callable_args
         # TODO(Hao): analyze stages/dependencies and generate placement and schedule.
         self.num_batch = num_batch
-        self.num_pipeline_worker = num_pipeline_worker
         self.dependency = dependency
+        # the code below will be removed
         if not self.dependency:
             self.dependency = _gen_linear_dependency(self.num_stage)
+
+        self.sliced_meshes = sliced_meshes
         self.schedule = schedule
+        if self.schedule and not self.sliced_meshes:
+            raise RuntimeError("Sliced meshes are required when schedule is provided.")
         # schedules here include placement information.
         if not self.schedule:
             self.schedule = GpipeSchedule(dependency=self.dependency,
                                           num_batch=self.num_batch,
-                                          num_pipeline_worker=self.num_pipeline_worker)
+                                          physical_mesh=self.physical_mesh,
+                                          logical_mesh=self.logical_mesh,
+                                          sliced_meshes=self.sliced_meshes)
             logger.debug(self.schedule.pprint_schedule())
+        if not self.sliced_meshes:
+            self.sliced_meshes = self.schedule.meshes
 
         self.workers = []
         self._create_workers()
@@ -247,6 +360,33 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
             worker = remote_runner.remote(name=stage_name, stages=stages)
             self.workers.append(worker)
 
+    def _create_workers_v2(self):
+        stages = dict()
+        mesh = self.sliced_meshes[0]
+        if isinstance(mesh, SingleHostDeviceMesh):
+            # reate remote runner by ourselves
+            num_gpu_this_mesh = len(mesh.devices)
+            runner_cls = ray.remote(num_gpus=num_gpu_this_mesh,
+                                    num_cpus=num_gpu_this_mesh)(Runner)
+            is_remote = True
+        else:
+            runner_cls = MultiHostRunner
+            is_remote = False
+        for worker_idx, mesh in enumerate(self.sliced_meshes):
+            stage_assignments = self.schedule.worker_placement(worker_idx)
+            for stage_idx in stage_assignments:
+                stages[stage_idx] = self.stages[stage_idx]
+            stage_name = ",".join([str(s) for s in stage_assignments])
+            logger.debug("Launching worker {} with stages {}.".format(
+                worker_idx, stage_name))
+            if is_remote:
+                worker = runner_cls.remote(name=stage_name, stages=stages, mesh=mesh,
+                                           auto_sharding_callable_args=self.auto_sharding_callable_args)
+            else:
+                worker = runner_cls(name=stage_name, stages=stages, mesh=mesh)
+            self.workers.append(worker)
+
+
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
         """
         Find the input refs based on dependency.
@@ -312,15 +452,23 @@ class GpipeSchedule:
     def __init__(self,
                  *,
                  dependency,
+                 physical_mesh,
+                 logical_mesh,
+                 sliced_meshes=None,
                  num_batch=1,
-                 num_pipeline_worker=1,
                  costs=None):
 
         self.dependency = dependency
+        self.physical_mesh = physical_mesh
+        self.logical_mesh = logical_mesh
+        self.meshes = sliced_meshes
         self.num_batch = num_batch
-        self.num_pipeline_worker = num_pipeline_worker
         self.costs = costs
         self.num_stage = dependency.shape[0]
+
+        if not self.meshes:
+            self.meshes = self.slice_mesh(self.physical_mesh)
+        self.num_pipeline_worker = len(self.meshes)
         if self.num_stage != 2 * self.num_pipeline_worker:
             raise RuntimeError("Gpipe schedule requires #stages being twice of #workers.")
         self._schedules = self._generate_schedule()
@@ -409,6 +557,11 @@ class GpipeSchedule:
                         ownership[worker_idx].add(stage_idx)
         return ownership
 
+    @property
+    def meshes(self):
+        """The woker meshes."""
+        return self.meshes
+
     def stage_placement(self, stage_idx):
         """Query the placement of a stage given its stage index."""
         return self.stage_worker_mapping[stage_idx]
@@ -429,3 +582,43 @@ class GpipeSchedule:
     def num_clock(self):
         """Return the number of clocks in the schedule."""
         return len(self._schedules)
+
+    def slice_mesh(self, physical_mesh):
+        """
+        Slice the mesh for each remote runner.
+
+        In this impl, we guarantee the slicing follows:
+        - len(sliced_meshes) == num_stages / 2 (place forward/backward in a mesh);
+        - higher priority to slice over the node dimension rather than gpu dimension.
+
+        Args:
+            mesh: a physical device mesh.
+
+        Returns:
+            sliced_meshes (List[Mesh]):
+        """
+        sliced_meshes = []
+        num_mesh = self.num_stage / 2
+        mesh = physical_mesh
+        if isinstance(mesh, MultiHostDeviceMesh) and mesh.num_hosts == 1:
+            mesh = SingleHostDeviceMesh(physical_mesh)
+        is_distributed = isinstance(mesh, MultiHostDeviceMesh)
+        if is_distributed:
+            num_host = mesh.num_hosts
+            if num_host < num_mesh:
+                raise RuntimeError("The number of available hosts in the mesh is insufficient.")
+            indices = list(range(num_host))
+            num_host_per_mesh = num_host / num_mesh
+            for i in range(num_host):
+                ins = indices[num_host_per_mesh:i:num_host_per_mesh*(i+1)]
+                sliced_meshes.append(mesh.slice(ins))
+        else:
+            num_device = len(mesh.devices)
+            if num_device < num_mesh:
+                raise RuntimeError("The number of available devices in the mesh is insufficient.")
+            indices = list(range(num_device))
+            num_device_per_mesh = num_device / num_mesh
+            for i in range(num_mesh):
+                ins = indices[num_device_per_mesh*i:num_device_per_mesh*(i+1)]
+                sliced_meshes.append(mesh.slice(ins))
+        return sliced_meshes

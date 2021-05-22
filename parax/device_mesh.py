@@ -240,8 +240,8 @@ class DistributedArray:
             fetched_np_buffers = self.device_mesh.get_remote_buffers([
                 self.remote_buffers[i] for i in self.one_replica_buffer_indices
             ])
-            for i in self.one_replica_buffer_indices:
-                npy_value[self.indices[i]] = fetched_np_buffers[i]
+            for ct, i in enumerate(self.one_replica_buffer_indices):
+                npy_value[self.indices[i]] = fetched_np_buffers[ct]
             self._npy_value = npy_value
         return self._npy_value
 
@@ -359,8 +359,26 @@ class MultiHostDeviceMesh:
                           aval, spec in zip(out_avals, output_sharding_specs)]
 
         outs_handler = partial(self._gather_outs, out_avals, output_sharding_specs, output_indices)
-        return partial(self._execute_with_handler,
-            remote_executable, args_handler, outs_handler, len(out_avals))
+        ret = partial(self._execute_with_handler, remote_executable, args_handler,
+            outs_handler, len(out_avals))
+        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
+            input_sharding_specs, input_indices)
+        return ret
+
+    def preshard_args(self, handler, avals, sharding_specs, indices, *args):
+        input_bufs = handler(args)
+
+        sharded_args = []
+        for i in range(len(args)):
+            sharded_args.append(DistributedArray(
+                self,
+                avals[i],
+                sharding_specs[i],
+                input_bufs[i],
+                indices[i],
+            ))
+
+        return sharded_args
 
     def _shard_args(self, arg_indices, args):
         input_bufs = []

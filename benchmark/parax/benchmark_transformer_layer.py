@@ -1,10 +1,13 @@
-import numpy as np
+import os
+
 from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
+import numpy as np
+import ray
 
-from parax import parallelize, global_config, testing, SingleHostDeviceMesh
+from parax import parallelize, global_config, testing, DeviceCluster
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 
 import timeit
@@ -31,9 +34,10 @@ def benchmark_transformer_one_case(benchmark_case):
         benchmark_case
 
     # Mesh configs
-    num_devices = dp_size * tensor_mp_size
-    device_mesh = SingleHostDeviceMesh(jax.devices()[:num_devices])
-    logical_mesh = device_mesh.get_logical_mesh([dp_size, tensor_mp_size])
+    device_cluster = DeviceCluster()
+    physical_mesh = device_cluster.get_physical_mesh()
+    logical_mesh = physical_mesh.get_logical_mesh(
+        [dp_size, tensor_mp_size], [1, 1], [1, 0.01])
 
     @parallelize(devices=logical_mesh)
     def train_step(optimizer, batch, apply_fn):
@@ -109,11 +113,15 @@ def benchmark_transformer_one_case(benchmark_case):
 
 benchmark_suits = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    (16,          1024,    1536,        3,          1536//96,  2,       2),
-    (16,          1024,    1536,        3,          1536//96,  1,       4),
+    (32,          1024,    1536,        1,          1536//96,  8,       1),
+    (32,          1024,    1536,        1,          1536//96,  4,       2),
+    (32,          1024,    1536,        1,          1536//96,  2,       4),
+    (32,          1024,    1536,        1,          1536//96,  1,       8),
 
-    (8,           256,     2304,        3,          2304//96,  2,       2),
-    (8,           256,     2304,        3,          2304//96,  1,       4),
+    (32,          128,     5120,        1,          5120//128, 8,       1),
+    (32,          128,     5120,        1,          5120//128, 4,       2),
+    (32,          128,     5120,        1,          5120//128, 2,       4),
+    (32,          128,     5120,        1,          5120//128, 1,       8),
 ]
 
 
@@ -123,5 +131,7 @@ def benchmark_all():
 
 
 if __name__ == "__main__":
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+    ray.init(address="auto")
     benchmark_all()
 

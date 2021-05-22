@@ -41,7 +41,7 @@ benchmark_suits_multi_node = [
 
 
 def benchmark_all(args):
-    if args.master_address is None:
+    if args.master_addr is None:
         benchmark_suits = benchmark_suits_single_node
     else:
         benchmark_suits = benchmark_suits_multi_node
@@ -49,7 +49,7 @@ def benchmark_all(args):
     for case in benchmark_suits:
         case_str = str(case)
 
-        if args.master_address is None:
+        if args.master_addr is None:
             # Single node
             ret = run_cmd('python3 -m torch.distributed.launch '
                          f'--nproc_per_node {args.nproc_per_node} '

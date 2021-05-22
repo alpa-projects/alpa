@@ -443,6 +443,8 @@ class MeshHostWorker:
         self.local_buffers = {}    # Dict[uuid -> DeviceArray]
         self.executable = {}       # Dict[uuid -> Executable]
 
+        print(self.local_devices)
+
     def put_buffer(self, uuid, device_id, data):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
@@ -501,7 +503,8 @@ class MeshHostWorker:
         self.executable[uuid] = compiled_computation
 
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
-            self.node_id, compiled_computation.hlo_modules()[0])
+            self.node_id) #, compiled_computation.hlo_modules()[0])
+        print("python done")
 
     def execute(self, executable_uuid, input_uuids, output_uuids):
         # Map uuids to input buffers

@@ -443,8 +443,6 @@ class MeshHostWorker:
         self.local_buffers = {}    # Dict[uuid -> DeviceArray]
         self.executable = {}       # Dict[uuid -> Executable]
 
-        print(self.local_devices)
-
     def put_buffer(self, uuid, device_id, data):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
@@ -543,8 +541,6 @@ class DeviceCluster:
             for key in node["Resources"]:
                 if key.startswith("node:"):
                     self.host_info.append(node)
-
-        self.host_info = list(reversed(self.host_info))
 
         # Gather device info
         self.num_devices = []

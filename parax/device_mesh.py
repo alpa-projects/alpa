@@ -287,7 +287,7 @@ class MultiHostDeviceMesh:
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
-            self.workers.append(cls.remote(self.server_address, i))
+            self.workers.append(cls.remote(self.server_address, self.num_hosts, i))
         self.sync_workers()
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
@@ -426,7 +426,8 @@ class MultiHostDeviceMesh:
 class MeshHostWorker:
     """A ray actor to manage the xla computation on a single host."""
 
-    def __init__(self, server_address, node_id):
+    def __init__(self, server_address, num_hosts, node_id):
+        self.num_hosts = num_hosts
         self.node_id = node_id
         self.distributed_client = \
                 xla_client._xla.get_distributed_runtime_client(server_address, node_id)
@@ -494,6 +495,9 @@ class MeshHostWorker:
             compiled_computation = backend.compile(computation, compile_options)
 
         self.executable[uuid] = compiled_computation
+
+        xla_client._xla.init_nccl_communicators(self.node_id, self.backend,
+            self.distributed_client, compiled_computation)
 
     def execute(self, executable_uuid, input_uuids, output_uuids):
         # Map uuids to input buffers

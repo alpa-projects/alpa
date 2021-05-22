@@ -180,6 +180,8 @@ class RemoteExecutableRef:
         return f"RemoteExecutableRef(uuid = {self.uuid})"
 
     def __del__(self):
+        return
+        assert ray.is_initialized() == True
         self.device_mesh.delete_remote_executable(self)
 
 
@@ -199,6 +201,8 @@ class RemoteBufferRef:
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
 
     def __del__(self):
+        return
+        assert ray.is_initialized() == True
         self.device_mesh.delete_remote_buffers((self,))
 
 
@@ -496,8 +500,8 @@ class MeshHostWorker:
 
         self.executable[uuid] = compiled_computation
 
-        xla_client._xla.init_nccl_communicators(self.node_id, self.backend,
-            self.distributed_client, compiled_computation)
+        xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
+            self.node_id, compiled_computation.hlo_modules()[0])
 
     def execute(self, executable_uuid, input_uuids, output_uuids):
         # Map uuids to input buffers
@@ -537,6 +541,8 @@ class DeviceCluster:
             for key in node["Resources"]:
                 if key.startswith("node:"):
                     self.host_info.append(node)
+
+        self.host_info = list(reversed(self.host_info))
 
         # Gather device info
         self.num_devices = []

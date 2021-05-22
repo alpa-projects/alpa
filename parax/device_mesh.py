@@ -503,7 +503,7 @@ class MeshHostWorker:
         self.executable[uuid] = compiled_computation
 
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
-            self.node_id) #, compiled_computation.hlo_modules()[0])
+            self.node_id, compiled_computation)
         print("python done")
 
     def execute(self, executable_uuid, input_uuids, output_uuids):

@@ -504,7 +504,6 @@ class MeshHostWorker:
 
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
             self.node_id, compiled_computation)
-        print("python done")
 
     def execute(self, executable_uuid, input_uuids, output_uuids):
         # Map uuids to input buffers

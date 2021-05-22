@@ -61,7 +61,7 @@ def benchmark_all(args):
                          f'--nproc_per_node {args.nproc_per_node} '
                          f'--nnodes {args.nnodes} '
                          f'--node_rank {args.node_rank} '
-                         f'--master_address {args.master_address} '
+                         f'--master_addr {args.master_addr} '
                          f'--master_port {args.master_port} '
                          'benchmark_transformer_layer_one_case.py '
                          f'"{case_str}"')
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     parser.add_argument("--nproc_per_node", type=int, required=True)
     parser.add_argument("--nnodes", type=str)
     parser.add_argument("--node_rank", type=str)
-    parser.add_argument("--master_address", type=str)
+    parser.add_argument("--master_addr", type=str)
     parser.add_argument("--master_port", type=str)
     args = parser.parse_args()
 

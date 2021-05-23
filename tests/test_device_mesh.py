@@ -17,7 +17,7 @@ from parax.testing import assert_allclose
 
 class DeviceMeshTest(unittest.TestCase):
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address='auto', ignore_reinit_error=True)
 
     def test_add_one(self):

@@ -3,6 +3,7 @@ from collections.abc import Iterable
 import os
 from operator import attrgetter
 import time
+from typing import Union, List, Tuple
 
 import numpy as np
 import ray
@@ -17,7 +18,7 @@ from jax._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                            extend_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, curry)
 
-from parax.util import get_dim_last_value, to_int_tuple
+from parax.util import get_dim_last_value, to_int_tuple, run_cmd
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -219,6 +220,9 @@ class DistributedArray:
         self._npy_value = None
         self._one_replica_buffer_indices = None
 
+    def block_until_ready(self):
+        self.device_mesh.block_until_ready_remote_buffers(self.remote_buffers)
+
     @property
     def one_replica_buffer_indices(self):
         """Indices of buffers containing one complete copy of the array data."""
@@ -307,10 +311,10 @@ class MultiHostDeviceMesh:
             [1, 1], [1, 0.01])
 
     def compile_remote_executable(self,
-                                  hlo_proto,
-                                  logical_mesh_shape,
-                                  auto_sharding_strategy_vector,
-                                  is_tuple_args):
+                                  hlo_proto: bytes,
+                                  logical_mesh_shape: Tuple[int],
+                                  auto_sharding_strategy_vector: np.ndarray,
+                                  is_tuple_args: bool):
         executable = RemoteExecutableRef(self)
         for w in self.workers:
             w.compile_executable.remote(
@@ -321,7 +325,7 @@ class MultiHostDeviceMesh:
                 is_tuple_args)
         return executable
 
-    def get_remote_buffers(self, buf_refs):
+    def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
         obj_refs = []
         for buf_ref in buf_refs:
             obj_refs.append(self.workers[buf_ref.host_id].
@@ -329,14 +333,21 @@ class MultiHostDeviceMesh:
 
         return ray.get(obj_refs)
 
-    def delete_remote_buffers(self, buf_refs):
+    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
         if self.workers is None:
             return
 
         for buf_ref in buf_refs:
             self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
 
-    def delete_remote_executable(self, exe_ref):
+    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        tasks = []
+        for buf_ref in buf_refs:
+            tasks.append(elf.workers[buf_ref.host_id].\
+                block_until_ready_buffers.remote(buf_ref.uuid))
+        ray.get(tasks)
+
+    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
         if self.workers is None:
             return
 
@@ -385,7 +396,7 @@ class MultiHostDeviceMesh:
         for arg, indices in zip(args, arg_indices):
             # Fast path for DistributedArray
             if isinstance(arg, DistributedArray) and arg.indices == indices:
-                return arg.remote_buffers
+                input_bufs.append(arg.remote_buffers)
             else:  # Slow path
                 arg = xla.canonicalize_dtype(arg)
                 buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
@@ -461,32 +472,39 @@ class MeshHostWorker:
         self.local_buffers = {}    # Dict[uuid -> DeviceArray]
         self.executable = {}       # Dict[uuid -> Executable]
 
-    def put_buffer(self, uuid, device_id, data):
+    def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
-    def get_buffers(self, uuids):
+    def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
             return [self.local_buffers[uuid] for uuid in uuids]
         return self.local_buffers[uuids]
 
-    def delete_buffers(self, uuids):
+    def delete_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
             for uuid in uuids:
                 del self.local_buffers[uuid]
         else:
             del self.local_buffers[uuids]
 
-    def delete_executable(self, uuid):
+    def block_until_ready_buffers(self, uuids: Union[List[int], int]):
+        if isinstance(uuids, Iterable):
+            for uuid in uuids:
+                self.local_buffers[uuid].block_until_ready()
+        else:
+            self.local_buffers[uuids].block_until_ready()
+
+    def delete_executable(self, uuid: int):
         self.executable[uuid].delete()
         del self.executable[uuid]
 
     def compile_executable(self,
-                           uuid,
-                           hlo_proto,
-                           logical_mesh_shape,
-                           auto_sharding_strategy_vector,
-                           is_tuple_args):
+                           uuid: int,
+                           hlo_proto: bytes,
+                           logical_mesh_shape: Tuple[int],
+                           auto_sharding_strategy_vector: np.ndarray,
+                           is_tuple_args: bool):
         backend = self.backend
         num_devices = np.prod(logical_mesh_shape)
 
@@ -521,7 +539,10 @@ class MeshHostWorker:
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
             self.node_id, compiled_computation)
 
-    def execute(self, executable_uuid, input_uuids, output_uuids):
+    def execute(self,
+                executable_uuid: int,
+                input_uuids: List[List[int]],
+                output_uuids: List[List[int]]):
         # Map uuids to input buffers
         device_inputs = [[None for _ in range(input_uuids.shape[1])]
             for _ in range(input_uuids.shape[0])]
@@ -539,7 +560,8 @@ class MeshHostWorker:
                 self.local_buffers[output_uuids[i][j]] = device_outs[i][j]
 
     def sync(self):
-        return
+        for device in self.local_devices:
+            device.synchronize_all_activity()
 
     def shutdown(self):
         self.distributed_client.shutdown()

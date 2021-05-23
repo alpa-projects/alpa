@@ -7,7 +7,7 @@ def run_cmd(cmd):
     return os.system(cmd)
 
 
-benchmark_suits_single_node = [
+benchmark_suite_single_node = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size, ddp_impl
     (32,          1024,    1536,        3,          1536//96,  4,       1,              0,),
     (32,          1024,    1536,        3,          1536//96,  2,       2,              0,),
@@ -18,7 +18,7 @@ benchmark_suits_single_node = [
     (32,          128,     5120,        2,          5120//128, 1,       4,              0,),
 ]
 
-benchmark_suits_multi_node = [
+benchmark_suite_multi_node = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size, ddp_impl
     (32,          1024,    1536,        3,          1536//96,  8,       1,              0,),
     (32,          1024,    1536,        3,          1536//96,  4,       2,              0,),
@@ -34,11 +34,11 @@ benchmark_suits_multi_node = [
 
 def benchmark_all(args):
     if args.master_addr is None:
-        benchmark_suits = benchmark_suits_single_node
+        benchmark_suite = benchmark_suite_single_node
     else:
-        benchmark_suits = benchmark_suits_multi_node
+        benchmark_suite = benchmark_suite_multi_node
 
-    for case in benchmark_suits:
+    for case in benchmark_suite:
         case_str = str(case)
 
         if args.master_addr is None:

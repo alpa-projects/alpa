@@ -108,7 +108,7 @@ def benchmark_mlp_one_case(benchmark_case):
         fout.write(line + "\n")
 
 
-benchmark_suits = [
+benchmark_suite = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
     (16,          1024,    2304,        4,          2304//96,  4,       1),
     (16,          1024,    2304,        4,          2304//96,  2,       2),
@@ -122,7 +122,7 @@ benchmark_suits = [
 
 
 def benchmark_all():
-    for case in benchmark_suits:
+    for case in benchmark_suite:
         benchmark_mlp_one_case(case)
 
 

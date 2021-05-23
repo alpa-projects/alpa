@@ -114,7 +114,7 @@ def benchmark_transformer_one_case(benchmark_case):
     physical_mesh.shutdown()
 
 
-benchmark_suits_4_gpu = [
+benchmark_suite_4_gpu = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
     (32,          1024,    1536,        3,          1536//96,  4,       1),
     (32,          1024,    1536,        3,          1536//96,  2,       2),
@@ -125,7 +125,7 @@ benchmark_suits_4_gpu = [
     (32,          128,     5120,        2,          5120//128, 1,       4),
 ]
 
-benchmark_suits_8_gpu = [
+benchmark_suite_8_gpu = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
     (32,          1024,    1536,        3,          1536//96,  8,       1),
     (32,          1024,    1536,        3,          1536//96,  4,       2),
@@ -143,13 +143,13 @@ def benchmark_all():
     num_gpus = ray.cluster_resources()["GPU"]
 
     if num_gpus == 4:
-        benchmark_suit = benchmark_suits_4_gpu
+        benchmark_suite = benchmark_suite_4_gpu
     elif num_gpus == 8:
-        benchmark_suit = benchmark_suits_8_gpu
+        benchmark_suite = benchmark_suite_8_gpu
     else:
-        raise ValueError("No benchmark suit")
+        raise ValueError("No benchmark suite")
 
-    for case in benchmark_suit:
+    for case in benchmark_suite:
         benchmark_transformer_one_case(case)
 
 

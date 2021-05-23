@@ -64,6 +64,7 @@ def benchmark_transformer_one_case(benchmark_case):
     params = model.init(rngkey, batch["hidden_states"], batch["attention_mask"])
     optimizer = optim.Adam(1e-2).create(params)
     params = rngkey = None
+
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
     gc.collect()
 
@@ -110,25 +111,46 @@ def benchmark_transformer_one_case(benchmark_case):
     with open("results.tsv", "a") as fout:
         fout.write("\t".join(values) + "\n")
 
+    physical_mesh.shutdown()
 
-benchmark_suits = [
+
+benchmark_suits_4_gpu = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    (32,          1024,    1536,        1,          1536//96,  4,       1),
-    (32,          1024,    1536,        1,          1536//96,  4,       2),
-    (32,          1024,    1536,        1,          1536//96,  2,       4),
-    (32,          1024,    1536,        1,          1536//96,  1,       8),
+    (32,          1024,    1536,        3,          1536//96,  4,       1),
+    (32,          1024,    1536,        3,          1536//96,  2,       2),
+    (32,          1024,    1536,        3,          1536//96,  1,       4),
 
-    (32,          128,     5120,        1,          5120//128, 8,       1),
-    (32,          128,     5120,        1,          5120//128, 4,       2),
-    (32,          128,     5120,        1,          5120//128, 2,       4),
-    (32,          128,     5120,        1,          5120//128, 1,       8),
+    (32,          128,     5120,        2,          5120//128, 4,       1),
+    (32,          128,     5120,        2,          5120//128, 2,       2),
+    (32,          128,     5120,        2,          5120//128, 1,       4),
+]
+
+benchmark_suits_8_gpu = [
+    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
+    (32,          1024,    1536,        3,          1536//96,  8,       1),
+    (32,          1024,    1536,        3,          1536//96,  4,       2),
+    (32,          1024,    1536,        3,          1536//96,  2,       4),
+    (32,          1024,    1536,        3,          1536//96,  1,       8),
+
+    (32,          128,     5120,        2,          5120//128, 8,       1),
+    (32,          128,     5120,        2,          5120//128, 4,       2),
+    (32,          128,     5120,        2,          5120//128, 2,       4),
+    (32,          128,     5120,        2,          5120//128, 1,       8),
 ]
 
 
 def benchmark_all():
-    for case in benchmark_suits:
+    num_gpus = ray.cluster_resources()["GPU"]
+
+    if num_gpus == 4:
+        benchmark_suit = benchmark_suits_4_gpu
+    elif num_gpus == 8:
+        benchmark_suit = benchmark_suits_8_gpu
+    else:
+        raise ValueError("No benchmark suit")
+
+    for case in benchmark_suit:
         benchmark_transformer_one_case(case)
-        break
 
 
 if __name__ == "__main__":

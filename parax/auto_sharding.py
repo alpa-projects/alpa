@@ -76,11 +76,12 @@ def auto_sharding_callable(
     # Set up aliases (donating invars)
     backend = xb.get_backend(backend_name)
     if backend.platform in ("gpu", "tpu"):
-        donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
-    if any(donated_invars):
+        donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+
+    if any(donation_results):
         # TODO(tomhennigan): At call time we should mark these buffers as deleted.
         unused_donations = [str(c.GetShape(a))
-                            for a, d in zip(xla_args, donated_invars) if d]
+                            for a, d in zip(xla_args, donation_results) if d]
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
     # Compile
@@ -142,7 +143,7 @@ def auto_sharding_callable(
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-        input_sharding_specs, output_sharding_specs)
+        input_sharding_specs, output_sharding_specs, donated_invars)
 
 
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):

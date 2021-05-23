@@ -15,7 +15,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
 from timeit_v2 import py_benchmark
 
-MB = 1024 ** 2
+GB = 1024 ** 3
 
 
 def get_memory_usage(print_info=False):
@@ -25,8 +25,8 @@ def get_memory_usage(print_info=False):
     allocated = torch.cuda.memory_allocated(device)
     reserved = torch.cuda.memory_reserved(device)
     if print_info:
-        print("allocated: %.2f MB" % (allocated / 1024 / 1024), flush=True)
-        print("reserved:  %.2f MB" % (reserved / 1024 / 1024), flush=True)
+        print("allocated: %.2f GB" % (allocated / GB), flush=True)
+        print("reserved:  %.2f GB" % (reserved / GB), flush=True)
     return allocated
 
 
@@ -131,8 +131,8 @@ def benchmark_transfomer_one_case(benchmark_case):
                  "Peak Mem", "ActMem", "Mean Time", "Std Time"]
         values = ["transformer-layer", str(benchmark_case[:-3]),
                   str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
-                  f"{weight_mem/MB:.2f}", f"{peak_mem/MB:.2f}",
-                  f"{act_mem[0]/MB:.2f}",
+                  f"{weight_mem/GB:5.2f}", f"{peak_mem/GB:5.2f}",
+                  f"{act_mem[0]/GB:5.2f}",
                   f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
 
         line = ""

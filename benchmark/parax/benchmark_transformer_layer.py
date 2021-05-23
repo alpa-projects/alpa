@@ -1,20 +1,21 @@
-import numpy as np
+import gc
+import os
+import time
+
 from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
+import numpy as np
+import ray
 
-from parax import parallelize, global_config, testing, SingleHostDeviceMesh
+from parax import parallelize, global_config, testing, DeviceCluster
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
+from parax.util import run_cmd
 
 import timeit
 
 MB = 1024 ** 2
-
-
-def block_until_ready(x):
-    for leaf in jax.tree_util.tree_leaves(x):
-        leaf.block_until_ready()
 
 
 def compute_bytes(param_tree):
@@ -31,9 +32,10 @@ def benchmark_transformer_one_case(benchmark_case):
         benchmark_case
 
     # Mesh configs
-    num_devices = dp_size * tensor_mp_size
-    device_mesh = SingleHostDeviceMesh(jax.devices()[:num_devices])
-    logical_mesh = device_mesh.get_logical_mesh([dp_size, tensor_mp_size])
+    device_cluster = DeviceCluster()
+    physical_mesh = device_cluster.get_physical_mesh()
+    logical_mesh = physical_mesh.get_logical_mesh(
+        [dp_size, tensor_mp_size], [1, 1], [1, 0.01])
 
     @parallelize(devices=logical_mesh)
     def train_step(optimizer, batch, apply_fn):
@@ -61,7 +63,10 @@ def benchmark_transformer_one_case(benchmark_case):
     rngkey = jax.random.PRNGKey(0)
     params = model.init(rngkey, batch["hidden_states"], batch["attention_mask"])
     optimizer = optim.Adam(1e-2).create(params)
+    params = rngkey = None
+
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
+    gc.collect()
 
     # Define benchmark function
     closure = [optimizer]
@@ -69,7 +74,7 @@ def benchmark_transformer_one_case(benchmark_case):
         optimizer = closure[0]
 
         optimizer = train_step(optimizer, batch, model.apply)
-        block_until_ready(optimizer)
+        physical_mesh.sync_workers()
 
         closure[0] = optimizer
 
@@ -82,17 +87,17 @@ def benchmark_transformer_one_case(benchmark_case):
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
     real_mem = testing.last_compiled_executable.total_allocation_size()
+    objective = testing.last_compiled_auto_sharding_objective
 
     # Check sharding strategy
-    hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-    hlo_ir = hlo_module.to_string()
-    objective = testing.last_compiled_auto_sharding_objective
-    print("===== HLO =====")
-    print(hlo_ir)
-
+    #hlo_module = testing.last_compiled_executable.hlo_modules()[0]
+    #hlo_ir = hlo_module.to_string()
+    #print("===== HLO =====")
+    #print(hlo_ir)
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
+    # Log benchmark results
     heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Mean Time", "Std Time", "Objective"]
     values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
              f"{real_mem/MB:.2f}", f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}",
@@ -106,22 +111,51 @@ def benchmark_transformer_one_case(benchmark_case):
     with open("results.tsv", "a") as fout:
         fout.write("\t".join(values) + "\n")
 
+    physical_mesh.shutdown()
 
-benchmark_suits = [
+
+benchmark_suite_4_gpu = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    (16,          1024,    1536,        3,          1536//96,  2,       2),
-    (16,          1024,    1536,        3,          1536//96,  1,       4),
+    (32,          1024,    1536,        3,          1536//96,  4,       1),
+    (32,          1024,    1536,        3,          1536//96,  2,       2),
+    (32,          1024,    1536,        3,          1536//96,  1,       4),
 
-    (8,           256,     2304,        3,          2304//96,  2,       2),
-    (8,           256,     2304,        3,          2304//96,  1,       4),
+    (32,          128,     5120,        2,          5120//128, 4,       1),
+    (32,          128,     5120,        2,          5120//128, 2,       2),
+    (32,          128,     5120,        2,          5120//128, 1,       4),
+]
+
+benchmark_suite_8_gpu = [
+    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
+    (32,          1024,    1536,        3,          1536//96,  8,       1),
+    (32,          1024,    1536,        3,          1536//96,  4,       2),
+    (32,          1024,    1536,        3,          1536//96,  2,       4),
+    (32,          1024,    1536,        3,          1536//96,  1,       8),
+
+    (32,          128,     5120,        2,          5120//128, 8,       1),
+    (32,          128,     5120,        2,          5120//128, 4,       2),
+    (32,          128,     5120,        2,          5120//128, 2,       4),
+    (32,          128,     5120,        2,          5120//128, 1,       8),
 ]
 
 
 def benchmark_all():
-    for case in benchmark_suits:
+    num_gpus = ray.cluster_resources()["GPU"]
+
+    if num_gpus == 4:
+        benchmark_suite = benchmark_suite_4_gpu
+    elif num_gpus == 8:
+        benchmark_suite = benchmark_suite_8_gpu
+    else:
+        raise ValueError(f"No benchmark suite for gpu number: {num_gpus}")
+
+    for case in benchmark_suite:
         benchmark_transformer_one_case(case)
 
 
 if __name__ == "__main__":
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
+    ray.init(address="auto")
     benchmark_all()
 

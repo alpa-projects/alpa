@@ -17,7 +17,7 @@ from parax.testing import assert_allclose
 
 class DeviceMeshTest(unittest.TestCase):
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address='auto', ignore_reinit_error=True)
 
     def test_add_one(self):
@@ -51,6 +51,7 @@ class DeviceMeshTest(unittest.TestCase):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
+        #logical_mesh = physical_mesh.get_logical_mesh([2, 4], [1, 1], [1, 0.01])
 
         class Model(nn.Module):
             hidden_dim: int
@@ -98,6 +99,7 @@ class DeviceMeshTest(unittest.TestCase):
         assert_allclose(optimizer_expected.target, optimizer_actaul.target)
 
         physical_mesh.shutdown()
+
 
 def suite():
     suite = unittest.TestSuite()

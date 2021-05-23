@@ -181,8 +181,6 @@ class RemoteExecutableRef:
         return f"RemoteExecutableRef(uuid = {self.uuid})"
 
     def __del__(self):
-        return
-        assert ray.is_initialized() == True
         self.device_mesh.delete_remote_executable(self)
 
 
@@ -202,8 +200,6 @@ class RemoteBufferRef:
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
 
     def __del__(self):
-        return
-        assert ray.is_initialized() == True
         self.device_mesh.delete_remote_buffers((self,))
 
 

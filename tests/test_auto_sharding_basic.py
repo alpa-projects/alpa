@@ -181,11 +181,11 @@ class AutoShardingBasicTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(AutoShardingBasicTest('test_donate_buffer'))
+    suite.addTest(AutoShardingBasicTest('test_donate_buffer'))
     suite.addTest(AutoShardingBasicTest('test_dropout'))
-    #suite.addTest(AutoShardingBasicTest('test_dot_reshape_transpose'))
-    #suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification'))
-    #suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification_out_reuse'))
+    suite.addTest(AutoShardingBasicTest('test_dot_reshape_transpose'))
+    suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification'))
+    suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification_out_reuse'))
     return suite
 
 

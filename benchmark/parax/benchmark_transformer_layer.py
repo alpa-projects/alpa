@@ -147,7 +147,7 @@ def benchmark_all():
     elif num_gpus == 8:
         benchmark_suite = benchmark_suite_8_gpu
     else:
-        raise ValueError("No benchmark suite")
+        raise ValueError(f"No benchmark suite for gpu number: {num_gpus}")
 
     for case in benchmark_suite:
         benchmark_transformer_one_case(case)

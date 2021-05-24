@@ -377,8 +377,8 @@ class MultiHostDeviceMesh:
 
         output_indices = [pxla.spec_to_indices(aval.shape, spec) for
                           aval, spec in zip(out_avals, output_sharding_specs)]
-
         outs_handler = partial(self._gather_outs, out_avals, output_sharding_specs, output_indices)
+
         ret = partial(self._execute_with_handler, remote_executable, args_handler,
             outs_handler, len(out_avals), donated_invars)
         ret.shard_args_only = partial(self.preshard_args, args_handler, avals,

@@ -54,7 +54,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         class Model(nn.Module):
             @nn.compact
             def __call__(self, x, deterministic):
-                x = nn.Dense(128)(x)
+                x = nn.Dense(128, use_bias=False)(x)
                 x = nn.Dropout(0.1, deterministic=deterministic)(x)
                 return x
 

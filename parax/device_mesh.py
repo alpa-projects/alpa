@@ -296,13 +296,18 @@ class MultiHostDeviceMesh:
         # Launch workers
         self.workers = []
         for i in range(self.num_hosts):
+            # Set XLA environment variables
+            env_vars = {
+                "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+            }
+
+            # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
-            self.workers.append(cls.options(
-                override_environment_variables={
-                    "XLA_FLAGS": "--xla_gpu_autotune_level=0"
-                }).remote(self.server_address, self.num_hosts, i))
+            worker = cls.options(override_environment_variables=env_vars).remote(
+                                 self.server_address, self.num_hosts, i)
+            self.workers.append(worker)
         self.sync_workers()
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
@@ -341,7 +346,7 @@ class MultiHostDeviceMesh:
         return ray.get(obj_refs)
 
     def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        if self.workers is None:
+        if self.workers is None or not ray.is_initialized():
             return
 
         for buf_ref in buf_refs:
@@ -355,7 +360,7 @@ class MultiHostDeviceMesh:
         ray.get(tasks)
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
-        if self.workers is None:
+        if self.workers is None or not ray.is_initialized():
             return
 
         for i in range(self.num_hosts):

@@ -2,6 +2,7 @@
 import itertools as it
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
+from warnings import warn
 
 from abc import ABC, abstractmethod
 from jax import jit
@@ -11,6 +12,10 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
 
 # pylint: disable=redefined-builtin
+from parax import testing
+from parax import PhysicalDeviceMesh, XlaPassContext
+from parax.auto_sharding import last_s_val, hlo_sharding_to_sharding_spec
+
 unsafe_map, map = map, safe_map  # type: ignore
 
 
@@ -197,3 +202,154 @@ class StrVarPipelineStage:
             global_outvars={repr(var) for var in pipeline_stage.global_outvars},
             local_outvars={repr(var) for var in pipeline_stage.local_outvars},
         )
+
+
+# TODO(Hao): merge sharded stage with unsharded stage.
+class XlaShardedPipelineStage(PipelineStage):
+    """Pipeline stage with XLA HLO protos, supporting auto-sharding."""
+    # hlo_proto: bytes = field(default_factory=b"")
+    mesh: PhysicalDeviceMesh
+    hlo_module: Any
+    hlo_proto: Any
+    donated_invars: Any
+    compiled: Any
+
+    @classmethod
+    def from_jax_pipeline_stage(cls,
+                                jax_pipeline_stage: JaxPipelineStage,
+                                mesh: PhysicalDeviceMesh,
+                                donated_invars,
+                                memory_budget_per_device):
+        distributed_compilation_head = True if mesh.is_distributed else False
+        logical_mesh = mesh.get_default_logical_mesh()
+        closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
+        in_avals = [var.aval for var in jax_pipeline_stage.invars]
+        out_avals = [var.aval for var in jax_pipeline_stage.outvars]
+        consts = closed_jaxpr.consts
+        map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+        tuple_args = False
+
+        # make xla arguments
+        c = xb.make_computation_builder("pipeline_stage_{}".format(jax_pipeline_stage.name))
+        # xla_consts = xla._xla_consts(c, consts)
+        # xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
+        xla_consts = map(partial(xb.constant, c), consts)
+        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=donated_invars)
+
+        # Convert jaxpr to XLA HLO
+        backend_name = "gpu"
+        axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
+        out_nodes = xla.jaxpr_subcomp(
+            c, closed_jaxpr.jaxpr, backend_name, axis_env, xla_consts,
+            extend_name_stack(wrap_name(jax_pipeline_stage.name, "stage")), *xla_args)
+        out_tuple = xc.ops.Tuple(c, out_nodes)
+
+        # Set up aliases (donating invars)
+        backend = xb.get_backend(backend_name)
+        if backend.platform in ("gpu", "tpu"):
+            donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+        if any(donation_results):
+            # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+            unused_donations = [str(c.GetShape(a))
+                                for a, d in zip(xla_args, donation_results) if d]
+            warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
+
+        # Compile
+        built = c.build(out_tuple)
+        #print(built.as_hlo_text())
+        #exit()
+        num_replicas = 1
+        num_partitions = len(logical_mesh.flatten_ids)
+        compile_options = xb.get_compile_options(
+            num_replicas=num_replicas,
+            num_partitions=num_partitions,
+            device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
+            use_spmd_partitioning=True,
+        )
+        compile_options.parameter_is_tupled_arguments = tuple_args
+
+        if memory_budget_per_device is None:
+            memory_budget_per_device = -1
+        pass_through_device_assignment = False
+        if distributed_compilation_head:
+            pass_through_device_assignment = True
+
+        with XlaPassContext({
+            # Solver options
+            "auto_sharding::enable": True,
+            "auto_sharding::memory_budget_per_device": memory_budget_per_device,
+            "auto_sharding::force_all_gather_cost": False,
+            "auto_sharding::all_gather_cost": 1e10,
+
+            # Device mesh
+            "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
+            "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
+            "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
+            "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
+
+            # Distributed compilation
+            "build_option::pass_through_device_assignment": pass_through_device_assignment,
+
+            # Debug options
+            "auto_sharding::simplify_graph": True,
+            "auto_sharding::print_strategy": False,
+        }):
+            compiled = xla.backend_compile(backend, built, compile_options)
+        testing.last_compiled_executable = compiled
+        hlo_module = compiled.hlo_modules()[0]
+
+        return cls(
+            name=jax_pipeline_stage.name,
+            hlo_module=hlo_module,
+            hlo_proto=built.as_serialized_hlo_module_proto(),
+            mesh=mesh,
+            compiled=compiled,
+            donated_invars=donated_invars,
+            invars=jax_pipeline_stage.invars,
+            pipeline_invars=jax_pipeline_stage.pipeline_invars,
+            global_invars=jax_pipeline_stage.global_invars,
+            local_invars=jax_pipeline_stage.local_invars,
+            outvars=jax_pipeline_stage.outvars,
+            pipeline_outvars=jax_pipeline_stage.pipeline_outvars,
+            global_outvars=jax_pipeline_stage.global_outvars,
+            local_outvars=jax_pipeline_stage.local_outvars,
+        )
+
+    def get_runnable(self):
+        """Return a callable of the pipeline stage."""
+        # out_avals = [var.aval for var in self.outvars]
+        # xla_computation = xc.XlaComputation(self.hlo_proto)
+        # tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
+        # nreps = 1
+        # backend = 'gpu'
+        # backend = xb.get_backend(backend)
+        # device = backend.get_default_device_assignment(1)[0]
+        # options = xb.get_compile_options(
+        #     num_replicas=nreps,
+        #     num_partitions=1,
+        #     device_assignment=(device.id,) if device else None)
+        # options.parameter_is_tupled_arguments = tuple_args
+        # compiled = backend.compile(xla_computation, compile_options=options)
+        # result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
+        # kept_var_idx = range(len(self.invars))
+        # return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
+        distributed_compilation_head = True if self.mesh.is_distributed else False
+        logical_mesh = self.mesh.get_default_logical_mesh()
+        tuple_args = False
+        if distributed_compilation_head:
+            compiled = self.mesh.compile_remote_executable(
+                self.hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
+
+        avals = [var.aval for var in self.invars]
+        out_avals = [var.aval for var in self.outvars]
+        logical_mesh = self.mesh.get_default_logical_mesh()
+        input_shardings = self.hlo_module.spmd_parameters_shardings()
+        input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
+                                for (proto_tuple, aval) in zip(input_shardings, avals)]
+        output_sharding = self.hlo_module.spmd_output_sharding()
+        output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+
+        # Return the final callable
+        return self.mesh.get_callable_with_arg_handler(self.compiled, avals, out_avals,
+                                                       input_sharding_specs, output_sharding_specs,
+                                                       self.donated_invars)

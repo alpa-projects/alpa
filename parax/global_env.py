@@ -6,7 +6,7 @@ class GlobalConfig:
 
     def __init__(self):
         # choices: {'data_parallel', 'auto_sharding'}
-        self.shard_parallel_strategy = 'data_parallel'
+        self.shard_parallel_strategy = 'auto_sharding'
 
 
 global_config = GlobalConfig()

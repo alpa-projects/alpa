@@ -3,14 +3,17 @@ from functools import partial
 import numpy as np
 
 import jax
+from jax import lax
 import jax.numpy as jnp
 from jax.nn import relu
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit, with_sharding_constraint
+from jax._src.random import _random_bits, threefry_2x32
+import flax
+from flax import linen as nn
 
 from util import benchmark_func
-
 
 def test_basic1d():
     @partial(pjit,
@@ -191,6 +194,66 @@ def test_mlp_grad():
     #np.testing.assert_allclose(w2_serial, w2_parallel, rtol=1e-5)
 
 
+def test_random_bits():
+    @partial(pjit,
+             in_axis_resources=(P('x'), None),
+             out_axis_resources=P('x'))
+    def func(inputs, key):
+      random_uniform = lax.rng_uniform(0.0, 1.0, inputs.shape)
+      ret = inputs * random_uniform
+      return ret
+
+    inputs = jnp.ones((4096,))
+    rngkey = jax.random.PRNGKey(0)
+
+    mesh_devices = np.array(jax.devices()[:4])
+    with mesh(mesh_devices, ('x',)):
+        actual = func(inputs, rngkey)
+        print(actual)
+        actual = func(inputs, rngkey)
+        print(actual)
+
+
+# Monkey patch random generator to use stateful random generator.
+# This can simplify the computational graph
+def fast_uniform(key, shape, dtype, minval=0.0, maxval=1.0):
+    shape = jax.core.as_named_shape(shape)
+    return lax.rng_uniform(minval, maxval, shape.positional)
+
+def remove_fold_in(key, data):
+    return key
+
+jax._src.random.uniform = fast_uniform
+jax.random.uniform = fast_uniform
+jax._src.random.fold_in = remove_fold_in
+jax.random.fold_in = remove_fold_in
+
+
+def test_dropout():
+    class Model(nn.Module):
+        @nn.compact
+        def __call__(self, x):
+            x = nn.Dropout(0.1, deterministic=False)(x)
+            return x
+
+    model = Model()
+
+    @partial(pjit,
+             in_axis_resources=(P('x', 'y', None), None),
+             out_axis_resources=P('x', 'y', None))
+    def func(inputs, key):
+      ret = model.apply({}, inputs, rngs={"dropout": key})
+      return ret
+
+    inputs = jnp.ones((512, 512, 16))
+    rngkey = jax.random.PRNGKey(0)
+
+    mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
+    with mesh(mesh_devices, ('x', 'y')):
+        actual = func(inputs, rngkey)
+        print(actual)
+
+
 if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
@@ -198,5 +261,8 @@ if __name__ == "__main__":
     #test_dict_arg()
 
     #test_mlp_forward()
-    test_mlp_grad()
+    #test_mlp_grad()
+
+    #test_random_bits()
+    test_dropout()
 

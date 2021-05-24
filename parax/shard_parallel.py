@@ -95,7 +95,8 @@ def shard_parallel_callable(
 
     if strategy == 'auto_sharding':
         # Use our auto_sharing solver
-        compiled_func = auto_sharding_callable(fun, out_tree_thunk, devices, donated_invars, memory_budget_per_device, *avals)
+        compiled_func = auto_sharding_callable(fun, in_tree, out_tree_thunk,
+            devices, donated_invars, memory_budget_per_device, *avals)
         return compiled_func
     elif strategy == 'data_parallel':
         fun_name = fun.__name__

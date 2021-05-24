@@ -26,7 +26,17 @@ def compute_bytes(param_tree):
     return total
 
 
+tic = time.time()
+def log_time_stamp(message):
+    global tic
+    if message:
+        print(f"{message}: {time.time() - tic:.2f}")
+    tic = time.time()
+
+
 def benchmark_transformer_one_case(benchmark_case):
+    log_time_stamp(None)
+
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
         benchmark_case
@@ -53,6 +63,7 @@ def benchmark_transformer_one_case(benchmark_case):
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
     }
+    log_time_stamp("Prepare input")
 
     # Init model and optimizer
     model = FlaxBertLayerCollection(BertConfig(
@@ -61,12 +72,15 @@ def benchmark_transformer_one_case(benchmark_case):
         intermediate_size=hidden_size * 4,
         num_attention_heads=num_heads))
     rngkey = jax.random.PRNGKey(0)
-    params = model.init(rngkey, batch["hidden_states"], batch["attention_mask"])
+    params = model.init_dummy(rngkey, batch["hidden_states"], batch["attention_mask"])
     optimizer = optim.Adam(1e-2).create(params)
     params = rngkey = None
+    log_time_stamp("Init model and optimizer")
 
+    # Shard inputs and weights
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
     gc.collect()
+    log_time_stamp("Compile and shard arguments")
 
     # Define benchmark function
     closure = [optimizer]
@@ -155,7 +169,8 @@ def benchmark_all():
 
 if __name__ == "__main__":
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-
+    jax.config.update('jax_platform_name', 'cpu')
     ray.init(address="auto")
+
     benchmark_all()
 

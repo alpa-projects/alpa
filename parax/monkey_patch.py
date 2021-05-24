@@ -1,7 +1,8 @@
 """Monkey patch other python libraries."""
 
+import flax
 import jax
-from jax import core, lax
+from jax import core, lax, numpy as jnp
 
 # Monkey patch random generator to use the stateful random generator.
 # This can simplify the computational graph for dropout.
@@ -17,13 +18,12 @@ jax.random.uniform = fast_uniform
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
+# Mondey patch a new method "init_dummy" to flax's Module.
+# This function initializes all weights with ones for testing/benchmark purposes.
+# This function is much faster than the standard initialization.
+def init_dummy(self, *args, **kwargs):
+    avals = jax.eval_shape(self.init, *args, **kwargs)
+    return jax.tree_util.tree_map(lambda x: jnp.ones(x.shape, x.dtype), avals)
 
-# DEPRECATED!
-# Patch __eq__ and __hash__ function for OptimizerDef in flax
+setattr(flax.linen.module.Module, "init_dummy", init_dummy)
 
-#def __hash__(self):
-#    return hash(self.hyper_params.learning_rate)
-#def __eq__(self, other):
-#    return True
-#setattr(flax.optim.GradientDescent, "__hash__", __hash__)
-#setattr(flax.optim.GradientDescent, "__eq__", __eq__)

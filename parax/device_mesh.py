@@ -185,7 +185,7 @@ class RemoteExecutableRef:
 
 
 class RemoteBufferRef:
-    """A refernece to a remote device buffer."""
+    """A reference to a remote device buffer."""
 
     ct = 0
 
@@ -194,13 +194,21 @@ class RemoteBufferRef:
         self.host_id = host_id
         self.device_id = device_id
         self.uuid = RemoteBufferRef.ct
+        self.is_donated = False
         RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
+
+    def donate(self):
+        """Set the buffer as donated. If the buffer is donated, we do not need
+        to explicitly call the actor to delete it. Its memory will be deleted by
+        xla runtime."""
+        self.is_donated = True
 
     def __repr__(self):
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
 
     def __del__(self):
-        self.device_mesh.delete_remote_buffers((self,))
+        if not self.is_donated:
+            self.device_mesh.delete_remote_buffers((self,))
 
 
 class DistributedArray:
@@ -367,7 +375,7 @@ class MultiHostDeviceMesh:
 
         outs_handler = partial(self._gather_outs, out_avals, output_sharding_specs, output_indices)
         ret = partial(self._execute_with_handler, remote_executable, args_handler,
-            outs_handler, len(out_avals))
+            outs_handler, len(out_avals), donated_invars)
         ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
             input_sharding_specs, input_indices)
         return ret
@@ -416,11 +424,18 @@ class MultiHostDeviceMesh:
 
         return ret
 
-    def _execute_with_handler(self, remote_executable, args_handler, outs_handler, num_outs, *args):
+    def _execute_with_handler(self, remote_executable, args_handler, outs_handler, num_outs,
+                              donated_invars, *args):
         num_args = len(args)
 
         # Shape: (num_args, total_devices)
         input_bufs = args_handler(args)
+
+        # Donate input buffers
+        for bufs, is_donated in zip(input_bufs, donated_invars):
+            if is_donated:
+                for buf in bufs:
+                    buf.donate()
 
         # Shape: (num_hosts, num_args, num_devices_per_host)
         input_bufs = np.array(input_bufs)\
@@ -556,6 +571,12 @@ class MeshHostWorker:
         for i in range(output_uuids.shape[0]):
             for j in range(output_uuids.shape[1]):
                 self.local_buffers[output_uuids[i][j]] = device_outs[i][j]
+
+        # Delete donated input buffers
+        for i in range(input_uuids.shape[0]):
+            for j in range(input_uuids.shape[1]):
+                if device_inputs[i][j].is_deleted():
+                    del self.local_buffers[input_uuids[i][j]]
 
     def sync(self):
         for device in self.local_devices:

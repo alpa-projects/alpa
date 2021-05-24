@@ -30,7 +30,7 @@ tic = time.time()
 def log_time_stamp(message):
     global tic
     if message:
-        print(f"{message}: {time.time() - tic:.2f}")
+        print(f"{message}: {time.time() - tic:.2f} s")
     tic = time.time()
 
 

@@ -320,8 +320,12 @@ class MultiHostDeviceMesh:
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
-        return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
-            [1, 1], [1, 0.01])
+        if self.num_hosts == 1:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                [1, 1], [1, 1])
+        else:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                [1, 1], [1, 0.01])
 
     def compile_remote_executable(self,
                                   hlo_proto: bytes,
@@ -404,10 +408,11 @@ class MultiHostDeviceMesh:
     def _shard_args(self, arg_indices, donated_invars, args):
         input_bufs = []
         for arg, indices, donated in zip(args, arg_indices, donated_invars):
-            # Fast path for DistributedArray
             if isinstance(arg, DistributedArray) and arg.indices == indices:
+                # Fast path: no resharding is required
                 input_bufs.append(arg.remote_buffers)
-            else:  # Slow path
+            else:
+                # Slow path: reshard this argument
                 arg = xla.canonicalize_dtype(arg)
                 buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                 input_bufs.append(buf_refs)

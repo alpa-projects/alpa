@@ -20,6 +20,8 @@ benchmark_suite_single_node = [
 
 benchmark_suite_multi_node = [
     # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size, ddp_impl
+    (32,          128,     1536,        1,          1536//96,  8,       1,              0,),
+
     (32,          1024,    1536,        4,          1536//96,  8,       1,              0,),
     (32,          1024,    1536,        4,          1536//96,  4,       2,              0,),
     (32,          1024,    1536,        4,          1536//96,  2,       4,              0,),

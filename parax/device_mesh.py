@@ -7,8 +7,8 @@ from typing import Union, List, Tuple
 
 import numpy as np
 import ray
-from jax import core, pmap, tree_util, xla
-from jax import numpy as jnp
+import jax
+from jax import core, numpy as jnp, pmap, tree_util, xla
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
@@ -18,6 +18,7 @@ from jax._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                            extend_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, curry)
 
+from parax.global_env import global_config
 from parax.util import get_dim_last_value, to_int_tuple, run_cmd
 from parax.xla_pass_context import XlaPassContext
 
@@ -185,7 +186,7 @@ class RemoteExecutableRef:
 
 
 class RemoteBufferRef:
-    """A refernece to a remote device buffer."""
+    """A reference to a remote device buffer."""
 
     ct = 0
 
@@ -194,13 +195,21 @@ class RemoteBufferRef:
         self.host_id = host_id
         self.device_id = device_id
         self.uuid = RemoteBufferRef.ct
+        self.is_donated = False
         RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
+
+    def donate(self):
+        """Set the buffer as donated. If the buffer is donated, we do not need
+        to explicitly call the actor to delete it. Its memory will be deleted by
+        xla runtime."""
+        self.is_donated = True
 
     def __repr__(self):
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
 
     def __del__(self):
-        self.device_mesh.delete_remote_buffers((self,))
+        if not self.is_donated:
+            self.device_mesh.delete_remote_buffers((self,))
 
 
 class DistributedArray:
@@ -288,13 +297,18 @@ class MultiHostDeviceMesh:
         # Launch workers
         self.workers = []
         for i in range(self.num_hosts):
+            # Set XLA environment variables
+            env_vars = {
+                "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+            }
+
+            # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
-            self.workers.append(cls.options(
-                override_environment_variables={
-                    "XLA_FLAGS": "--xla_gpu_autotune_level=0"
-                }).remote(self.server_address, self.num_hosts, i))
+            worker = cls.options(override_environment_variables=env_vars).remote(
+                                 self.server_address, self.num_hosts, i)
+            self.workers.append(worker)
         self.sync_workers()
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
@@ -306,8 +320,12 @@ class MultiHostDeviceMesh:
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
-        return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
-            [1, 1], [1, 0.01])
+        if self.num_hosts == 1:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                [1, 1], [1, 1])
+        else:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                [1, 1], [1, 0.01])
 
     def compile_remote_executable(self,
                                   hlo_proto: bytes,
@@ -333,7 +351,7 @@ class MultiHostDeviceMesh:
         return ray.get(obj_refs)
 
     def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        if self.workers is None:
+        if self.workers is None or not ray.is_initialized():
             return
 
         for buf_ref in buf_refs:
@@ -347,7 +365,7 @@ class MultiHostDeviceMesh:
         ray.get(tasks)
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
-        if self.workers is None:
+        if self.workers is None or not ray.is_initialized():
             return
 
         for i in range(self.num_hosts):
@@ -364,10 +382,10 @@ class MultiHostDeviceMesh:
 
         output_indices = [pxla.spec_to_indices(aval.shape, spec) for
                           aval, spec in zip(out_avals, output_sharding_specs)]
-
         outs_handler = partial(self._gather_outs, out_avals, output_sharding_specs, output_indices)
+
         ret = partial(self._execute_with_handler, remote_executable, args_handler,
-            outs_handler, len(out_avals))
+            outs_handler, len(out_avals), donated_invars)
         ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
             input_sharding_specs, input_indices)
         return ret
@@ -390,10 +408,11 @@ class MultiHostDeviceMesh:
     def _shard_args(self, arg_indices, donated_invars, args):
         input_bufs = []
         for arg, indices, donated in zip(args, arg_indices, donated_invars):
-            # Fast path for DistributedArray
             if isinstance(arg, DistributedArray) and arg.indices == indices:
+                # Fast path: no resharding is required
                 input_bufs.append(arg.remote_buffers)
-            else:  # Slow path
+            else:
+                # Slow path: reshard this argument
                 arg = xla.canonicalize_dtype(arg)
                 buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                 input_bufs.append(buf_refs)
@@ -416,11 +435,18 @@ class MultiHostDeviceMesh:
 
         return ret
 
-    def _execute_with_handler(self, remote_executable, args_handler, outs_handler, num_outs, *args):
+    def _execute_with_handler(self, remote_executable, args_handler, outs_handler, num_outs,
+                              donated_invars, *args):
         num_args = len(args)
 
         # Shape: (num_args, total_devices)
         input_bufs = args_handler(args)
+
+        # Donate input buffers
+        for bufs, is_donated in zip(input_bufs, donated_invars):
+            if is_donated:
+                for buf in bufs:
+                    buf.donate()
 
         # Shape: (num_hosts, num_args, num_devices_per_host)
         input_bufs = np.array(input_bufs)\
@@ -473,6 +499,11 @@ class MeshHostWorker:
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
+
+    def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
+        self.local_buffers[uuid] = \
+            self.backend.buffer_from_pyval(np.ones(shape, dtype),
+                self.local_devices[device_id])
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
@@ -557,6 +588,12 @@ class MeshHostWorker:
             for j in range(output_uuids.shape[1]):
                 self.local_buffers[output_uuids[i][j]] = device_outs[i][j]
 
+        # Delete donated input buffers
+        for i in range(input_uuids.shape[0]):
+            for j in range(input_uuids.shape[1]):
+                if device_inputs[i][j].is_deleted():
+                    del self.local_buffers[input_uuids[i][j]]
+
     def sync(self):
         for device in self.local_devices:
             device.synchronize_all_activity()
@@ -623,17 +660,22 @@ def _device_mesh_put(device_mesh, shards):
     for host_id in range(device_mesh.num_hosts):
         for device_id in range(device_mesh.num_devices_per_host):
             buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
-            device_mesh.workers[host_id].put_buffer.remote(
-                buf_ref.uuid, device_id, shards[pt])
+            if global_config.use_dummy_value_for_benchmarking:
+                device_mesh.workers[host_id].put_dummy_buffer.remote(
+                    buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
+            else:
+                device_mesh.workers[host_id].put_buffer.remote(
+                    buf_ref.uuid, device_id, shards[pt])
             buf_refs.append(buf_ref)
             pt += 1
     return buf_refs
 
 def _shard_array(x, device_mesh, indices):
+    # Create shards according to indices for a numpy array
     return _device_mesh_put(device_mesh, [x[i] for i in indices])
 
 def _shard_device_array(array, device_mesh, indices):
-    # Create shards according to indices
+    # Create shards according to indices for a DeviceArray
     start_indices, limit_indices, removed_dims = map(tuple, unzip3(
         _as_slice_indices(array, idx) for idx in indices))
     shards = array._multi_slice(start_indices, limit_indices, removed_dims)
@@ -641,6 +683,7 @@ def _shard_device_array(array, device_mesh, indices):
     return _device_mesh_put(device_mesh, shards)
 
 def _shard_distributed_array(array, device_mesh, indices):
+    # Create shards according to indices for a DistributedArray
     return shard_arg_handlers[type(array._value)](array._value, device_mesh, indices)
 
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh

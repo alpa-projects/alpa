@@ -37,14 +37,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_attention(self, batch_size, seq_len, hidden_size, num_heads,
-                      dropout_rate, device_mesh):
+                      deterministic, device_mesh):
         @parallelize(devices=device_mesh)
-        def train_step(optimizer, batch, apply_fn):
+        def train_step(optimizer, batch, deterministic, apply_fn):
             def loss_func(params):
-                rngs = {"dropout": batch['rng']}
+                rngs = {"dropout": batch["rng"]}
                 out = apply_fn(params,
-                               batch['hidden_states'], batch['attention_mask'],
-                               rngs=rngs)[0]
+                               batch["hidden_states"], batch["attention_mask"],
+                               deterministic, rngs=rngs)[0]
                 return jnp.mean((out - batch['label']) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
@@ -58,8 +58,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Init model and optimizer
         model = FlaxBertAttention(BertConfig(
             hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            attention_probs_dropout_prob=0))
+            num_attention_heads=num_heads))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
@@ -70,6 +69,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                                 "attention_mask": attention_mask,
                                 "label": label,
                                 "rng": rngkey},
+                               deterministic,
                                model.apply)
 
         # Get optimized HLO IR
@@ -79,14 +79,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
     def run_bert_layers(self, num_layers, batch_size, seq_len, hidden_size,
-                        num_heads, dropout_rate, device_mesh):
+                        num_heads, deterministic, device_mesh):
         @parallelize(devices=device_mesh)
-        def train_step(optimizer, batch, apply_fn):
+        def train_step(optimizer, batch, deterministic, apply_fn):
             def loss_func(params):
-                rngs = {"dropout": batch['rng']}
+                rngs = {"dropout": batch["rng"]}
                 out = apply_fn(params,
-                               batch['hidden_states'], batch['attention_mask'],
-                               rngs=rngs)[0]
+                               batch["hidden_states"], batch["attention_mask"],
+                               deterministic, rngs=rngs)[0]
                 return jnp.mean((out - batch['label']) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
@@ -101,8 +101,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         model = FlaxBertLayerCollection(BertConfig(
             num_hidden_layers=num_layers,
             hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            attention_probs_dropout_prob=0))
+            num_attention_heads=num_heads))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
@@ -113,6 +112,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                                 "attention_mask": attention_mask,
                                 "label": label,
                                 "rng": rngkey},
+                               deterministic,
                                model.apply)
 
         # Get optimized HLO IR
@@ -126,13 +126,13 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 32
         hidden_size = 64
         num_heads = 8
-        dropout_rate = 0.0
+        deterministic = True
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_attention(
-                batch_size, seq_len, hidden_size, num_heads, dropout_rate, device_mesh)
+                batch_size, seq_len, hidden_size, num_heads, deterministic, device_mesh)
 
             # Check communication cost
             params = jax.tree_util.tree_leaves(optimizer.target)
@@ -151,13 +151,13 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 256
         num_heads = 8
-        dropout_rate = 0.0
+        deterministic = True
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_attention(
-                batch_size, seq_len, hidden_size, num_heads, dropout_rate, device_mesh)
+                batch_size, seq_len, hidden_size, num_heads, deterministic, device_mesh)
 
             # Check communication cost
             expected = device_mesh.all_reduce_cost(
@@ -178,12 +178,12 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        dropout_rate = 0.0
+        deterministic = True
 
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.01])
         optimizer, hlo_ir, objective = self.run_attention(
-            batch_size, seq_len, hidden_size, num_heads, dropout_rate, device_mesh)
+            batch_size, seq_len, hidden_size, num_heads, deterministic, device_mesh)
 
         # Check communication cost
         params = jax.tree_util.tree_leaves(optimizer.target)
@@ -205,14 +205,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 64
         hidden_size = 32
         num_heads = 8
-        dropout_rate = 0.0
+        deterministic = True
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_layers(
                 num_layers, batch_size, seq_len, hidden_size,
-                num_heads, dropout_rate, device_mesh)
+                num_heads, deterministic, device_mesh)
 
             # Check communication cost
             params = jax.tree_util.tree_leaves(optimizer.target)
@@ -229,14 +229,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        dropout_rate = 0.0
+        deterministic = True
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_layers(
                 num_layers, batch_size, seq_len, hidden_size,
-                num_heads, dropout_rate, device_mesh)
+                num_heads, deterministic, device_mesh)
 
             # Check communication cost
             expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
@@ -268,14 +268,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        dropout_rate = 0.0
+        deterministic = True
 
         # Test on different device meshes
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.01])
         optimizer, hlo_ir, objective = self.run_bert_layers(
             num_layers, batch_size, seq_len, hidden_size,
-            num_heads, dropout_rate, device_mesh)
+            num_heads, deterministic, device_mesh)
 
         # Check communication cost
         params = jax.tree_util.tree_leaves(optimizer.target)

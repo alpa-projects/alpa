@@ -35,7 +35,10 @@ def auto_sharding_callable(
     # Get physical and logical device mesh according to the arguments
     distributed_compilation_head = False
 
-    if isinstance(devices, (list, tuple)):
+    if devices is None:
+        physical_mesh = SingleHostDeviceMesh(xb.devices())
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, (list, tuple)):
         physical_mesh = SingleHostDeviceMesh(devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, SingleHostDeviceMesh):
@@ -73,15 +76,18 @@ def auto_sharding_callable(
     # Set up aliases (donating invars)
     backend = xb.get_backend(backend_name)
     if backend.platform in ("gpu", "tpu"):
-        donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
-    if any(donated_invars):
+        donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+
+    if any(donation_results):
         # TODO(tomhennigan): At call time we should mark these buffers as deleted.
         unused_donations = [str(c.GetShape(a))
-                            for a, d in zip(xla_args, donated_invars) if d]
+                            for a, d in zip(xla_args, donation_results) if d]
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
     # Compile
     built = c.Build(out_tuple)
+    #print(built.as_hlo_text())
+    #exit()
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
@@ -137,7 +143,7 @@ def auto_sharding_callable(
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-        input_sharding_specs, output_sharding_specs)
+        input_sharding_specs, output_sharding_specs, donated_invars)
 
 
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):

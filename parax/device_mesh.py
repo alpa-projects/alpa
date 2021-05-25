@@ -7,8 +7,8 @@ from typing import Union, List, Tuple
 
 import numpy as np
 import ray
-from jax import core, pmap, tree_util, xla
-from jax import numpy as jnp
+import jax
+from jax import core, numpy as jnp, pmap, tree_util, xla
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
@@ -18,6 +18,7 @@ from jax._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                            extend_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, curry)
 
+from parax.global_env import global_config
 from parax.util import get_dim_last_value, to_int_tuple, run_cmd
 from parax.xla_pass_context import XlaPassContext
 
@@ -494,6 +495,11 @@ class MeshHostWorker:
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
+    def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
+        self.local_buffers[uuid] = \
+            self.backend.buffer_from_pyval(np.ones(shape, dtype),
+                self.local_devices[device_id])
+
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
             return [self.local_buffers[uuid] for uuid in uuids]
@@ -649,17 +655,22 @@ def _device_mesh_put(device_mesh, shards):
     for host_id in range(device_mesh.num_hosts):
         for device_id in range(device_mesh.num_devices_per_host):
             buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
-            device_mesh.workers[host_id].put_buffer.remote(
-                buf_ref.uuid, device_id, shards[pt])
+            if global_config.use_dummy_value_for_benchmarking:
+                device_mesh.workers[host_id].put_dummy_buffer.remote(
+                    buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
+            else:
+                device_mesh.workers[host_id].put_buffer.remote(
+                    buf_ref.uuid, device_id, shards[pt])
             buf_refs.append(buf_ref)
             pt += 1
     return buf_refs
 
 def _shard_array(x, device_mesh, indices):
+    # Create shards according to indices for a numpy array
     return _device_mesh_put(device_mesh, [x[i] for i in indices])
 
 def _shard_device_array(array, device_mesh, indices):
-    # Create shards according to indices
+    # Create shards according to indices for a DeviceArray
     start_indices, limit_indices, removed_dims = map(tuple, unzip3(
         _as_slice_indices(array, idx) for idx in indices))
     shards = array._multi_slice(start_indices, limit_indices, removed_dims)
@@ -667,6 +678,7 @@ def _shard_device_array(array, device_mesh, indices):
     return _device_mesh_put(device_mesh, shards)
 
 def _shard_distributed_array(array, device_mesh, indices):
+    # Create shards according to indices for a DistributedArray
     return shard_arg_handlers[type(array._value)](array._value, device_mesh, indices)
 
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh

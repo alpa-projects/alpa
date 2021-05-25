@@ -16,6 +16,7 @@ from parax.util import run_cmd
 import timeit
 
 MB = 1024 ** 2
+GB = 1024 ** 3
 
 
 def compute_bytes(param_tree):
@@ -112,10 +113,10 @@ def benchmark_transformer_one_case(benchmark_case):
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     # Log benchmark results
-    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Mean Time", "Std Time", "Objective"]
+    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
-             f"{real_mem/MB:.2f}", f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}",
-             f"{objective:.2f}"]
+             f"{real_mem/GB:.3f}", f"{objective:.2f}",
+             f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
 
     line = ""
     for i in range(len(heads)):
@@ -129,31 +130,23 @@ def benchmark_transformer_one_case(benchmark_case):
 
 
 benchmark_suite_4_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    (32,          1024,    1536,        3,          1536//96,  4,       1),
-    (32,          1024,    1536,        3,          1536//96,  2,       2),
-    (32,          1024,    1536,        3,          1536//96,  1,       4),
+    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
+    (32,          1024,    1536,        3,          1536//96,  4,         1),
+    (32,          1024,    1536,        3,          1536//96,  2,         2),
 
-    (32,          128,     5120,        2,          5120//128, 4,       1),
-    (32,          128,     5120,        2,          5120//128, 2,       2),
-    (32,          128,     5120,        2,          5120//128, 1,       4),
+    (32,          128,     5120,        2,          5120//128, 4,         1),
+    (32,          128,     5120,        2,          5120//128, 2,         2),
 ]
 
 benchmark_suite_8_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    #(32,          1024,    1536,        3,          1536//96,  8,       1),
-    #(32,          1024,    1536,        3,          1536//96,  4,       2),
-    #(32,          1024,    1536,        3,          1536//96,  2,       4),
-    #(32,          1024,    1536,        3,          1536//96,  1,       8),
+    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
+    (32,          1024,    1536,        4,          1536//96,  8,        1),
+    (32,          1024,    1536,        4,          1536//96,  4,        2),
+    (32,          1024,    1536,        4,          1536//96,  2,        4),
 
-    #(32,          128,     5120,        2,          5120//128, 8,       1),
-    #(32,          128,     5120,        2,          5120//128, 4,       2),
-    #(32,          128,     5120,        2,          5120//128, 2,       4),
-    #(32,          128,     5120,        2,          5120//128, 1,       8),
-
-    (32,          128,     5120,        2,          5120//128, 8,       1),
-    (32,          128,     5120,        2,          5120//128, 8,       1),
-    (32,          128,     5120,        2,          5120//128, 8,       1),
+    (32,          128,     5120,        3,          5120//128, 8,        1),
+    (32,          128,     5120,        3,          5120//128, 4,        2),
+    (32,          128,     5120,        3,          5120//128, 2,        4),
 ]
 
 
@@ -175,6 +168,7 @@ if __name__ == "__main__":
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
     jax.config.update('jax_platform_name', 'cpu')
     ray.init(address="auto")
+    global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all()
 

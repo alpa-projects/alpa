@@ -62,8 +62,8 @@ class PipelineMLPTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        # strategy = "pipeline_parallel"
-        strategy = "distributed_pipeline_parallel"
+        strategy = "pipeline_parallel"
+        # strategy = "distributed_pipeline_parallel"
         pipelined_train_step = parallelize(donate_argnums=(), devices=self.devices,
                                            strategy=strategy)(train_step)
         gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)

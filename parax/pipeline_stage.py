@@ -116,10 +116,12 @@ class XlaPipelineStage(PipelineStage):
         Args:
             jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
         """
+        print("=" * 80)
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
         in_avals = [var.aval for var in jax_pipeline_stage.invars]
         consts = closed_jaxpr.consts
         map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+        print("closed_jaxpr", closed_jaxpr)
 
         backend = 'gpu'
         tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
@@ -133,6 +135,7 @@ class XlaPipelineStage(PipelineStage):
             extend_name_stack(wrap_name(jax_pipeline_stage.name, 'stage')), *xla_args)
         out_tuple = xc.ops.Tuple(c, out_nodes)
         built = c.build(out_tuple)
+        print("built", built.as_hlo_text())
 
         return cls(
             name=jax_pipeline_stage.name,

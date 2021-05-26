@@ -380,14 +380,14 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
 
     def __init__(self,
                  *,
-                 sharded_stages,
+                 pipeline_stages,
                  global_invars,
                  global_outvars,
                  mesh,
                  dependency=None,
                  num_batch=1,
                  schedule=None):
-        self.stages = sharded_stages
+        self.stages = pipeline_stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
         self.num_stage = len(self.stages)
@@ -397,7 +397,7 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         self.num_batch = num_batch
         self.dependency = dependency
         # the code below will be removed
-        if not self.dependency:
+        if self.dependency is not None:
             self.dependency = _gen_linear_dependency(self.num_stage)
 
         self.schedule = schedule
@@ -412,8 +412,8 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
             self.sliced_meshes = self.schedule.meshes
 
         # Below are runtime-related
-        self.physical_meshes = []
         self._start_physical_meshes()
+
         self.stage_outputs = None
         self.microbatches = None
         # Note(Hao): all dicts constructed in this class are
@@ -438,7 +438,12 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                 batch_idx, stage_idx = task
                 inputs = self._identify_stage_inputs(clock, stage_idx, batch_idx)
                 # results_ref = self.workers[device].compute.remote(inputs, stage_idx)
-                results_ref = self.mesh
+                # unroll
+                inputs_list = []
+                for var in self.stages[stage_idx].invars:
+                    val = inputs[repr(var)]
+                    inputs_list.append(val)
+                results_ref = self.runnables[stage_idx](*inputs_list)
                 # put result refs in the stage_outputs
                 pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
                 if stage_global_outputs_dict:
@@ -477,20 +482,20 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
             if not array.shape or array.shape[batch_dim] != batch_size:
                 # empty shape means it is not the input batch
                 # no need to split
-                ref = ray.put(inputs[i])
+                # ref = ray.put(inputs[i])
                 for b in range(self.num_batch):
-                    microbatches[b][key] = ref
+                    microbatches[b][key] = inputs[i]
             else:
                 splits = jax.numpy.split(array, self.num_batch, axis=batch_dim)
                 for b, split in enumerate(splits):
-                    microbatches[b][key] = ray.put(split)
+                    microbatches[b][key] = split
         return microbatches
 
     def _start_physical_meshes(self):
         self.runnables = []
-        for mesh in self.sliced_meshes:
+        for stage in self.stages:
             # This will request resources from Ray
-            self.runnables.append(mesh.get_runnable())
+            self.runnables.append(stage.get_runnable())
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
         """
@@ -517,7 +522,7 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                 else:
                     for ans in ancestors:
                         if key in self.stage_outputs[clock - 1][ans]:
-                            stage_inputs[key] = self.stage_outputs[clock - 1][ans][key]
+                            stage_inputs[key] = ray.get(self.stage_outputs[clock - 1][ans][key])
             elif var in stage.global_invars:
                 assert var in self.global_invars
                 stage_inputs[key] = self.microbatches[batch_idx][key]

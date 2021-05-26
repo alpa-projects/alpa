@@ -213,7 +213,7 @@ class XlaShardedPipelineStage(PipelineStage):
     mesh: VirtualMesh = None
     hlo_module: Any = None
     hlo_proto: Any = None
-    donated_invars: Any  = None#Hao: figure out what this is?
+    donated_invars: Any  = None #Hao: figure out what this is?
     compiled: Any = None
 
     @classmethod
@@ -236,7 +236,7 @@ class XlaShardedPipelineStage(PipelineStage):
         # xla_consts = xla._xla_consts(c, consts)
         # xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
         xla_consts = map(partial(xb.constant, c), consts)
-        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
+        xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
 
         # Convert jaxpr to XLA HLO
         backend_name = "gpu"
@@ -339,7 +339,7 @@ class XlaShardedPipelineStage(PipelineStage):
 
         # instantiate the physical mesh:
         physical_mesh = self.mesh.get_physical_mesh()
-
+        compiled = self.compiled
         distributed_compilation_head = True if self.mesh.is_distributed else False
         logical_mesh = self.mesh.get_default_logical_mesh()
         tuple_args = False
@@ -356,6 +356,6 @@ class XlaShardedPipelineStage(PipelineStage):
         output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
 
         # Return the final callable
-        return physical_mesh.get_callable_with_arg_handler(self.compiled, avals, out_avals,
-                                                       input_sharding_specs, output_sharding_specs,
-                                                       self.donated_invars)
+        return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
+                                                           input_sharding_specs, output_sharding_specs,
+                                                           self.donated_invars)

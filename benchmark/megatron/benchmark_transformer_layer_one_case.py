@@ -127,12 +127,12 @@ def benchmark_transfomer_one_case(benchmark_case):
 
     # Print results
     if rank == 0:
-        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
-                 "Peak Mem", "ActMem", "Mean Time", "Std Time"]
+        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Peak Mem",
+                 "Weight Mem", "ActMem", "Mean Time", "Std Time"]
         values = ["transformer-layer", str(benchmark_case[:-3]),
                   str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
-                  f"{weight_mem/GB:5.2f}", f"{peak_mem/GB:5.2f}",
-                  f"{act_mem[0]/GB:5.2f}",
+                  f"{peak_mem/GB:5.3f}", f"{weight_mem/GB:5.3f}",
+                  f"{act_mem[0]/GB:5.3f}",
                   f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
 
         line = ""

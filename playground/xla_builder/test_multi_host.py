@@ -1,12 +1,6 @@
-from functools import partial
-import os
-import time
-
 import numpy as np
-import jax
-import jax.numpy as jnp
-from jax.lib import xla_client, xla_bridge
 import ray
+from jax.lib import xla_client
 
 from parax import DeviceCluster, XlaPassContext, parallelize, global_config
 
@@ -107,5 +101,5 @@ def test_multi_host_auto_sharding():
 
 
 if __name__ == "__main__":
+    ray.init(address="auto")
     test_multi_host_auto_sharding()
-

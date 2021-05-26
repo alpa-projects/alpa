@@ -1,26 +1,24 @@
 """Use the auto sharding pass in XLA."""
-
+import logging
 import multiprocessing
-import pickle
 import time
 import traceback
-from warnings import warn
 
 import numpy as np
 from jax import linear_util as lu
+from jax._src.util import (partial, extend_name_stack, wrap_name)
 from jax.interpreters import xla, pxla, partial_eval as pe
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client as xc
-from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
-                           extend_name_stack, wrap_name, assert_unreachable,
-                           tuple_insert, tuple_delete, curry)
 from jaxlib.xla_client import OpSharding
+from warnings import warn
 
 from parax import testing
-from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, LogicalDeviceMesh, PhysicalDeviceMesh
-from parax.global_env import global_config
-from parax.util import to_int_tuple
+from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.xla_pass_context import XlaPassContext
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def auto_sharding_callable(
@@ -36,22 +34,30 @@ def auto_sharding_callable(
     distributed_compilation_head = False
 
     if devices is None:
-        physical_mesh = SingleHostDeviceMesh(xb.devices())
+        # physical_mesh = SingleHostDeviceMesh(xb.devices())
+        physical_mesh = PhysicalDeviceMesh(devices=xb.devices())
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, (list, tuple)):
-        physical_mesh = SingleHostDeviceMesh(devices)
+        # physical_mesh = SingleHostDeviceMesh(devices)
+        physical_mesh = PhysicalDeviceMesh(devices=devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, SingleHostDeviceMesh):
-        physical_mesh = devices
-        logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, MultiHostDeviceMesh):
+    # elif isinstance(devices, SingleHostDeviceMesh):
+    #     physical_mesh = devices
+    #     logical_mesh = physical_mesh.get_default_logical_mesh()
+    # elif isinstance(devices, MultiHostDeviceMesh):
+    #     logger.warning("Deprecated...")
+    #     physical_mesh = devices
+    #     logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, PhysicalDeviceMesh):
         physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, LogicalDeviceMesh):
         logical_mesh = devices
         physical_mesh = logical_mesh.physical_mesh
 
-    if isinstance(physical_mesh, MultiHostDeviceMesh):
+    # if isinstance(physical_mesh, MultiHostDeviceMesh):
+    #     distributed_compilation_head = True
+    if physical_mesh.is_distributed:
         distributed_compilation_head = True
 
     # Trace to get jaxpr

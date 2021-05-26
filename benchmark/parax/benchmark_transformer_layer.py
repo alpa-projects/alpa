@@ -16,6 +16,7 @@ from parax.util import run_cmd
 import timeit
 
 MB = 1024 ** 2
+GB = 1024 ** 3
 
 
 def compute_bytes(param_tree):
@@ -26,7 +27,17 @@ def compute_bytes(param_tree):
     return total
 
 
+tic = time.time()
+def log_time_stamp(message):
+    global tic
+    if message:
+        print(f"{message}: {time.time() - tic:.2f} s")
+    tic = time.time()
+
+
 def benchmark_transformer_one_case(benchmark_case):
+    log_time_stamp(None)
+
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
         benchmark_case
@@ -53,6 +64,7 @@ def benchmark_transformer_one_case(benchmark_case):
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
     }
+    log_time_stamp("Prepare input")
 
     # Init model and optimizer
     model = FlaxBertLayerCollection(BertConfig(
@@ -61,12 +73,15 @@ def benchmark_transformer_one_case(benchmark_case):
         intermediate_size=hidden_size * 4,
         num_attention_heads=num_heads))
     rngkey = jax.random.PRNGKey(0)
-    params = model.init(rngkey, batch["hidden_states"], batch["attention_mask"])
+    params = model.init_dummy(rngkey, batch["hidden_states"], batch["attention_mask"])
     optimizer = optim.Adam(1e-2).create(params)
     params = rngkey = None
+    log_time_stamp("Init model and optimizer")
 
+    # Shard inputs and weights
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
     gc.collect()
+    log_time_stamp("Compile and shard arguments")
 
     # Define benchmark function
     closure = [optimizer]
@@ -98,10 +113,10 @@ def benchmark_transformer_one_case(benchmark_case):
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     # Log benchmark results
-    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Mean Time", "Std Time", "Objective"]
+    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
-             f"{real_mem/MB:.2f}", f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}",
-             f"{objective:.2f}"]
+             f"{real_mem/GB:.3f}", f"{objective:.2f}",
+             f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
 
     line = ""
     for i in range(len(heads)):
@@ -115,27 +130,23 @@ def benchmark_transformer_one_case(benchmark_case):
 
 
 benchmark_suite_4_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    (32,          1024,    1536,        3,          1536//96,  4,       1),
-    (32,          1024,    1536,        3,          1536//96,  2,       2),
-    (32,          1024,    1536,        3,          1536//96,  1,       4),
+    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
+    (32,          1024,    1536,        3,          1536//96,  4,         1),
+    (32,          1024,    1536,        3,          1536//96,  2,         2),
 
-    (32,          128,     5120,        2,          5120//128, 4,       1),
-    (32,          128,     5120,        2,          5120//128, 2,       2),
-    (32,          128,     5120,        2,          5120//128, 1,       4),
+    (32,          128,     5120,        2,          5120//128, 4,         1),
+    (32,          128,     5120,        2,          5120//128, 2,         2),
 ]
 
 benchmark_suite_8_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size
-    (32,          1024,    1536,        3,          1536//96,  8,       1),
-    (32,          1024,    1536,        3,          1536//96,  4,       2),
-    (32,          1024,    1536,        3,          1536//96,  2,       4),
-    (32,          1024,    1536,        3,          1536//96,  1,       8),
+    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
+    (32,          1024,    1536,        4,          1536//96,  8,        1),
+    (32,          1024,    1536,        4,          1536//96,  4,        2),
+    (32,          1024,    1536,        4,          1536//96,  2,        4),
 
-    (32,          128,     5120,        2,          5120//128, 8,       1),
-    (32,          128,     5120,        2,          5120//128, 4,       2),
-    (32,          128,     5120,        2,          5120//128, 2,       4),
-    (32,          128,     5120,        2,          5120//128, 1,       8),
+    (32,          128,     5120,        3,          5120//128, 8,        1),
+    (32,          128,     5120,        3,          5120//128, 4,        2),
+    (32,          128,     5120,        3,          5120//128, 2,        4),
 ]
 
 
@@ -155,7 +166,9 @@ def benchmark_all():
 
 if __name__ == "__main__":
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-
+    jax.config.update('jax_platform_name', 'cpu')
     ray.init(address="auto")
+    global_config.use_dummy_value_for_benchmarking = True
+
     benchmark_all()
 

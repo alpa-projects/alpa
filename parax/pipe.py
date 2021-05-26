@@ -426,7 +426,7 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         assert not kwargs, "kwargs not supported"
         self.microbatches = self._make_microbatches(*args)
 
-        global_output_refs = {}
+        global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
             # submit work in parallel
             logger.debug("At clock {}, working on tasks {}.".format(clock, sched))
@@ -443,13 +443,18 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                 for var in self.stages[stage_idx].invars:
                     val = inputs[repr(var)]
                     inputs_list.append(val)
-                results_ref = self.runnables[stage_idx](*inputs_list)
+                outputs = self.runnables[stage_idx](*inputs_list)
                 # put result refs in the stage_outputs
-                pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
-                if stage_global_outputs_dict:
-                    global_output_refs.update(stage_global_outputs_dict)
-                if pipeline_outputs_dict:
-                    self.stage_outputs[clock][stage_idx].update(pipeline_outputs_dict)
+                # pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
+                pipeline_outvals, global_outvals, local_outvals = self._post_process_stage_outputs(stage_idx, outputs)
+                if pipeline_outvals:
+                    self.stage_outputs[clock][stage_idx].update(pipeline_outvals)
+                if global_outvals:
+                    global_outputs.update(global_outvals)
+                # if stage_global_outputs_dict:
+                #     global_output_refs.update(stage_global_outputs_dict)
+                # if pipeline_outputs_dict:
+                #     self.stage_outputs[clock][stage_idx].update(pipeline_outputs_dict)
             logger.info("All pipelining jobs done!")
 
         global_outvals_list = []
@@ -458,8 +463,8 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                 global_outvals_list.append(var.val)
             else:
                 key = repr(var)
-                assert key in global_output_refs
-                val = ref_to_array(global_output_refs[key])
+                assert key in global_outputs
+                val = ref_to_array(global_outputs[key])
                 global_outvals_list.append(val)
         return global_outvals_list
 
@@ -535,6 +540,32 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs.")
         return stage_inputs
+
+    def _post_process_stage_outputs(self, stage_idx, outputs):
+        stage = self.stages[stage_idx]
+        outvals = dict(zip(stage.outvars, outputs))
+            # now split the outputs_dict
+        pipeline_outvals = dict()
+        global_outvals = dict()
+        local_outvals = dict()
+        logger.debug("all outputs: {}".format(list(outvals.keys())))
+        logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
+        logger.debug("pipeline_outvars: {}".format(list(stage.pipeline_outvars)))
+        logger.debug("global outvars: {}".format(list(stage.global_outvars)))
+        for var, val in outvals.items():
+            key = repr(var)
+            if var in stage.local_outvars:
+                # self.env.update({var: val})
+                local_outvals[key] = val
+            if var in stage.pipeline_outvars:
+                pipeline_outvals[key] = ray.put(val)
+            if var in stage.global_outvars:
+                global_outvals[key] = ray.put(val)
+        logger.debug("pipeline outvals: {}".format(pipeline_outvals.keys()))
+        logger.debug("global outvals: {}".format(global_outvals.keys()))
+        logger.debug("local outvals: {}".format(local_outvals.keys()))
+        return pipeline_outvals, global_outvals, local_outvals
+
 
 
 def _gen_linear_dependency(num_stage):

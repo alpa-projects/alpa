@@ -13,7 +13,7 @@ from jax.interpreters import xla
 
 # pylint: disable=redefined-builtin
 from parax import testing
-from parax.device_mesh import PhysicalDeviceMesh
+from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
 from parax.xla_pass_context import XlaPassContext
 from parax.auto_sharding import last_s_val, hlo_sharding_to_sharding_spec
 
@@ -206,19 +206,20 @@ class StrVarPipelineStage:
 
 
 # TODO(Hao): merge sharded stage with unsharded stage.
+@dataclass
 class XlaShardedPipelineStage(PipelineStage):
     """Pipeline stage with XLA HLO protos, supporting auto-sharding."""
     # hlo_proto: bytes = field(default_factory=b"")
-    mesh: PhysicalDeviceMesh
-    hlo_module: Any
-    hlo_proto: Any
-    donated_invars: Any
-    compiled: Any
+    mesh: VirtualMesh = None
+    hlo_module: Any = None
+    hlo_proto: Any = None
+    donated_invars: Any  = None#Hao: figure out what this is?
+    compiled: Any = None
 
     @classmethod
     def from_jax_pipeline_stage(cls,
                                 jax_pipeline_stage: JaxPipelineStage,
-                                mesh: PhysicalDeviceMesh,
+                                mesh: VirtualMesh,
                                 donated_invars,
                                 memory_budget_per_device):
         distributed_compilation_head = True if mesh.is_distributed else False
@@ -235,7 +236,7 @@ class XlaShardedPipelineStage(PipelineStage):
         # xla_consts = xla._xla_consts(c, consts)
         # xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
         xla_consts = map(partial(xb.constant, c), consts)
-        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=donated_invars)
+        xla_args, donated_invars = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
 
         # Convert jaxpr to XLA HLO
         backend_name = "gpu"
@@ -247,13 +248,14 @@ class XlaShardedPipelineStage(PipelineStage):
 
         # Set up aliases (donating invars)
         backend = xb.get_backend(backend_name)
-        if backend.platform in ("gpu", "tpu"):
-            donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
-        if any(donation_results):
-            # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-            unused_donations = [str(c.GetShape(a))
-                                for a, d in zip(xla_args, donation_results) if d]
-            warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
+        # if backend.platform in ("gpu", "tpu"):
+        #     # donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+        #     donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+        # if any(donation_results):
+        #     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+        #     unused_donations = [str(c.GetShape(a))
+        #                         for a, d in zip(xla_args, donation_results) if d]
+        #     warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
         # Compile
         built = c.build(out_tuple)
@@ -301,9 +303,9 @@ class XlaShardedPipelineStage(PipelineStage):
 
         return cls(
             name=jax_pipeline_stage.name,
+            mesh=mesh,
             hlo_module=hlo_module,
             hlo_proto=built.as_serialized_hlo_module_proto(),
-            mesh=mesh,
             compiled=compiled,
             donated_invars=donated_invars,
             invars=jax_pipeline_stage.invars,
@@ -334,16 +336,19 @@ class XlaShardedPipelineStage(PipelineStage):
         # result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
         # kept_var_idx = range(len(self.invars))
         # return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
+
+        # instantiate the physical mesh:
+        physical_mesh = self.mesh.get_physical_mesh()
+
         distributed_compilation_head = True if self.mesh.is_distributed else False
         logical_mesh = self.mesh.get_default_logical_mesh()
         tuple_args = False
         if distributed_compilation_head:
-            compiled = self.mesh.compile_remote_executable(
+            compiled = physical_mesh.compile_remote_executable(
                 self.hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        logical_mesh = self.mesh.get_default_logical_mesh()
         input_shardings = self.hlo_module.spmd_parameters_shardings()
         input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
                                 for (proto_tuple, aval) in zip(input_shardings, avals)]
@@ -351,6 +356,6 @@ class XlaShardedPipelineStage(PipelineStage):
         output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
 
         # Return the final callable
-        return self.mesh.get_callable_with_arg_handler(self.compiled, avals, out_avals,
+        return physical_mesh.get_callable_with_arg_handler(self.compiled, avals, out_avals,
                                                        input_sharding_specs, output_sharding_specs,
                                                        self.donated_invars)

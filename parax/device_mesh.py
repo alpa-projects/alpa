@@ -636,6 +636,87 @@ class PhysicalDeviceMesh:
         return ret
 
 
+class VirtualMesh:
+    """A virtual mesh used to instantiate a Physical Mesh in the future."""
+    def __init__(self,
+                 *,
+                 host_ids=None,
+                 host_info=None,
+                 head_ip=None,
+                 num_devices_per_host=1):
+        self.host_ids = host_ids
+        self.host_info = host_info
+        self.head_ip = head_ip
+        self.num_devices_per_host = num_devices_per_host
+
+        self.devices_str = []
+        for i, host_id in enumerate(self.host_ids):
+            ip = self.host_info[i]["NodeManagerAddress"]
+            self.devices_str.extend([device_id_to_str(ip, i)
+                                     for i in range(self.num_devices_per_host)])
+
+
+    def slice(self, dim, indices):
+        """Slice a mesh given the slicing config.
+
+        Args:
+            dim (int): which dimension to slice from, num_host or num_gpu
+            indices (List[int]):
+
+        Returns:
+            mesh (PhysicalDeviceMesh)
+        """
+        if dim == 0:
+            # slicing along the host dimension
+            host_ids = [self.host_ids[x] for x in indices]
+            host_info = [self.host_info[x] for x in host_ids]
+            return VirtualMesh(host_ids=host_ids, host_info=host_info,
+                               head_ip=self.head_ip, num_devices_per_host=self.num_devices_per_host)
+        else:
+            # slicing along the device dimension
+            return VirtualMesh(host_ids=self.host_ids, host_info=self.host_info,
+                               head_ip=self.head_ip, num_devices_per_host=len(indices))
+    @property
+    def total_devices(self):
+        return len(self.device_ids)
+
+    @property
+    def num_hosts(self):
+        return len(self.host_ids)
+
+    @property
+    def device_ids(self):
+        """This property does not distinguish host IPs."""
+        return [device_str_to_id(device_str) for device_str in self.devices_str]
+
+    @property
+    def is_distributed(self):
+        return True
+
+    def get_physical_mesh(self):
+        """Note that this will request resources from Ray."""
+        return PhysicalDeviceMesh(host_ids=self.host_ids,
+                                  host_info=self.host_info,
+                                  head_ip=self.head_ip,
+                                  num_devices_per_host=self.num_devices_per_host,
+                                  use_ray=True)
+    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
+        """Get a mapping to logical mesh."""
+        id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
+        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
+        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+        return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
+
+    def get_default_logical_mesh(self):
+        if self.num_hosts == 1:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                                         [1, 1], [1, 1])
+        else:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                                         [1, 1], [1, 0.01])
+
+
+
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 
@@ -658,7 +739,9 @@ class DeviceCluster:
             assert number.is_integer()
             self.num_devices.append(int(number))
 
-    def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
+    def get_physical_mesh(self,
+                          host_ids=None,
+                          num_devices_per_host=None):
         """
         Slice a subset of hosts and devices to form a physical device mesh.
 
@@ -684,6 +767,23 @@ class DeviceCluster:
                                   num_devices_per_host=num_devices_per_host,
                                   head_ip=self.head_ip,
                                   use_ray=True)
+
+    def get_virtual_mesh(self,
+                         host_ids=None,
+                         num_devices_per_host=None):
+        host_ids = host_ids or np.arange(len(self.host_info))
+        host_info = [self.host_info[x] for x in host_ids]
+
+        num_devices_per_host = num_devices_per_host or self.num_devices[host_ids[0]]
+        for host_id in host_ids:
+            assert self.num_devices[host_id] >= num_devices_per_host
+
+        # return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
+        return VirtualMesh(host_ids=host_ids,
+                           host_info=host_info,
+                           num_devices_per_host=num_devices_per_host,
+                           head_ip=self.head_ip)
+
 
 ########################################
 # Register ShardArg Handler

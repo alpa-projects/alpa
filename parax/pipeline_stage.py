@@ -13,7 +13,8 @@ from jax.interpreters import xla
 
 # pylint: disable=redefined-builtin
 from parax import testing
-from parax import PhysicalDeviceMesh, XlaPassContext
+from parax.device_mesh import PhysicalDeviceMesh
+from parax.xla_pass_context import XlaPassContext
 from parax.auto_sharding import last_s_val, hlo_sharding_to_sharding_spec
 
 unsafe_map, map = map, safe_map  # type: ignore

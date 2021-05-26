@@ -96,8 +96,9 @@ params = model.init(rngkey, x)
 optimizer = optim.GradientDescent(1e-2).create(params)
 
 gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-strategy = "distributed_pipeline_parallel"
+# strategy = "distributed_pipeline_parallel"
 # strategy = "pipeline_parallel"
+strategy = "3d_parallel"
 # import cloudpickle as pickle
 # m = pickle.dumps(train_step)
 # new_train_step = pickle.loads(m)

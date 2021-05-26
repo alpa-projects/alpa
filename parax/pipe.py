@@ -7,8 +7,6 @@ import numpy as np
 import jax
 from jax.core import Literal
 import ray
-from parax import PhysicalDeviceMesh, LogicalDeviceMesh
-from parax.auto_sharding import _auto_sharding_compile
 
 from parax.pipeline_stage import StrVarPipelineStage
 
@@ -243,13 +241,13 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
         if not self.schedule:
             self.schedule = GpipeSchedule(dependency=self.dependency,
                                           num_batch=self.num_batch,
-                                          mesh=self.mesh
+                                          mesh=self.mesh,
                                           sliced_meshes=self.sliced_meshes)
             logger.debug(self.schedule.pprint_schedule())
 
         if self.schedule:
             self.sliced_meshes = self.schedule.meshes
-        self._sharding_compile()
+
         # Below are runtime-related
         self.workers = []
         self._create_workers()

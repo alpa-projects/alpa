@@ -4,7 +4,7 @@ import jax
 from jax import linear_util as lu
 from jax.core import ClosedJaxpr
 from jax.interpreters import partial_eval as pe
-from parax import PhysicalDeviceMesh, LogicalDeviceMesh
+from parax.device_mesh import PhysicalDeviceMesh, LogicalDeviceMesh
 
 from parax.pipe import JaxPipeline
 from parax.pipeline_parallel import slice_closed_jaxpr_by_pipeline_marks

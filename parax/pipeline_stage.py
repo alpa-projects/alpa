@@ -95,6 +95,26 @@ class JaxPipelineStage(PipelineStage):
         return jit(jaxpr_as_fun(closed_jaxpr))
 
 
+def build_hlo_computation_from_jaxpr(name, closed_jaxpr):
+    in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
+    consts = closed_jaxpr.consts
+    map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+
+    backend = 'gpu'
+    tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
+
+    c = xb.make_computation_builder("pipeline_stage_{}".format(name))
+    xla_consts = xla._xla_consts(c, consts)
+    xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
+    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
+    out_nodes = xla.jaxpr_subcomp(
+        c, closed_jaxpr.jaxpr, backend, axis_env, xla_consts,
+        extend_name_stack(wrap_name(name, 'stage')), *xla_args)
+    out_tuple = xc.ops.Tuple(c, out_nodes)
+    built = c.build(out_tuple)
+    return built
+
+
 @dataclass
 class XlaPipelineStage(PipelineStage):
     """
@@ -118,23 +138,7 @@ class XlaPipelineStage(PipelineStage):
         """
         print("=" * 80)
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
-        in_avals = [var.aval for var in jax_pipeline_stage.invars]
-        consts = closed_jaxpr.consts
-        map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
-        print("closed_jaxpr", closed_jaxpr)
-
-        backend = 'gpu'
-        tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
-
-        c = xb.make_computation_builder("pipeline_stage_{}".format(jax_pipeline_stage.name))
-        xla_consts = xla._xla_consts(c, consts)
-        xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
-        axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
-        out_nodes = xla.jaxpr_subcomp(
-            c, closed_jaxpr.jaxpr, backend, axis_env, xla_consts,
-            extend_name_stack(wrap_name(jax_pipeline_stage.name, 'stage')), *xla_args)
-        out_tuple = xc.ops.Tuple(c, out_nodes)
-        built = c.build(out_tuple)
+        built = build_hlo_computation_from_jaxpr(jax_pipeline_stage.name, closed_jaxpr)
         print("built", built.as_hlo_text())
 
         return cls(
@@ -170,7 +174,7 @@ class XlaPipelineStage(PipelineStage):
         return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
 
 
-def generate_sharded_xla_stages(jax_stages: Sequence[JaxPipelineStage]):
+def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage]):
     invars = set()
     outvars = set()
     eqns = []
@@ -188,6 +192,8 @@ def generate_sharded_xla_stages(jax_stages: Sequence[JaxPipelineStage]):
     )
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     print("closed_jaxpr:", closed_jaxpr)
+    hlo_computation = build_hlo_computation_from_jaxpr(name, closed_jaxpr)
+    print("hlo_computation", hlo_computation.as_hlo_text())
     pass
 
 @dataclass

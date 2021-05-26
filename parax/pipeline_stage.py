@@ -191,9 +191,11 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
         eqns=eqns,
     )
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
-    print("closed_jaxpr:", closed_jaxpr)
+    print("=" * 40 + " closed_jaxpr " + name + " " + "=" * 40)
+    print(closed_jaxpr)
     hlo_computation = build_hlo_computation_from_jaxpr(name, closed_jaxpr)
-    print("hlo_computation", hlo_computation.as_hlo_text())
+    print("=" * 40 + " hlo_computation " + name + " " + "=" * 40)
+    print(hlo_computation.as_hlo_text())
     pass
 
 @dataclass

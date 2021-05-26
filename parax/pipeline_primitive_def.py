@@ -5,6 +5,36 @@ from jax.core import Primitive, abstract_unit
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 
+from .pipeline_custom_call import xla_pipeline_marker
+xla_client.register_custom_call_target(b'xla_pipeline_marker',
+    xla_pipeline_marker.pipeline_marker(), platform='gpu')
+
+def flatten_shape_byte_sizes(shape):
+    def _flatten_shape_byte_sizes(shape):
+        if shape.is_tuple():
+            res = []
+            for sub_shape in shape.tuple_shapes():
+                res += _flatten_shape_byte_sizes(sub_shape)
+            return res
+        else:
+            return [shape.numpy_dtype().itemsize * np.prod(shape.dimensions())]
+    res = _flatten_shape_byte_sizes(shape)
+    return np.array(res, dtype=np.int64)
+
+
+def mark_pipeline_xla(c, *args):
+    input_params = ops.Tuple(c, args)
+    input_shape = c.get_shape(input_params)
+    flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
+    output_tuple = xla_client.ops.CustomCall(c,
+        b'xla_pipeline_marker',
+        operands=(input_params, ),
+        shape=input_shape,
+        opaque=flattened_byte_sizes.tobytes()
+        )
+    return [ops.GetTupleElement(output_tuple, i) for i in range(len(args))]
+
+
 # Define a Jax primitive to mark start/end of a pipeline stage.
 pipeline_p = Primitive('pipeline')
 pipeline_p.multiple_results = True
@@ -36,6 +66,7 @@ def _pipeline_abstract_eval(*args, **kwargs):
 
 
 def _pipeline_xla_translation(c, *args, **kwargs):
+    return xla_pipeline_marker(c, args)
     return xc.ops.Tuple(c, args) if len(args) > 0 else xc.ops.Tuple(c, (xc.ops.Constant(c, np.float32(0.0)),))
 
 

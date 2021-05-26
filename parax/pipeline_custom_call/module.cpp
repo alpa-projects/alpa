@@ -7,7 +7,7 @@ namespace py = pybind11;
 PYBIND11_MODULE(xla_pipeline_marker, m) {
     m.doc() = "Pipeline marker in XLA.";
     m.def(
-        "pipeline_marker", [](){
+        "xla_pipeline_marker", [](){
             const char *name = "xla._CUSTOM_CALL_TARGET";
             return py::capsule((void *) &kernel::pipelineMarker, name);
         }, "return a capsule"

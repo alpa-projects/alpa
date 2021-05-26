@@ -170,6 +170,26 @@ class XlaPipelineStage(PipelineStage):
         return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
 
 
+def generate_sharded_xla_stages(jax_stages: Sequence[JaxPipelineStage]):
+    invars = set()
+    outvars = set()
+    eqns = []
+    consts_dir = {}
+    for stage in jax_stages:
+        consts_dir.update(stage.consts_dir)
+        invars.update(stage.global_invars, stage.pipeline_invars)
+        outvars.update(stage.global_outvars, stage.pipeline_outvars)
+        eqns += stage.eqns
+    jaxpr = Jaxpr(
+        constvars=consts_dir.keys(),
+        invars=invars,
+        outvars=outvars,
+        eqns=eqns,
+    )
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
+    print("closed_jaxpr:", closed_jaxpr)
+    pass
+
 @dataclass
 class StrVarPipelineStage:
     """Stringified stage with all Set/Dict have string keys."""

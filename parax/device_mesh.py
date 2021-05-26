@@ -1,5 +1,6 @@
 """Cluster related configurations (e.g., topology)."""
 import time
+import logging
 from collections.abc import Iterable
 from typing import Union, List, Tuple
 
@@ -19,8 +20,12 @@ from parax.util import get_dim_last_value, to_int_tuple
 from parax.xla_pass_context import XlaPassContext
 
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
-    return "{}:{}:{}".format(host_ip, str(device_id), device_type)
+    return "{}:{}:{}".format(host_ip, device_type, str(device_id))
 
 
 def device_str_to_id(device_str):
@@ -118,59 +123,6 @@ class LogicalDeviceMesh:
                 self.mesh_alpha, self.mesh_beta) == \
                (other.flatten_ids, other.id_mesh.shape,
                 other.mesh_alpha, other.mesh_beta)
-
-
-# TODO(Hao): deprecate this soon
-class SingleHostDeviceMesh:
-    """A physical device mesh that presents devices on a single node."""
-
-    def __init__(self, devices):
-        self.devices = devices
-
-    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
-        """Get a mapping to logoical mesh."""
-        device_ids = np.array([d.id for d in self.devices])
-        device_ids = device_ids.reshape(mesh_shape)
-        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
-        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
-        return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
-
-    def get_default_logical_mesh(self):
-        return self.get_logical_mesh((1, len(self.devices)))
-
-    def get_callable_with_arg_handler(self, compiled, avals, out_avals,
-                                      input_sharding_specs, output_sharding_specs, donated_invars):
-        input_indices = [pxla.spec_to_indices(aval.shape, spec) for
-                         aval, spec in zip(avals, input_sharding_specs)]
-        args_handler = partial(pxla.shard_args, self.devices, input_indices)
-        outs_handler = pxla.avals_to_results_handler(1, len(self.devices),
-                                                     output_sharding_specs, out_avals)
-
-        ret = partial(SingleHostDeviceMesh._execute_with_handler,
-                      compiled, args_handler, outs_handler)
-        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
-                                      input_sharding_specs, input_indices)
-        return ret
-
-    def preshard_args(self, handler, avals, sharding_specs, indices, *args):
-        input_bufs = handler(args)
-
-        sharded_args = []
-        for i in range(len(args)):
-            sharded_args.append(ShardedDeviceArray(
-                avals[i],
-                sharding_specs[i],
-                input_bufs[i],
-                indices[i],
-            ))
-
-        return sharded_args
-
-    @staticmethod
-    def _execute_with_handler(compiled, args_handler, outs_handler, *args):
-        input_bufs = args_handler(args)
-        out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
-        return outs_handler(out_bufs)
 
 
 class RemoteExecutableRef:
@@ -631,11 +583,14 @@ class PhysicalDeviceMesh:
         # Do some argument check
         if not use_ray and not devices:
             raise RuntimeError("`devices` are required for single-host device mesh.")
+        if devices and use_ray:
+            raise RuntimeError("`devices` are passed in when not using a Ray cluster.")
         if not use_ray:
+            self.devices = devices
             self.host_ids = [0]
             self.host_info = None
             self.head_ip = "127.0.0.1"
-            self.devices_str = [device_id_to_str(self.head_ip, d) for d in devices]
+            self.devices_str = [device_id_to_str(self.head_ip, d.id) for d in devices]
             self.num_devices_per_host = len(self.devices)
 
         if use_ray:
@@ -694,6 +649,12 @@ class PhysicalDeviceMesh:
 
         input_indices = [pxla.spec_to_indices(aval.shape, spec)
                          for aval, spec in zip(avals, input_sharding_specs)]
+
+        # if not self.is_distributed:
+        #     args_handler = partial(pxla.shard_args, self.devices, input_indices)
+        # else:
+        #     args_handler = partial(self._shard_args, input_indices, donated_invars)
+
         args_handler = partial(self._shard_args, input_indices, donated_invars)
         if not self.is_distributed:
             outs_handler = pxla.avals_to_results_handler(1, len(self.devices),
@@ -757,7 +718,7 @@ class PhysicalDeviceMesh:
     def _shard_args(self, arg_indices, donated_invars, args):
         if not self.is_distributed:
             # single host w/o Ray
-            return partial(pxla.shard_args, self.devices, arg_indices)
+            return pxla.shard_args(self.devices, arg_indices, args)
         else:
             input_bufs = []
             for arg, indices, donated in zip(args, arg_indices, donated_invars):
@@ -775,14 +736,14 @@ class PhysicalDeviceMesh:
 
     @property
     def total_devices(self):
-        return len(self.devices)
+        return len(self.device_ids)
 
     @property
     def num_hosts(self):
         return len(self.host_ids)
 
     @property
-    def devices(self):
+    def device_ids(self):
         """This property does not distinguish host IPs."""
         return [device_str_to_id(device_str) for device_str in self.devices_str]
 
@@ -901,6 +862,63 @@ class DeviceCluster:
             assert self.num_devices[host_id] >= num_devices_per_host
 
         return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
+
+
+########################################
+# To be Deprecated
+########################################
+class SingleHostDeviceMesh:
+    """A physical device mesh that presents devices on a single node."""
+
+    def __init__(self, devices):
+        self.devices = devices
+        logger.warning("`SingleHostDeviceMesh` has been deprecated, "
+                       "use `PhysicalDeviceMesh` instead.")
+
+    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
+        """Get a mapping to logoical mesh."""
+        device_ids = np.array([d.id for d in self.devices])
+        device_ids = device_ids.reshape(mesh_shape)
+        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
+        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+        return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
+
+    def get_default_logical_mesh(self):
+        return self.get_logical_mesh((1, len(self.devices)))
+
+    def get_callable_with_arg_handler(self, compiled, avals, out_avals,
+                                      input_sharding_specs, output_sharding_specs, donated_invars):
+        input_indices = [pxla.spec_to_indices(aval.shape, spec) for
+                         aval, spec in zip(avals, input_sharding_specs)]
+        args_handler = partial(pxla.shard_args, self.devices, input_indices)
+        outs_handler = pxla.avals_to_results_handler(1, len(self.devices),
+                                                     output_sharding_specs, out_avals)
+
+        ret = partial(SingleHostDeviceMesh._execute_with_handler,
+                      compiled, args_handler, outs_handler)
+        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
+                                      input_sharding_specs, input_indices)
+        return ret
+
+    def preshard_args(self, handler, avals, sharding_specs, indices, *args):
+        input_bufs = handler(args)
+
+        sharded_args = []
+        for i in range(len(args)):
+            sharded_args.append(ShardedDeviceArray(
+                avals[i],
+                sharding_specs[i],
+                input_bufs[i],
+                indices[i],
+            ))
+
+        return sharded_args
+
+    @staticmethod
+    def _execute_with_handler(compiled, args_handler, outs_handler, *args):
+        input_bufs = args_handler(args)
+        out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
+        return outs_handler(out_bufs)
 
 
 ########################################

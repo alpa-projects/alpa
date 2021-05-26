@@ -4,6 +4,7 @@ import multiprocessing
 import pickle
 import time
 import traceback
+import logging
 from warnings import warn
 
 import numpy as np
@@ -17,10 +18,17 @@ from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, LogicalDeviceMesh
+# from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, \
+#     LogicalDeviceMesh, PhysicalDeviceMesh
+from parax.device_mesh import MultiHostDeviceMesh, LogicalDeviceMesh, \
+    PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.util import to_int_tuple
 from parax.xla_pass_context import XlaPassContext
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def auto_sharding_callable(
@@ -36,14 +44,16 @@ def auto_sharding_callable(
     distributed_compilation_head = False
 
     if devices is None:
-        physical_mesh = SingleHostDeviceMesh(xb.devices())
+        # physical_mesh = SingleHostDeviceMesh(xb.devices())
+        physical_mesh = PhysicalDeviceMesh(devices=xb.devices())
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, (list, tuple)):
-        physical_mesh = SingleHostDeviceMesh(devices)
+        # physical_mesh = SingleHostDeviceMesh(devices)
+        physical_mesh = PhysicalDeviceMesh(devices=devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, SingleHostDeviceMesh):
-        physical_mesh = devices
-        logical_mesh = physical_mesh.get_default_logical_mesh()
+    # elif isinstance(devices, SingleHostDeviceMesh):
+    #     physical_mesh = devices
+    #     logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, MultiHostDeviceMesh):
         physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()

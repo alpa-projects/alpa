@@ -221,7 +221,7 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
                  pipeline_stages,
                  global_invars,
                  global_outvars,
-                 sliced_meshes=None,
+                 mesh,
                  dependency=None,
                  num_batch=1,
                  schedule=None):
@@ -229,9 +229,9 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
         self.global_invars = global_invars
         self.global_outvars = global_outvars
         self.num_stage = len(self.stages)
-        self.phyiscal_mesh = physical_mesh
-        self.logical_mesh = self.phyiscal_mesh.get_default_logical_mesh()
-        self.auto_sharding_callable_args = auto_sharding_callable_args
+
+        self.mesh = mesh
+        self.logical_mesh = self.mesh.get_default_logical_mesh()
         # TODO(Hao): analyze stages/dependencies and generate placement and schedule.
         self.num_batch = num_batch
         self.dependency = dependency
@@ -239,23 +239,17 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
         if not self.dependency:
             self.dependency = _gen_linear_dependency(self.num_stage)
 
-        self.sliced_meshes = sliced_meshes
         self.schedule = schedule
-        if self.schedule and not self.sliced_meshes:
-            raise RuntimeError("Sliced meshes are required when schedule is provided.")
-        # schedules here include placement information.
         if not self.schedule:
             self.schedule = GpipeSchedule(dependency=self.dependency,
                                           num_batch=self.num_batch,
-                                          physical_mesh=self.physical_mesh,
-                                          logical_mesh=self.logical_mesh,
+                                          mesh=self.mesh
                                           sliced_meshes=self.sliced_meshes)
             logger.debug(self.schedule.pprint_schedule())
-        if not self.sliced_meshes:
+
+        if self.schedule:
             self.sliced_meshes = self.schedule.meshes
-
         self._sharding_compile()
-
         # Below are runtime-related
         self.workers = []
         self._create_workers()
@@ -435,22 +429,20 @@ class GpipeSchedule:
     def __init__(self,
                  *,
                  dependency,
-                 physical_mesh,
-                 logical_mesh,
+                 mesh,
                  sliced_meshes=None,
                  num_batch=1,
                  costs=None):
 
         self.dependency = dependency
-        self.physical_mesh = physical_mesh
-        self.logical_mesh = logical_mesh
+        self.original_mesh = mesh
         self.meshes = sliced_meshes
         self.num_batch = num_batch
         self.costs = costs
         self.num_stage = dependency.shape[0]
 
         if not self.meshes:
-            self.meshes = self.slice_mesh(self.physical_mesh)
+            self.meshes = self.slice_mesh(self.original_mesh)
         self.num_pipeline_worker = len(self.meshes)
         if self.num_stage != 2 * self.num_pipeline_worker:
             raise RuntimeError("Gpipe schedule requires #stages being twice of #workers.")
@@ -540,11 +532,6 @@ class GpipeSchedule:
                         ownership[worker_idx].add(stage_idx)
         return ownership
 
-    @property
-    def meshes(self):
-        """The woker meshes."""
-        return self.meshes
-
     def stage_placement(self, stage_idx):
         """Query the placement of a stage given its stage index."""
         return self.stage_worker_mapping[stage_idx]
@@ -575,18 +562,16 @@ class GpipeSchedule:
         - higher priority to slice over the node dimension rather than gpu dimension.
 
         Args:
-            mesh: a physical device mesh.
+            physical_mesh: a physical device mesh.
 
         Returns:
             sliced_meshes (List[Mesh]):
         """
         sliced_meshes = []
-        num_mesh = self.num_stage / 2
+        # TODO (should be self.num_stage / 2 after the merging of HLO is done..)
+        num_mesh = self.num_stage
         mesh = physical_mesh
-        if isinstance(mesh, MultiHostDeviceMesh) and mesh.num_hosts == 1:
-            mesh = SingleHostDeviceMesh(physical_mesh)
-        is_distributed = isinstance(mesh, MultiHostDeviceMesh)
-        if is_distributed:
+        if mesh.is_distributed:
             num_host = mesh.num_hosts
             if num_host < num_mesh:
                 raise RuntimeError("The number of available hosts in the mesh is insufficient.")
@@ -594,7 +579,7 @@ class GpipeSchedule:
             num_host_per_mesh = num_host / num_mesh
             for i in range(num_host):
                 ins = indices[num_host_per_mesh:i:num_host_per_mesh*(i+1)]
-                sliced_meshes.append(mesh.slice(ins))
+                sliced_meshes.append(mesh.slice(0, ins))
         else:
             num_device = len(mesh.devices)
             if num_device < num_mesh:
@@ -603,5 +588,5 @@ class GpipeSchedule:
             num_device_per_mesh = num_device / num_mesh
             for i in range(num_mesh):
                 ins = indices[num_device_per_mesh*i:num_device_per_mesh*(i+1)]
-                sliced_meshes.append(mesh.slice(ins))
+                sliced_meshes.append(mesh.slice(1, ins))
         return sliced_meshes

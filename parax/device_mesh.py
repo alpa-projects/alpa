@@ -626,6 +626,29 @@ class PhysicalDeviceMesh:
 
             self._launch_xla_servers()
 
+    def slice(self, dim, indices):
+        """Slice a mesh given the slicing config.
+
+        Args:
+            dim (int): which dimension to slice from, num_host or num_gpu
+            indices (List[int]):
+
+        Returns:
+            mesh (PhysicalDeviceMesh)
+        """
+        if dim == 0:
+            # slicing along the host dimension
+            host_ids = [self.host_ids[x] for x in indices]
+            host_info = [self.host_info[x] for x in host_ids]
+            return PhysicalDeviceMesh(host_ids=host_ids, host_info=host_info,
+                                      head_ip=self.head_ip, num_devices_per_host=self.num_devices_per_host,
+                                      use_ray=self.use_ray)
+        else:
+            # slicing along the device dimension
+            return PhysicalDeviceMesh(host_ids=self.host_ids, host_info=self.host_info,
+                                      head_ip=self.head_ip, num_devices_per_host=len(indices),
+                                      use_ray=self.use_ray)
+
     def _launch_xla_servers(self):
         # Launch distributed xla runtime
         port = np.random.randint(10000, 11000)

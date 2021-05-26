@@ -42,14 +42,17 @@ def three_d_parallel_callable(
     jax_pipeline_stages, global_invars, global_outvars = \
         mock_slicing_algo(fun, avals, physical_mesh, logical_mesh)
 
-    # Slice mesh based on the stages
-    meshes = slice_mesh(physical_mesh, len(jax_pipeline_stages))
+    # some temporary params
+    dependency = _gen_linear_dependency(len(jax_pipeline_stages))
+    # Gpipe will slice the mesh.
+    gpipe_schedule = GpipeSchedule(dependency=dependency,
+                                   mesh=physical_mesh)
+    meshes = gpipe_schedule.meshes
 
     # convert JaxPipelineStage to XLAshardedStage:
     xla_sharded_pipeline_stages = \
         [XlaShardedPipelineStage.from_jax_pipeline_stage(stage, meshes[i], donated_invars, memory_budget_per_device)
          for i, stage in enumerate(jax_pipeline_stages)]
-
     jp = JaxPipeline(pipeline_stages=xla_sharded_pipeline_stages,
                      global_invars=global_invars,
                      global_outvars=global_outvars)
@@ -65,8 +68,3 @@ def mock_slicing_algo(fun, avals, physical_mesh, logical_mesh):
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     return jax_pipeline_stages, global_invars, global_outvars
-
-def slice_mesh(physical_mesh, num_stage):
-    """TODO"""
-    sliced_meshes = []
-    return sliced_meshes

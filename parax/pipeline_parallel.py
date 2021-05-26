@@ -200,7 +200,7 @@ def pipeline_parallel_callable(
         stage_dict[stage.name].append(stage)
     xla_stage_dict = {}
     for name, stages in stage_dict:
-        xla_stage_dict[name] = generate_sharded_xla_stages(stages)
+        xla_stage_dict[name] = generate_sharded_xla_stages(name, stages)
     exit(1)
     xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage)
                            for stage in jax_pipeline_stages]

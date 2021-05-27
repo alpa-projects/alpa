@@ -1,17 +1,15 @@
 """Test auto sharding with MLP."""
-import numpy as np
 
 import unittest
 
-from flax import linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
-from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
+from flax import linen as nn
+from flax import optim
+from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 
-from parax import parallelize, SingleHostDeviceMesh, global_config, testing
+from parax import parallelize, global_config, testing, PhysicalDeviceMesh
 
 MB = 1024 ** 2
 
@@ -62,7 +60,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         global_config.shard_parallel_strategy = "auto_sharding"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = SingleHostDeviceMesh(self.devices)
+        # device_mesh = SingleHostDeviceMesh(self.devices)
+        device_mesh = PhysicalDeviceMesh(devices=self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_2_layer_mlp(self, batch_size, input_dim, output_dim, hidden_dim,

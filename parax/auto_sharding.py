@@ -1,62 +1,65 @@
 """Use the auto sharding pass in XLA."""
-
+import logging
 import multiprocessing
-import pickle
 import time
 import traceback
-from warnings import warn
 
+from warnings import warn
 import numpy as np
 from jax import linear_util as lu
+from jax._src.util import (partial, extend_name_stack, wrap_name)
 from jax.interpreters import xla, pxla, partial_eval as pe
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client as xc
-from jax._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
-                           extend_name_stack, wrap_name, assert_unreachable,
-                           tuple_insert, tuple_delete, curry)
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.device_mesh import SingleHostDeviceMesh, MultiHostDeviceMesh, LogicalDeviceMesh
-from parax.global_env import global_config
-from parax.util import to_int_tuple
+from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.xla_pass_context import XlaPassContext
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
+
+# pylint: disable=too-many-arguments,too-many-locals
 def auto_sharding_callable(
-    fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    devices,
-    donated_invars,
-    memory_budget_per_device,
-    *avals
-):
+        fun: lu.WrappedFun,
+        in_tree,
+        out_tree_thunk,
+        devices,
+        donated_invars,
+        memory_budget_per_device,
+        *avals):
+    """Perform sharding optimization."""
     # Get physical and logical device mesh according to the arguments
     distributed_compilation_head = False
 
     if devices is None:
-        physical_mesh = SingleHostDeviceMesh(xb.devices())
+        physical_mesh = PhysicalDeviceMesh(devices=xb.devices())
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, (list, tuple)):
-        physical_mesh = SingleHostDeviceMesh(devices)
+        physical_mesh = PhysicalDeviceMesh(devices=devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, SingleHostDeviceMesh):
-        physical_mesh = devices
-        logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, MultiHostDeviceMesh):
+    # elif isinstance(devices, SingleHostDeviceMesh):
+    #     physical_mesh = devices
+    #     logical_mesh = physical_mesh.get_default_logical_mesh()
+    # elif isinstance(devices, MultiHostDeviceMesh):
+    #     physical_mesh = devices
+    #     logical_mesh = physical_mesh.get_default_logical_mesh()
+    elif isinstance(devices, PhysicalDeviceMesh):
         physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, LogicalDeviceMesh):
         logical_mesh = devices
         physical_mesh = logical_mesh.physical_mesh
-
-    if isinstance(physical_mesh, MultiHostDeviceMesh):
+    # if isinstance(physical_mesh, MultiHostDeviceMesh):
+    #     distributed_compilation_head = True
+    if physical_mesh.is_distributed:
         distributed_compilation_head = True
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    #tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+    # tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
     tuple_args = False
 
     # Make xla arguments
@@ -86,8 +89,8 @@ def auto_sharding_callable(
 
     # Compile
     built = c.Build(out_tuple)
-    #print(built.as_hlo_text())
-    #exit()
+    # print(built.as_hlo_text())
+    # exit()
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
@@ -137,17 +140,17 @@ def auto_sharding_callable(
     # Read HloSharding from HloModule and convert them to ShardingSpec
     input_shardings = hlo_module.spmd_parameters_shardings()
     input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
-                           for (proto_tuple, aval) in zip(input_shardings, avals)]
+                            for (proto_tuple, aval) in zip(input_shardings, avals)]
     output_sharding = hlo_module.spmd_output_sharding()
     output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-        input_sharding_specs, output_sharding_specs, donated_invars)
+                                                       input_sharding_specs, output_sharding_specs, donated_invars)
 
 
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
-    sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
+    sharding_type, tile_assignment_dimensions, tile_assignment_devices, \
         _, _ = proto_tuple
 
     sharding = []
@@ -169,7 +172,7 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
                 pt += 1
 
         # All other dims are replicated
-        for mesh_dim in range(len(mesh_mapping)):
+        for mesh_dim, _ in enumerate(mesh_mapping):
             if mesh_mapping[mesh_dim] is None:
                 mesh_mapping[mesh_dim] = pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
     elif sharding_type == OpSharding.Type.REPLICATED:
@@ -182,9 +185,9 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
 
 
 def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh):
+    """Convert hlo sharding to sharding spec."""
     proto_tuple = hlo_sharding.proto_tuple()
-    sharding_type, tile_assignment_dimensions, tile_assignment_devices,\
-        tuple_shardings, replicate_on_last_tile_dim = proto_tuple
+    sharding_type, _, _, tuple_shardings, _ = proto_tuple
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
         return [_hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
@@ -194,6 +197,7 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh):
 
 
 def call_solver_serialized_args(*args):
+    """Call solver."""
     try:
         ret = _call_solver_serialized_args(*args)
     except AssertionError:
@@ -211,6 +215,7 @@ def call_solver_serialized_args(*args):
 
 # The last solution vector of auto sharding
 last_s_val = None
+
 
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
@@ -305,7 +310,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
             else:
                 num_nodes += 1
                 s.append(LpVariable.matrix(f"s[{i}]",
-                    (range(s_len[i]),), cat="Binary"))
+                                           (range(s_len[i]),), cat="Binary"))
         else:
             s.append(s[s_follow[i]])
 
@@ -318,7 +323,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         else:
             num_edges += 1
             e.append(LpVariable.matrix(f"e[{i},{j}]",
-                (range(len(s[i]) * len(s[j])),), cat="Binary"))
+                                       (range(len(s[i]) * len(s[j])),), cat="Binary"))
         assert len(e[idx]) == len(r[idx])
 
     # 2. Set initial value for warm start
@@ -402,7 +407,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
     solver = pulp.COIN_CMD(mip=True, msg=msg, timeLimit=time_limit,
                            threads=multiprocessing.cpu_count())
-    #solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
+    # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     prob.solve(solver)
 
     objective = float(pulp.value(prob.objective))

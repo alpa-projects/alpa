@@ -46,6 +46,7 @@ class DeviceMeshTest(unittest.TestCase):
         assert_allclose(out._value, (np.ones_like(a) + 1) * 2)
 
         physical_mesh.shutdown()
+        ray.shutdown()
 
     def test_mlp(self):
         # Launch a multi-host device mesh
@@ -99,6 +100,7 @@ class DeviceMeshTest(unittest.TestCase):
         assert_allclose(optimizer_expected.target, optimizer_actaul.target)
 
         physical_mesh.shutdown()
+        ray.shutdown()
 
 
 def suite():

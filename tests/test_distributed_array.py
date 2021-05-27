@@ -23,8 +23,8 @@ class DistributedArrayTest(unittest.TestCase):
         sharding_spec = logical_mesh.make_tile_spec(array, [0, 1], [0, 1])
         indices = sharding_spec.indices(array.shape).flatten()
         remote_a = physical_mesh._shard_args([indices], (False,), (array,))
-
         physical_mesh.shutdown()
+        ray.shutdown()
 
 
 def suite():

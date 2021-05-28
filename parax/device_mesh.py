@@ -628,6 +628,7 @@ class PhysicalDeviceMesh:
         return ret
 
 
+# TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.
 class VirtualMesh:
     """A virtual mesh used to instantiate a Physical Mesh in the future."""
     def __init__(self,
@@ -646,7 +647,6 @@ class VirtualMesh:
             ip = self.host_info[i]["NodeManagerAddress"]
             self.devices_str.extend([device_id_to_str(ip, i)
                                      for i in range(self.num_devices_per_host)])
-
 
     def slice(self, dim, indices):
         """Slice a mesh given the slicing config.
@@ -692,6 +692,7 @@ class VirtualMesh:
                                   head_ip=self.head_ip,
                                   num_devices_per_host=self.num_devices_per_host,
                                   use_ray=True)
+
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Get a mapping to logical mesh."""
         id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
@@ -706,7 +707,6 @@ class VirtualMesh:
         else:
             return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
                                          [1, 1], [1, 0.01])
-
 
 
 class DeviceCluster:

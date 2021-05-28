@@ -1,5 +1,6 @@
 """Distributed JAX pipeline parallelism."""
 import logging
+import math
 from collections import OrderedDict
 import functools
 import numpy as np
@@ -392,7 +393,6 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         self.global_outvars = global_outvars
         self.num_stage = len(self.stages)
         self.mesh = mesh
-        self.logical_mesh = self.mesh.get_default_logical_mesh()
 
         self.num_batch = num_batch
         self.dependency = dependency
@@ -403,22 +403,33 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         self.schedule = schedule
         if not self.schedule:
             self.schedule = GpipeSchedule(dependency=self.dependency,
-                                          num_batch=self.num_batch,
                                           mesh=self.mesh,
-                                          sliced_meshes=self.sliced_meshes)
+                                          num_batch=self.num_batch)
             logger.debug(self.schedule.pprint_schedule())
 
-        if self.schedule:
-            self.sliced_meshes = self.schedule.meshes
+        self.sliced_meshes = self.schedule.meshes
+
+        self._prepare()
+
+        self._compile_sharding_strategy()
 
         # Below are runtime-related
         self._start_physical_meshes()
-
         self.stage_outputs = None
         self.microbatches = None
         # Note(Hao): all dicts constructed in this class are
         # string-keyed instead of Object-keyed.
         self.stage_outputs = self._init_stage_outputs()
+
+    def _prepare(self):
+        # assign stages
+
+        # compile sharding
+
+        # start phyiscal mesh (launch xla runtime)
+
+        # prepare inputs/outputs buffers and communication between stages.
+
 
     def run(self, *args, **kwargs):
         """Run the training with pipelining."""
@@ -501,6 +512,8 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         for stage in self.stages:
             # This will request resources from Ray
             self.runnables.append(stage.get_runnable())
+
+    def _compile_sharding_strategy(self):
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
         """
@@ -597,7 +610,6 @@ class GpipeSchedule:
                  sliced_meshes=None,
                  num_batch=1,
                  costs=None):
-
         self.dependency = dependency
         self.original_mesh = mesh
         self.meshes = sliced_meshes
@@ -605,11 +617,13 @@ class GpipeSchedule:
         self.costs = costs
         self.num_stage = dependency.shape[0]
 
+        if self.num_stage % 2 != 0:
+            raise RuntimeError("Gpipe schedule require an even number of stages.")
+        self.num_pipeline_worker = self.num_stage // 2
         if not self.meshes:
             self.meshes = self.slice_mesh(self.original_mesh)
-        self.num_pipeline_worker = len(self.meshes)
-        # if self.num_stage != 2 * self.num_pipeline_worker:
-        #     raise RuntimeError("Gpipe schedule requires #stages being twice of #workers.")
+        if len(self.meshes) != self.num_pipeline_worker:
+            raise RuntimeError("Gpipe schedule requires #meshes = #workers.")
         self._schedules = self._generate_schedule()
 
     def _generate_schedule(self):
@@ -717,7 +731,7 @@ class GpipeSchedule:
         """Return the number of clocks in the schedule."""
         return len(self._schedules)
 
-    def slice_mesh(self, mesh):
+    def slice_mesh(self, original_mesh):
         """
         Slice the mesh for each remote runner.
 
@@ -726,29 +740,34 @@ class GpipeSchedule:
         - higher priority to slice over the node dimension rather than gpu dimension.
 
         Args:
-            mesh: a device mesh.
+            original_mesh: a virtual device mesh.
 
         Returns:
-            sliced_meshes (List[Mesh]):
+            sliced_meshes (List[Mesh]): List of meshes to spawn worker on.
         """
-        sliced_meshes = []
-        # TODO (should be self.num_stage / 2 after the merging of HLO is done..)
-        num_mesh = self.num_stage
-        if mesh.is_distributed and False: # Hao: disable this branch now
-            num_host = mesh.num_hosts
-            if num_host < num_mesh:
-                raise RuntimeError("The number of available hosts in the mesh is insufficient.")
-            indices = list(range(num_host))
-            num_host_per_mesh = num_host / num_mesh
-            for i in range(num_host):
-                ins = indices[num_host_per_mesh:i:num_host_per_mesh*(i+1)]
-                sliced_meshes.append(mesh.slice(0, ins))
+        output_meshes = []
+        num_mesh_expected = self.num_pipeline_worker
+        if not original_mesh.is_distributed:
+            raise RuntimeError("SingleDeviceMesh is not supported.")
+        if original_mesh.total_devices < num_mesh_expected:
+            raise RuntimeError("#device < #workers.")
+
+        num_device_per_mesh = original_mesh.total_devices / num_mesh_expected
+        num_device_per_host = original_mesh.num_devices_per_host
+        num_host = original_mesh.num_hosts
+        if num_device_per_host >= num_device_per_mesh:
+            num_mesh_per_host = num_device_per_host / num_device_per_mesh
+            for i in range(num_mesh_expected):
+                host_idx = i / num_mesh_per_host
+                mesh_idx = i % num_mesh_per_host
+                ind = list(range(num_device_per_host))
+                mesh = original_mesh.slice(0, [host_idx])\
+                    .slice(1, ind[mesh_idx*num_device_per_mesh:(mesh_idx+1)*num_device_per_mesh])
+                output_meshes.append(mesh)
         else:
-            if mesh.total_devices < num_mesh:
-                raise RuntimeError("The number of available devices in the mesh is insufficient.")
-            indices = list(range(mesh.total_devices))
-            num_device_per_mesh = int(mesh.total_devices / num_mesh)
-            for i in range(num_mesh):
-                ins = indices[num_device_per_mesh*i:num_device_per_mesh*(i+1)]
-                sliced_meshes.append(mesh.slice(1, ins))
-        return sliced_meshes
+            num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)
+            ind = list(range(num_host))
+            for i in range(num_mesh_expected):
+                output_meshes.append((
+                    original_mesh.slice(0, ind[num_host_per_mesh*i:num_host_per_mesh*(i+1)])))
+        return output_meshes

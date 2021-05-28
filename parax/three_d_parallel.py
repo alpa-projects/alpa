@@ -42,19 +42,19 @@ def three_d_parallel_callable(
     #     physical_mesh = logical_mesh.physical_mesh
 
     if not isinstance(devices, VirtualMesh):
-        raise RuntimeError("Unrecognized type of `devices`, got: {}, expected: {}.".
-                           format(type(devices), "VirtualMesh"))
+        raise RuntimeError("Unrecognized type of `devices`, got: {}, "
+                           "expected type: {}.".format(type(devices), "VirtualMesh"))
     virtual_mesh = devices
-    # Note(Hao): For now we manually slice the model to get stages.
-    # Later we shall run a scheduling algorithm (signature below) to get the stages.
     jax_pipeline_stages, global_invars, global_outvars = \
         mock_slicing_algo(fun, avals, virtual_mesh)
+    jp = Jax3DPipeline(pipeline_stages=jax_pipeline_stages,
+                       global_invars=global_invars,
+                       global_outvars=global_outvars,
+                       mesh=virtual_mesh)
 
     # For test purpose, try the first two stages, so each stage has two GPUs
     jax_pipeline_stages = jax_pipeline_stages[:2]
-    # some temporary params
     dependency = _gen_linear_dependency(len(jax_pipeline_stages))
-    # Gpipe will slice the mesh.
     gpipe_schedule = GpipeSchedule(dependency=dependency,
                                    mesh=virtual_mesh)
     meshes = gpipe_schedule.meshes

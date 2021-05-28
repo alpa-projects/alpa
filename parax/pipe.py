@@ -11,7 +11,7 @@ import ray
 from parax.pipeline_stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def cached_property(fn, *args, **kwargs):

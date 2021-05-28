@@ -43,7 +43,6 @@ def benchmark_mlp_one_case(benchmark_case):
 
     # Mesh configs
     num_devices = dp_size * tensor_mp_size
-    # device_mesh = SingleHostDeviceMesh(jax.devices()[:num_devices])
     device_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices])
     logical_mesh = device_mesh.get_logical_mesh([dp_size, tensor_mp_size])
 

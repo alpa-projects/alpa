@@ -47,29 +47,34 @@ def three_d_parallel_callable(
     virtual_mesh = devices
     jax_pipeline_stages, global_invars, global_outvars = \
         mock_slicing_algo(fun, avals, virtual_mesh)
-    jp = Jax3DPipeline(pipeline_stages=jax_pipeline_stages,
-                       global_invars=global_invars,
-                       global_outvars=global_outvars,
-                       mesh=virtual_mesh)
 
-    # For test purpose, try the first two stages, so each stage has two GPUs
-    jax_pipeline_stages = jax_pipeline_stages[:2]
-    dependency = _gen_linear_dependency(len(jax_pipeline_stages))
-    gpipe_schedule = GpipeSchedule(dependency=dependency,
-                                   mesh=virtual_mesh)
-    meshes = gpipe_schedule.meshes
-
-    # convert JaxPipelineStage to XLAshardedStage:
-    xla_sharded_pipeline_stages = \
-        [XlaShardedPipelineStage.from_jax_pipeline_stage(stage, meshes[i], donated_invars, memory_budget_per_device)
-         for i, stage in enumerate(jax_pipeline_stages)]
-
-    jp = Jax3DPipeline(pipeline_stages=xla_sharded_pipeline_stages,
+    sharding_compilation_kwargs = {
+        "donated_invars": donated_invars,
+        "memory_budget_per_device": memory_budget_per_device
+    }
+    jp = Jax3DPipeline(pipeline_stages=jax_pipeline_stages[:2],
                        global_invars=global_invars,
                        global_outvars=global_outvars,
                        mesh=virtual_mesh,
-                       dependency=dependency,
-                       schedule=gpipe_schedule)
+                       sharding_compilation_kwargs=sharding_compilation_kwargs)
+
+    # # For test purpose, try the first two stages, so each stage has two GPUs
+    # jax_pipeline_stages = jax_pipeline_stages[:2]
+    # dependency = _gen_linear_dependency(len(jax_pipeline_stages))
+    # gpipe_schedule = GpipeSchedule(dependency=dependency,
+    #                                mesh=virtual_mesh)
+    # meshes = gpipe_schedule.meshes
+    #
+    # # convert JaxPipelineStage to XLAshardedStage:
+    # xla_sharded_pipeline_stages = \
+    #     [XlaShardedPipelineStage.from_jax_pipeline_stage(stage, meshes[i], donated_invars, memory_budget_per_device)
+    #      for i, stage in enumerate(jax_pipeline_stages)]
+    # jp = Jax3DPipeline(pipeline_stages=xla_sharded_pipeline_stages,
+    #                    global_invars=global_invars,
+    #                    global_outvars=global_outvars,
+    #                    mesh=virtual_mesh,
+    #                    dependency=dependency,
+    #                    schedule=gpipe_schedule)
 
     return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda
 

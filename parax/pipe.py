@@ -9,7 +9,8 @@ import jax
 from jax.core import Literal
 import ray
 
-from parax.pipeline_stage import StrVarPipelineStage
+from parax.pipeline_stage import StrVarPipelineStage, \
+    XlaShardedPipelineStage
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -385,15 +386,16 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                  global_invars,
                  global_outvars,
                  mesh,
+                 sharding_compilation_kwargs=None,
                  dependency=None,
                  num_batch=1,
                  schedule=None):
         self.stages = pipeline_stages
+        self.sharded_stages = []
         self.global_invars = global_invars
         self.global_outvars = global_outvars
         self.num_stage = len(self.stages)
         self.mesh = mesh
-
         self.num_batch = num_batch
         self.dependency = dependency
         # the code below will be removed
@@ -408,34 +410,48 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
             logger.debug(self.schedule.pprint_schedule())
 
         self.sliced_meshes = self.schedule.meshes
+        self._sharding_compilation_kwargs = sharding_compilation_kwargs
+
+        # private attributes
+        self._sharded_stages = []
+        self._physical_meshes = []
+        self._runnables = []
+        self._stage_outputs = []
+        self._microbatches = []
 
         self._prepare()
 
-        self._compile_sharding_strategy()
-
-        # Below are runtime-related
-        self._start_physical_meshes()
-        self.stage_outputs = None
-        self.microbatches = None
-        # Note(Hao): all dicts constructed in this class are
-        # string-keyed instead of Object-keyed.
-        self.stage_outputs = self._init_stage_outputs()
-
     def _prepare(self):
-        # assign stages
+        # For each stage, compile it and get it sharding strategy
+        # TODO(Hao): up to change, incorporate HLO merging logic
+        for stage_idx, raw_stage in enumerate(self.stages):
+            mesh = self.sliced_meshes[self.schedule.stage_placement(stage_idx)]
+            sharded_stage = XlaShardedPipelineStage.from_jax_pipeline_stage(
+                jax_pipeline_stage=raw_stage,
+                mesh=mesh,
+                **self._sharding_compilation_kwargs)
+            self._sharded_stages.append(sharded_stage)
 
-        # compile sharding
+        # start physical mesh (launch xla runtime)
+        # Ray cluster resources are allocated starting from here..
+        self._physical_meshes = [mesh.get_physical_mesh() for mesh in self.sliced_meshes]
 
-        # start phyiscal mesh (launch xla runtime)
+        # Let each physical mesh to re-compile the sharded stage
+        self._runnables = []
+        for i, stage in enumerate(self.sharded_stages):
+            # This will request resources from Ray
+            mesh_idx = self.schedule.stage_placement(i)
+            self._runnables.append(stage.get_runnable(self._physical_meshes[mesh_idx]))
 
         # prepare inputs/outputs buffers and communication between stages.
-
+        self._stage_outputs = self._init_stage_outputs()
+        self._microbatches = None
 
     def run(self, *args, **kwargs):
         """Run the training with pipelining."""
         # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
-        self.microbatches = self._make_microbatches(*args)
+        self._microbatches = self._make_microbatches(*args)
 
         global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
@@ -454,12 +470,13 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                 for var in self.stages[stage_idx].invars:
                     val = inputs[repr(var)]
                     inputs_list.append(val)
-                outputs = self.runnables[stage_idx](*inputs_list)
+                outputs = self._runnables[stage_idx](*inputs_list)
                 # put result refs in the stage_outputs
                 # pipeline_outputs_dict, stage_global_outputs_dict = ray.get(results_ref)
-                pipeline_outvals, global_outvals, local_outvals = self._post_process_stage_outputs(stage_idx, outputs)
+                pipeline_outvals, global_outvals, local_outvals = \
+                    self._post_process_stage_outputs(stage_idx, outputs)
                 if pipeline_outvals:
-                    self.stage_outputs[clock][stage_idx].update(pipeline_outvals)
+                    self._stage_outputs[clock][stage_idx].update(pipeline_outvals)
                 if global_outvals:
                     global_outputs.update(global_outvals)
                 # if stage_global_outputs_dict:
@@ -489,7 +506,10 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                          for _ in range(len(self.schedule))]
         return stage_outputs
 
-    def _make_microbatches(self, *inputs, batch_dim=0, batch_size=128):
+    def _make_microbatches(self,
+                           *inputs,
+                           batch_dim=0,
+                           batch_size=128):
         assert len(inputs) == len(self.global_invars)
         microbatches = [dict() for _ in range(self.num_batch)]
         for i, var in enumerate(self.global_invars):
@@ -506,14 +526,6 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                 for b, split in enumerate(splits):
                     microbatches[b][key] = split
         return microbatches
-
-    def _start_physical_meshes(self):
-        self.runnables = []
-        for stage in self.stages:
-            # This will request resources from Ray
-            self.runnables.append(stage.get_runnable())
-
-    def _compile_sharding_strategy(self):
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
         """

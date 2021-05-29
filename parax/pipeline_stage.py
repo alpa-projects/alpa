@@ -60,7 +60,7 @@ class PipelineStage(ABC):
     intermediate_vars: Set[Var] = field(default_factory=set)
 
     @abstractmethod
-    def get_runnable(self):
+    def get_runnable(self, args, **kwargs):
         """Compile the stage and get the runnable."""
         raise NotImplementedError()
 
@@ -103,14 +103,7 @@ class JaxPipelineStage(PipelineStage):
 
 @dataclass
 class XlaPipelineStage(PipelineStage):
-    """
-    Pipeline stage with XLA HLO protos.
-
-    Attributes:
-        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
-        consts_dir: Dict[Atom, Any]: All the constants used in the pipeline
-            stage.
-    """
+    """Pipeline stage with XLA HLO protos."""
 
     hlo_proto: bytes = field(default_factory=b"")
 
@@ -153,7 +146,7 @@ class XlaPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
-    def get_runnable(self):
+    def get_runnable(self, *args, **kwargs):
         """Return a callable of the pipeline stage."""
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
@@ -205,19 +198,19 @@ class StrVarPipelineStage:
         )
 
 
-# TODO(Hao): merge sharded stage with unsharded stage.
 @dataclass
 class XlaShardedPipelineStage(PipelineStage):
     """Pipeline stage with XLA HLO protos, supporting auto-sharding."""
-    # hlo_proto: bytes = field(default_factory=b"")
+
     mesh: VirtualMesh = None
     hlo_module: Any = None
     hlo_proto: Any = None
-    donated_invars: Any  = None #Hao: figure out what this is?
+    donated_invars: Any  = None # TODO(Hao): figure out donated_invars
     compiled: Any = None
 
     @classmethod
     def from_jax_pipeline_stage(cls,
+                                *,
                                 jax_pipeline_stage: JaxPipelineStage,
                                 mesh: VirtualMesh,
                                 donated_invars,
@@ -226,15 +219,12 @@ class XlaShardedPipelineStage(PipelineStage):
         logical_mesh = mesh.get_default_logical_mesh()
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
         in_avals = [var.aval for var in jax_pipeline_stage.invars]
-        out_avals = [var.aval for var in jax_pipeline_stage.outvars]
         consts = closed_jaxpr.consts
-        map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+        # map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
         tuple_args = False
 
         # make xla arguments
         c = xb.make_computation_builder("pipeline_stage_{}".format(jax_pipeline_stage.name))
-        # xla_consts = xla._xla_consts(c, consts)
-        # xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
         xla_consts = map(partial(xb.constant, c), consts)
         xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
 
@@ -248,6 +238,7 @@ class XlaShardedPipelineStage(PipelineStage):
 
         # Set up aliases (donating invars)
         backend = xb.get_backend(backend_name)
+        # Note(Hao): we do not handle donation now.
         # if backend.platform in ("gpu", "tpu"):
         #     # donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
         #     donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
@@ -259,8 +250,6 @@ class XlaShardedPipelineStage(PipelineStage):
 
         # Compile
         built = c.build(out_tuple)
-        #print(built.as_hlo_text())
-        #exit()
         num_replicas = 1
         num_partitions = len(logical_mesh.flatten_ids)
         compile_options = xb.get_compile_options(
@@ -318,32 +307,16 @@ class XlaShardedPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
-    def get_runnable(self):
+    def get_runnable(self, mesh, **kwargs):
         """Return a callable of the pipeline stage."""
-        # out_avals = [var.aval for var in self.outvars]
-        # xla_computation = xc.XlaComputation(self.hlo_proto)
-        # tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
-        # nreps = 1
-        # backend = 'gpu'
-        # backend = xb.get_backend(backend)
-        # device = backend.get_default_device_assignment(1)[0]
-        # options = xb.get_compile_options(
-        #     num_replicas=nreps,
-        #     num_partitions=1,
-        #     device_assignment=(device.id,) if device else None)
-        # options.parameter_is_tupled_arguments = tuple_args
-        # compiled = backend.compile(xla_computation, compile_options=options)
-        # result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
-        # kept_var_idx = range(len(self.invars))
-        # return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
 
         # instantiate the physical mesh:
         physical_mesh = self.mesh.get_physical_mesh()
         compiled = self.compiled
-        distributed_compilation_head = True if self.mesh.is_distributed else False
+
         logical_mesh = self.mesh.get_default_logical_mesh()
         tuple_args = False
-        if distributed_compilation_head:
+        if self.mesh.is_distributed:
             compiled = physical_mesh.compile_remote_executable(
                 self.hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
 

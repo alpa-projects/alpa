@@ -8,7 +8,7 @@ from jax.core import Var, DropVar, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_primitive_def import pipeline_p
-from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage, generate_sharded_xla_stages, mark_global_and_local_input
+from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage, generate_sharded_xla_stages, mark_global_and_local_vars
 from parax.pipe import JaxPipeline
 
 # pylint: disable=redefined-builtin
@@ -193,7 +193,7 @@ def pipeline_parallel_callable(
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    jax_pipeline_stages = [mark_global_and_local_input(stage) for stage in jax_pipeline_stages]
+    jax_pipeline_stages = [mark_global_and_local_vars(stage) for stage in jax_pipeline_stages]
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     stage_dict = {}

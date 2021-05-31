@@ -4,7 +4,7 @@ from typing import Sequence, Set
 import jax
 from jax import linear_util as lu
 from jax._src.util import safe_map
-from jax.core import Var, DropVar, ClosedJaxpr, Literal
+from jax.core import Var, DropVar, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_primitive_def import pipeline_p
@@ -192,8 +192,9 @@ def pipeline_parallel_callable(
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    gensym_func = gensym(closed_jaxpr.jaxpr)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    jax_pipeline_stages = [mark_global_and_local_vars(stage) for stage in jax_pipeline_stages]
+    jax_pipeline_stages = [mark_global_and_local_vars(stage, gensym_func) for stage in jax_pipeline_stages]
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     stage_dict = {}

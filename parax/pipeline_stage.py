@@ -7,7 +7,7 @@ from typing import Sequence, List, Set, Any, Dict
 from abc import ABC, abstractmethod
 from jax import jit
 from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
-from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, jaxpr_as_fun, gensym
+from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, jaxpr_as_fun
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
 
@@ -175,14 +175,13 @@ class XlaPipelineStage(PipelineStage):
         return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
 
 
-def mark_global_and_local_vars(stage: JaxPipelineStage):
+def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker"""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params['mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params['mark_type'] == 'end'
     new_stage = copy(stage)
     new_stage.eqns = []
-    stage_gensym = gensym([stage.closed_jaxpr().jaxpr])
-    var_alias = {var: stage_gensym(var.aval) for var in it.chain(
+    var_alias = {var: gensym_func(var.aval) for var in it.chain(
         stage.global_invars, stage.local_invars, stage.global_outvars,
         stage.local_outvars)}
 

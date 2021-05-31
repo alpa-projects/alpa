@@ -86,7 +86,7 @@ def train_step(optimizer, batch, apply_fn):
 ray.init(address="auto", ignore_reinit_error=True)
 
 device_cluster = DeviceCluster()
-physical_mesh = device_cluster.get_virtual_mesh()
+mesh = device_cluster.get_virtual_mesh()
 batch_size = 128
 hidden_dim = 2048
 input_dim = output_dim = hidden_dim
@@ -104,6 +104,6 @@ gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
 strategy = "3d_parallel"
 
 assert_allclose(x, y)
-pipelined_train_step = parallelize(donate_argnums=(), devices=physical_mesh, strategy=strategy)(train_step)
+pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
 gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
 assert_allclose(gradients, gradients_with_pipeline)

@@ -311,13 +311,15 @@ class XlaShardedPipelineStage(PipelineStage):
         """Return a callable of the pipeline stage."""
 
         # instantiate the physical mesh:
-        physical_mesh = self.mesh.get_physical_mesh()
+        if not isinstance(mesh, PhysicalDeviceMesh):
+            raise RuntimeError("Require a preallocated physical mesh to compile the runnable")
+        assert isinstance(mesh, PhysicalDeviceMesh)
         compiled = self.compiled
 
-        logical_mesh = self.mesh.get_default_logical_mesh()
+        logical_mesh = mesh.get_default_logical_mesh()
         tuple_args = False
         if self.mesh.is_distributed:
-            compiled = physical_mesh.compile_remote_executable(
+            compiled = mesh.compile_remote_executable(
                 self.hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
 
         avals = [var.aval for var in self.invars]
@@ -329,6 +331,6 @@ class XlaShardedPipelineStage(PipelineStage):
         output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
 
         # Return the final callable
-        return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                           input_sharding_specs, output_sharding_specs,
-                                                           self.donated_invars)
+        return mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
+                                                  input_sharding_specs, output_sharding_specs,
+                                                  self.donated_invars)

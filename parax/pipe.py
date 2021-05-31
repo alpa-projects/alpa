@@ -13,7 +13,7 @@ from parax.pipeline_stage import StrVarPipelineStage, \
     XlaShardedPipelineStage
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def cached_property(fn, *args, **kwargs):
@@ -391,7 +391,6 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
                  num_batch=1,
                  schedule=None):
         self.stages = pipeline_stages
-        self.sharded_stages = []
         self.global_invars = global_invars
         self.global_outvars = global_outvars
         self.num_stage = len(self.stages)
@@ -399,7 +398,7 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         self.num_batch = num_batch
         self.dependency = dependency
         # the code below will be removed
-        if self.dependency is not None:
+        if self.dependency is None:
             self.dependency = _gen_linear_dependency(self.num_stage)
 
         self.schedule = schedule
@@ -425,7 +424,10 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         # For each stage, compile it and get it sharding strategy
         # TODO(Hao): up to change, incorporate HLO merging logic
         for stage_idx, raw_stage in enumerate(self.stages):
-            mesh = self.sliced_meshes[self.schedule.stage_placement(stage_idx)]
+            meshes = [self.sliced_meshes[mesh_idx]
+                      for mesh_idx in self.schedule.stage_placement(stage_idx)]
+            assert len(meshes) == 1
+            mesh = meshes[0]
             sharded_stage = XlaShardedPipelineStage.from_jax_pipeline_stage(
                 jax_pipeline_stage=raw_stage,
                 mesh=mesh,
@@ -433,14 +435,18 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
             self._sharded_stages.append(sharded_stage)
 
         # start physical mesh (launch xla runtime)
-        # Ray cluster resources are allocated starting from here..
-        self._physical_meshes = [mesh.get_physical_mesh() for mesh in self.sliced_meshes]
+        # Ray cluster resources are allocated starting from here
+        for i, mesh in enumerate(self.sliced_meshes):
+            logger.debug("Lanuch the {}th mesh.".format(i))
+            self._physical_meshes.append(mesh.get_physical_mesh())
 
         # Let each physical mesh to re-compile the sharded stage
         self._runnables = []
-        for i, stage in enumerate(self.sharded_stages):
+        for stage_idx, stage in enumerate(self._sharded_stages):
             # This will request resources from Ray
-            mesh_idx = self.schedule.stage_placement(i)
+            mesh_indices = list(self.schedule.stage_placement(stage_idx))
+            assert len(mesh_indices) == 1
+            mesh_idx = mesh_indices[0]
             self._runnables.append(stage.get_runnable(self._physical_meshes[mesh_idx]))
 
         # prepare inputs/outputs buffers and communication between stages.
@@ -548,14 +554,14 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
             key = repr(var)
             if var in stage.pipeline_invars:
                 if stage_idx == 0:
-                    stage_inputs[key] = self.microbatches[batch_idx][key]
+                    stage_inputs[key] = self._microbatches[batch_idx][key]
                 else:
                     for ans in ancestors:
-                        if key in self.stage_outputs[clock - 1][ans]:
-                            stage_inputs[key] = ray.get(self.stage_outputs[clock - 1][ans][key])
+                        if key in self._stage_outputs[clock - 1][ans]:
+                            stage_inputs[key] = ray.get(self._stage_outputs[clock - 1][ans][key])
             elif var in stage.global_invars:
                 assert var in self.global_invars
-                stage_inputs[key] = self.microbatches[batch_idx][key]
+                stage_inputs[key] = self._microbatches[batch_idx][key]
             elif var in stage.local_invars:
                 # set it as None.
                 stage_inputs[key] = None
@@ -590,7 +596,6 @@ class Jax3DPipeline:         # pylint: disable=too-many-instance-attributes
         logger.debug("global outvals: {}".format(global_outvals.keys()))
         logger.debug("local outvals: {}".format(local_outvals.keys()))
         return pipeline_outvals, global_outvals, local_outvals
-
 
 
 def _gen_linear_dependency(num_stage):
@@ -764,13 +769,13 @@ class GpipeSchedule:
         if original_mesh.total_devices < num_mesh_expected:
             raise RuntimeError("#device < #workers.")
 
-        num_device_per_mesh = original_mesh.total_devices / num_mesh_expected
+        num_device_per_mesh = int(original_mesh.total_devices / num_mesh_expected)
         num_device_per_host = original_mesh.num_devices_per_host
         num_host = original_mesh.num_hosts
         if num_device_per_host >= num_device_per_mesh:
-            num_mesh_per_host = num_device_per_host / num_device_per_mesh
+            num_mesh_per_host = num_device_per_host // num_device_per_mesh
             for i in range(num_mesh_expected):
-                host_idx = i / num_mesh_per_host
+                host_idx = i // num_mesh_per_host
                 mesh_idx = i % num_mesh_per_host
                 ind = list(range(num_device_per_host))
                 mesh = original_mesh.slice(0, [host_idx])\

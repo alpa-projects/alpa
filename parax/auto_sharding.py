@@ -23,18 +23,7 @@ from parax.util import to_int_tuple
 from parax.xla_pass_context import XlaPassContext
 
 
-def auto_sharding_callable(
-    fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    devices,
-    donated_invars,
-    memory_budget_per_device,
-    *avals
-):
-    # Get physical and logical device mesh according to the arguments
-    distributed_compilation_head = False
-
+def analyze_mesh(devices):
     if devices is None:
         physical_mesh = SingleHostDeviceMesh(xb.devices())
         logical_mesh = physical_mesh.get_default_logical_mesh()
@@ -50,44 +39,15 @@ def auto_sharding_callable(
     elif isinstance(devices, LogicalDeviceMesh):
         logical_mesh = devices
         physical_mesh = logical_mesh.physical_mesh
+    return logical_mesh, physical_mesh
+
+
+def compile_distributed_callable(built_computation, logical_mesh, physical_mesh, backend, memory_budget_per_device=None, tuple_args=False):
+    # Get physical and logical device mesh according to the arguments
+    distributed_compilation_head = False
 
     if isinstance(physical_mesh, MultiHostDeviceMesh):
         distributed_compilation_head = True
-
-    # Trace to get jaxpr
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    #tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
-    tuple_args = False
-
-    # Make xla arguments
-    c = xb.make_computation_builder(f"auto_shard_{fun.__name__}")
-    xla_consts = map(partial(xb.constant, c), consts)
-    xla_args, donated_invars = xla._xla_callable_args(c, avals, tuple_args, donated_invars=donated_invars)
-
-    # Convert jaxpr to XLA HLO
-    backend_name = 'gpu'
-    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
-    transformed_name = fun.__name__
-    out_nodes = xla.jaxpr_subcomp(
-        c, jaxpr, backend_name, axis_env, xla_consts,
-        extend_name_stack(wrap_name(transformed_name, 'auto_sharding')), *xla_args)
-    out_tuple = xc.ops.Tuple(c, out_nodes)
-
-    # Set up aliases (donating invars)
-    backend = xb.get_backend(backend_name)
-    if backend.platform in ("gpu", "tpu"):
-        donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
-
-    if any(donation_results):
-        # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-        unused_donations = [str(c.GetShape(a))
-                            for a, d in zip(xla_args, donation_results) if d]
-        warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
-
-    # Compile
-    built = c.Build(out_tuple)
-    #print(built.as_hlo_text())
-    #exit()
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
@@ -124,15 +84,65 @@ def auto_sharding_callable(
         "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
     }):
-        compiled = xla.backend_compile(backend, built, compile_options)
+        compiled = xla.backend_compile(backend, built_computation, compile_options)
     testing.last_compiled_executable = compiled
     hlo_module = compiled.hlo_modules()[0]
 
     # Send code and sharding strategy to host workers
     if distributed_compilation_head:
-        hlo_proto = built.as_serialized_hlo_module_proto()
+        hlo_proto = built_computation.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
             hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
+
+    return compiled, hlo_module
+
+
+def auto_sharding_callable(
+    fun: lu.WrappedFun,
+    in_tree,
+    out_tree_thunk,
+    devices,
+    donated_invars,
+    memory_budget_per_device,
+    *avals
+):
+    # Trace to get jaxpr
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
+    #tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+    tuple_args = False
+
+    # Make xla arguments
+    c = xb.make_computation_builder(f"auto_shard_{fun.__name__}")
+    xla_consts = map(partial(xb.constant, c), consts)
+    xla_args, donated_invars = xla._xla_callable_args(c, avals, tuple_args, donated_invars=donated_invars)
+
+    # Convert jaxpr to XLA HLO
+    backend_name = 'gpu'
+    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
+    transformed_name = fun.__name__
+    out_nodes = xla.jaxpr_subcomp(
+        c, jaxpr, backend_name, axis_env, xla_consts,
+        extend_name_stack(wrap_name(transformed_name, 'auto_sharding')), *xla_args)
+    out_tuple = xc.ops.Tuple(c, out_nodes)
+
+    # Set up aliases (donating invars)
+    backend = xb.get_backend(backend_name)
+    if backend.platform in ("gpu", "tpu"):
+        donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+
+    if any(donation_results):
+        # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+        unused_donations = [str(c.GetShape(a))
+                            for a, d in zip(xla_args, donation_results) if d]
+        warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
+
+    # Compile
+    built = c.Build(out_tuple)
+    #print(built.as_hlo_text())
+    #exit()
+
+    logical_mesh, physical_mesh = analyze_mesh(devices)
+    compiled, hlo_module = compile_distributed_callable(built, logical_mesh, physical_mesh, backend, memory_budget_per_device, tuple_args)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec
     input_shardings = hlo_module.spmd_parameters_shardings()

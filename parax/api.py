@@ -28,7 +28,7 @@ def parallelize(fun=None,
                 memory_budget_per_device=None,
                 strategy="shard_parallel"):
     """Automatically parallelize a jax function.
-    
+
     Args:
         donate_argnums: The same as the donated_argnums in jax.jit. If is "auto",
           parax uses heuristic rules to infer this.
@@ -141,7 +141,7 @@ def auto_parallel_callable(
             fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
         )
     elif strategy == "pipeline_parallel":
-        return pipeline_parallel_callable(fun, *avals)
+        return pipeline_parallel_callable(fun, devices, *avals)
     elif strategy == "distributed_pipeline_parallel":
         return distributed_pipeline_parallel_callable(fun, *avals)
     else:

@@ -23,7 +23,8 @@ from parax.util import to_int_tuple
 from parax.xla_pass_context import XlaPassContext
 
 
-def analyze_mesh(devices):
+def analyze_device_mesh(devices):
+    # Get physical and logical device mesh according to the arguments
     if devices is None:
         physical_mesh = SingleHostDeviceMesh(xb.devices())
         logical_mesh = physical_mesh.get_default_logical_mesh()
@@ -42,12 +43,8 @@ def analyze_mesh(devices):
     return logical_mesh, physical_mesh
 
 
-def compile_distributed_callable(built_computation, logical_mesh, physical_mesh, backend, memory_budget_per_device=None, tuple_args=False):
-    # Get physical and logical device mesh according to the arguments
-    distributed_compilation_head = False
-
-    if isinstance(physical_mesh, MultiHostDeviceMesh):
-        distributed_compilation_head = True
+def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backend, memory_budget_per_device=None, tuple_args=False):
+    distributed_compilation_head = isinstance(physical_mesh, MultiHostDeviceMesh)
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
     compile_options = xb.get_compile_options(
@@ -141,8 +138,8 @@ def auto_sharding_callable(
     #print(built.as_hlo_text())
     #exit()
 
-    logical_mesh, physical_mesh = analyze_mesh(devices)
-    compiled, hlo_module = compile_distributed_callable(built, logical_mesh, physical_mesh, backend, memory_budget_per_device, tuple_args)
+    logical_mesh, physical_mesh = analyze_device_mesh(devices)
+    compiled, hlo_module = auto_sharding_compile(built, logical_mesh, physical_mesh, backend, memory_budget_per_device, tuple_args)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec
     input_shardings = hlo_module.spmd_parameters_shardings()

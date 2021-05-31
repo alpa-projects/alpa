@@ -197,8 +197,8 @@ def mark_global_and_local_input(stage: JaxPipelineStage):
             invars = eqn.invars + [var_alias[var] for var in global_and_local_outvars]
             outvars = eqn.outvars + global_and_local_outvars
         else:
-            invars = [var_alias.get(var, var) for var in eqn.invars]
-            outvars = [var_alias.get(var, var) for var in eqn.outvars]
+            invars = [var_alias.get(var, var) if isinstance(var, Var) else var for var in eqn.invars]
+            outvars = [var_alias.get(var, var) if isinstance(var, Var) else var for var in eqn.outvars]
         new_stage.eqns.append(eqn._replace(invars=invars, outvars=outvars))
 
     return new_stage

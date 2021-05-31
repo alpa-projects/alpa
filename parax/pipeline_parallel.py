@@ -192,7 +192,7 @@ def pipeline_parallel_callable(
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    gensym_func = gensym(closed_jaxpr.jaxpr)
+    gensym_func = gensym([closed_jaxpr.jaxpr])
     print("=" * 40 + " closed_jaxpr " + "=" * 40)
     print(closed_jaxpr)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)

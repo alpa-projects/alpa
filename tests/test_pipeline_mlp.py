@@ -15,7 +15,11 @@ MB = 1024 ** 2
 class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = tuple(jax.local_devices()[:4])
+        # self.devices = tuple(jax.local_devices()[:4])
+        self.devices = {
+            "1": tuple(jax.local_devices()[0:2]),
+            "2": tuple(jax.local_devices()[2:4]),
+        }
         ray.init(address='auto')
 
     def test_2_layer_mlp(self):

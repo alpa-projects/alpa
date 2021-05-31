@@ -1,7 +1,6 @@
 """pipeline stage definitions."""
 import itertools as it
 from copy import copy
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
 
@@ -180,14 +179,12 @@ def mark_global_and_local_input(stage: JaxPipelineStage):
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker"""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params['mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params['mark_type'] == 'end'
-    new_stage = stage
+    new_stage = copy(stage)
     new_stage.eqns = []
     stage_gensym = gensym([stage.closed_jaxpr().jaxpr])
-    var_alias = defaultdict(lambda var: var)
-    var_alias.update({
-        var: stage_gensym(var.aval) for var in it.chain(
-            stage.global_invars, stage.pipeline_invars, stage.global_outvars,
-            stage.pipeline_outvars)})
+    var_alias = {var: stage_gensym(var.aval) for var in it.chain(
+        stage.global_invars, stage.pipeline_invars, stage.global_outvars,
+        stage.pipeline_outvars)}
 
     for eqn in stage.eqns:
         new_eqn = copy(eqn)
@@ -201,8 +198,8 @@ def mark_global_and_local_input(stage: JaxPipelineStage):
             new_eqn.invars.extend(var_alias[var] for var in global_and_local_outvars)
             new_eqn.outvars.extend(global_and_local_outvars)
         else:
-            new_eqn.invars = [var_alias[var] for var in eqn.invars]
-            new_eqn.outvars = [var_alias[var] for var in eqn.outvars]
+            new_eqn.invars = [var_alias.get(var, var) for var in eqn.invars]
+            new_eqn.outvars = [var_alias.get(var, var) for var in eqn.outvars]
         new_stage.eqns.append(new_eqn)
 
     return new_stage

@@ -8,7 +8,7 @@ from jax.core import Var, DropVar, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_primitive_def import pipeline_p
-from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage, generate_sharded_xla_stages
+from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage, generate_sharded_xla_stages, mark_global_and_local_input
 from parax.pipe import JaxPipeline
 
 # pylint: disable=redefined-builtin
@@ -36,11 +36,13 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
     result_stages = []
 
     current_stage = None
+    current_stage_intermediate_vars = set()
 
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
             current_stage = JaxPipelineStage(name=eqn.params['name'])
+            current_stage_intermediate_vars = set()
             for var in eqn.invars:
                 if not isinstance(var, Literal):
                     current_stage.pipeline_invars.add(var)
@@ -48,7 +50,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
 
         for var in eqn.invars:
             if isinstance(var, Literal) or (var in current_stage.pipeline_invars) or (
-                    var in current_stage.intermediate_vars):
+                    var in current_stage_intermediate_vars):
                 continue
             if var in global_consts_dir:
                 if var not in current_stage.consts_dir:
@@ -70,7 +72,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
 
         for var in eqn.outvars:
             if not isinstance(var, DropVar):
-                current_stage.intermediate_vars.add(var)
+                current_stage_intermediate_vars.add(var)
                 var2stage[var] = current_stage
                 if var in global_outvars:
                     current_stage.global_outvars.add(var)
@@ -191,6 +193,7 @@ def pipeline_parallel_callable(
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    jax_pipeline_stages = [mark_global_and_local_input(stage) for stage in jax_pipeline_stages]
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     stage_dict = {}

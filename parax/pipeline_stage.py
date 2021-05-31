@@ -1,14 +1,18 @@
 """pipeline stage definitions."""
 import itertools as it
+from copy import copy
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
 
 from abc import ABC, abstractmethod
 from jax import jit
 from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
-from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, jaxpr_as_fun
+from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, jaxpr_as_fun, gensym
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
+
+from parax.pipeline_primitive_def import pipeline_p
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -50,8 +54,6 @@ class PipelineStage(ABC):
     pipeline_outvars: Set[Var] = field(default_factory=set)
     global_outvars: Set[Var] = field(default_factory=set)
     local_outvars: Set[Var] = field(default_factory=set)
-    # intermediate vars
-    intermediate_vars: Set[Var] = field(default_factory=set)
 
     @abstractmethod
     def get_runnable(self):
@@ -172,6 +174,38 @@ class XlaPipelineStage(PipelineStage):
         result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
         kept_var_idx = range(len(self.invars))
         return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
+
+
+def mark_global_and_local_input(stage: JaxPipelineStage):
+    """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker"""
+    assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params['mark_type'] == 'start'
+    assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params['mark_type'] == 'end'
+    new_stage = stage
+    new_stage.eqns = []
+    stage_gensym = gensym([stage.closed_jaxpr().jaxpr])
+    var_alias = defaultdict(lambda var: var)
+    var_alias.update({
+        var: stage_gensym(var.aval) for var in it.chain(
+            stage.global_invars, stage.pipeline_invars, stage.global_outvars,
+            stage.pipeline_outvars)})
+
+    for eqn in stage.eqns:
+        new_eqn = copy(eqn)
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
+            # Pipeline start marker
+            global_and_local_invars = list(it.chain(stage.global_invars, stage.local_invars))
+            new_eqn.invars.extend(global_and_local_invars)
+            new_eqn.outvars.extend(var_alias[var] for var in global_and_local_invars)
+        elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
+            global_and_local_outvars = list(it.chain(stage.global_outvars, stage.local_outvars))
+            new_eqn.invars.extend(var_alias[var] for var in global_and_local_outvars)
+            new_eqn.outvars.extend(global_and_local_outvars)
+        else:
+            new_eqn.invars = [var_alias[var] for var in eqn.invars]
+            new_eqn.outvars = [var_alias[var] for var in eqn.outvars]
+        new_stage.eqns.append(new_eqn)
+
+    return new_stage
 
 
 def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage]):

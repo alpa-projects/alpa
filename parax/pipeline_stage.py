@@ -209,6 +209,8 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     eqns = []
     consts_dir = {}
     for stage in jax_stages:
+        print("=" * 40 + " stage " + "=" * 40)
+        print(stage.closed_jaxpr())
         consts_dir.update(stage.consts_dir)
         invars.update(stage.global_invars, stage.pipeline_invars)
         outvars.update(stage.global_outvars, stage.pipeline_outvars)

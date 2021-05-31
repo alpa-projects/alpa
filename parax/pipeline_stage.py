@@ -187,20 +187,19 @@ def mark_global_and_local_input(stage: JaxPipelineStage):
         stage.pipeline_outvars)}
 
     for eqn in stage.eqns:
-        new_eqn = copy(eqn)
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             # Pipeline start marker
             global_and_local_invars = list(it.chain(stage.global_invars, stage.local_invars))
-            new_eqn.invars.extend(global_and_local_invars)
-            new_eqn.outvars.extend(var_alias[var] for var in global_and_local_invars)
+            invars = eqn.invars + global_and_local_invars
+            outvars = eqn.outvars + [var_alias[var] for var in global_and_local_invars]
         elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
             global_and_local_outvars = list(it.chain(stage.global_outvars, stage.local_outvars))
-            new_eqn.invars.extend(var_alias[var] for var in global_and_local_outvars)
-            new_eqn.outvars.extend(global_and_local_outvars)
+            invars = eqn.invars + [var_alias[var] for var in global_and_local_outvars]
+            outvars = eqn.outvars + global_and_local_outvars
         else:
-            new_eqn.invars = [var_alias.get(var, var) for var in eqn.invars]
-            new_eqn.outvars = [var_alias.get(var, var) for var in eqn.outvars]
-        new_stage.eqns.append(new_eqn)
+            invars = [var_alias.get(var, var) for var in eqn.invars]
+            outvars = [var_alias.get(var, var) for var in eqn.outvars]
+        new_stage.eqns.append(eqn._replace(invars=invars, outvars=outvars))
 
     return new_stage
 

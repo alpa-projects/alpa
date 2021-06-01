@@ -21,7 +21,7 @@ from parax.xla_pass_context import XlaPassContext
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -156,6 +156,8 @@ class RemoteBufferRef:
         self.uuid = RemoteBufferRef.ct
         self.is_donated = False
         RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
+        logger.debug("RemoteBufferRef uuid: {} created on mesh with devices {}."
+                     .format(self.uuid, self.device_mesh.devices_str))
 
     def donate(self):
         """
@@ -417,6 +419,7 @@ class PhysicalDeviceMesh:
             # Set XLA environment variables
             env_vars = {
                 "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
             }
 
             # Launch a ray actor
@@ -429,7 +432,7 @@ class PhysicalDeviceMesh:
         self.sync_workers()
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
-        """Get a mapping to logical mesh."""
+        """Generate a logical mesh."""
         id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
         mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
         mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
@@ -451,11 +454,6 @@ class PhysicalDeviceMesh:
         """Get a callable after sharding optimization."""
         input_indices = [pxla.spec_to_indices(aval.shape, spec)
                          for aval, spec in zip(avals, input_sharding_specs)]
-
-        # if not self.is_distributed:
-        #     args_handler = partial(pxla.shard_args, self.devices, input_indices)
-        # else:
-        #     args_handler = partial(self._shard_args, input_indices, donated_invars)
 
         args_handler = partial(self._shard_args, input_indices, donated_invars)
         if not self.is_distributed:
@@ -628,6 +626,94 @@ class PhysicalDeviceMesh:
         return ret
 
 
+# TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.
+class VirtualMesh:
+    """A virtual mesh used to instantiate a Physical Mesh in the future."""
+
+    def __init__(self,
+                 *,
+                 host_ids=None,
+                 host_info=None,
+                 head_ip=None,
+                 num_devices_per_host=1):
+        self.host_ids = host_ids
+        self.host_info = host_info
+        self.head_ip = head_ip
+        self.num_devices_per_host = num_devices_per_host
+
+        self.devices_str = []
+        for i, _ in enumerate(self.host_ids):
+            ip = self.host_info[i]["NodeManagerAddress"]
+            self.devices_str.extend([device_id_to_str(ip, i)
+                                     for i in range(self.num_devices_per_host)])
+
+    def slice(self, dim, indices):
+        """
+        Slice a mesh given the slicing config.
+
+        Args:
+            dim (int): which dimension to slice from, num_host or num_gpu
+            indices (List[int]):
+
+        Returns:
+            mesh (PhysicalDeviceMesh)
+        """
+        if dim == 0:
+            # slicing along the host dimension
+            host_ids = [self.host_ids[x] for x in indices]
+            host_info = [self.host_info[x] for x in host_ids]
+            return VirtualMesh(host_ids=host_ids, host_info=host_info,
+                               head_ip=self.head_ip, num_devices_per_host=self.num_devices_per_host)
+        else:
+            # slicing along the device dimension
+            return VirtualMesh(host_ids=self.host_ids, host_info=self.host_info,
+                               head_ip=self.head_ip, num_devices_per_host=len(indices))
+
+    @property
+    def total_devices(self):
+        """Return the total number of GPUs on this mesh."""
+        return len(self.device_ids)
+
+    @property
+    def num_hosts(self):
+        """Return the number of hosts in the mesh."""
+        return len(self.host_ids)
+
+    @property
+    def device_ids(self):
+        """Return the device ids (does not distinguish host IPs)."""
+        return [device_str_to_id(device_str) for device_str in self.devices_str]
+
+    @property
+    def is_distributed(self):
+        """Whether this mesh should be considered as a distributed mesh."""
+        return True
+
+    def get_physical_mesh(self):
+        """Convert to a physical mesh (which will request resources from Ray)."""
+        return PhysicalDeviceMesh(host_ids=self.host_ids,
+                                  host_info=self.host_info,
+                                  head_ip=self.head_ip,
+                                  num_devices_per_host=self.num_devices_per_host,
+                                  use_ray=True)
+
+    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
+        """Generate a logical mesh."""
+        id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
+        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
+        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+        return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
+
+    def get_default_logical_mesh(self):
+        """Return the default logical mesh."""
+        if self.num_hosts == 1:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                                         [1, 1], [1, 1])
+        else:
+            return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
+                                         [1, 1], [1, 0.01])
+
+
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 
@@ -676,6 +762,28 @@ class DeviceCluster:
                                   num_devices_per_host=num_devices_per_host,
                                   head_ip=self.head_ip,
                                   use_ray=True)
+
+    def get_virtual_mesh(self,
+                         host_ids=None,
+                         num_devices_per_host=None):
+        """
+        Slice a subset of hosts and devices to form a virtual device mesh.
+
+        The only difference between a virtual and a physical mesh is that a virtual
+        mesh does not request cluster resources.
+        """
+        host_ids = host_ids or np.arange(len(self.host_info))
+        host_info = [self.host_info[x] for x in host_ids]
+
+        num_devices_per_host = num_devices_per_host or self.num_devices[host_ids[0]]
+        for host_id in host_ids:
+            assert self.num_devices[host_id] >= num_devices_per_host
+
+        # return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
+        return VirtualMesh(host_ids=host_ids,
+                           host_info=host_info,
+                           num_devices_per_host=num_devices_per_host,
+                           head_ip=self.head_ip)
 
 
 ########################################

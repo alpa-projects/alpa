@@ -94,10 +94,10 @@ class DeviceMeshTest(unittest.TestCase):
 
         # Distributed execution
         train_step_parallel = parallelize(devices=physical_mesh)(train_step)
-        optimizer_actaul = train_step_parallel(optimizer, batch, model.apply)
+        optimizer_actual = train_step_parallel(optimizer, batch, model.apply)
 
         # Check results
-        assert_allclose(optimizer_expected.target, optimizer_actaul.target)
+        assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
         physical_mesh.shutdown()
         ray.shutdown()

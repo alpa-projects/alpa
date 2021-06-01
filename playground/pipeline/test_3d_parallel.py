@@ -8,18 +8,18 @@ from flax import optim
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 
-from parax import parallelize, mark_pipeline
+from parax import mark_pipeline
+from parax import parallelize, DeviceCluster
 
 MB = 1024 ** 2
 num_gpus = 2
-assert len(jax.local_devices()) >= num_gpus
-devices = tuple(jax.local_devices()[:num_gpus])
-
-
 # in order for ray to work we have to set this
 # so the driver program and actor program can share GPUs...
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
-
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+jax.config.update('jax_platform_name', 'cpu')
+# assert len(jax.local_devices()) >= num_gpus
+# devices = tuple(jax.local_devices()[:num_gpus])
 
 def is_sequence(x):
     try:
@@ -81,7 +81,10 @@ def train_step(optimizer, batch, apply_fn):
     return grad_param
 
 
-ray.init(num_cpus=8, num_gpus=2)
+ray.init(address="auto", ignore_reinit_error=True)
+
+device_cluster = DeviceCluster()
+mesh = device_cluster.get_virtual_mesh()
 batch_size = 128
 hidden_dim = 2048
 input_dim = output_dim = hidden_dim
@@ -96,14 +99,9 @@ params = model.init(rngkey, x)
 optimizer = optim.GradientDescent(1e-2).create(params)
 
 gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-strategy = "distributed_pipeline_parallel"
-# strategy = "pipeline_parallel"
-# import cloudpickle as pickle
-# m = pickle.dumps(train_step)
-# new_train_step = pickle.loads(m)
-# print("OK")
-# new_gradients = new_train_step(optimizer, {"x": x, "y": y}, model.apply)
+strategy = "3d_parallel"
+
 assert_allclose(x, y)
-pipelined_train_step = parallelize(donate_argnums=(), devices=devices, strategy=strategy)(train_step)
+pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
 gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
 assert_allclose(gradients, gradients_with_pipeline)

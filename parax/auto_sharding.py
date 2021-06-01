@@ -22,7 +22,7 @@ logger.setLevel(logging.INFO)
 
 
 # pylint: disable=too-many-arguments,too-many-locals
-def auto_sharding_callable(
+def auto_sharding_callable(   # noqa MC0001
         fun: lu.WrappedFun,
         in_tree,
         out_tree_thunk,
@@ -107,6 +107,40 @@ def auto_sharding_callable(
     if distributed_compilation_head:
         pass_through_device_assignment = True
 
+    # Invoke the auto-sharding optimizer
+    compiled, sharding_strategy_vector = \
+        _auto_sharding_internal(logical_mesh, built, compile_options,
+                                memory_budget_per_device,
+                                pass_through_device_assignment)
+    testing.last_compiled_executable = compiled
+    hlo_module = compiled.hlo_modules()[0]
+
+    # Send code and sharding strategy to host workers
+    if distributed_compilation_head:
+        hlo_proto = built.as_serialized_hlo_module_proto()
+        compiled = physical_mesh.compile_remote_executable(
+            hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args)
+
+    # Read HloSharding from HloModule and convert them to ShardingSpec
+    input_shardings = hlo_module.spmd_parameters_shardings()
+    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
+                            for (proto_tuple, aval) in zip(input_shardings, avals)]
+    output_sharding = hlo_module.spmd_output_sharding()
+    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+
+    # Return the final callable
+    return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
+                                                       input_sharding_specs, output_sharding_specs, donated_invars)
+
+
+def _auto_sharding_internal(logical_mesh,
+                            built,
+                            compile_options,
+                            memory_budget_per_device,
+                            pass_through_device_assignment):
+    backend_name = "gpu"
+    backend = xb.get_backend(backend_name)
+    global last_s_val
     with XlaPassContext({
         # Solver options
         "auto_sharding::enable": True,
@@ -128,25 +162,7 @@ def auto_sharding_callable(
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
-    testing.last_compiled_executable = compiled
-    hlo_module = compiled.hlo_modules()[0]
-
-    # Send code and sharding strategy to host workers
-    if distributed_compilation_head:
-        hlo_proto = built.as_serialized_hlo_module_proto()
-        compiled = physical_mesh.compile_remote_executable(
-            hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
-
-    # Read HloSharding from HloModule and convert them to ShardingSpec
-    input_shardings = hlo_module.spmd_parameters_shardings()
-    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
-                            for (proto_tuple, aval) in zip(input_shardings, avals)]
-    output_sharding = hlo_module.spmd_output_sharding()
-    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
-
-    # Return the final callable
-    return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                       input_sharding_specs, output_sharding_specs, donated_invars)
+    return compiled, last_s_val
 
 
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):

@@ -15,6 +15,8 @@ from parax.pmap_data_parallel import pmap_data_parallel_callable
 from parax.shard_parallel import shard_parallel_callable
 from parax.pipeline_parallel import pipeline_parallel_callable, \
     distributed_pipeline_parallel_callable
+from parax.three_d_parallel import three_d_parallel_callable
+
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -144,5 +146,10 @@ def auto_parallel_callable(
         return pipeline_parallel_callable(fun, *avals)
     elif strategy == "distributed_pipeline_parallel":
         return distributed_pipeline_parallel_callable(fun, *avals)
+    elif strategy == "3d_parallel":
+        return three_d_parallel_callable(
+            fun, in_tree, out_tree_thunk, devices, donated_invars,
+            memory_budget_per_device, *avals
+        )
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)

@@ -13,15 +13,13 @@ from parax import parallelize, DeviceCluster
 
 MB = 1024 ** 2
 num_gpus = 2
-assert len(jax.local_devices()) >= num_gpus
-devices = tuple(jax.local_devices()[:num_gpus])
-
-
 # in order for ray to work we have to set this
 # so the driver program and actor program can share GPUs...
-os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
-
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+jax.config.update('jax_platform_name', 'cpu')
+# assert len(jax.local_devices()) >= num_gpus
+# devices = tuple(jax.local_devices()[:num_gpus])
 
 def is_sequence(x):
     try:

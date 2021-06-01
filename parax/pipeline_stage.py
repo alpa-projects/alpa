@@ -1,23 +1,26 @@
 """pipeline stage definitions."""
 import itertools as it
+import logging
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
-from warnings import warn
 
 from abc import ABC, abstractmethod
 from jax import jit
 from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, jaxpr_as_fun
-from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
+from jax.lib import xla_bridge as xb, xla_client as xc
 
 # pylint: disable=redefined-builtin
 from parax import testing
+from parax.auto_sharding import hlo_sharding_to_sharding_spec, _auto_sharding_internal
 from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
-from parax.xla_pass_context import XlaPassContext
-from parax.auto_sharding import last_s_val, hlo_sharding_to_sharding_spec
 
 unsafe_map, map = map, safe_map  # type: ignore
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 @dataclass
@@ -60,7 +63,7 @@ class PipelineStage(ABC):
     intermediate_vars: Set[Var] = field(default_factory=set)
 
     @abstractmethod
-    def get_runnable(self, args, **kwargs):
+    def get_runnable(self, mesh=None):
         """Compile the stage and get the runnable."""
         raise NotImplementedError()
 
@@ -95,7 +98,7 @@ class JaxPipelineStage(PipelineStage):
         closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
         return closed_jaxpr
 
-    def get_runnable(self):
+    def get_runnable(self, mesh=None):
         """Return a JIT callable of the pipeline stage."""
         closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
@@ -146,7 +149,7 @@ class XlaPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
-    def get_runnable(self, *args, **kwargs):
+    def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
@@ -205,8 +208,9 @@ class XlaShardedPipelineStage(PipelineStage):
     mesh: VirtualMesh = None
     hlo_module: Any = None
     hlo_proto: Any = None
-    donated_invars: Any  = None # TODO(Hao): figure out donated_invars
+    donated_invars: Any = None  # TODO(Hao): figure out donated_invars
     compiled: Any = None
+    sharding_strategy_vector: Any = None
 
     @classmethod
     def from_jax_pipeline_stage(cls,
@@ -215,7 +219,9 @@ class XlaShardedPipelineStage(PipelineStage):
                                 mesh: VirtualMesh,
                                 donated_invars,
                                 memory_budget_per_device):
-        distributed_compilation_head = True if mesh.is_distributed else False
+        # pylint: disable=too-many-locals
+        """Run auto-sharding optimizer on a Jax pipeline stage."""
+        distributed_compilation_head = bool(mesh.is_distributed)
         logical_mesh = mesh.get_default_logical_mesh()
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
         in_avals = [var.aval for var in jax_pipeline_stage.invars]
@@ -237,7 +243,7 @@ class XlaShardedPipelineStage(PipelineStage):
         out_tuple = xc.ops.Tuple(c, out_nodes)
 
         # Set up aliases (donating invars)
-        backend = xb.get_backend(backend_name)
+        # backend = xb.get_backend(backend_name)
         # Note(Hao): we do not handle donation now.
         # if backend.platform in ("gpu", "tpu"):
         #     # donation_results = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
@@ -265,28 +271,10 @@ class XlaShardedPipelineStage(PipelineStage):
         pass_through_device_assignment = False
         if distributed_compilation_head:
             pass_through_device_assignment = True
-
-        with XlaPassContext({
-            # Solver options
-            "auto_sharding::enable": True,
-            "auto_sharding::memory_budget_per_device": memory_budget_per_device,
-            "auto_sharding::force_all_gather_cost": False,
-            "auto_sharding::all_gather_cost": 1e10,
-
-            # Device mesh
-            "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
-            "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
-            "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
-            "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
-
-            # Distributed compilation
-            "build_option::pass_through_device_assignment": pass_through_device_assignment,
-
-            # Debug options
-            "auto_sharding::simplify_graph": True,
-            "auto_sharding::print_strategy": False,
-        }):
-            compiled = xla.backend_compile(backend, built, compile_options)
+        compiled, last_s_val = _auto_sharding_internal(logical_mesh, built, compile_options,
+                                                       memory_budget_per_device,
+                                                       pass_through_device_assignment)
+        logger.debug(">>> Stage sharding strategy vector: {}.".format(last_s_val))
         testing.last_compiled_executable = compiled
         hlo_module = compiled.hlo_modules()[0]
 
@@ -296,6 +284,7 @@ class XlaShardedPipelineStage(PipelineStage):
             hlo_module=hlo_module,
             hlo_proto=built.as_serialized_hlo_module_proto(),
             compiled=compiled,
+            sharding_strategy_vector=last_s_val,
             donated_invars=donated_invars,
             invars=jax_pipeline_stage.invars,
             pipeline_invars=jax_pipeline_stage.pipeline_invars,
@@ -307,12 +296,10 @@ class XlaShardedPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
-    def get_runnable(self, mesh, **kwargs):
+    def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
-
-        # instantiate the physical mesh:
         if not isinstance(mesh, PhysicalDeviceMesh):
-            raise RuntimeError("Require a preallocated physical mesh to compile the runnable")
+            raise RuntimeError("Require a pre-allocated physical mesh to compile the runnable.")
         assert isinstance(mesh, PhysicalDeviceMesh)
         compiled = self.compiled
 
@@ -320,7 +307,8 @@ class XlaShardedPipelineStage(PipelineStage):
         tuple_args = False
         if self.mesh.is_distributed:
             compiled = mesh.compile_remote_executable(
-                self.hlo_proto, logical_mesh.id_mesh.shape, last_s_val, tuple_args)
+                self.hlo_proto, logical_mesh.id_mesh.shape,
+                self.sharding_strategy_vector, tuple_args)
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]

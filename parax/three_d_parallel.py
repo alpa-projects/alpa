@@ -4,13 +4,10 @@ import jax
 from jax import linear_util as lu
 from jax.core import ClosedJaxpr
 from jax.interpreters import partial_eval as pe
-from jax.lib import xla_bridge as xb
-from parax.device_mesh import PhysicalDeviceMesh, LogicalDeviceMesh, VirtualMesh
 
-from parax.pipe import JaxPipeline, Jax3DPipeline
+from parax.device_mesh import VirtualMesh
+from parax.pipe import Jax3DPipeline
 from parax.pipeline_parallel import slice_closed_jaxpr_by_pipeline_marks
-from parax.pipeline_stage import XlaShardedPipelineStage
-from parax.pipe import GpipeSchedule, _gen_linear_dependency
 
 
 @lu.cache
@@ -24,23 +21,7 @@ def three_d_parallel_callable(
         *avals
 ):
     """End-to-end 3d parallel combining pipelining and sharding."""
-    # parse the device mesh (copied code from auto-sharding)
-    # physical_mesh = None
-    # logical_mesh = None
-    # if devices is None:
-    #     # physical_mesh = SingleHostDeviceMesh(xb.devices())
-    #     physical_mesh = PhysicalDeviceMesh(devices=xb.devices())
-    #     logical_mesh = physical_mesh.get_default_logical_mesh()
-    # if isinstance(devices, (list, tuple)):
-    #     physical_mesh = PhysicalDeviceMesh(devices==devices)
-    #     logical_mesh = physical_mesh.get_default_logical_mesh()
-    # elif isinstance(devices, PhysicalDeviceMesh):
-    #     physical_mesh = devices
-    #     logical_mesh = physical_mesh.get_default_logical_mesh()
-    # elif isinstance(devices, LogicalDeviceMesh):
-    #     logical_mesh = devices
-    #     physical_mesh = logical_mesh.physical_mesh
-
+    # pylint: disable=too-many-arguments
     if not isinstance(devices, VirtualMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
                            "expected type: {}.".format(type(devices), "VirtualMesh"))
@@ -57,24 +38,6 @@ def three_d_parallel_callable(
                        global_outvars=global_outvars,
                        mesh=virtual_mesh,
                        sharding_compilation_kwargs=sharding_compilation_kwargs)
-
-    # # For test purpose, try the first two stages, so each stage has two GPUs
-    # jax_pipeline_stages = jax_pipeline_stages[:2]
-    # dependency = _gen_linear_dependency(len(jax_pipeline_stages))
-    # gpipe_schedule = GpipeSchedule(dependency=dependency,
-    #                                mesh=virtual_mesh)
-    # meshes = gpipe_schedule.meshes
-    #
-    # # convert JaxPipelineStage to XLAshardedStage:
-    # xla_sharded_pipeline_stages = \
-    #     [XlaShardedPipelineStage.from_jax_pipeline_stage(stage, meshes[i], donated_invars, memory_budget_per_device)
-    #      for i, stage in enumerate(jax_pipeline_stages)]
-    # jp = Jax3DPipeline(pipeline_stages=xla_sharded_pipeline_stages,
-    #                    global_invars=global_invars,
-    #                    global_outvars=global_outvars,
-    #                    mesh=virtual_mesh,
-    #                    dependency=dependency,
-    #                    schedule=gpipe_schedule)
 
     return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda
 

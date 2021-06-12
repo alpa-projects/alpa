@@ -52,7 +52,6 @@ class DeviceMeshTest(unittest.TestCase):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
-        #logical_mesh = physical_mesh.get_logical_mesh([2, 4], [1, 1], [1, 0.01])
 
         class Model(nn.Module):
             hidden_dim: int

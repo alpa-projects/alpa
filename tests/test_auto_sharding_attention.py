@@ -13,9 +13,11 @@ from flax import optim
 
 from parax import parallelize, global_config, testing, PhysicalDeviceMesh
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
-from test_auto_sharding_mlp import (assert_close, assert_all_replicated, assert_column_partitioned,
+from test_auto_sharding_mlp import (assert_close, assert_all_replicated,
+                                    assert_column_partitioned,
                                     assert_row_partitioned,
-                                    assert_replicated_column_partitioned, assert_replicated_row_partitioned)
+                                    assert_replicated_column_partitioned,
+                                    assert_replicated_row_partitioned)
 
 MB = 1024 ** 2
 
@@ -26,7 +28,6 @@ class AutoShardingAttentionTest(unittest.TestCase):
         global_config.shard_parallel_strategy = 'auto_sharding'
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        # device_mesh = SingleHostDeviceMesh(self.devices)
         device_mesh = PhysicalDeviceMesh(self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 

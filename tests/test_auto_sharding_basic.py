@@ -26,9 +26,21 @@ class AutoShardingBasicTest(unittest.TestCase):
         global_config.shard_parallel_strategy = "auto_sharding"
 
 
+    def test_one_by_one_mesh(self):
+        @parallelize(donate_argnums=(0,),
+                     devices=self.devices[0:1])
+        def add_one(x):
+            x = x + 1
+            return x
+
+        a = jnp.ones((128, 128))
+        b = add_one(a)
+
+        np.testing.assert_allclose(b, a + 1)
+
+
     def test_donate_buffer(self):
         @parallelize(donate_argnums=(0,),
-                     memory_budget_per_device=3 * MB,
                      devices=self.devices)
         def add_one(x):
             x = x + 1
@@ -181,6 +193,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
+    suite.addTest(AutoShardingBasicTest('test_one_by_one_mesh'))
     suite.addTest(AutoShardingBasicTest('test_donate_buffer'))
     suite.addTest(AutoShardingBasicTest('test_dropout'))
     suite.addTest(AutoShardingBasicTest('test_dot_reshape_transpose'))

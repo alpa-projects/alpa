@@ -40,20 +40,13 @@ def auto_sharding_callable(   # noqa MC0001
     elif isinstance(devices, (list, tuple)):
         physical_mesh = PhysicalDeviceMesh(devices=devices)
         logical_mesh = physical_mesh.get_default_logical_mesh()
-    # elif isinstance(devices, SingleHostDeviceMesh):
-    #     physical_mesh = devices
-    #     logical_mesh = physical_mesh.get_default_logical_mesh()
-    # elif isinstance(devices, MultiHostDeviceMesh):
-    #     physical_mesh = devices
-    #     logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, PhysicalDeviceMesh):
         physical_mesh = devices
         logical_mesh = physical_mesh.get_default_logical_mesh()
     elif isinstance(devices, LogicalDeviceMesh):
         logical_mesh = devices
         physical_mesh = logical_mesh.physical_mesh
-    # if isinstance(physical_mesh, MultiHostDeviceMesh):
-    #     distributed_compilation_head = True
+
     if physical_mesh.is_distributed:
         distributed_compilation_head = True
 
@@ -122,11 +115,17 @@ def auto_sharding_callable(   # noqa MC0001
             hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec
-    input_shardings = hlo_module.spmd_parameters_shardings()
-    input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
-                            for (proto_tuple, aval) in zip(input_shardings, avals)]
-    output_sharding = hlo_module.spmd_output_sharding()
-    output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+    if num_partitions != 1:
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
+                                for (proto_tuple, aval) in zip(input_shardings, avals)]
+        output_shardings = hlo_module.spmd_output_sharding()
+        output_sharding_specs = hlo_sharding_to_sharding_spec(output_shardings, out_avals, logical_mesh)
+    else:
+        # the spmd partition related code will be bypassed if num_partitions == 1
+        # assume all sharding specs are replicated.
+        input_sharding_specs = [make_replicated_spec(aval, logical_mesh) for aval in avals]
+        output_sharding_specs = [make_replicated_spec(aval, logical_mesh) for aval in out_avals]
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
@@ -212,8 +211,15 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh):
         return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh)
 
 
+def make_replicated_spec(aval, logical_mesh):
+    """Make a replicated ShardingSpec."""
+    sharding = (pxla.NoSharding(),) * len(aval.shape)
+    mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)
+    return pxla.ShardingSpec(sharding, mesh_mapping)
+
+
 def call_solver_serialized_args(*args):
-    """Call solver."""
+    """Call the solver with serialized arguments and handle python errors."""
     try:
         ret = _call_solver_serialized_args(*args)
     except AssertionError:
@@ -236,7 +242,7 @@ last_s_val = None
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
-    """Call solver with serailized arguments."""
+    """Call the solver with serailized arguments."""
     global last_s_val
 
     import pulp
@@ -456,3 +462,4 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     testing.last_compiled_auto_sharding_objective = objective
     last_s_val = s_val
     return s_val, e_val, objective, status
+

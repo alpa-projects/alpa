@@ -41,7 +41,6 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_donate_buffer(self):
         @parallelize(donate_argnums=(0,),
-                     memory_budget_per_device=3 * MB,
                      devices=self.devices)
         def add_one(x):
             x = x + 1

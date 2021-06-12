@@ -386,7 +386,7 @@ class PhysicalDeviceMesh:
         if not use_ray and not devices:
             raise RuntimeError("`devices` are required for single-host device mesh.")
         if devices and use_ray:
-            raise RuntimeError("`devices` are passed in when not using a Ray cluster.")
+            raise RuntimeError("`devices` should not be passed in when using a Ray cluster.")
         if not use_ray:
             self.devices = devices
             self.host_ids = [0]

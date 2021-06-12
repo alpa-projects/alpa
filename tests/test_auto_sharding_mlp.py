@@ -60,7 +60,6 @@ class AutoShardingMLPTest(unittest.TestCase):
         global_config.shard_parallel_strategy = "auto_sharding"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        # device_mesh = SingleHostDeviceMesh(self.devices)
         device_mesh = PhysicalDeviceMesh(devices=self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 

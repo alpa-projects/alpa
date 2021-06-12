@@ -73,13 +73,13 @@ class PipelineMLPTest(unittest.TestCase):
         ray.shutdown()
 
     def test_2_layer_mlp_distributed_pipeline_parallel(self):
-        return  # temporarly disable it
-        self.train_2_layer_mlp("distributed_pipeline_parallel")
+        # temporarly disable it
+        # self.train_2_layer_mlp("distributed_pipeline_parallel")
         ray.shutdown()
 
     def test_2_layer_mlp_3d_parallel(self):
-        return  # temporarly disable it
-        self.train_2_layer_mlp("3d_parallel")
+        # temporarly disable it
+        # self.train_2_layer_mlp("3d_parallel")
         ray.shutdown()
 
 

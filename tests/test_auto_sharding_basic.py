@@ -13,7 +13,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, global_config, testing
+from parax import parallelize, global_config, testing, PhysicalDeviceMesh
 
 from test_auto_sharding_mlp import assert_close, all_reduce_cost
 
@@ -79,7 +79,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x, True)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize
+        physical_mesh = PhysicalDeviceMesh(devices=self.devices)
+        logical_mesh = physical_mesh.get_logical_mesh([2, 2], [1, 1], [1, 1])
+
+        @parallelize(devices=logical_mesh)
         def func(optimizer, x, y, rngs):
             def loss_func(params):
                 out = model.apply(params, x, False, rngs=rngs)
@@ -93,6 +96,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
 
+        objective = testing.last_compiled_auto_sharding_objective
+        expected = all_reduce_cost(2, 128 * 128 * 4 / 2) + \
+                   all_reduce_cost(2, 256 * 256 * 128 * 4 / 2)
+        assert_close(objective, expected)
 
     def test_dot_reshape_transpose(self):
         dim_0 = 64

@@ -15,9 +15,10 @@ from parax import parallelize, global_config, testing, PhysicalDeviceMesh
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from test_auto_sharding_mlp import (assert_close, assert_all_replicated,
                                     assert_column_partitioned,
-                                    assert_row_partitioned,
+                                    assert_only_has_allreduce,
                                     assert_replicated_column_partitioned,
-                                    assert_replicated_row_partitioned)
+                                    assert_replicated_row_partitioned,
+                                    assert_row_partitioned)
 
 MB = 1024 ** 2
 
@@ -25,7 +26,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
-        global_config.shard_parallel_strategy = 'auto_sharding'
+        global_config.shard_parallel_strategy = "auto_sharding"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(self.devices)
@@ -40,7 +41,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 out = apply_fn(params,
                                batch["hidden_states"], batch["attention_mask"],
                                deterministic, rngs=rngs)[0]
-                return jnp.mean((out - batch['label']) ** 2)
+                return jnp.mean((out - batch["label"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -82,7 +83,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 out = apply_fn(params,
                                batch["hidden_states"], batch["attention_mask"],
                                deterministic, rngs=rngs)[0]
-                return jnp.mean((out - batch['label']) ** 2)
+                return jnp.mean((out - batch["label"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -121,7 +122,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 32
         hidden_size = 64
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -134,6 +135,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
                            for x in params)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
@@ -146,7 +148,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 256
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -158,6 +160,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = device_mesh.all_reduce_cost(
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             assert hlo_ir.count("channel_id") == 1
             assert hlo_ir.count("all-reduce(") == 1
@@ -173,7 +176,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.01])
@@ -187,6 +190,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
@@ -200,7 +204,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 64
         hidden_size = 32
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -214,6 +218,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
                            for x in params)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             for weight in params:
                 assert_all_replicated(weight, np.prod(mesh_shape))
@@ -224,7 +229,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -237,6 +242,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             assert hlo_ir.count("channel_id") == num_layers * 4 - 1
             assert hlo_ir.count("all-reduce(") == num_layers * 4 - 1
@@ -263,7 +269,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         mesh_shape = [2, 2]
@@ -279,6 +285,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         for k in range(num_layers):
@@ -298,18 +305,18 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingAttentionTest('test_attention_data_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_attention_model_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_attention_2d_mesh'))
+    suite.addTest(AutoShardingAttentionTest("test_attention_data_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_attention_model_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_attention_2d_mesh"))
 
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_data_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_model_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_2d_mesh'))
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_data_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_model_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_2d_mesh"))
 
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

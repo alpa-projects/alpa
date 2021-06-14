@@ -13,7 +13,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, global_config, testing
+from parax import parallelize, global_config, testing, PhysicalDeviceMesh
 
 from test_auto_sharding_mlp import assert_close, all_reduce_cost
 
@@ -61,39 +61,6 @@ class AutoShardingBasicTest(unittest.TestCase):
             sharding=(Chunked([4]), NoSharding()),
             mesh_mapping=(Replicated(1), ShardedAxis(0)))
 
-
-    def test_dropout(self):
-        class Model(nn.Module):
-            @nn.compact
-            def __call__(self, x, deterministic):
-                x = nn.Dense(128, use_bias=False)(x)
-                x = nn.Dropout(0.1, deterministic=deterministic)(x)
-                return x
-
-        x = jnp.ones((256, 256, 128))
-        y = jnp.ones((256, 256, 128))
-
-        # Init model and optimizer
-        model = Model()
-        rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, x, True)
-        optimizer = optim.GradientDescent(1e-2).create(params)
-
-        @parallelize
-        def func(optimizer, x, y, rngs):
-            def loss_func(params):
-                out = model.apply(params, x, False, rngs=rngs)
-                return jnp.mean((out - y) ** 2)
-            grad = jax.grad(loss_func)(optimizer.target)
-            return grad
-
-        expected = func(optimizer, x, y, {"dropout": rngkey})
-
-        # Check sharding strategy
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-
-
     def test_dot_reshape_transpose(self):
         dim_0 = 64
         dim_1 = 1024
@@ -114,6 +81,45 @@ class AutoShardingBasicTest(unittest.TestCase):
         expected = func(a, b)
         actual = para_func(a, b)
         np.testing.assert_allclose(expected, actual)
+
+    def test_dropout(self):
+        class Model(nn.Module):
+            @nn.compact
+            def __call__(self, x, deterministic):
+                x = nn.Dense(16, use_bias=False)(x)
+                x = nn.Dropout(0.1, deterministic=deterministic)(x)
+                x = nn.Dense(16, use_bias=False)(x)
+                return x
+
+        x = jnp.ones((32, 32, 16))
+        y = jnp.ones((32, 32, 16))
+
+        # Init model and optimizer
+        model = Model()
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, x, True)
+        optimizer = optim.GradientDescent(1e-2).create(params)
+
+        @parallelize
+        def func(optimizer, x, y, rngs):
+            def loss_func(params):
+                out = model.apply(params, x, False, rngs=rngs)
+                return jnp.mean((out - y) ** 2)
+            grad = jax.grad(loss_func)(optimizer.target)
+            new_optimizer = optimizer.apply_gradient(grad)
+            return new_optimizer
+
+        func(optimizer, x, y, {"dropout": rngkey})
+
+        # Check sharding strategy (data-parallel)
+        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
+        hlo_ir = hlo_module.to_string()
+        assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
+
+        assert_close(testing.last_compiled_auto_sharding_objective,
+                     all_reduce_cost(4, 16 * 16 * 4) * 2)
+        assert hlo_ir.count("channel_id") == 1
+        assert hlo_ir.count("all-reduce(") == 1
 
     def test_all_reduce_simplification(self):
         # This test is deprecated.
@@ -193,16 +199,16 @@ class AutoShardingBasicTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingBasicTest('test_one_by_one_mesh'))
-    suite.addTest(AutoShardingBasicTest('test_donate_buffer'))
-    suite.addTest(AutoShardingBasicTest('test_dropout'))
-    suite.addTest(AutoShardingBasicTest('test_dot_reshape_transpose'))
-    suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification'))
-    suite.addTest(AutoShardingBasicTest('test_all_reduce_simplification_out_reuse'))
+    suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
+    suite.addTest(AutoShardingBasicTest("test_donate_buffer"))
+    suite.addTest(AutoShardingBasicTest("test_dot_reshape_transpose"))
+    suite.addTest(AutoShardingBasicTest("test_dropout"))
+    suite.addTest(AutoShardingBasicTest("test_all_reduce_simplification"))
+    suite.addTest(AutoShardingBasicTest("test_all_reduce_simplification_out_reuse"))
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

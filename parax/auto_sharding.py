@@ -467,3 +467,9 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     last_s_val = s_val
     return s_val, e_val, objective, status
 
+# The last solution vector of auto sharding
+last_auto_sharded_hlo_module = None
+
+def set_last_auto_sharded_hlo_module(serialized_hlo_module):
+    global last_auto_sharded_hlo_module
+    last_auto_sharded_hlo_module = serialized_hlo_module

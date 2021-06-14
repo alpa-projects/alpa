@@ -1,12 +1,12 @@
+import timeit
+
+import jax
+import jax.numpy as jnp
 import numpy as np
 from flax import linen as nn
 from flax import optim
-import jax
-import jax.numpy as jnp
 
-from parax import parallelize, global_config, testing, SingleHostDeviceMesh
-
-import timeit
+from parax import parallelize, testing, PhysicalDeviceMesh
 
 MB = 1024 ** 2
 
@@ -43,7 +43,7 @@ def benchmark_mlp_one_case(benchmark_case):
 
     # Mesh configs
     num_devices = dp_size * tensor_mp_size
-    device_mesh = SingleHostDeviceMesh(jax.devices()[:num_devices])
+    device_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices])
     logical_mesh = device_mesh.get_logical_mesh([dp_size, tensor_mp_size])
 
     @parallelize(devices=logical_mesh)

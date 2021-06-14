@@ -1,6 +1,6 @@
 import unittest
+import os
 
-import numpy as np
 from flax import linen as nn
 from flax import optim
 import jax
@@ -15,6 +15,7 @@ MB = 1024 ** 2
 
 class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
+        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         assert len(jax.local_devices()) >= 4
         # self.devices = tuple(jax.local_devices()[:4])
         self.devices = FrozenDict({
@@ -23,7 +24,8 @@ class PipelineMLPTest(unittest.TestCase):
         })
         ray.init(address='auto')
 
-    def test_2_layer_mlp(self):
+
+    def train_2_layer_mlp(self, strategy):
         class Model(nn.Module):
             hidden_dim: int
             output_dim: int
@@ -65,23 +67,35 @@ class PipelineMLPTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
-
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        strategy = "pipeline_parallel"
-        # strategy = "distributed_pipeline_parallel"
         pipelined_train_step = parallelize(donate_argnums=(), devices=self.devices,
                                            strategy=strategy)(train_step)
         gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 
+    def test_2_layer_mlp_pipeline_parallel(self):
+        self.train_2_layer_mlp("pipeline_parallel")
+        ray.shutdown()
+
+    @unittest.skip("Temporarily disable it")
+    def test_2_layer_mlp_distributed_pipeline_parallel(self):
+        self.train_2_layer_mlp("distributed_pipeline_parallel")
+        ray.shutdown()
+
+    @unittest.skip("Temporarily disable it")
+    def test_2_layer_mlp_3d_parallel(self):
+        self.train_2_layer_mlp("3d_parallel")
+        ray.shutdown()
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineMLPTest('test_2_layer_mlp'))
+    suite.addTest(PipelineMLPTest("test_2_layer_mlp_pipeline_parallel"))
+    suite.addTest(PipelineMLPTest("test_2_layer_mlp_distributed_pipeline_parallel"))
+    suite.addTest(PipelineMLPTest("test_2_layer_mlp_3d_parallel"))
     return suite
 
 
 if __name__ == '__main__':
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

@@ -296,12 +296,12 @@ class AutoShardingMLPTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_data_parallel'))
-    # suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_model_parallel'))
-    # suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_2d_mesh'))
+    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_model_parallel'))
+    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_2d_mesh'))
 
-    # suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_data_parallel'))
-    # suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_model_parallel'))
-    # suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_2d_mesh'))
+    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_data_parallel'))
+    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_model_parallel'))
+    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_2d_mesh'))
     return suite
 
 

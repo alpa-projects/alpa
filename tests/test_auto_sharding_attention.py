@@ -280,9 +280,6 @@ class AutoShardingAttentionTest(unittest.TestCase):
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
 
-        print(hlo_ir)
-        exit()
-
         # Check sharding specification
         for k in range(num_layers):
             params = optimizer.target["params"][str(k)]

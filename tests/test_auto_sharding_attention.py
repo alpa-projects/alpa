@@ -121,7 +121,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 32
         hidden_size = 64
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -146,7 +146,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 256
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -173,7 +173,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.01])
@@ -200,7 +200,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 64
         hidden_size = 32
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -224,7 +224,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -263,7 +263,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 128
         num_heads = 8
-        deterministic = True
+        deterministic = False
 
         # Test on different device meshes
         mesh_shape = [2, 2]
@@ -279,6 +279,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
             device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+
+        print(hlo_ir)
+        exit()
 
         # Check sharding specification
         for k in range(num_layers):

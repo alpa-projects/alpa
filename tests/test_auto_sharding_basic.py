@@ -66,12 +66,13 @@ class AutoShardingBasicTest(unittest.TestCase):
         class Model(nn.Module):
             @nn.compact
             def __call__(self, x, deterministic):
-                x = nn.Dense(128, use_bias=False)(x)
+                x = nn.Dense(16, use_bias=False)(x)
                 x = nn.Dropout(0.1, deterministic=deterministic)(x)
+                x = nn.Dense(16, use_bias=False)(x)
                 return x
 
-        x = jnp.ones((256, 256, 128))
-        y = jnp.ones((256, 256, 128))
+        x = jnp.ones((128, 128, 16))
+        y = jnp.ones((128, 128, 16))
 
         # Init model and optimizer
         model = Model()
@@ -79,27 +80,26 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x, True)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        physical_mesh = PhysicalDeviceMesh(devices=self.devices)
-        logical_mesh = physical_mesh.get_logical_mesh([2, 2], [1, 1], [1, 1])
-
-        @parallelize(devices=logical_mesh)
+        @parallelize
         def func(optimizer, x, y, rngs):
             def loss_func(params):
                 out = model.apply(params, x, False, rngs=rngs)
                 return jnp.mean((out - y) ** 2)
             grad = jax.grad(loss_func)(optimizer.target)
-            return grad
+            new_optimizer = optimizer.apply_gradient(grad)
+            return new_optimizer
 
-        expected = func(optimizer, x, y, {"dropout": rngkey})
+        func(optimizer, x, y, {"dropout": rngkey})
 
         # Check sharding strategy
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
 
-        objective = testing.last_compiled_auto_sharding_objective
-        expected = all_reduce_cost(2, 128 * 128 * 4 / 2) + \
-                   all_reduce_cost(2, 256 * 256 * 128 * 4 / 2)
-        assert_close(objective, expected)
+        assert_close(testing.last_compiled_auto_sharding_objective,
+                     all_reduce_cost(4, 16 * 16 * 4) * 2)
+        assert hlo_ir.count("channel_id") == 1
+        assert hlo_ir.count("all-reduce(") == 1
+
 
     def test_dot_reshape_transpose(self):
         dim_0 = 64

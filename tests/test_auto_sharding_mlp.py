@@ -60,6 +60,11 @@ def assert_sharded(x):
     assert False, f"Not sharded: {str(x.sharding_spec)}"
 
 
+def assert_only_has_allreduce(hlo_ir):
+    assert "all-gather(" not in hlo_ir, hlo_ir
+    assert "all-to-all(" not in hlo_ir, hlo_ir
+
+
 class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
@@ -171,6 +176,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 device_mesh.all_reduce_cost(hidden_dim * 4, i))
 
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
@@ -192,6 +198,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             # Check communication cost
             expected = device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
@@ -216,6 +223,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             device_mesh.all_reduce_cost(hidden_dim * 4, 0)) +\
             device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
@@ -240,6 +248,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                 device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4, i) +
                 device_mesh.all_reduce_cost(hidden_dim * 4, i))
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             for i in range(num_layers):
@@ -262,6 +271,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             expected = (num_layers - 1) *\
               device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             for k in range(num_layers):
@@ -290,6 +300,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             (num_layers - 1) *\
             device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         for k in range(num_layers):

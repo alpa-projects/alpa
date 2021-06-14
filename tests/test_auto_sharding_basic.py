@@ -114,6 +114,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         # Check sharding strategy (data-parallel)
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
+        assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
 
         assert_close(testing.last_compiled_auto_sharding_objective,
                      all_reduce_cost(4, 16 * 16 * 4) * 2)

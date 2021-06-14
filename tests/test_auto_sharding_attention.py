@@ -15,9 +15,10 @@ from parax import parallelize, global_config, testing, PhysicalDeviceMesh
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from test_auto_sharding_mlp import (assert_close, assert_all_replicated,
                                     assert_column_partitioned,
-                                    assert_row_partitioned,
+                                    assert_only_has_allreduce,
                                     assert_replicated_column_partitioned,
-                                    assert_replicated_row_partitioned)
+                                    assert_replicated_row_partitioned,
+                                    assert_row_partitioned)
 
 MB = 1024 ** 2
 
@@ -134,6 +135,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
                            for x in params)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
@@ -158,6 +160,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = device_mesh.all_reduce_cost(
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             assert hlo_ir.count("channel_id") == 1
             assert hlo_ir.count("all-reduce(") == 1
@@ -187,6 +190,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         weight0 = optimizer.target["params"]["self"]["qvk_combined"]["kernel"]
@@ -214,6 +218,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
                            for x in params)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             for weight in params:
                 assert_all_replicated(weight, np.prod(mesh_shape))
@@ -237,6 +242,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
+            assert_only_has_allreduce(hlo_ir)
 
             assert hlo_ir.count("channel_id") == num_layers * 4 - 1
             assert hlo_ir.count("all-reduce(") == num_layers * 4 - 1
@@ -279,6 +285,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         for k in range(num_layers):

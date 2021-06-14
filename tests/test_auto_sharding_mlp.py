@@ -53,6 +53,13 @@ def assert_all_replicated(x, num_replicas):
     assert x.sharding_spec.mesh_mapping[0] == Replicated(num_replicas)
 
 
+def assert_sharded(x):
+    for axis in x.sharding_spec.mesh_mapping:
+        if isinstance(axis, ShardedAxis):
+            return
+    assert False, f"Not sharded: {str(x.sharding_spec)}"
+
+
 class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
@@ -79,8 +86,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         @parallelize(devices=device_mesh)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
-                out = apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y']) ** 2)
+                out = apply_fn(params, batch["x"])
+                return jnp.mean((out - batch["y"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -122,8 +129,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         @parallelize(devices=device_mesh)
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
-                out = apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y']) ** 2)
+                out = apply_fn(params, batch["x"])
+                return jnp.mean((out - batch["y"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -292,20 +299,52 @@ class AutoShardingMLPTest(unittest.TestCase):
             else:
                 assert_replicated_row_partitioned(weight, mesh_shape)
 
+    def test_weight_init(self):
+        class Model(nn.Module):
+            @nn.compact
+            def __call__(self, x, deterministic):
+                x = nn.Dense(16)(x)
+                x = nn.Dense(16)(x)
+                return x
+
+        x = jnp.ones((64, 16))
+        y = jnp.ones((64, 16))
+
+        # Init model and optimizer
+        model = Model()
+        rngkey = jax.random.PRNGKey(0)
+
+        @parallelize
+        def init_weight(rngkey):
+            params = model.init(rngkey, x, True)
+            optimizer = optim.Adam(1e-2).create(params)
+            return optimizer
+
+        optimizer = init_weight(rngkey)
+
+        # Check sharding specification
+        assert_all_replicated(optimizer.state.step, len(self.devices))
+        assert_sharded(optimizer.target["params"]["Dense_0"]["kernel"])
+        assert_sharded(optimizer.target["params"]["Dense_1"]["kernel"])
+        assert_sharded(optimizer.state.param_states["params"]["Dense_0"]["kernel"].grad_ema)
+        assert_sharded(optimizer.state.param_states["params"]["Dense_1"]["kernel"].grad_sq_ema)
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_data_parallel'))
-    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_model_parallel'))
-    suite.addTest(AutoShardingMLPTest('test_2_layer_mlp_2d_mesh'))
+    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_data_parallel"))
+    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_model_parallel"))
+    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_2d_mesh"))
 
-    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_data_parallel'))
-    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_model_parallel'))
-    suite.addTest(AutoShardingMLPTest('test_n_layer_mlp_2d_mesh'))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_data_parallel"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh"))
+
+    suite.addTest(AutoShardingMLPTest("test_weight_init"))
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

@@ -25,7 +25,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = tuple(jax.local_devices()[:4])
-        global_config.shard_parallel_strategy = 'auto_sharding'
+        global_config.shard_parallel_strategy = "auto_sharding"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(self.devices)
@@ -40,7 +40,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 out = apply_fn(params,
                                batch["hidden_states"], batch["attention_mask"],
                                deterministic, rngs=rngs)[0]
-                return jnp.mean((out - batch['label']) ** 2)
+                return jnp.mean((out - batch["label"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -82,7 +82,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 out = apply_fn(params,
                                batch["hidden_states"], batch["attention_mask"],
                                deterministic, rngs=rngs)[0]
-                return jnp.mean((out - batch['label']) ** 2)
+                return jnp.mean((out - batch["label"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -298,18 +298,18 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingAttentionTest('test_attention_data_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_attention_model_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_attention_2d_mesh'))
+    suite.addTest(AutoShardingAttentionTest("test_attention_data_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_attention_model_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_attention_2d_mesh"))
 
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_data_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_model_parallel'))
-    suite.addTest(AutoShardingAttentionTest('test_bert_layer_2d_mesh'))
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_data_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_model_parallel"))
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_2d_mesh"))
 
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

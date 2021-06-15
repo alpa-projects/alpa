@@ -13,7 +13,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
 
 from parax.pipeline_primitive_def import pipeline_p
-from parax.auto_sharding import analyze_device_mesh, auto_sharding_compile
+from parax.auto_sharding import analyze_device_mesh, auto_sharding_compile, get_last_auto_sharded_hlo_module
 
 # pylint: disable=redefined-builtin
 from parax import testing
@@ -318,6 +318,7 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     logical_mesh, physical_mesh = analyze_device_mesh(stage_devices)
     backend = xb.get_backend(backend_name)
     compiled, hlo_module = auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backend, tuple_args=False)
+    print("get_last_auto_sharded_hlo_module", get_last_auto_sharded_hlo_module())
     print("=" * 40 + " compiled_computation " + name + " " + "=" * 40)
     print(hlo_module.to_string())
 

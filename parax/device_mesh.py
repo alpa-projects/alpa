@@ -15,8 +15,9 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
 from jax.lib import xla_client, xla_bridge
 
+from parax.benchmark_communication import compile_all_reduce
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, to_int_tuple
+from parax.util import get_dim_last_value, to_int_tuple, GB, MB
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -355,6 +356,42 @@ class MeshHostWorker:
                 if device_inputs[i][j].is_deleted():
                     del self.local_buffers[input_uuids[i][j]]
 
+    ##### Benchmark Related Functions #####
+    def benchmark_allreduce(self, shape, dtype, reduce_op, replica_groups,
+                            warmup=2, number=10):
+        num_devices = self.num_hosts * len(self.local_devices)
+        compiled = compile_all_reduce(self.backend, num_devices, shape, dtype,
+            reduce_op, replica_groups)
+        #real_mem = compiled.total_allocation_size()
+        #print(compiled.hlo_modules()[0].to_string())
+        #print(f"{real_mem / GB:.3f} GB")
+
+        # Warm up
+        dummy_data = np.ones(shape, dtype)
+        device_inputs = [
+            [self.backend.buffer_from_pyval(dummy_data, self.local_devices[i])
+                for i in range(len(self.local_devices))],
+            [self.backend.buffer_from_pyval(dummy_data, self.local_devices[i])
+                for i in range(len(self.local_devices))],
+            [self.backend.buffer_from_pyval(np.int32(warmup), self.local_devices[i])
+                for i in range(len(self.local_devices))]
+        ]
+
+        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+        # Run benchmark
+        device_inputs[2] = \
+            [self.backend.buffer_from_pyval(np.int32(number), self.local_devices[i])
+                for i in range(len(self.local_devices))]
+
+        self.sync()
+        tic = time.time()
+        compiled.execute_sharded_on_local_devices(device_inputs)
+        self.sync()
+        toc = time.time()
+
+        return (toc - tic) / number
+
     ##### Other Functions #####
     def sync(self):
         for device in self.local_devices:
@@ -525,46 +562,46 @@ class PhysicalDeviceMesh:
             ray.kill(worker)
         self.workers = None
 
-    def benchmark_allreduce(self, logical_mesh_shape):
-        size_configs = [#(64 << 20, np.float32),
-                        #(128 << 20, np.float32),
-                        (256 << 20, np.float32)]
+    def benchmark_allreduce(self):
+        size_configs = [(256 << 20, np.float32)]
+        logical_mesh_shapes = [(1, 4), (2, 2)]
 
-        # dim 0
-        replica_groups = []
-        tmp_group = []
-        for i in range(logical_mesh_shape[0]):
-            tmp_group.append([i * logical_mesh_shape[1] + j for j in range(logical_mesh_shape[1])])
-        replica_groups.append(tmp_group)
-
-        # dim 1
-        #tmp_group = []
-        #for j in range(logical_mesh_shape[1]):
-        #    tmp_group.append([i * logical_mesh_shape[1] + j for i in range(logical_mesh_shape[0])])
-        #replica_groups.append(tmp_group)
-
-        time_costs = []
-        bandwidths = []
         for config in size_configs:
-            for replica_group in replica_groups:
-                size, dtype = config
-                for worker in self.workers:
-                    ret = worker.benchmark_allreduce((size,), dtype, 'add', replica_group)
+            for logical_mesh_shape in logical_mesh_shapes:
+                # dim 0
+                replica_groups = []
+                tmp_group = []
+                for i in range(logical_mesh_shape[0]):
+                    tmp_group.append(
+                        [i * logical_mesh_shape[1] + j for j in range(logical_mesh_shape[1])])
+                replica_groups.append(tmp_group)
 
-                #cost = ray.get(ret)
-                cost = ret
-                num_devices = len(replica_group[0])
-                total_bytes = 2 * size * dtype().nbytes * (num_devices - 1) / num_devices
-                bandwidth = total_bytes / cost
+                # dim 1
+                tmp_group = []
+                for j in range(logical_mesh_shape[1]):
+                    tmp_group.append(
+                        [i * logical_mesh_shape[1] + j for i in range(logical_mesh_shape[0])])
+                replica_groups.append(tmp_group)
 
-                time_costs.append(cost)
-                bandwidths.append(bandwidth)
+                for replica_group in replica_groups:
+                    size, dtype = config
+                    for worker in self.workers:
+                        ret = worker.benchmark_allreduce.remote((size,), dtype, 'add', replica_group)
 
-        for i in range(len(replica_groups)):
-            print(replica_groups[i])
-            print(time_costs[i])
-            print(bandwidths[i] / (1<<30))
-            print()
+                    cost = ray.get(ret)
+                    num_devices = len(replica_group[0])
+                    array_size = size * dtype().nbytes
+                    communication_size = 2 * array_size * (num_devices - 1) / num_devices
+                    bandwidth = communication_size / cost
+
+                    heads = ["Groups", "Size (GB)", "Time", "Bandwidth (GB/s)"]
+                    values = [str(replica_group), f"{array_size / GB:.3f}",
+                              f"{cost:.3f}", f"{bandwidth / GB:.2f}"]
+
+                    line = ""
+                    for i in range(len(heads)):
+                        line += heads[i] + ": " + values[i] + "  "
+                    print(line)
 
     def get_callable_with_arg_handler(self, compiled_executable, avals, out_avals,
                                       input_sharding_specs, output_sharding_specs,

@@ -76,9 +76,9 @@ def benchmark(size, dtype, groups):
 #benchmark(256 << 20, cp.float32, [[1, 2], [0, 3]])
 #benchmark(256 << 20, cp.float32, [[1, 0], [2, 3]])
 
-benchmark(256 << 20, cp.float32, [[0, 1, 2]])
-benchmark(256 << 20, cp.float32, [[0, 2, 3]])
-benchmark(256 << 20, cp.float32, [[0, 1, 3]])
+#benchmark(256 << 20, cp.float32, [[0, 1, 2]])
+#benchmark(256 << 20, cp.float32, [[0, 2, 3]])
+#benchmark(256 << 20, cp.float32, [[0, 1, 3]])
 benchmark(256 << 20, cp.float32, [[0, 1, 2, 3]])
 
 #for size in range(20):

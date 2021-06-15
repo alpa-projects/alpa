@@ -101,11 +101,22 @@ class DeviceMeshTest(unittest.TestCase):
         physical_mesh.shutdown()
         ray.shutdown()
 
+    def test_benchmark_allreduce(self):
+        # Launch a multi-host device mesh
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
+
+        physical_mesh.benchmark_allreduce()
+        physical_mesh.sync_workers()
+        physical_mesh.shutdown()
+
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DeviceMeshTest("test_add_one"))
-    suite.addTest(DeviceMeshTest("test_mlp"))
+    #suite.addTest(DeviceMeshTest("test_add_one"))
+    #suite.addTest(DeviceMeshTest("test_mlp"))
+    suite.addTest(DeviceMeshTest("test_benchmark_allreduce"))
 
     return suite
 

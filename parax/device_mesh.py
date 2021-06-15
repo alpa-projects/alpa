@@ -255,6 +255,7 @@ class MeshHostWorker:
         self.local_buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> Executable]
 
+    ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
@@ -283,6 +284,7 @@ class MeshHostWorker:
         else:
             self.local_buffers[uuids].block_until_ready()
 
+    ##### Executable Related Functions #####
     def delete_executable(self, uuid: int):
         self.executables[uuid].delete()
         del self.executables[uuid]
@@ -353,6 +355,7 @@ class MeshHostWorker:
                 if device_inputs[i][j].is_deleted():
                     del self.local_buffers[input_uuids[i][j]]
 
+    ##### Other Functions #####
     def sync(self):
         for device in self.local_devices:
             device.synchronize_all_activity()
@@ -447,6 +450,122 @@ class PhysicalDeviceMesh:
             return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
                                          [1, 1], [1, 0.01])
 
+    @property
+    def total_devices(self):
+        """Return the total number of GPUs on this mesh."""
+        return len(self.device_ids)
+
+    @property
+    def num_hosts(self):
+        """Return the number of hosts in the mesh."""
+        return len(self.host_ids)
+
+    @property
+    def device_ids(self):
+        """Return the device ids (does not distinguish host IPs)."""
+        return [device_str_to_id(device_str) for device_str in self.devices_str]
+
+    @property
+    def is_distributed(self):
+        """Whether this mesh should be considered as a distributed mesh."""
+        return not (self.num_hosts == 1 and not self.use_ray)
+
+    def compile_remote_executable(self,
+                                  hlo_proto: bytes,
+                                  logical_mesh_shape: Tuple[int],
+                                  auto_sharding_strategy_vector: np.ndarray,
+                                  is_tuple_args: bool):
+        """Compile the remote executable."""
+        executable = RemoteExecutableRef(self)
+        for w in self.workers:
+            w.compile_executable.remote(
+                executable.uuid,
+                hlo_proto,
+                logical_mesh_shape,
+                auto_sharding_strategy_vector,
+                is_tuple_args)
+        return executable
+
+    def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        obj_refs = []
+        for buf_ref in buf_refs:
+            obj_refs.append(self.workers[buf_ref.host_id].
+                            get_buffers.remote(buf_ref.uuid))
+
+        return ray.get(obj_refs)
+
+    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        if self.workers is None or not ray.is_initialized():
+            return
+
+        for buf_ref in buf_refs:
+            self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
+
+    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        tasks = []
+        for buf_ref in buf_refs:
+            tasks.append(self.workers[buf_ref.host_id].
+                         block_until_ready_buffers.remote(buf_ref.uuid))
+        ray.get(tasks)
+
+    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
+        if self.workers is None or not ray.is_initialized():
+            return
+
+        for i in range(self.num_hosts):
+            self.workers[i].delete_executable.remote(exe_ref.uuid)
+
+    def sync_workers(self):
+        ray.get([w.sync.remote() for w in self.workers])
+
+    def shutdown(self):
+        """Shut down the mesh."""
+        ray.get([w.shutdown.remote() for w in self.workers])
+        for worker in self.workers:
+            ray.kill(worker)
+        self.workers = None
+
+    def benchmark_allreduce(self, logical_mesh_shape):
+        size_configs = [#(64 << 20, np.float32),
+                        #(128 << 20, np.float32),
+                        (256 << 20, np.float32)]
+
+        # dim 0
+        replica_groups = []
+        tmp_group = []
+        for i in range(logical_mesh_shape[0]):
+            tmp_group.append([i * logical_mesh_shape[1] + j for j in range(logical_mesh_shape[1])])
+        replica_groups.append(tmp_group)
+
+        # dim 1
+        #tmp_group = []
+        #for j in range(logical_mesh_shape[1]):
+        #    tmp_group.append([i * logical_mesh_shape[1] + j for i in range(logical_mesh_shape[0])])
+        #replica_groups.append(tmp_group)
+
+        time_costs = []
+        bandwidths = []
+        for config in size_configs:
+            for replica_group in replica_groups:
+                size, dtype = config
+                for worker in self.workers:
+                    ret = worker.benchmark_allreduce((size,), dtype, 'add', replica_group)
+
+                #cost = ray.get(ret)
+                cost = ret
+                num_devices = len(replica_group[0])
+                total_bytes = 2 * size * dtype().nbytes * (num_devices - 1) / num_devices
+                bandwidth = total_bytes / cost
+
+                time_costs.append(cost)
+                bandwidths.append(bandwidth)
+
+        for i in range(len(replica_groups)):
+            print(replica_groups[i])
+            print(time_costs[i])
+            print(bandwidths[i] / (1<<30))
+            print()
+
     def get_callable_with_arg_handler(self, compiled_executable, avals, out_avals,
                                       input_sharding_specs, output_sharding_specs,
                                       donated_invars):
@@ -535,81 +654,6 @@ class PhysicalDeviceMesh:
                         arg.delete()
 
             return input_bufs
-
-    @property
-    def total_devices(self):
-        """Return the total number of GPUs on this mesh."""
-        return len(self.device_ids)
-
-    @property
-    def num_hosts(self):
-        """Return the number of hosts in the mesh."""
-        return len(self.host_ids)
-
-    @property
-    def device_ids(self):
-        """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.devices_str]
-
-    @property
-    def is_distributed(self):
-        """Whether this mesh should be considered as a distributed mesh."""
-        return not (self.num_hosts == 1 and not self.use_ray)
-
-    def compile_remote_executable(self,
-                                  hlo_proto: bytes,
-                                  logical_mesh_shape: Tuple[int],
-                                  auto_sharding_strategy_vector: np.ndarray,
-                                  is_tuple_args: bool):
-        """Compile the remote executable."""
-        executable = RemoteExecutableRef(self)
-        for w in self.workers:
-            w.compile_executable.remote(
-                executable.uuid,
-                hlo_proto,
-                logical_mesh_shape,
-                auto_sharding_strategy_vector,
-                is_tuple_args)
-        return executable
-
-    def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        obj_refs = []
-        for buf_ref in buf_refs:
-            obj_refs.append(self.workers[buf_ref.host_id].
-                            get_buffers.remote(buf_ref.uuid))
-
-        return ray.get(obj_refs)
-
-    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        if self.workers is None or not ray.is_initialized():
-            return
-
-        for buf_ref in buf_refs:
-            self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
-
-    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        tasks = []
-        for buf_ref in buf_refs:
-            tasks.append(self.workers[buf_ref.host_id].
-                         block_until_ready_buffers.remote(buf_ref.uuid))
-        ray.get(tasks)
-
-    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
-        if self.workers is None or not ray.is_initialized():
-            return
-
-        for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(exe_ref.uuid)
-
-    def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
-
-    def shutdown(self):
-        """Shut down the mesh."""
-        ray.get([w.shutdown.remote() for w in self.workers])
-        for worker in self.workers:
-            ray.kill(worker)
-        self.workers = None
 
     def _gather_outs(self, avals, sharding_specs, indices, bufs):
         ret = []

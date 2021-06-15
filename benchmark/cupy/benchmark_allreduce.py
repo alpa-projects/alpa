@@ -60,13 +60,27 @@ def benchmark(size, dtype, groups):
     total_bytes = 2 * size * dtype().nbytes * (num_devices - 1) / (num_devices)
     bandwidth = total_bytes / time_cost
     print(f"Group: {groups}\tBytes: {total_bytes / GB:.3f} GB\t"
-          f"Bandwidth: {bandwidth / (1<<30):.2f} GB/s")
+          f"Time: {time_cost:.3f} s\tBandwidth: {bandwidth / (1<<30):.2f} GB/s")
 
-benchmark(128 << 20, cp.float32, [[0, 1]])
-benchmark(128 << 20, cp.float32, [[2, 3]])
-benchmark(128 << 20, cp.float32, [[0, 1], [2, 3]])
-benchmark(128 << 20, cp.float32, [[0, 1, 2, 3]])
 
-for size in range(18):
-    benchmark(1 << (10 + size), cp.float32, [[0, 1, 2, 3]])
+#benchmark(256 << 20, cp.float32, [[0, 1]])
+#benchmark(256 << 20, cp.float32, [[0, 2]])
+#benchmark(256 << 20, cp.float32, [[0, 3]])
+#benchmark(256 << 20, cp.float32, [[1, 2]])
+#benchmark(256 << 20, cp.float32, [[1, 3]])
+#benchmark(256 << 20, cp.float32, [[2, 3]])
+#
+#benchmark(256 << 20, cp.float32, [[0, 1], [2, 3]])
+#benchmark(256 << 20, cp.float32, [[0, 2], [1, 3]])
+#
+#benchmark(256 << 20, cp.float32, [[1, 2], [0, 3]])
+#benchmark(256 << 20, cp.float32, [[1, 0], [2, 3]])
+
+benchmark(256 << 20, cp.float32, [[0, 1, 2]])
+benchmark(256 << 20, cp.float32, [[0, 2, 3]])
+benchmark(256 << 20, cp.float32, [[0, 1, 3]])
+benchmark(256 << 20, cp.float32, [[0, 1, 2, 3]])
+
+#for size in range(20):
+#    benchmark(1 << (10 + size), cp.float32, [[0, 1]])
 

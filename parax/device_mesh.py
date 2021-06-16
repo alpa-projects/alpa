@@ -484,6 +484,7 @@ class PhysicalDeviceMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
+        self.profile_result = None
 
         # Do some argument check
         if not use_ray and not devices:

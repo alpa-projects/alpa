@@ -100,7 +100,7 @@ def auto_sharding_callable(   # noqa MC0001
     if distributed_compilation_head:
         pass_through_device_assignment = True
 
-    # Invoke the auto-sharding optimizer
+    # Invoke the auto-sharding compilation pass
     compiled, sharding_strategy_vector = \
         _auto_sharding_internal(logical_mesh, built, compile_options,
                                 memory_budget_per_device,
@@ -152,6 +152,10 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
+        #"auto_sharding::device_mesh_use_profiling":
+        #    logical_mesh.physical_mesh.profile_result is not None,
+        #"auto_sharding::device_mesh_profile_result":
+        #    logical_mesh.physical_mesh.profile_result.serialize(),
 
         # Distributed compilation
         "build_option::pass_through_device_assignment": pass_through_device_assignment,

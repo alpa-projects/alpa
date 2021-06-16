@@ -14,9 +14,22 @@ class ProfilingResult:
         # assume the elements in the list is sorted according to the size (ascending).
         self.all_reduce_cost = defaultdict(list)
 
+    def serialize():
+        keys = []
+        lens = []
+        values = []
+
+        for key, value in self.all_reduce_cost.items():
+            pass
+
     def record_all_reduce(self, group, size, dtype, time_cost):
         key = (group, dtype)
         self.all_reduce_cost[key].append((size, time_cost))
+
+    def estimate_all_reduce(self, group, size, dtype):
+        ret = self._estimate_all_reduce_internal(group, size, dtype) -\
+              self._estimate_all_reduce_internal(group, 0, dtype)
+        return ret
 
     def _estimate_all_reduce_internal(self, group, size, dtype):
         key = (group, dtype)
@@ -38,11 +51,6 @@ class ProfilingResult:
         right_cost = l[i+1][1]
 
         return (size - left_size) / (right_size - left_size) * (right_cost - left_cost) + left_cost
-
-    def estimate_all_reduce(self, group, size, dtype):
-        ret = self._estimate_all_reduce_internal(group, size, dtype) -\
-              self._estimate_all_reduce_internal(group, 0, dtype)
-        return ret
 
     def __str__(self):
         ret = ""

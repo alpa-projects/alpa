@@ -2,6 +2,7 @@
 
 from functools import partial
 import os
+import pickle
 import unittest
 
 from flax import linen as nn
@@ -73,7 +74,7 @@ class DeviceMeshTest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        batch_size = 512
+        batch_size = 32
         input_dim = hidden_dim = output_dim = 32
 
         # One batch of data and label
@@ -101,22 +102,19 @@ class DeviceMeshTest(unittest.TestCase):
         physical_mesh.shutdown()
         ray.shutdown()
 
-    def test_benchmark_allreduce(self):
-        # Launch a multi-host device mesh
+    def test_profile_allreduce(self):
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
-
-        physical_mesh.benchmark_allreduce()
+        physical_mesh.profile_allreduce()
         physical_mesh.sync_workers()
         physical_mesh.shutdown()
-
 
 
 def suite():
     suite = unittest.TestSuite()
     #suite.addTest(DeviceMeshTest("test_add_one"))
     #suite.addTest(DeviceMeshTest("test_mlp"))
-    suite.addTest(DeviceMeshTest("test_benchmark_allreduce"))
+    suite.addTest(DeviceMeshTest("test_profile_allreduce"))
 
     return suite
 

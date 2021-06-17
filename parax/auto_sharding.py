@@ -126,7 +126,7 @@ def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backen
         _auto_sharding_internal(logical_mesh, built_computation, compile_options,
                                 memory_budget_per_device,
                                 pass_through_device_assignment,
-                                disable_cse=multi_stage_compilation)
+                                multi_stage_compilation=multi_stage_compilation)
     testing.last_compiled_executable = compiled
     hlo_module = compiled.hlo_modules()[0]
 
@@ -144,7 +144,7 @@ def _auto_sharding_internal(logical_mesh,
                             compile_options,
                             memory_budget_per_device,
                             pass_through_device_assignment,
-                            disable_cse=False):
+                            multi_stage_compilation=False):
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
     global last_s_val
@@ -168,8 +168,8 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
 
-        # Disable CSE for pipeline stage compilation
-        "auto_sharding::disable_cse": disable_cse,
+        # Multi pipeline stage compilation
+        "auto_sharding::multi_stage_compilation": multi_stage_compilation,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
     return compiled, last_s_val

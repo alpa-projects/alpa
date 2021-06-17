@@ -1,8 +1,6 @@
 """Test distributed mulit-host device mesh."""
 
-from functools import partial
 import os
-import pickle
 import unittest
 
 from flax import linen as nn
@@ -12,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import parallelize, DeviceCluster, global_config, testing
+from parax import parallelize, DeviceCluster, testing
 from parax.testing import assert_allclose
 
 
@@ -102,19 +100,11 @@ class DeviceMeshTest(unittest.TestCase):
         physical_mesh.shutdown()
         ray.shutdown()
 
-    def test_profile_allreduce(self):
-        device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.get_physical_mesh()
-        physical_mesh.profile_allreduce()
-        physical_mesh.sync_workers()
-        physical_mesh.shutdown()
-
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(DeviceMeshTest("test_add_one"))
-    #suite.addTest(DeviceMeshTest("test_mlp"))
-    suite.addTest(DeviceMeshTest("test_profile_allreduce"))
+    suite.addTest(DeviceMeshTest("test_add_one"))
+    suite.addTest(DeviceMeshTest("test_mlp"))
 
     return suite
 

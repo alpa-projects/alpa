@@ -15,7 +15,7 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
 from jax.lib import xla_client, xla_bridge
 
-from parax.profile_communication import compile_all_reduce, ProfilingResult
+from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
 from parax.util import get_dim_last_value, to_int_tuple, GB, MB
 from parax.xla_pass_context import XlaPassContext
@@ -105,7 +105,7 @@ class LogicalDeviceMesh:
     def make_tile_spec(self, array, tensor_dims, mesh_dims):
         shape = array.shape
         sharding = [NoSharding(), ] * len(shape)
-        mesh_mapping = [None, ] * len(self.id_mesh.shape)
+        mesh_mapping = [None,] * len(self.id_mesh.shape)
 
         for i, (tensor_dim, mesh_dim) in enumerate(zip(tensor_dims, mesh_dims)):
             sharding[tensor_dim] = Chunked([self.id_mesh.shape[mesh_dim]], )
@@ -357,11 +357,11 @@ class MeshHostWorker:
                     del self.local_buffers[input_uuids[i][j]]
 
     ##### Profiling Related Functions #####
-    def profile_allreduce_one_config(self, shape, dtype,
-            reduce_op, replica_group, number=10, warmup=2):
+    def profile_collective_one_config(self, shape, dtype, replica_groups, primitive_name,
+            number=10, warmup=2):
         num_devices = self.num_hosts * len(self.local_devices)
-        compiled = compile_all_reduce(self.backend, num_devices, shape, dtype,
-            reduce_op, replica_group)
+        in_shape, out_shape, compiled = compile_collective_hlo(
+            self.backend, num_devices, replica_groups, shape, dtype, primitive_name)
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
                                                 self.host_id, compiled)
 
@@ -370,11 +370,10 @@ class MeshHostWorker:
         #print(f"{real_mem / GB:.3f} GB")
 
         # Warm up
-        dummy_data = np.empty(shape, dtype)
         device_inputs = [
-            [self.backend.buffer_from_pyval(dummy_data, self.local_devices[i])
+            [self.backend.buffer_from_pyval(np.empty(in_shape, dtype), self.local_devices[i])
                 for i in range(len(self.local_devices))],
-            [self.backend.buffer_from_pyval(dummy_data, self.local_devices[i])
+            [self.backend.buffer_from_pyval(np.empty(out_shape, dtype), self.local_devices[i])
                 for i in range(len(self.local_devices))],
             [self.backend.buffer_from_pyval(np.int32(warmup), self.local_devices[i])
                 for i in range(len(self.local_devices))]
@@ -394,12 +393,14 @@ class MeshHostWorker:
 
         return (toc - tic) / number
 
-    def profile_allreduce(self):
-        """Profile the time cost of all-reduce"""
+    def profile_collective(self, primitive_name, size_range, number, verbose):
+        """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
+
+        # Generate all possible communication groups
         profile_result = ProfilingResult()
         size_configs = []
         size_configs.append((0, np.float32))
-        for i in range(30):
+        for i in size_range or range(30):
             size_configs.append((1 << i, np.float32))
 
         logical_mesh_shapes = []
@@ -432,18 +433,29 @@ class MeshHostWorker:
         all_keys.sort()
 
         for replica_group, size, dtype in all_keys:
-            number = min(max(15, int((1 << 31) / (max(size, 1) * dtype().nbytes))), 1 << 13)
-            time_cost = self.profile_allreduce_one_config((size,), dtype, 'add',
-                replica_group, number)
-            profile_result.record_all_reduce(replica_group, size, dtype, time_cost)
+            if number == "auto":
+                number_ = min(max(15, int((1 << 31) / (max(size, 1) * dtype().nbytes))), 1 << 13)
+            else:
+                number_ = number
 
-            if self.host_id == 0:
-                num_devices = len(replica_group[0])
-                array_size = size * dtype().nbytes
+            time_cost = self.profile_collective_one_config((size,), dtype, replica_group,
+                                                           primitive_name, number_)
+            num_devices = len(replica_group[0])
+            array_size = size * dtype().nbytes
+
+            if primitive_name == "all-reduce":
+                profile_result.record_all_reduce(replica_group, size, dtype, time_cost)
                 communication_size = 2 * array_size * (num_devices - 1) / num_devices
-                bandwidth = communication_size / time_cost
+            elif primitive_name == "all-gather":
+                profile_result.record_all_gather(replica_group, size, dtype, time_cost)
+                communication_size = array_size * (num_devices - 1) / num_devices
+            else:
+                raise ValueError("Invalid primitive: " + primitive_name)
 
-                heads = ["Groups", "Size (GB)", "Time", "Bandwidth (GB/s)"]
+            bandwidth = communication_size / time_cost
+
+            if self.host_id == 0 and verbose >= 1:
+                heads = [primitive_name, "Size (GB)", "Time", "Bandwidth (GB/s)"]
                 values = [str(replica_group), f"{array_size / GB:.5f}",
                           f"{time_cost:.5f}", f"{bandwidth / GB:.2f}"]
 
@@ -452,8 +464,8 @@ class MeshHostWorker:
                     line += heads[i] + ": " + values[i] + "  "
                 print(line)
 
-        return profile_result
-
+        if self.host_id == 0:
+            return profile_result
 
     ##### Other Functions #####
     def sync(self):
@@ -484,7 +496,7 @@ class PhysicalDeviceMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
-        self.profile_result = None
+        self.profile_result = ProfilingResult()
 
         # Do some argument check
         if not use_ray and not devices:
@@ -724,12 +736,19 @@ class PhysicalDeviceMesh:
         return ret
 
     ##### Profling related Functions #####
-    def profile_allreduce(self):
+    def profile_collective(self, primitive_name, size_range=None, number="auto", verbose=1):
+        """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
         tasks = []
         for worker in self.workers:
-            tasks.append(worker.profile_allreduce.remote())
+            tasks.append(worker.profile_collective.remote(
+                primitive_name, size_range, number, verbose))
         profile_result = ray.get(tasks)[0]
-        self.profile_result = profile_result
+        if primitive_name == "all-reduce":
+            self.profile_result.all_reduce_cost_dict = profile_result.all_reduce_cost_dict
+        elif primitive_name == "all-gather":
+            self.profile_result.all_gather_cost_dict = profile_result.all_gather_cost_dict
+        else:
+            raise ValueError("Invalid primitive_name: " + primitive_name)
 
     ##### Other Functions #####
     def sync_workers(self):

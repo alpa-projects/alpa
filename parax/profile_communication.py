@@ -12,7 +12,8 @@ class ProfilingResult:
     def __init__(self):
         # Dict[Tuple(group, dtype) -> List[Tuple(size, time)]]
         # assume the elements in the list is sorted according to the size (ascending).
-        self.all_reduce_cost = defaultdict(list)
+        self.all_reduce_cost_dict = defaultdict(list)
+        self.all_gather_cost_dict = defaultdict(list)
 
     def serialize():
         keys = []
@@ -24,16 +25,25 @@ class ProfilingResult:
 
     def record_all_reduce(self, group, size, dtype, time_cost):
         key = (group, dtype)
-        self.all_reduce_cost[key].append((size, time_cost))
+        self.all_reduce_cost_dict[key].append((size, time_cost))
+
+    def record_all_gather(self, group, size, dtype, time_cost):
+        key = (group, dtype)
+        self.all_gather_cost_dict[key].append((size, time_cost))
 
     def estimate_all_reduce(self, group, size, dtype):
-        ret = self._estimate_all_reduce_internal(group, size, dtype) -\
-              self._estimate_all_reduce_internal(group, 0, dtype)
+        ret = self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -\
+              self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
         return ret
 
-    def _estimate_all_reduce_internal(self, group, size, dtype):
+    def estimate_all_gather(self, group, size, dtype):
+        ret = self._estimate_internal(group, size, dtype, self.all_gather_cost_dict) -\
+              self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
+        return ret
+
+    def _estimate_internal(self, group, size, dtype, cost_dict):
         key = (group, dtype)
-        l = self.all_reduce_cost[key]
+        l = cost_dict[key]
         assert l
 
         if size > l[-1][0]:
@@ -85,11 +95,25 @@ def op_all_reduce(builder, operand, reduce_op, replica_groups, channel_id):
     return ret
 
 
-def compile_all_reduce(backend, num_devices, shape, dtype, reduce_op, replica_groups):
-    """Compile a Runnable to benchmark the time cost of all-reduce"""
+def op_all_gather(builder, operand, replica_groups, channel_id):
+    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    ret = ops.AllGather(operand, 0, len(replica_groups[0]),
+                        replica_groups_protos, channel_id, None, True)
+    return ret
+
+
+def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, primitive_name):
+    if primitive_name == "all-reduce":
+        in_shape = out_shape = shape
+    elif primitive_name == "all-gather":
+        in_shape = (shape[0] // len(replica_groups[0]),)
+        out_shape = shape
+    else:
+        raise ValueError("Invalid primitive: " + primitive_name)
+
     in_tuple_shape = xla_client.Shape.tuple_shape([
-        xla_client.Shape.array_shape(np.dtype(dtype), shape),
-        xla_client.Shape.array_shape(np.dtype(dtype), shape),
+        xla_client.Shape.array_shape(np.dtype(dtype), in_shape),
+        xla_client.Shape.array_shape(np.dtype(dtype), out_shape),
         xla_client.Shape.array_shape(np.dtype(np.int32), ()),
     ])
 
@@ -106,7 +130,15 @@ def compile_all_reduce(backend, num_devices, shape, dtype, reduce_op, replica_gr
     counter = ops.GetTupleElement(in_tuple, 2)
     channel_id = backend.create_channel_handle()
     body.set_sharding(sharding)
-    out_buf = op_all_reduce(body, in_buf, reduce_op, replica_groups, channel_id)
+    if primitive_name == "all-reduce":
+        out_buf = op_all_reduce(body, in_buf, "add", replica_groups, channel_id)
+    elif primitive_name == "all-gather":
+        if in_shape[0] == 0 or out_shape[0] == 0:
+            out_buf = out_buf
+        else:
+            out_buf = op_all_gather(body, in_buf, replica_groups, channel_id)
+    else:
+        raise ValueError("Invalid primitive: " + primitive_name)
     counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
     body.clear_sharding()
     ops.Tuple(body, [in_buf, out_buf, counter])
@@ -121,8 +153,8 @@ def compile_all_reduce(backend, num_devices, shape, dtype, reduce_op, replica_gr
 
     # while loop
     loop = xla_client.XlaBuilder("loop")
-    in_buf = op_parameter(loop, 0, shape, dtype)
-    out_buf = op_parameter(loop, 1, shape, dtype)
+    in_buf = op_parameter(loop, 0, in_shape, dtype)
+    out_buf = op_parameter(loop, 1, out_shape, dtype)
     counter = op_parameter(loop, 2, (), np.int32)
     while_init = ops.Tuple(loop, [in_buf, out_buf, counter])
     ops.While(cond_computation, body_computation, while_init)
@@ -137,5 +169,5 @@ def compile_all_reduce(backend, num_devices, shape, dtype, reduce_op, replica_gr
         use_spmd_partitioning=True,
     )
 
-    return backend.compile(loop_computation, compile_options)
+    return in_shape, out_shape, backend.compile(loop_computation, compile_options)
 

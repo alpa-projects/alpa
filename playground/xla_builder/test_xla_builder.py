@@ -7,6 +7,7 @@ from jax.lib import xla_client, xla_bridge
 
 ops = xla_client.ops
 
+MB = 1 << 20
 
 def test_sin_cos():
     def f(x):
@@ -23,6 +24,44 @@ def test_sin_cos():
     host_input = np.ones((10,8), dtype=np.float32)
     device_input = gpu_backend.buffer_from_pyval(host_input)
     device_out = compiled_computation.execute([device_input,])
+
+
+def parameter(builder, num, shape, dtype):
+    shape = xla_client.Shape.array_shape(np.dtype(dtype), shape)
+    name = ""
+    replicated = []
+    return ops.Parameter(builder, num,
+                         shape.with_major_to_minor_layout_if_absent(), name,
+                         replicated)
+
+def test_alias():
+    c = xla_client.XlaBuilder("test")
+    a = parameter(c, 0, (8 * MB//4,), np.float32)
+    b = parameter(c, 1, (8 * MB//4,), np.float32)
+    d = parameter(c, 2, (8 * MB//4,), np.float32)
+    e = parameter(c, 3, (8 * MB//4,), np.float32)
+
+    backend = xla_client.get_local_backend("gpu")
+
+    #z = ops.Add(a, b)
+    z = ops.Constant(c, 0.1)
+
+    #c.setup_alias((0,), 0, ())
+
+    c = c.build(ops.Tuple(c, [z]))
+    compiled_c = backend.compile(c)
+    real_mem = compiled_c.total_allocation_size()
+
+    print(compiled_c.hlo_modules()[0].to_string())
+    print(f"{real_mem / MB:.2f} MB")
+
+    #a = backend.buffer_from_pyval(np.ones((8 * MB // 4), dtype=np.float32))
+    #b = backend.buffer_from_pyval(np.ones((8 * MB // 4), dtype=np.float32))
+    #d = backend.buffer_from_pyval(np.ones((8 * MB // 4), dtype=np.float32))
+    #e = backend.buffer_from_pyval(np.ones((8 * MB // 4), dtype=np.float32))
+
+    #for i in range(10):
+    #    ans, = compiled_c.execute([a, b, d, e])
 
 
 def test_shard():
@@ -233,9 +272,10 @@ def test_manual_construct_spmd_one_device():
 
 if __name__ == "__main__":
     #test_sin_cos()
+    test_alias()
     #test_shard()
 
     #test_manual_construct_replica()
     #test_manual_construct_spmd_shard()
-    test_manual_construct_spmd_one_device()
+    #test_manual_construct_spmd_one_device()
 

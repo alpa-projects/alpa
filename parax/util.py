@@ -60,6 +60,10 @@ def auto_donate_argnums(args):
 ##### Other Utilities
 ########################################
 
+GB = 1 << 30  # Gigabyte
+MB = 1 << 20  # Megabyte
+
+
 def run_cmd(cmd):
     """Run a bash commond."""
     print(cmd)

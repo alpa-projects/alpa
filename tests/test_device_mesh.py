@@ -1,6 +1,5 @@
 """Test distributed mulit-host device mesh."""
 
-from functools import partial
 import os
 import unittest
 
@@ -11,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import parallelize, DeviceCluster, global_config, testing
+from parax import parallelize, DeviceCluster, testing
 from parax.testing import assert_allclose
 
 
@@ -73,7 +72,7 @@ class DeviceMeshTest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        batch_size = 512
+        batch_size = 32
         input_dim = hidden_dim = output_dim = 32
 
         # One batch of data and label

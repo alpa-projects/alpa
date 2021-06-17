@@ -100,7 +100,7 @@ def auto_sharding_callable(   # noqa MC0001
     if distributed_compilation_head:
         pass_through_device_assignment = True
 
-    # Invoke the auto-sharding optimizer
+    # Invoke the auto-sharding compilation pass
     compiled, sharding_strategy_vector = \
         _auto_sharding_internal(logical_mesh, built, compile_options,
                                 memory_budget_per_device,
@@ -152,6 +152,10 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
+        #"auto_sharding::device_mesh_use_profiling":
+        #    logical_mesh.physical_mesh.profile_result is not None,
+        #"auto_sharding::device_mesh_profile_result":
+        #    logical_mesh.physical_mesh.profile_result.serialize(),
 
         # Distributed compilation
         "build_option::pass_through_device_assignment": pass_through_device_assignment,
@@ -225,7 +229,7 @@ def call_solver_serialized_args(*args):
     except AssertionError:
         ret = None
         info = str(traceback.format_exc()[:-1])
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         ret = None
         info = str(traceback.format_exc()[:-1])
 
@@ -235,10 +239,11 @@ def call_solver_serialized_args(*args):
     return ret
 
 
-# The last solution vector of auto sharding
+# The last solution vector of auto sharding.
 last_s_val = None
 
 
+# pylint: disable=import-outside-toplevel
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
@@ -262,8 +267,8 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         """Get the index of non-zero item in a vector."""
         ct = 0
         ret = None
-        for i in range(len(binary_vector)):
-            if pulp.value(binary_vector[i]):
+        for i, elem in enumerate(binary_vector):
+            if pulp.value(elem):
                 ret = i
                 ct += 1
 
@@ -413,9 +418,9 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         C = len(s[j])
         if (i, j) in alias_set:
             raise ValueError(f"Duplicated edges: {(i, j)}")
-        else:
-            alias_set.add((i, j))
-            alias_set.add((j, i))
+
+        alias_set.add((i, j))
+        alias_set.add((j, i))
 
         for row in range(len(s[i])):
             for col in range(len(s[j])):
@@ -462,4 +467,3 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     testing.last_compiled_auto_sharding_objective = objective
     last_s_val = s_val
     return s_val, e_val, objective, status
-

@@ -101,7 +101,9 @@ def auto_sharding_callable(   # noqa MC0001
                                                        input_sharding_specs, output_sharding_specs, donated_invars)
 
 
-def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backend, memory_budget_per_device=None, tuple_args=False):
+def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backend,
+                          memory_budget_per_device=None, tuple_args=False,
+                          multi_stage_compilation=False):
     distributed_compilation_head = physical_mesh.is_distributed
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
@@ -123,12 +125,13 @@ def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backen
     compiled, sharding_strategy_vector = \
         _auto_sharding_internal(logical_mesh, built_computation, compile_options,
                                 memory_budget_per_device,
-                                pass_through_device_assignment)
+                                pass_through_device_assignment,
+                                disable_cse=multi_stage_compilation)
     testing.last_compiled_executable = compiled
     hlo_module = compiled.hlo_modules()[0]
 
     # Send code and sharding strategy to host workers
-    if distributed_compilation_head:
+    if distributed_compilation_head and not multi_stage_compilation:
         hlo_proto = built_computation.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
             hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args)
@@ -140,7 +143,8 @@ def _auto_sharding_internal(logical_mesh,
                             built,
                             compile_options,
                             memory_budget_per_device,
-                            pass_through_device_assignment):
+                            pass_through_device_assignment,
+                            disable_cse=False):
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
     global last_s_val
@@ -163,6 +167,9 @@ def _auto_sharding_internal(logical_mesh,
         # Debug options
         "auto_sharding::simplify_graph": True,
         "auto_sharding::print_strategy": False,
+
+        # Disable CSE for pipeline stage compilation
+        "auto_sharding::disable_cse": disable_cse,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
     return compiled, last_s_val

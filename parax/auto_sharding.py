@@ -229,7 +229,7 @@ def call_solver_serialized_args(*args):
     except AssertionError:
         ret = None
         info = str(traceback.format_exc()[:-1])
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         ret = None
         info = str(traceback.format_exc()[:-1])
 
@@ -242,7 +242,7 @@ def call_solver_serialized_args(*args):
 # The last solution vector of auto sharding
 last_s_val = None
 
-
+# pylint: disable=import-outside-toplevel
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
@@ -266,8 +266,8 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         """Get the index of non-zero item in a vector."""
         ct = 0
         ret = None
-        for i in range(len(binary_vector)):
-            if pulp.value(binary_vector[i]):
+        for i, elem in enumerate(binary_vector):
+            if pulp.value(elem):
                 ret = i
                 ct += 1
 
@@ -417,9 +417,9 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         C = len(s[j])
         if (i, j) in alias_set:
             raise ValueError(f"Duplicated edges: {(i, j)}")
-        else:
-            alias_set.add((i, j))
-            alias_set.add((j, i))
+
+        alias_set.add((i, j))
+        alias_set.add((j, i))
 
         for row in range(len(s[i])):
             for col in range(len(s[j])):
@@ -466,4 +466,3 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     testing.last_compiled_auto_sharding_objective = objective
     last_s_val = s_val
     return s_val, e_val, objective, status
-

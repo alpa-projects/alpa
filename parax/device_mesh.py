@@ -17,7 +17,7 @@ from jax.lib import xla_client, xla_bridge
 
 from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, to_int_tuple, GB, MB
+from parax.util import get_dim_last_value, to_int_tuple, GB
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -105,7 +105,7 @@ class LogicalDeviceMesh:
     def make_tile_spec(self, array, tensor_dims, mesh_dims):
         shape = array.shape
         sharding = [NoSharding(), ] * len(shape)
-        mesh_mapping = [None,] * len(self.id_mesh.shape)
+        mesh_mapping = [None, ] * len(self.id_mesh.shape)
 
         for i, (tensor_dim, mesh_dim) in enumerate(zip(tensor_dims, mesh_dims)):
             sharding[tensor_dim] = Chunked([self.id_mesh.shape[mesh_dim]], )
@@ -358,7 +358,7 @@ class MeshHostWorker:
 
     ##### Profiling Related Functions #####
     def profile_collective_one_config(self, shape, dtype, replica_groups, primitive_name,
-            number=10, warmup=2):
+                                      number=10, warmup=2):
         num_devices = self.num_hosts * len(self.local_devices)
         in_shape, out_shape, compiled = compile_collective_hlo(
             self.backend, num_devices, replica_groups, shape, dtype, primitive_name)
@@ -395,7 +395,6 @@ class MeshHostWorker:
 
     def profile_collective(self, primitive_name, size_range, number, verbose):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
-
         # Generate all possible communication groups
         profile_result = ProfilingResult()
         size_configs = []
@@ -460,12 +459,13 @@ class MeshHostWorker:
                           f"{time_cost:.5f}", f"{bandwidth / GB:.2f}"]
 
                 line = ""
-                for i in range(len(heads)):
-                    line += heads[i] + ": " + values[i] + "  "
+                for head, value in zip(heads, values):
+                    line += head + ": " + value + "  "
                 print(line)
 
         if self.host_id == 0:
             return profile_result
+        return None
 
     ##### Other Functions #####
     def sync(self):
@@ -624,7 +624,6 @@ class PhysicalDeviceMesh:
                 is_tuple_args)
         return executable
 
-
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
         if self.workers is None or not ray.is_initialized():
             return
@@ -760,7 +759,6 @@ class PhysicalDeviceMesh:
         for worker in self.workers:
             ray.kill(worker)
         self.workers = None
-
 
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.

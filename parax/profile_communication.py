@@ -9,13 +9,15 @@ ops = xla_client.ops
 
 
 class ProfilingResult:
+    """Store the profiling result."""
+
     def __init__(self):
         # Dict[Tuple(group, dtype) -> List[Tuple(size, time)]]
         # assume the elements in the list is sorted according to the size (ascending).
         self.all_reduce_cost_dict = defaultdict(list)
         self.all_gather_cost_dict = defaultdict(list)
 
-    def serialize():
+    def serialize(self):
         keys = []
         lens = []
         values = []
@@ -43,22 +45,22 @@ class ProfilingResult:
 
     def _estimate_internal(self, group, size, dtype, cost_dict):
         key = (group, dtype)
-        l = cost_dict[key]
-        assert l
+        cost_list = cost_dict[key]
+        assert cost_list
 
-        if size > l[-1][0]:
-            i = len(l) - 2
-        elif size < l[0][0]:
+        if size > cost_list[-1][0]:
+            i = len(cost_list) - 2
+        elif size < cost_list[0][0]:
             i = 0
         else:
-            for i in range(len(l)-1):
-                if l[i][0] <= size <= l[i+1][0]:
+            for i in range(len(cost_list) - 1):
+                if cost_list[i][0] <= size <= cost_list[i + 1][0]:
                     break
 
-        left_size = l[i][0]
-        left_cost = l[i][1]
-        right_size = l[i+1][0]
-        right_cost = l[i+1][1]
+        left_size = cost_list[i][0]
+        left_cost = cost_list[i][1]
+        right_size = cost_list[i + 1][0]
+        right_cost = cost_list[i + 1][1]
 
         return (size - left_size) / (right_size - left_size) * (right_cost - left_cost) + left_cost
 
@@ -103,6 +105,10 @@ def op_all_gather(builder, operand, replica_groups, channel_id):
 
 
 def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, primitive_name):
+    """
+    Compile a xla executable for benchmarking collective primitives.
+    It is a while loop that calls the collective primitive for multiple times.
+    """
     if primitive_name == "all-reduce":
         in_shape = out_shape = shape
     elif primitive_name == "all-gather":
@@ -134,7 +140,7 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
         out_buf = op_all_reduce(body, in_buf, "add", replica_groups, channel_id)
     elif primitive_name == "all-gather":
         if in_shape[0] == 0 or out_shape[0] == 0:
-            out_buf = out_buf
+            pass
         else:
             out_buf = op_all_gather(body, in_buf, replica_groups, channel_id)
     else:
@@ -148,7 +154,7 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     cond = xla_client.XlaBuilder("condition")
     in_tuple = ops.Parameter(cond, 0, in_tuple_shape)
     counter = ops.GetTupleElement(in_tuple, 2)
-    pred = ops.Gt(counter, ops.Constant(cond, np.int32(0)))
+    ops.Gt(counter, ops.Constant(cond, np.int32(0)))
     cond_computation = cond.Build()
 
     # while loop
@@ -170,4 +176,3 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     )
 
     return in_shape, out_shape, backend.compile(loop_computation, compile_options)
-

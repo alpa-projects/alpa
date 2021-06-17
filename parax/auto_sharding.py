@@ -239,8 +239,9 @@ def call_solver_serialized_args(*args):
     return ret
 
 
-# The last solution vector of auto sharding
+# The last solution vector of auto sharding.
 last_s_val = None
+
 
 # pylint: disable=import-outside-toplevel
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,

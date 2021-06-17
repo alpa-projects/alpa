@@ -319,9 +319,10 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     backend = xb.get_backend(backend_name)
     auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
                           backend, tuple_args=False, multi_stage_compilation=True)
-    print("get_last_auto_sharded_hlo_module", get_last_auto_sharded_hlo_module())
-    print("=" * 40 + " compiled_computation " + name + " " + "=" * 40)
-    print(hlo_module.to_string())
+    stage_protos = get_last_auto_sharded_hlo_module()
+    stages = [xc.XlaComputation(proto) for proto in stage_protos]
+    print(stages)
+    return stages
 
 
 @dataclass

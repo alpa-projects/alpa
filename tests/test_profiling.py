@@ -1,4 +1,4 @@
-"""Test distributed mulit-host device mesh."""
+"""Test profiling of communication and compute costs."""
 
 from functools import partial
 import os
@@ -25,14 +25,14 @@ class DeviceMeshTest(unittest.TestCase):
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
         physical_mesh.profile_collective(
-            "all-reduce", size_range=range(27, 29), verbose=True)
+            "all-reduce", size_range=range(18, 19), verbose=False)
         physical_mesh.shutdown()
 
     def test_profile_allgather(self):
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
         physical_mesh.profile_collective(
-            "all-gather", size_range=range(28, 29), verbose=True)
+            "all-gather", size_range=range(18, 19), verbose=False)
         physical_mesh.shutdown()
 
 

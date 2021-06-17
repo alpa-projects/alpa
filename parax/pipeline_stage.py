@@ -13,7 +13,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
 
 from parax.pipeline_primitive_def import pipeline_p
-from parax.auto_sharding import analyze_device_mesh, auto_sharding_compile, get_last_auto_sharded_hlo_module
+from parax.auto_sharding import analyze_device_mesh, auto_sharding_compile, get_auto_sharded_hlo_stages
 
 # pylint: disable=redefined-builtin
 from parax import testing
@@ -296,8 +296,6 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     eqns = []
     consts_dir = {}
     for stage in jax_stages:
-        print("=" * 40 + " stage " + "=" * 40)
-        print(stage.closed_jaxpr())
         consts_dir.update(stage.consts_dir)
         invars.update(stage.global_invars, stage.pipeline_invars)
         outvars.update(stage.global_outvars, stage.pipeline_outvars)
@@ -313,15 +311,15 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     print(closed_jaxpr)
     backend_name = 'gpu'
     built_computation = build_hlo_computation_from_jaxpr(name, closed_jaxpr, backend_name=backend_name)
-    print("=" * 40 + " built_computation " + name + " " + "=" * 40)
-    print(built_computation.as_hlo_text())
     logical_mesh, physical_mesh = analyze_device_mesh(stage_devices)
     backend = xb.get_backend(backend_name)
     auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
                           backend, tuple_args=False, multi_stage_compilation=True)
-    stage_protos = get_last_auto_sharded_hlo_module()
+    stage_protos = get_auto_sharded_hlo_stages()
     stages = [xc.XlaComputation(proto) for proto in stage_protos]
-    print(stages)
+    for stage in stages:
+        print("=" * 40 + " stage " + "=" * 40)
+        print(stage.as_hlo_text())
     return stages
 
 

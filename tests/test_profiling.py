@@ -16,7 +16,7 @@ from parax import parallelize, DeviceCluster, global_config, testing
 from parax.testing import assert_allclose
 
 
-class DeviceMeshTest(unittest.TestCase):
+class ProfilingTest(unittest.TestCase):
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
@@ -38,8 +38,8 @@ class DeviceMeshTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DeviceMeshTest("test_profile_allreduce"))
-    suite.addTest(DeviceMeshTest("test_profile_allgather"))
+    suite.addTest(ProfilingTest("test_profile_allreduce"))
+    suite.addTest(ProfilingTest("test_profile_allgather"))
 
     return suite
 

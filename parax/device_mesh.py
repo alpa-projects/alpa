@@ -322,6 +322,7 @@ class MeshHostWorker:
             # Other useless but required arguments
             "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
             "auto_sharding::device_mesh_beta": (1.0,) * len(logical_mesh_shape),
+            "auto_sharding::device_mesh_prof_result": None,
         }):
             compiled_computation = backend.compile(computation, compile_options)
 
@@ -396,11 +397,11 @@ class MeshHostWorker:
     def profile_collective(self, primitive_name, size_range, number, verbose):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
         # Generate all possible communication groups
-        profile_result = ProfilingResult()
+        prof_result = ProfilingResult()
         size_configs = []
-        size_configs.append((0, np.float32))
+        size_configs.append((0, "float32"))
         for i in size_range or range(30):
-            size_configs.append((1 << i, np.float32))
+            size_configs.append((1 << i, "float32"))
 
         logical_mesh_shapes = []
         total_devices = self.num_hosts * len(self.local_devices)
@@ -433,20 +434,21 @@ class MeshHostWorker:
 
         for replica_group, size, dtype in all_keys:
             if number == "auto":
-                number_ = min(max(15, int((1 << 31) / (max(size, 1) * dtype().nbytes))), 1 << 13)
+                number_ = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))),
+                              1 << 13)
             else:
                 number_ = number
 
             time_cost = self.profile_collective_one_config((size,), dtype, replica_group,
                                                            primitive_name, number_)
             num_devices = len(replica_group[0])
-            array_size = size * dtype().nbytes
+            array_size = size * np.dtype(dtype).itemsize
 
             if primitive_name == "all-reduce":
-                profile_result.record_all_reduce(replica_group, size, dtype, time_cost)
+                prof_result.record_all_reduce(replica_group, size, dtype, time_cost)
                 communication_size = 2 * array_size * (num_devices - 1) / num_devices
             elif primitive_name == "all-gather":
-                profile_result.record_all_gather(replica_group, size, dtype, time_cost)
+                prof_result.record_all_gather(replica_group, size, dtype, time_cost)
                 communication_size = array_size * (num_devices - 1) / num_devices
             else:
                 raise ValueError("Invalid primitive: " + primitive_name)
@@ -464,7 +466,7 @@ class MeshHostWorker:
                 print(line)
 
         if self.host_id == 0:
-            return profile_result
+            return prof_result
         return None
 
     ##### Other Functions #####
@@ -496,7 +498,7 @@ class PhysicalDeviceMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
-        self.profile_result = ProfilingResult()
+        self.prof_result = ProfilingResult()
 
         # Do some argument check
         if not use_ray and not devices:
@@ -741,11 +743,11 @@ class PhysicalDeviceMesh:
         for worker in self.workers:
             tasks.append(worker.profile_collective.remote(
                 primitive_name, size_range, number, verbose))
-        profile_result = ray.get(tasks)[0]
+        prof_result = ray.get(tasks)[0]
         if primitive_name == "all-reduce":
-            self.profile_result.all_reduce_cost_dict = profile_result.all_reduce_cost_dict
+            self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict
         elif primitive_name == "all-gather":
-            self.profile_result.all_gather_cost_dict = profile_result.all_gather_cost_dict
+            self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 

@@ -152,10 +152,8 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
-        #"auto_sharding::device_mesh_use_profiling":
-        #    logical_mesh.physical_mesh.profile_result is not None,
-        #"auto_sharding::device_mesh_profile_result":
-        #    logical_mesh.physical_mesh.profile_result.serialize(),
+        "auto_sharding::device_mesh_prof_result":
+            logical_mesh.physical_mesh.prof_result,
 
         # Distributed compilation
         "build_option::pass_through_device_assignment": pass_through_device_assignment,

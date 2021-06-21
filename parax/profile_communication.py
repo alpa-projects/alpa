@@ -16,14 +16,7 @@ class ProfilingResult:
         # assume the elements in the list is sorted according to the size (ascending).
         self.all_reduce_cost_dict = defaultdict(list)
         self.all_gather_cost_dict = defaultdict(list)
-
-    def serialize(self):
-        keys = []
-        lens = []
-        values = []
-
-        for key, value in self.all_reduce_cost.items():
-            pass
+        self.reduce_scatter_cost_dict = defaultdict(list)
 
     def record_all_reduce(self, group, size, dtype, time_cost):
         key = (group, dtype)
@@ -66,7 +59,7 @@ class ProfilingResult:
 
     def __str__(self):
         ret = ""
-        for key, value in self.all_reduce_cost.items():
+        for key, value in self.all_reduce_cost_dict.items():
             ret += str(key) + "\n"
             ret += str(value) + "\n"
         return ret
@@ -81,12 +74,12 @@ def op_parameter(builder, num, shape, dtype):
                          replicated)
 
 
-def op_all_reduce(builder, operand, reduce_op, replica_groups, channel_id):
+def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     if reduce_op == 'add':
         rc = xla_client.XlaBuilder("reduce_" + reduce_op)
-        x = op_parameter(rc, 0, (), np.float32)
-        y = op_parameter(rc, 1, (), np.float32)
+        x = op_parameter(rc, 0, (), dtype)
+        y = op_parameter(rc, 1, (), dtype)
         z = ops.Add(x, y)
         rc = rc.build(z)
     else:
@@ -137,7 +130,7 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     channel_id = backend.create_channel_handle()
     body.set_sharding(sharding)
     if primitive_name == "all-reduce":
-        out_buf = op_all_reduce(body, in_buf, "add", replica_groups, channel_id)
+        out_buf = op_all_reduce(body, in_buf, dtype, "add", replica_groups, channel_id)
     elif primitive_name == "all-gather":
         if in_shape[0] == 0 or out_shape[0] == 0:
             pass

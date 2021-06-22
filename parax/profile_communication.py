@@ -5,6 +5,8 @@ import numpy as np
 
 from jax.lib import xla_client, xla_bridge
 
+from parax.util import GB
+
 ops = xla_client.ops
 
 
@@ -16,14 +18,7 @@ class ProfilingResult:
         # assume the elements in the list is sorted according to the size (ascending).
         self.all_reduce_cost_dict = defaultdict(list)
         self.all_gather_cost_dict = defaultdict(list)
-
-    def serialize(self):
-        keys = []
-        lens = []
-        values = []
-
-        for key, value in self.all_reduce_cost.items():
-            pass
+        self.reduce_scatter_cost_dict = defaultdict(list)
 
     def record_all_reduce(self, group, size, dtype, time_cost):
         key = (group, dtype)
@@ -35,18 +30,62 @@ class ProfilingResult:
 
     def estimate_all_reduce(self, group, size, dtype):
         ret = self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -\
-              self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
+            self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
         return ret
 
     def estimate_all_gather(self, group, size, dtype):
         ret = self._estimate_internal(group, size, dtype, self.all_gather_cost_dict) -\
-              self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
+            self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
         return ret
+
+    def multiply_scale(self, factor):
+        """
+        Multiply the time cost by a constant factor.
+
+        This is used to make the scale of time cost similar to the old alpha-beta model.
+        """
+        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
+        self._multiply_scale_internal(factor, self.all_gather_cost_dict)
+        self._multiply_scale_internal(factor, self.reduce_scatter_cost_dict)
+
+    def make_monotonic(self):
+        """Make the bandwidth monotonically increase along with the communication size."""
+        self._make_monotonic_internal(self.all_reduce_cost_dict)
+        self._make_monotonic_internal(self.all_gather_cost_dict)
+        self._make_monotonic_internal(self.reduce_scatter_cost_dict)
+
+    def _make_monotonic_internal(self, cost_dict):
+        new_cost_dict = {}
+
+        for key, value in cost_dict.items():
+            # make bandwidth monotonically increasing
+            sizes = np.array([x[0] for x in value])
+            times = np.array([x[1] for x in value])
+            bandwidth = sizes / times
+            for i in range(1, len(bandwidth)):
+                bandwidth[i] = max(bandwidth[i], bandwidth[i - 1])
+
+            new_times = np.empty_like(times)
+            for i in range(len(times)):
+                if sizes[i] == 0 or bandwidth[i] == 0:
+                    new_times[i] = value[i][1]
+                else:
+                    new_times[i] = sizes[i] / bandwidth[i]
+
+            new_value = [(value[i][0], new_times[i]) for i in range(len(value))]
+            new_cost_dict[key] = new_value
+
+        cost_dict.update(new_cost_dict)
+
+    def _multiply_scale_internal(self, factor, cost_dict):
+        for value in cost_dict.values():
+            for i in range(len(value)):
+                value[i] = (value[i][0], value[i][1] * factor)
 
     def _estimate_internal(self, group, size, dtype, cost_dict):
         key = (group, dtype)
         cost_list = cost_dict[key]
-        assert cost_list
+        assert cost_list, f"Cannot find records for {(group, dtype)}"
 
         if size > cost_list[-1][0]:
             i = len(cost_list) - 2
@@ -65,10 +104,15 @@ class ProfilingResult:
         return (size - left_size) / (right_size - left_size) * (right_cost - left_cost) + left_cost
 
     def __str__(self):
-        ret = ""
-        for key, value in self.all_reduce_cost.items():
-            ret += str(key) + "\n"
-            ret += str(value) + "\n"
+        ret = "=== all_reduce_cost_dict ===\n"
+        for key, value in self.all_reduce_cost_dict.items():
+            num_devices = len(key[0][0])
+            sizes = np.array([x[0] for x in value])
+            times = np.array([x[1] for x in value])
+            comm_bytes = 2 * (num_devices - 1) / num_devices * sizes * np.dtype(key[1]).itemsize
+            bandwidth = comm_bytes / times / GB
+            bandwidth_str = ", ".join(f"{x:.2f}" for x in bandwidth)
+            ret += f"Key: {key}\nBandwidth: {bandwidth_str}\n"
         return ret
 
 
@@ -81,19 +125,19 @@ def op_parameter(builder, num, shape, dtype):
                          replicated)
 
 
-def op_all_reduce(builder, operand, reduce_op, replica_groups, channel_id):
+def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     if reduce_op == 'add':
         rc = xla_client.XlaBuilder("reduce_" + reduce_op)
-        x = op_parameter(rc, 0, (), np.float32)
-        y = op_parameter(rc, 1, (), np.float32)
+        x = op_parameter(rc, 0, (), dtype)
+        y = op_parameter(rc, 1, (), dtype)
         z = ops.Add(x, y)
         rc = rc.build(z)
     else:
         raise NotImplementedError
 
     ret = ops.AllReduce(operand, rc, replica_groups_protos,
-            channel_id, None, True)
+                        channel_id, None, True)
     return ret
 
 
@@ -107,6 +151,7 @@ def op_all_gather(builder, operand, replica_groups, channel_id):
 def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, primitive_name):
     """
     Compile a xla executable for benchmarking collective primitives.
+
     It is a while loop that calls the collective primitive for multiple times.
     """
     if primitive_name == "all-reduce":
@@ -137,7 +182,7 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     channel_id = backend.create_channel_handle()
     body.set_sharding(sharding)
     if primitive_name == "all-reduce":
-        out_buf = op_all_reduce(body, in_buf, "add", replica_groups, channel_id)
+        out_buf = op_all_reduce(body, in_buf, dtype, "add", replica_groups, channel_id)
     elif primitive_name == "all-gather":
         if in_shape[0] == 0 or out_shape[0] == 0:
             pass

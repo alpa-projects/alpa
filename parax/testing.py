@@ -30,3 +30,9 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         return
     else:
         raise TypeError((type(x), type(y)))
+
+
+def assert_only_has_allreduce(hlo_ir):
+    """Assert all communication primitives in a HLO IR are all-reduce."""
+    assert "all-gather(" not in hlo_ir, hlo_ir
+    assert "all-to-all(" not in hlo_ir, hlo_ir

@@ -2,6 +2,8 @@
 import time
 import logging
 from collections.abc import Iterable
+from collections import defaultdict
+import pickle
 from typing import Union, List, Tuple
 
 from operator import attrgetter
@@ -13,11 +15,11 @@ from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client
 
 from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, to_int_tuple, GB
+from parax.util import get_dim_last_value, get_compile_options, list_gpu_info, to_int_tuple, GB
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -263,7 +265,7 @@ class MeshHostWorker:
 
     def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
         self.local_buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.ones(shape, dtype),
+            self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
 
     def get_buffers(self, uuids: Union[List[int], int]):
@@ -295,22 +297,24 @@ class MeshHostWorker:
                            hlo_proto: bytes,
                            logical_mesh_shape: Tuple[int],
                            auto_sharding_strategy_vector: np.ndarray,
-                           is_tuple_args: bool):
+                           is_tuple_args: bool,
+                           build_random_seed: int):
         backend = self.backend
         num_devices = np.prod(logical_mesh_shape)
 
         assert num_devices == len(backend.devices())
 
-        compile_options = xla_bridge.get_compile_options(
+        compile_options = get_compile_options(
             num_replicas=1,
             num_partitions=num_devices,
             device_assignment=np.arange(num_devices).reshape((1, -1)),
             use_spmd_partitioning=True,
+            parameter_is_tupled_arguments=is_tuple_args,
+            build_random_seed=build_random_seed
         )
-        compile_options.parameter_is_tupled_arguments = is_tuple_args
-
         computation = xla_client.XlaComputation(hlo_proto)
         with XlaPassContext({
+            # Solver options
             "auto_sharding::enable": True,
             "auto_sharding::load_strategy": True,
             "auto_sharding::strategy_vector": to_int_tuple(auto_sharding_strategy_vector),
@@ -322,6 +326,7 @@ class MeshHostWorker:
             # Other useless but required arguments
             "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
             "auto_sharding::device_mesh_beta": (1.0,) * len(logical_mesh_shape),
+            "auto_sharding::device_mesh_prof_result": None,
         }):
             compiled_computation = backend.compile(computation, compile_options)
 
@@ -396,11 +401,11 @@ class MeshHostWorker:
     def profile_collective(self, primitive_name, size_range, number, verbose):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
         # Generate all possible communication groups
-        profile_result = ProfilingResult()
+        prof_result = ProfilingResult()
         size_configs = []
-        size_configs.append((0, np.float32))
+        size_configs.append((0, "float32"))
         for i in size_range or range(30):
-            size_configs.append((1 << i, np.float32))
+            size_configs.append((1 << i, "float32"))
 
         logical_mesh_shapes = []
         total_devices = self.num_hosts * len(self.local_devices)
@@ -433,20 +438,21 @@ class MeshHostWorker:
 
         for replica_group, size, dtype in all_keys:
             if number == "auto":
-                number_ = min(max(15, int((1 << 31) / (max(size, 1) * dtype().nbytes))), 1 << 13)
+                number_ = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))),
+                              1 << 13)
             else:
                 number_ = number
 
             time_cost = self.profile_collective_one_config((size,), dtype, replica_group,
                                                            primitive_name, number_)
             num_devices = len(replica_group[0])
-            array_size = size * dtype().nbytes
+            array_size = size * np.dtype(dtype).itemsize
 
             if primitive_name == "all-reduce":
-                profile_result.record_all_reduce(replica_group, size, dtype, time_cost)
+                prof_result.record_all_reduce(replica_group, size, dtype, time_cost)
                 communication_size = 2 * array_size * (num_devices - 1) / num_devices
             elif primitive_name == "all-gather":
-                profile_result.record_all_gather(replica_group, size, dtype, time_cost)
+                prof_result.record_all_gather(replica_group, size, dtype, time_cost)
                 communication_size = array_size * (num_devices - 1) / num_devices
             else:
                 raise ValueError("Invalid primitive: " + primitive_name)
@@ -464,7 +470,7 @@ class MeshHostWorker:
                 print(line)
 
         if self.host_id == 0:
-            return profile_result
+            return prof_result
         return None
 
     ##### Other Functions #####
@@ -496,7 +502,7 @@ class PhysicalDeviceMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
-        self.profile_result = ProfilingResult()
+        self.prof_result = ProfilingResult()
 
         # Do some argument check
         if not use_ray and not devices:
@@ -534,8 +540,8 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                "XLA_FLAGS": "--xla_gpu_autotune_level=0",
-                # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
+                #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
             }
 
             # Launch a ray actor
@@ -546,6 +552,14 @@ class PhysicalDeviceMesh:
                 self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
+
+    def get_signature(self):
+        """Return a signature string that contains the mesh shape and GPU model."""
+        gpu_type = list_gpu_info()
+        gpu_name = gpu_type.split("\n")[0].split(" (UUID:")[0][7:]
+        ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
+        ret = ret.replace(" ", "-")
+        return ret
 
     @property
     def total_devices(self):
@@ -568,11 +582,78 @@ class PhysicalDeviceMesh:
         return not (self.num_hosts == 1 and not self.use_ray)
 
     ##### Mesh Related Functions #####
-    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
-        """Generate a logical mesh."""
+    def get_logical_mesh(self,
+                         mesh_shape,
+                         mesh_alpha=None,
+                         mesh_beta=None,
+                         mesh_topology=None,
+                         intra_host_bandwidth=None,
+                         inter_host_bandwidth=None):
+        """Return a logical mesh and parameters of the alpha-beta communication cost model."""
         id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
-        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
-        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+
+        if mesh_topology is None:
+            mesh_alpha = mesh_alpha or (1,) * len(mesh_shape)
+            mesh_beta = mesh_beta or (1,) * len(mesh_shape)
+        elif mesh_topology == "tree":
+            assert mesh_alpha is None
+            assert mesh_beta is None
+            mesh_alpha = [1] * 2
+            mesh_beta = [None] * 2
+            host_ids = np.tile(np.arange(self.num_hosts).reshape(-1, 1),
+                               self.num_devices_per_host)
+            host_ids = host_ids.reshape(mesh_shape)
+
+            # Compute bandwidth of doing communication along dim 0.
+            # 1. Compute the number of links between each host pairs.
+            #    Assume using ring-based algorithms.
+            host_link_ct = defaultdict(int)
+            for j in range(mesh_shape[1]):
+                for i in range(mesh_shape[0]):
+                    left = host_ids[i][j]
+                    right = host_ids[(i+1) % mesh_shape[0]][j]
+                    if left != right:
+                        if left > right:
+                            left, right = right, left
+                        host_link_ct[(left, right)] += 1
+
+            j = 0
+            # 2. Bandwidth between two hosts = total_bandwidth / number_of_links.
+            #    Bandwdith along a communication dimension = min bandwidth of all links.
+            bandwidth = intra_host_bandwidth
+            for i in range(mesh_shape[0]):
+                left = host_ids[i][j]
+                right = host_ids[(i+1) % mesh_shape[0]][j]
+                if left != right:
+                    if left > right:
+                        left, right = right, left
+                    bandwidth = min(bandwidth,
+                                    inter_host_bandwidth / host_link_ct[(left, right)])
+            mesh_beta[0] = 1 / bandwidth
+
+            # Compute bandwidth of doing communication along dim 1.
+            host_link_ct = defaultdict(int)
+            for i in range(mesh_shape[0]):
+                for j in range(mesh_shape[1]):
+                    left = host_ids[i][j]
+                    right = host_ids[i][(j+1) % mesh_shape[1]]
+                    if left != right:
+                        if left > right:
+                            left, right = right, left
+                        host_link_ct[(left, right)] += 1
+
+            i = 0
+            bandwidth = intra_host_bandwidth
+            for j in range(mesh_shape[1]):
+                left = host_ids[i][j]
+                right = host_ids[i][(j+1) % mesh_shape[1]]
+                if left != right:
+                    if left > right:
+                        left, right = right, left
+                    bandwidth = min(bandwidth,
+                                    inter_host_bandwidth / host_link_ct[(left, right)])
+            mesh_beta[1] = 1 / bandwidth
+
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
@@ -612,7 +693,8 @@ class PhysicalDeviceMesh:
                                   hlo_proto: bytes,
                                   logical_mesh_shape: Tuple[int],
                                   auto_sharding_strategy_vector: np.ndarray,
-                                  is_tuple_args: bool):
+                                  is_tuple_args: bool,
+                                  build_random_seed: int):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
@@ -621,7 +703,8 @@ class PhysicalDeviceMesh:
                 hlo_proto,
                 logical_mesh_shape,
                 auto_sharding_strategy_vector,
-                is_tuple_args)
+                is_tuple_args,
+                build_random_seed)
         return executable
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
@@ -741,24 +824,37 @@ class PhysicalDeviceMesh:
         for worker in self.workers:
             tasks.append(worker.profile_collective.remote(
                 primitive_name, size_range, number, verbose))
-        profile_result = ray.get(tasks)[0]
+        prof_result = ray.get(tasks)[0]
         if primitive_name == "all-reduce":
-            self.profile_result.all_reduce_cost_dict = profile_result.all_reduce_cost_dict
+            self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict
         elif primitive_name == "all-gather":
-            self.profile_result.all_gather_cost_dict = profile_result.all_gather_cost_dict
+            self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
+    def load_profiling_result(self, filename):
+        self.prof_result = pickle.load(open(filename, "rb"))
+
+    def save_profiling_result(self, filename):
+        pickle.dump(self.prof_result, open(filename, "wb"))
+
     ##### Other Functions #####
     def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
+        if self.is_distributed:
+            ray.get([w.sync.remote() for w in self.workers])
+        else:
+            for device in self.devices:
+                device.synchronize_all_activity()
 
     def shutdown(self):
         """Shut down the mesh."""
-        ray.get([w.shutdown.remote() for w in self.workers])
-        for worker in self.workers:
-            ray.kill(worker)
-        self.workers = None
+        if self.is_distributed:
+            ray.get([w.shutdown.remote() for w in self.workers])
+            for worker in self.workers:
+                ray.kill(worker)
+            self.workers = None
+        else:
+            self.sync_workers()
 
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.

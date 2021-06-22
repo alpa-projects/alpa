@@ -6,7 +6,6 @@ dist
 *.egg-info
 .cache
 
-
 # Vim
 *.swp
 
@@ -17,3 +16,6 @@ dist
 
 # pycharm
 .idea
+
+# Profiling result cache
+*.prof.pkl

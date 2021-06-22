@@ -15,6 +15,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from parax import testing
 from parax.auto_sharding import hlo_sharding_to_sharding_spec, _auto_sharding_internal
 from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
+from parax.util import get_compile_options
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -154,15 +155,18 @@ class XlaPipelineStage(PipelineStage):
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
         tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
-        nreps = 1
         backend = 'gpu'
         backend = xb.get_backend(backend)
         device = backend.get_default_device_assignment(1)[0]
-        options = xb.get_compile_options(
-            num_replicas=nreps,
+        options = get_compile_options(
+            num_replicas=1,
             num_partitions=1,
-            device_assignment=(device.id,) if device else None)
-        options.parameter_is_tupled_arguments = tuple_args
+            device_assignment=(device.id,) if device else None,
+            use_spmd_partitioning=False,
+            parameter_is_tupled_arguments=tuple_args,
+            build_random_seed=42,
+        )
+
         compiled = backend.compile(xla_computation, compile_options=options)
         result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
         kept_var_idx = range(len(self.invars))
@@ -255,16 +259,18 @@ class XlaShardedPipelineStage(PipelineStage):
         #     warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
         # Compile
-        built = c.build(out_tuple)
+        built = c.Build(out_tuple)
+        build_random_seed = 42
         num_replicas = 1
         num_partitions = len(logical_mesh.flatten_ids)
-        compile_options = xb.get_compile_options(
+        compile_options = get_compile_options(
             num_replicas=num_replicas,
             num_partitions=num_partitions,
             device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
             use_spmd_partitioning=True,
+            parameter_is_tupled_arguments=tuple_args,
+            build_random_seed=build_random_seed
         )
-        compile_options.parameter_is_tupled_arguments = tuple_args
 
         if memory_budget_per_device is None:
             memory_budget_per_device = -1
@@ -308,7 +314,8 @@ class XlaShardedPipelineStage(PipelineStage):
         if self.mesh.is_distributed:
             compiled = mesh.compile_remote_executable(
                 self.hlo_proto, logical_mesh.id_mesh.shape,
-                self.sharding_strategy_vector, tuple_args)
+                self.sharding_strategy_vector, tuple_args, 42)
+            # TODO(lmzheng): get this random seed from the above function (from_jax_pipeline_stage).
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]

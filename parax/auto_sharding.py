@@ -16,6 +16,7 @@ from jaxlib.xla_client import OpSharding
 from parax import testing
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.xla_pass_context import XlaPassContext
+from parax.util import get_compile_options
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -52,7 +53,6 @@ def auto_sharding_callable(   # noqa MC0001
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    # tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
     tuple_args = False
 
     # Make xla arguments
@@ -82,17 +82,17 @@ def auto_sharding_callable(   # noqa MC0001
 
     # Compile
     built = c.Build(out_tuple)
-    # print(built.as_hlo_text())
-    # exit()
+    build_random_seed = 42
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
-    compile_options = xb.get_compile_options(
+    compile_options = get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
         device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
         use_spmd_partitioning=True,
+        parameter_is_tupled_arguments=tuple_args,
+        build_random_seed=build_random_seed
     )
-    compile_options.parameter_is_tupled_arguments = tuple_args
 
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
@@ -112,7 +112,8 @@ def auto_sharding_callable(   # noqa MC0001
     if distributed_compilation_head:
         hlo_proto = built.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
-            hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args)
+            hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector,
+            tuple_args, build_random_seed)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec
     if num_partitions != 1:
@@ -129,7 +130,8 @@ def auto_sharding_callable(   # noqa MC0001
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                       input_sharding_specs, output_sharding_specs, donated_invars)
+                                                       input_sharding_specs, output_sharding_specs,
+                                                       donated_invars)
 
 
 def _auto_sharding_internal(logical_mesh,
@@ -152,10 +154,8 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
-        #"auto_sharding::device_mesh_use_profiling":
-        #    logical_mesh.physical_mesh.profile_result is not None,
-        #"auto_sharding::device_mesh_profile_result":
-        #    logical_mesh.physical_mesh.profile_result.serialize(),
+        "auto_sharding::device_mesh_prof_result":
+            logical_mesh.physical_mesh.prof_result,
 
         # Distributed compilation
         "build_option::pass_through_device_assignment": pass_through_device_assignment,

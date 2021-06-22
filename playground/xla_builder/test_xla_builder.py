@@ -270,12 +270,73 @@ def test_manual_construct_spmd_one_device():
     print(device_outs)
 
 
+def test_reshard():
+    c = xla_client.XlaBuilder("shard")
+
+    # Set input sharding
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.OTHER
+    sharding.tile_assignment_dimensions.extend([8, 2])
+    sharding.tile_assignment_devices.extend(list(range(16)))
+    c.set_sharding(sharding)
+    x = parameter(c, 0, (32, 32), np.float32)
+    c.clear_sharding()
+
+    # Build computational graph
+    y = ops.Constant(c, np.float32(1))
+    z = ops.Broadcast(y, (32, 32))
+    z = ops.Add(x, z)
+
+    # Set output sharding
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    #sharding.tile_assignment_dimensions.extend([2, 2])
+    ##sharding.replicate_on_last_tile_dim = True
+    #sharding.tile_assignment_devices.extend([0, 1, 2, 3])
+
+    sharding2 = xla_client.OpSharding()
+    sharding2.type = sharding.type.TUPLE
+    sharding2.tuple_shardings = [sharding]
+    c.set_sharding(sharding2)
+    out = ops.Tuple(c, [z])
+    c.clear_sharding()
+
+    # Build HLO
+    c = c.build(out)
+    print(c.as_hlo_text())
+    print("=" * 20)
+
+    # Compile
+    num_replicas = 1
+    num_partitions = 16
+    use_spmd_partitioning = False
+    device_assignment = xla_client.DeviceAssignment.create([list(range(num_partitions))])
+    compile_options = xla_client.CompileOptions()
+    build_options = compile_options.executable_build_options
+    build_options.num_replicas = num_replicas
+    build_options.num_partitions = num_partitions
+    build_options.use_spmd_partitioning = True
+    build_options.device_assignment = device_assignment
+
+    backend = xla_client.get_local_backend("gpu")
+    import parax
+    with parax.XlaPassContext({
+        "build_option::pass_through_device_assignment": True,
+    }):
+        compiled_computation = backend.compile(c, compile_options)
+
+    # Print spmd partitioned HLO
+    print(compiled_computation.hlo_modules()[0].to_string())
+
+
 if __name__ == "__main__":
     #test_sin_cos()
-    test_alias()
+    #test_alias()
     #test_shard()
 
     #test_manual_construct_replica()
     #test_manual_construct_spmd_shard()
     #test_manual_construct_spmd_one_device()
+
+    test_reshard()
 

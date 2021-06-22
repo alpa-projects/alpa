@@ -15,6 +15,22 @@ from parax import parallelize, testing, global_config, DeviceCluster
 
 MB = 1024 ** 2
 
+def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
+    """For debugging usage."""
+    cost = 0
+    for size in [9216, 2304] * 4 + [2304 * 9216] * 8:
+        cost += physical_mesh.prof_result.estimate_all_reduce(
+            ((0,1,2,3),), size, "float32")
+    print("Data-parallel", cost)
+
+    cost = 0
+    for size in [8192*2304] * 7 + [4608, 2304] * 4 + \
+            [2304*4608] * 8:
+        cost += physical_mesh.prof_result.estimate_all_reduce(
+            ((0,1),(2,3),), size, "float32")
+    print("Hybrid-parallel", cost)
+    exit(0)
+
 
 def benchmark_mlp_one_case(benchmark_case, use_profiling):
     # Model configs
@@ -46,19 +62,6 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
             physical_mesh.load_profiling_result(filename)
             physical_mesh.prof_result.multiply_scale(1e7)
 
-            #cost = 0
-            #for size in [9216, 2304] * 4 + [2304 * 9216] * 8:
-            #    cost += physical_mesh.prof_result.estimate_all_reduce(
-            #        ((0,1,2,3),), size, "float32")
-            #print("Data-parallel", cost)
-
-            #cost = 0
-            #for size in [8192*2304] * 7 + [4608, 2304] * 4 + \
-            #        [2304*4608] * 8:
-            #    cost += physical_mesh.prof_result.estimate_all_reduce(
-            #        ((0,1),(2,3),), size, "float32")
-            #print("Hybrid-parallel", cost)
-            #exit(0)
         else:
             physical_mesh.profile_collective("all-reduce")
             print(f"Save profiling results to {filename}")

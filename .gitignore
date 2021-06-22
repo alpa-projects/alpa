@@ -17,5 +17,5 @@ dist
 # pycharm
 .idea
 
-# Profiling results
+# Profiling result cache
 *.prof.pkl

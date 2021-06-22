@@ -551,7 +551,7 @@ class PhysicalDeviceMesh:
         self.sync_workers()
 
     def get_signature(self):
-        """Return a unique signature of this physical mesh."""
+        """Return a signature string that contains the mesh shape and GPU model."""
         gpu_type = list_gpu_info()
         gpu_name = gpu_type.split("\n")[0].split(" (UUID:")[0][7:]
         ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
@@ -586,7 +586,7 @@ class PhysicalDeviceMesh:
                          mesh_topology=None,
                          intra_host_bandwidth=None,
                          inter_host_bandwidth=None):
-        """Generate a logical mesh."""
+        """Return a logical mesh and parameters of the alpha-beta communication cost model."""
         id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
 
         if mesh_topology is None:

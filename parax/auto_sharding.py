@@ -3,7 +3,6 @@ import logging
 import multiprocessing
 import time
 import traceback
-import os
 
 from warnings import warn
 import numpy as np

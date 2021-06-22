@@ -147,8 +147,8 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     args = parser.parse_args()
 
-    jax.config.update('jax_platform_name', 'cpu')
     ray.init(address="auto")
+    jax.config.update('jax_platform_name', 'cpu')
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all(args.use_profiling)

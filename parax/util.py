@@ -1,5 +1,6 @@
 """Common utilities."""
 import os
+import subprocess
 
 import flax
 import numpy as np
@@ -57,30 +58,6 @@ def auto_donate_argnums(args):
 
 
 ########################################
-##### Other Utilities
-########################################
-
-GB = 1 << 30  # Gigabyte
-MB = 1 << 20  # Megabyte
-
-
-def run_cmd(cmd):
-    """Run a bash commond."""
-    print(cmd)
-    os.system(cmd)
-
-
-def compute_bytes(pytree):
-    """Compute the total bytes of arrays in a pytree."""
-    flatten_args, _ = tree_flatten(pytree)
-    ret = 0
-    for x in flatten_args:
-        if hasattr(x, "shape"):
-            ret += np.prod(x.shape) * x.dtype.itemsize
-    return ret
-
-
-########################################
 ##### Data Structure Utilities
 ########################################
 
@@ -112,3 +89,34 @@ class FastLookupList:
     def append(self, element):
         self.elements.append(element)
         self.elements_set.add(element)
+
+
+########################################
+##### Other Utilities
+########################################
+
+GB = 1 << 30  # Gigabyte
+MB = 1 << 20  # Megabyte
+
+
+def run_cmd(cmd):
+    """Run a bash commond."""
+    print(cmd)
+    os.system(cmd)
+
+
+def compute_bytes(pytree):
+    """Compute the total bytes of arrays in a pytree."""
+    flatten_args, _ = tree_flatten(pytree)
+    ret = 0
+    for x in flatten_args:
+        if hasattr(x, "shape"):
+            ret += np.prod(x.shape) * x.dtype.itemsize
+    return ret
+
+
+def list_gpu_info():
+    """List all gpu information by calling nvidia-sim"""
+    ret = subprocess.getoutput("nvidia-smi -L")
+    return ret
+

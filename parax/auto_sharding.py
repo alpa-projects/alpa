@@ -3,6 +3,7 @@ import logging
 import multiprocessing
 import time
 import traceback
+import os
 
 from warnings import warn
 import numpy as np
@@ -129,7 +130,8 @@ def auto_sharding_callable(   # noqa MC0001
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                       input_sharding_specs, output_sharding_specs, donated_invars)
+                                                       input_sharding_specs, output_sharding_specs,
+                                                       donated_invars)
 
 
 def _auto_sharding_internal(logical_mesh,

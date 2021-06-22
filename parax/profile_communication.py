@@ -1,9 +1,12 @@
 """Profiling communication cost."""
 from collections import defaultdict
+import ast
 
 import numpy as np
 
 from jax.lib import xla_client, xla_bridge
+
+from parax.util import GB
 
 ops = xla_client.ops
 
@@ -36,10 +39,48 @@ class ProfilingResult:
               self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
         return ret
 
+    def multiply_scale(self, factor):
+        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
+        self._multiply_scale_internal(factor, self.all_gather_cost_dict)
+        self._multiply_scale_internal(factor, self.reduce_scatter_cost_dict)
+
+    def make_monotonic(self):
+        self._make_monotonic_internal(self.all_reduce_cost_dict)
+        self._make_monotonic_internal(self.all_gather_cost_dict)
+        self._make_monotonic_internal(self.reduce_scatter_cost_dict)
+
+    def _make_monotonic_internal(self, cost_dict):
+        new_cost_dict = {}
+
+        for key, value in cost_dict.items():
+            # make bandwidth monotonically increasing
+            sizes = np.array([x[0] for x in value])
+            times = np.array([x[1] for x in value])
+            bandwidth = sizes / times
+            for i in range(1, len(bandwidth)):
+                bandwidth[i] = max(bandwidth[i], bandwidth[i - 1])
+
+            new_times = np.empty_like(times)
+            for i in range(len(times)):
+                if sizes[i] == 0 or bandwidth[i] == 0:
+                    new_times[i] = value[i][1]
+                else:
+                    new_times[i] = sizes[i] / bandwidth[i]
+
+            new_value = [(value[i][0], new_times[i]) for i in range(len(value))]
+            new_cost_dict[key] = new_value
+
+        cost_dict.update(new_cost_dict)
+
+    def _multiply_scale_internal(self, factor, cost_dict):
+        for value in cost_dict.values():
+            for i in range(len(value)):
+                value[i] = (value[i][0], value[i][1] * factor)
+
     def _estimate_internal(self, group, size, dtype, cost_dict):
         key = (group, dtype)
         cost_list = cost_dict[key]
-        assert cost_list
+        assert cost_list, f"Cannot find records for {(group, dtype)}"
 
         if size > cost_list[-1][0]:
             i = len(cost_list) - 2
@@ -58,10 +99,15 @@ class ProfilingResult:
         return (size - left_size) / (right_size - left_size) * (right_cost - left_cost) + left_cost
 
     def __str__(self):
-        ret = ""
+        ret = "=== all_reduce_cost_dict ===\n"
         for key, value in self.all_reduce_cost_dict.items():
-            ret += str(key) + "\n"
-            ret += str(value) + "\n"
+            num_devices = len(key[0][0])
+            sizes = np.array([x[0] for x in value])
+            times = np.array([x[1] for x in value])
+            comm_bytes = 2 * (num_devices - 1) / num_devices * sizes * np.dtype(key[1]).itemsize
+            bandwidth = comm_bytes / times / GB
+            bandwidth_str = ", ".join(f"{x:.2f}" for x in bandwidth)
+            ret += f"Key: {key}\nBandwidth: {bandwidth_str}\n"
         return ret
 
 

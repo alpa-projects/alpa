@@ -2,6 +2,8 @@
 import time
 import logging
 from collections.abc import Iterable
+from collections import defaultdict
+import pickle
 from typing import Union, List, Tuple
 
 from operator import attrgetter
@@ -17,7 +19,7 @@ from jax.lib import xla_client, xla_bridge
 
 from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, to_int_tuple, GB
+from parax.util import get_dim_last_value, list_gpu_info, to_int_tuple, GB
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -536,8 +538,7 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                "XLA_FLAGS": "--xla_gpu_autotune_level=0",
-                # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
+                # "XLA_FLAGS": "--xla_gpu_autotune_level=0",
             }
 
             # Launch a ray actor
@@ -548,6 +549,14 @@ class PhysicalDeviceMesh:
                 self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
+
+    def get_signature(self):
+        """Return a unique signature of this physical mesh."""
+        gpu_type = list_gpu_info()
+        gpu_name = gpu_type.split("\n")[0].split(" (UUID:")[0][7:]
+        ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
+        ret = ret.replace(" ", "-")
+        return ret
 
     @property
     def total_devices(self):
@@ -570,11 +579,78 @@ class PhysicalDeviceMesh:
         return not (self.num_hosts == 1 and not self.use_ray)
 
     ##### Mesh Related Functions #####
-    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
+    def get_logical_mesh(self,
+                         mesh_shape,
+                         mesh_alpha=None,
+                         mesh_beta=None,
+                         mesh_topology=None,
+                         intra_host_bandwidth=None,
+                         inter_host_bandwidth=None):
         """Generate a logical mesh."""
         id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
-        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
-        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+
+        if mesh_topology is None:
+            mesh_alpha = mesh_alpha or (1,) * len(mesh_shape)
+            mesh_beta = mesh_beta or (1,) * len(mesh_shape)
+        elif mesh_topology == "tree":
+            assert mesh_alpha is None
+            assert mesh_beta is None
+            mesh_alpha = [1] * 2
+            mesh_beta = [None] * 2
+            host_ids = np.tile(np.arange(self.num_hosts).reshape(-1, 1),
+                               self.num_devices_per_host)
+            host_ids = host_ids.reshape(mesh_shape)
+
+            # Compute bandwidth of doing communication along dim 0.
+            # 1. Compute the number of links between each host pairs.
+            #    Assume using ring-based algorithms.
+            host_link_ct = defaultdict(int)
+            for j in range(mesh_shape[1]):
+                for i in range(mesh_shape[0]):
+                    left = host_ids[i][j]
+                    right = host_ids[(i+1) % mesh_shape[0]][j]
+                    if left != right:
+                        if left > right:
+                            left, right = right, left
+                        host_link_ct[(left, right)] += 1
+
+            j = 0
+            # 2. Bandwidth between two hosts = total_bandwidth / number_of_links.
+            #    Bandwdith along a communication dimension = min bandwidth of all links.
+            bandwidth = intra_host_bandwidth
+            for i in range(mesh_shape[0]):
+                left = host_ids[i][j]
+                right = host_ids[(i+1) % mesh_shape[0]][j]
+                if left != right:
+                    if left > right:
+                        left, right = right, left
+                    bandwidth = min(bandwidth,
+                                    inter_host_bandwidth / host_link_ct[(left, right)])
+            mesh_beta[0] = 1 / bandwidth
+
+            # Compute bandwidth of doing communication along dim 1.
+            host_link_ct = defaultdict(int)
+            for i in range(mesh_shape[0]):
+                for j in range(mesh_shape[1]):
+                    left = host_ids[i][j]
+                    right = host_ids[i][(j+1) % mesh_shape[1]]
+                    if left != right:
+                        if left > right:
+                            left, right = right, left
+                        host_link_ct[(left, right)] += 1
+
+            i = 0
+            bandwidth = intra_host_bandwidth
+            for j in range(mesh_shape[1]):
+                left = host_ids[i][j]
+                right = host_ids[i][(j+1) % mesh_shape[1]]
+                if left != right:
+                    if left > right:
+                        left, right = right, left
+                    bandwidth = min(bandwidth,
+                                    inter_host_bandwidth / host_link_ct[(left, right)])
+            mesh_beta[1] = 1 / bandwidth
+
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
@@ -750,6 +826,12 @@ class PhysicalDeviceMesh:
             self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
+
+    def load_profiling_result(self, filename):
+        self.prof_result = pickle.load(open(filename, "rb"))
+
+    def save_profiling_result(self, filename):
+        pickle.dump(self.prof_result, open(filename, "wb"))
 
     ##### Other Functions #####
     def sync_workers(self):

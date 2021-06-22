@@ -10,6 +10,7 @@ from flax import optim
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 
 from parax import parallelize, global_config, testing, PhysicalDeviceMesh
+from parax.testing import assert_only_has_allreduce
 
 MB = 1024 ** 2
 
@@ -58,11 +59,6 @@ def assert_sharded(x):
         if isinstance(axis, ShardedAxis):
             return
     assert False, f"Not sharded: {str(x.sharding_spec)}"
-
-
-def assert_only_has_allreduce(hlo_ir):
-    assert "all-gather(" not in hlo_ir, hlo_ir
-    assert "all-to-all(" not in hlo_ir, hlo_ir
 
 
 class AutoShardingMLPTest(unittest.TestCase):

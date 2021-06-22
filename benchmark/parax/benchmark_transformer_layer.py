@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import parallelize, global_config, testing, DeviceCluster
+from parax import parallelize, global_config, testing, DeviceCluster, PhysicalDeviceMesh
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from parax.testing import assert_only_has_allreduce
 from parax.util import run_cmd
@@ -58,6 +58,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Mesh configs
     device_cluster = DeviceCluster()
     physical_mesh = device_cluster.get_physical_mesh()
+    #physical_mesh = PhysicalDeviceMesh(jax.devices())
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,

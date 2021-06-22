@@ -6,6 +6,7 @@ import flax
 import numpy as np
 from jax.api_util import shaped_abstractify
 from jax.experimental.maps import FrozenDict
+from jax.lib import xla_bridge as xb
 from jax.tree_util import tree_map, tree_flatten
 
 
@@ -89,6 +90,28 @@ class FastLookupList:
     def append(self, element):
         self.elements.append(element)
         self.elements_set.add(element)
+
+
+########################################
+##### XLA API Utilities
+########################################
+
+def get_compile_options(num_replicas,
+                        num_partitions,
+                        device_assignment,
+                        use_spmd_partitioning,
+                        parameter_is_tupled_arguments,
+                        build_random_seed):
+    """Return CompileOptions for XLA compilation."""
+    compile_options = xb.get_compile_options(
+        num_replicas=num_replicas,
+        num_partitions=num_partitions,
+        device_assignment=device_assignment,
+        use_spmd_partitioning=use_spmd_partitioning,
+    )
+    compile_options.parameter_is_tupled_arguments = parameter_is_tupled_arguments
+    compile_options.executable_build_options.seed = build_random_seed
+    return compile_options
 
 
 ########################################

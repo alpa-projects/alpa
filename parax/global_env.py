@@ -19,4 +19,5 @@ class GlobalConfig:
 global_config = GlobalConfig()
 
 # Don't let the compilation on the driver node use GPUs.
-os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
+os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0"
+# TODO(lmzheng): enable auto-tuning for compilation on workers.

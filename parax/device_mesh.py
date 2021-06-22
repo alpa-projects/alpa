@@ -15,11 +15,11 @@ from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client
 
 from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, list_gpu_info, to_int_tuple, GB
+from parax.util import get_dim_last_value, get_compile_options, list_gpu_info, to_int_tuple, GB
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -265,7 +265,7 @@ class MeshHostWorker:
 
     def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
         self.local_buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.ones(shape, dtype),
+            self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
 
     def get_buffers(self, uuids: Union[List[int], int]):
@@ -297,22 +297,24 @@ class MeshHostWorker:
                            hlo_proto: bytes,
                            logical_mesh_shape: Tuple[int],
                            auto_sharding_strategy_vector: np.ndarray,
-                           is_tuple_args: bool):
+                           is_tuple_args: bool,
+                           build_random_seed: int):
         backend = self.backend
         num_devices = np.prod(logical_mesh_shape)
 
         assert num_devices == len(backend.devices())
 
-        compile_options = xla_bridge.get_compile_options(
+        compile_options = get_compile_options(
             num_replicas=1,
             num_partitions=num_devices,
             device_assignment=np.arange(num_devices).reshape((1, -1)),
             use_spmd_partitioning=True,
+            parameter_is_tupled_arguments=is_tuple_args,
+            build_random_seed=build_random_seed
         )
-        compile_options.parameter_is_tupled_arguments = is_tuple_args
-
         computation = xla_client.XlaComputation(hlo_proto)
         with XlaPassContext({
+            # Solver options
             "auto_sharding::enable": True,
             "auto_sharding::load_strategy": True,
             "auto_sharding::strategy_vector": to_int_tuple(auto_sharding_strategy_vector),
@@ -538,7 +540,8 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                # "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
             }
 
             # Launch a ray actor
@@ -690,7 +693,8 @@ class PhysicalDeviceMesh:
                                   hlo_proto: bytes,
                                   logical_mesh_shape: Tuple[int],
                                   auto_sharding_strategy_vector: np.ndarray,
-                                  is_tuple_args: bool):
+                                  is_tuple_args: bool,
+                                  build_random_seed: int):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
@@ -699,7 +703,8 @@ class PhysicalDeviceMesh:
                 hlo_proto,
                 logical_mesh_shape,
                 auto_sharding_strategy_vector,
-                is_tuple_args)
+                is_tuple_args,
+                build_random_seed)
         return executable
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
@@ -835,14 +840,21 @@ class PhysicalDeviceMesh:
 
     ##### Other Functions #####
     def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
+        if self.is_distributed:
+            ray.get([w.sync.remote() for w in self.workers])
+        else:
+            for device in self.devices:
+                device.synchronize_all_activity()
 
     def shutdown(self):
         """Shut down the mesh."""
-        ray.get([w.shutdown.remote() for w in self.workers])
-        for worker in self.workers:
-            ray.kill(worker)
-        self.workers = None
+        if self.is_distributed:
+            ray.get([w.shutdown.remote() for w in self.workers])
+            for worker in self.workers:
+                ray.kill(worker)
+            self.workers = None
+        else:
+            self.sync_workers()
 
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.

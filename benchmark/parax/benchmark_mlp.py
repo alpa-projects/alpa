@@ -109,8 +109,8 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print("===== HLO =====")
-    print(hlo_ir)
+    #print("===== HLO =====")
+    #print(hlo_ir)
 
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)

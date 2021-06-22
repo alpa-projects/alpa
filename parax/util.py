@@ -116,7 +116,6 @@ def compute_bytes(pytree):
 
 
 def list_gpu_info():
-    """List all gpu information by calling nvidia-sim"""
+    """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
     return ret
-

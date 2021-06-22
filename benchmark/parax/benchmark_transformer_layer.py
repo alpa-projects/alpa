@@ -79,7 +79,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     @parallelize(devices=logical_mesh)
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
-            out = apply_fn(params, batch["hidden_states"], batch["attention_mask"])[0]
+            rngs = {"dropout": batch["rng"]}
+            out = apply_fn(params, batch["hidden_states"], batch["attention_mask"],
+                           deterministic=False, rngs=rngs)[0]
             return jnp.mean((out - batch["label"]) ** 2)
 
         grad = jax.grad(loss_func)(optimizer.target)
@@ -91,6 +93,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
+        "rng": jax.random.PRNGKey(0),
     }
     log_time_stamp("Prepare input")
 

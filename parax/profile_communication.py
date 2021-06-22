@@ -1,6 +1,5 @@
 """Profiling communication cost."""
 from collections import defaultdict
-import ast
 
 import numpy as np
 
@@ -31,20 +30,26 @@ class ProfilingResult:
 
     def estimate_all_reduce(self, group, size, dtype):
         ret = self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -\
-              self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
+            self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
         return ret
 
     def estimate_all_gather(self, group, size, dtype):
         ret = self._estimate_internal(group, size, dtype, self.all_gather_cost_dict) -\
-              self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
+            self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
         return ret
 
     def multiply_scale(self, factor):
+        """
+        Multiply the time cost by a constant factor.
+
+        This is used to make the scale of time cost similar to the old alpha-beta model.
+        """
         self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
         self._multiply_scale_internal(factor, self.all_gather_cost_dict)
         self._multiply_scale_internal(factor, self.reduce_scatter_cost_dict)
 
     def make_monotonic(self):
+        """Make the bandwidth monotonically increase along with the communication size."""
         self._make_monotonic_internal(self.all_reduce_cost_dict)
         self._make_monotonic_internal(self.all_gather_cost_dict)
         self._make_monotonic_internal(self.reduce_scatter_cost_dict)
@@ -132,7 +137,7 @@ def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id
         raise NotImplementedError
 
     ret = ops.AllReduce(operand, rc, replica_groups_protos,
-            channel_id, None, True)
+                        channel_id, None, True)
     return ret
 
 
@@ -146,6 +151,7 @@ def op_all_gather(builder, operand, replica_groups, channel_id):
 def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, primitive_name):
     """
     Compile a xla executable for benchmarking collective primitives.
+
     It is a while loop that calls the collective primitive for multiple times.
     """
     if primitive_name == "all-reduce":

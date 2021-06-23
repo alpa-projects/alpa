@@ -292,7 +292,8 @@ class MeshHostWorker:
                            hlo_proto: bytes,
                            logical_mesh_shape: Tuple[int],
                            auto_sharding_strategy_vector: np.ndarray,
-                           is_tuple_args: bool):
+                           is_tuple_args: bool,
+                           enable_auto_sharding: bool=False):
         backend = self.backend
         num_devices = np.prod(logical_mesh_shape)
 
@@ -308,7 +309,7 @@ class MeshHostWorker:
 
         computation = xla_client.XlaComputation(hlo_proto)
         with XlaPassContext({
-            "auto_sharding::enable": True,
+            "auto_sharding::enable": enable_auto_sharding,
             "auto_sharding::load_strategy": True,
             "auto_sharding::strategy_vector": to_int_tuple(auto_sharding_strategy_vector),
 
@@ -560,7 +561,8 @@ class PhysicalDeviceMesh:
                                   hlo_proto: bytes,
                                   logical_mesh_shape: Tuple[int],
                                   auto_sharding_strategy_vector: np.ndarray,
-                                  is_tuple_args: bool):
+                                  is_tuple_args: bool,
+                                  enable_auto_sharding: bool=True):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
@@ -569,7 +571,8 @@ class PhysicalDeviceMesh:
                 hlo_proto,
                 logical_mesh_shape,
                 auto_sharding_strategy_vector,
-                is_tuple_args)
+                is_tuple_args,
+                enable_auto_sharding=enable_auto_sharding)
         return executable
 
     def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):

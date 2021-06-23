@@ -79,7 +79,7 @@ def auto_sharding_callable(   # noqa MC0001
     # Compile
     built = c.Build(out_tuple)
     logical_mesh, physical_mesh = analyze_device_mesh(devices)
-    compiled, hlo_module = auto_sharding_compile(built, logical_mesh, physical_mesh, backend, memory_budget_per_device, tuple_args)
+    compiled, hlo_module = auto_sharding_compile(built, logical_mesh, physical_mesh, memory_budget_per_device, tuple_args)
     # print(built.as_hlo_text())
     # exit()
 
@@ -101,9 +101,9 @@ def auto_sharding_callable(   # noqa MC0001
                                                        input_sharding_specs, output_sharding_specs, donated_invars)
 
 
-def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backend,
+def auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
                           memory_budget_per_device=None, tuple_args=False,
-                          multi_stage_compilation=False):
+                          multi_stage_compilation=False, enable_auto_sharding=True):
     distributed_compilation_head = physical_mesh.is_distributed
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
@@ -126,7 +126,8 @@ def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backen
         _auto_sharding_internal(logical_mesh, built_computation, compile_options,
                                 memory_budget_per_device,
                                 pass_through_device_assignment,
-                                multi_stage_compilation=multi_stage_compilation)
+                                multi_stage_compilation=multi_stage_compilation,
+                                enable_auto_sharding=enable_auto_sharding)
     testing.last_compiled_executable = compiled
     hlo_module = compiled.hlo_modules()[0]
 
@@ -134,7 +135,8 @@ def auto_sharding_compile(built_computation, logical_mesh, physical_mesh, backen
     if distributed_compilation_head and not multi_stage_compilation:
         hlo_proto = built_computation.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
-            hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args)
+            hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args,
+            enable_auto_sharding=enable_auto_sharding)
 
     return compiled, hlo_module
 
@@ -144,13 +146,15 @@ def _auto_sharding_internal(logical_mesh,
                             compile_options,
                             memory_budget_per_device,
                             pass_through_device_assignment,
-                            multi_stage_compilation=False):
+                            multi_stage_compilation=False,
+                            enable_auto_sharding=True):
+    # TODO (zhuohan): add backend args here
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
     global last_s_val
     with XlaPassContext({
         # Solver options
-        "auto_sharding::enable": True,
+        "auto_sharding::enable": enable_auto_sharding,
         "auto_sharding::memory_budget_per_device": memory_budget_per_device,
         "auto_sharding::force_all_gather_cost": False,
         "auto_sharding::all_gather_cost": 1e10,

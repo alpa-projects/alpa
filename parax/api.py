@@ -3,16 +3,17 @@ from functools import wraps
 
 from jax import linear_util as lu
 from jax.api import _check_callable
-from jax.api_util import flatten_fun_nokwargs, argnums_partial, \
-    donation_vector, rebase_donate_argnums
-from jax.interpreters import xla
+from jax.api_util import (argnums_partial, donation_vector,
+    flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.experimental.maps import FrozenDict
+from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_map, HashableFunction
 
 from parax import util
-from parax.pmap_data_parallel import pmap_data_parallel_callable
-from parax.shard_parallel import shard_parallel_callable
+from parax.auto_sharding import auto_sharding_callable
+from parax.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
+from parax.global_env import global_config
 from parax.pipeline_parallel import pipeline_parallel_callable, \
     distributed_pipeline_parallel_callable
 from parax.three_d_parallel import three_d_parallel_callable
@@ -22,21 +23,18 @@ from parax.three_d_parallel import three_d_parallel_callable
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-# pylint: disable=too-many-arguments
 def parallelize(fun=None,
                 donate_argnums="auto",
-                static_argnums="auto",
-                devices=None,
-                memory_budget_per_device=None,
-                strategy="shard_parallel"):
+                static_argnums="auto"):
     """
     Automatically parallelize a jax function.
 
     Args:
-        donate_argnums: The same as the donated_argnums in jax.jit. If is "auto",
-          parax uses heuristic rules to infer this.
-        static_argnums: The same as the donated_argnums in jax.jit. If is "auto",
-          parax uses heuristic rules to infer this.
+        func: The function to be parallelized.
+        donate_argnums: The same as the donated_argnums argument of jax.jit.
+          If is "auto", parax uses heuristic rules to infer this.
+        static_argnums: The same as the static_argnums argument of jax.jit.
+          If is "auto", parax uses heuristic rules to infer this.
     """
 
     def decorate_fun(fun):
@@ -55,7 +53,7 @@ def parallelize(fun=None,
 
             if static_argnums:
                 dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-                # freeze static dict to make it hashable
+                # Freeze static dict to make it hashable
                 frozen_args = []
                 for i, arg in enumerate(args):
                     if i in static_argnums and isinstance(arg, dict):
@@ -86,8 +84,9 @@ def parallelize(fun=None,
             # JIT compile and call the compiled func
             abstract_args = unsafe_map(xla.abstractify, args_flat)
             compiled_func = auto_parallel_callable(
-                f, in_tree, out_tree_hashable, devices, donated_invars,
-                memory_budget_per_device, strategy, *abstract_args
+                f, in_tree, out_tree_hashable, donated_invars,
+                global_config.devices, global_config.strategy,
+                global_config.memory_budget_per_device, *abstract_args
             )
 
             if shard_args_only_mode:
@@ -121,10 +120,10 @@ def auto_parallel_callable(
     fun: lu.WrappedFun,
     in_tree,
     out_tree_thunk,
-    devices,
     donated_invars,
-    memory_budget_per_device,
+    devices,
     strategy,
+    memory_budget_per_device,
     *avals,
 ):
     """Auto parallel callable."""
@@ -133,11 +132,21 @@ def auto_parallel_callable(
         if store:
             store.reset()
 
-    # Apply parallel strategy
-    if strategy == "shard_parallel":
-        return shard_parallel_callable(
+    # Check cached strategy folder
+    #compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
+    #device_key = get_device_key(global_config.devices)
+    #search_task_key = (compute_key, device_key)
+    #measure_record = load_best_record(search_task_key)
+
+    # Choose parallel strategy
+    if strategy == "auto_sharding_parallel":
+        return auto_sharding_callable(
             fun, in_tree, out_tree_thunk, devices, donated_invars,
             memory_budget_per_device, *avals
+        )
+    elif strategy == "shard_data_parallel":
+        return shard_data_parallel_callable(
+            fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
         )
     elif strategy == "pmap_data_parallel":
         return pmap_data_parallel_callable(

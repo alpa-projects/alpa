@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from parax import parallelize, mark_pipeline
+from parax import parallelize, set_parallelize_options, mark_pipeline
 from parax.testing import assert_allclose
 
 MB = 1024 ** 2
@@ -21,6 +21,8 @@ class PipelineMLPTest(unittest.TestCase):
 
 
     def train_2_layer_mlp(self, strategy):
+        set_parallelize_options(devices=self.devices, strategy=strategy)
+
         class Model(nn.Module):
             hidden_dim: int
             output_dim: int
@@ -63,8 +65,7 @@ class PipelineMLPTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        pipelined_train_step = parallelize(donate_argnums=(), devices=self.devices,
-                                           strategy=strategy)(train_step)
+        pipelined_train_step = parallelize(donate_argnums=())(train_step)
         gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 

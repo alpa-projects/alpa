@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import parallelize, DeviceCluster, global_config, testing
+from parax import DeviceCluster, parallelize, set_parallelize_options, testing
 from parax.testing import assert_allclose
 
 
@@ -40,8 +40,9 @@ class ProfilingTest(unittest.TestCase):
         physical_mesh.prof_result.record_all_reduce(((0, 1, 2, 3),), 1 << 11, "float32", 0.4)
         physical_mesh.prof_result.record_all_reduce(((0, 1), (2, 3),), 1 << 10, "float32", 0.2)
         physical_mesh.prof_result.record_all_reduce(((0, 1), (2, 3),), 1 << 11, "float32", 0.4)
+        set_parallelize_options(devices=physical_mesh)
 
-        @parallelize(devices=physical_mesh)
+        @parallelize
         def add_one(x):
             return x + 1
 

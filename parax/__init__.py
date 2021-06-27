@@ -5,7 +5,7 @@ from . import monkey_patch
 from . import util
 
 # Shortcut
-from .api import parallelize
+from .api import parallelize, clear_callable_cache
 from .device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from .global_env import global_config, set_parallelize_options
 from .pipeline_primitive_def import mark_pipeline

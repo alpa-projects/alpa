@@ -25,7 +25,7 @@ MB = 1024 ** 2
 class AutoShardingAttentionTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = tuple(jax.local_devices()[:4])
+        self.devices = jax.local_devices()[:4]
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(self.devices)

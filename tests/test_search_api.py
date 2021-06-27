@@ -18,9 +18,10 @@ from parax.testing import assert_only_has_allreduce
 
 class SearchAPITest(unittest.TestCase):
     def setUp(self):
-        ray.init(address="auto")
+        #ray.init(address="auto")
+        pass
 
-    def test_auto_sharding(self):
+    def test_search_single_host(self):
         batch_size = 16
         hidden_dim = 128
 
@@ -51,12 +52,10 @@ class SearchAPITest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         # Set parallleize option
-        device_cluster = DeviceCluster()
         parax.set_parallelize_options(
-            devices=device_cluster,
-            enable_profiling_communiation=True,
+            devices=jax.devices(),
             enable_mesh_shape_search=True,
-            cache_folder="parax_search_cache",
+            mesh_shape_search_mode="measurement",
         )
 
         optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
@@ -64,7 +63,7 @@ class SearchAPITest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(SearchAPITest("test_auto_sharding"))
+    suite.addTest(SearchAPITest("test_search_single_host"))
     return suite
 
 

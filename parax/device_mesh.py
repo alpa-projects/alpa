@@ -15,11 +15,12 @@ from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
-from jax.lib import xla_client
+from jax.lib import xla_client, xla_bridge
 
 from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, get_compile_options, list_gpu_info, to_int_tuple, GB
+from parax.util import (get_dim_last_value, get_compile_options, list_gpu_info, measure_func,
+                        to_int_tuple, GB)
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -831,6 +832,37 @@ class PhysicalDeviceMesh:
             self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
+
+    def profile_executable(self, compiled, logical_mesh_shape, strategy_vector,
+            tuple_args, build_random_seed):
+        if self.is_distributed:
+            raise NotImplementedError
+
+        hlo_module = compiled.hlo_modules()[0]
+        backend = xla_bridge.get_backend("gpu")
+
+        # Prepare input
+        input_shapes = hlo_module.parameter_shapes()
+        device_inputs = []
+        for shape in input_shapes:
+            device_inputs.append(
+                [backend.buffer_from_pyval(np.empty(shape.dimensions(), shape.numpy_dtype()),
+                                           self.devices[i], force_copy=True)
+                 for i in range(len(self.devices))]
+            )
+
+        def run_once():
+            device_outputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+            # Reset the value for donate buffers
+            for j in range(len(device_inputs)):
+                if device_inputs[j][0].is_deleted():
+                    device_inputs[j] = device_outputs[j]
+
+            self.sync_workers()
+
+        costs = measure_func(run_once, repeat=1, min_repeat_second=0.5)
+        return np.mean(costs)
 
     def load_profiling_result(self, filename):
         self.prof_result = pickle.load(open(filename, "rb"))

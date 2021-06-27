@@ -1,4 +1,5 @@
 """Use the auto sharding pass in XLA."""
+from enum import Enum, auto
 import logging
 import multiprocessing
 import time
@@ -9,8 +10,7 @@ import numpy as np
 from jax import linear_util as lu
 from jax._src.util import (partial, extend_name_stack, wrap_name)
 from jax.interpreters import xla, pxla, partial_eval as pe
-from jax.lib import xla_bridge as xb
-from jax.lib import xla_client as xc
+from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
@@ -22,34 +22,22 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+
 # pylint: disable=too-many-arguments,too-many-locals
 def auto_sharding_callable(   # noqa MC0001
         fun: lu.WrappedFun,
         in_tree,
         out_tree_thunk,
-        devices,
         donated_invars,
+        physical_mesh,
+        logical_mesh_search_mode,
+	logical_mesh_choices,
         memory_budget_per_device,
         *avals):
-    """Perform sharding optimization."""
-    # Get physical and logical device mesh according to the arguments
-    distributed_compilation_head = False
-
-    if devices is None:
-        physical_mesh = PhysicalDeviceMesh(devices=xb.devices())
-        logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, (list, tuple)):
-        physical_mesh = PhysicalDeviceMesh(devices=devices)
-        logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, PhysicalDeviceMesh):
-        physical_mesh = devices
-        logical_mesh = physical_mesh.get_default_logical_mesh()
-    elif isinstance(devices, LogicalDeviceMesh):
-        logical_mesh = devices
-        physical_mesh = logical_mesh.physical_mesh
-
+    """Compile a callable with auto-sharding pass."""
+    distributed_compilation_driver_node = False
     if physical_mesh.is_distributed:
-        distributed_compilation_head = True
+        distributed_compilation_driver_node = True
 
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
@@ -80,15 +68,15 @@ def auto_sharding_callable(   # noqa MC0001
                             for a, d in zip(xla_args, donation_results) if d]
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
-    # Compile
+    # Set compile_options for XLA
     built = c.Build(out_tuple)
     build_random_seed = 42
     num_replicas = 1
-    num_partitions = len(logical_mesh.flatten_ids)
+    num_partitions = physical_mesh.total_devices
     compile_options = get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
-        device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
+        device_assignment=np.arange(physical_mesh.total_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=tuple_args,
         build_random_seed=build_random_seed
@@ -97,22 +85,40 @@ def auto_sharding_callable(   # noqa MC0001
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
     pass_through_device_assignment = False
-    if distributed_compilation_head:
+    if distributed_compilation_driver_node:
         pass_through_device_assignment = True
 
-    # Invoke the auto-sharding compilation pass
-    compiled, sharding_strategy_vector = \
-        _auto_sharding_internal(logical_mesh, built, compile_options,
-                                memory_budget_per_device,
-                                pass_through_device_assignment)
-    testing.last_compiled_executable = compiled
-    hlo_module = compiled.hlo_modules()[0]
+    # Invoke the auto-sharding compilation pass and search for logical mesh shape
+    best_logical_mesh = best_compiled = best_strategy_vector = best_objective = None
+    best_latency = float("inf")
+    for logical_mesh in logical_mesh_choices:
+        compiled, strategy_vector, objective = \
+            _auto_sharding_internal(backend, built, compile_options,
+                                    logical_mesh, memory_budget_per_device,
+                                    pass_through_device_assignment)
 
-    # Send code and sharding strategy to host workers
-    if distributed_compilation_head:
+        if logical_mesh_search_mode == "cost_model":
+            latency = objective
+        else:
+            latency = physical_mesh.profile_executable(compiled, logical_mesh.id_mesh.shape,
+                strategy_vector, tuple_args, build_random_seed)
+        print(logical_mesh.id_mesh.shape, objective, latency)
+
+        if latency < best_latency:
+            best_logical_mesh, best_compiled, best_strategy_vector, best_objective = \
+                logical_mesh, compiled, strategy_vector, objective
+            best_latency = latency
+
+    testing.last_compiled_executable = best_compiled
+    testing.last_compiled_auto_sharding_objective = best_objective
+    logical_mesh, compiled, strategy_vector = best_logical_mesh, best_compiled, best_strategy_vector
+
+    # Send code and sharding strategy to workers
+    hlo_module = compiled.hlo_modules()[0]
+    if distributed_compilation_driver_node:
         hlo_proto = built.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
-            hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector,
+            hlo_proto, logical_mesh.id_mesh.shape, strategy_vector,
             tuple_args, build_random_seed)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec
@@ -134,14 +140,14 @@ def auto_sharding_callable(   # noqa MC0001
                                                        donated_invars)
 
 
-def _auto_sharding_internal(logical_mesh,
+def _auto_sharding_internal(backend,
                             built,
                             compile_options,
+                            logical_mesh,
                             memory_budget_per_device,
                             pass_through_device_assignment):
-    backend_name = "gpu"
-    backend = xb.get_backend(backend_name)
     global last_s_val
+    global last_objective
     with XlaPassContext({
         # Solver options
         "auto_sharding::enable": True,
@@ -165,7 +171,7 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::print_strategy": False,
     }):
         compiled = xla.backend_compile(backend, built, compile_options)
-    return compiled, last_s_val
+    return compiled, last_s_val, last_objective
 
 
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
@@ -242,13 +248,16 @@ def call_solver_serialized_args(*args):
 # The last solution vector of auto sharding.
 last_s_val = None
 
+# The last objective value of the best ILP solution.
+last_objective = None
+
 
 # pylint: disable=import-outside-toplevel
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
     """Call the solver with serailized arguments."""
-    global last_s_val
+    global last_s_val, last_objective
 
     import pulp
     from pulp import LpVariable, LpProblem, LpMinimize, lpSum, lpDot, LpStatus
@@ -464,6 +473,6 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         if verbose and r[idx][e_val[idx]] > 0:
             print(f"Edge cost {(i, j)} : {r[idx][e_val[idx]]}")
 
-    testing.last_compiled_auto_sharding_objective = objective
+    last_objective = objective
     last_s_val = s_val
     return s_val, e_val, objective, status

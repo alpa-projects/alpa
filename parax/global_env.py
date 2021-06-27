@@ -12,6 +12,7 @@ class GlobalConfig:
         self.memory_budget_per_device = None
         self.enable_profiling_communiation = False
         self.enable_mesh_shape_search = False
+        self.mesh_shape_search_mode = "cost_model"
         self.cache_folder = "~/.parax"
 
         ########## Options for benchmark ########## 
@@ -30,6 +31,7 @@ def set_parallelize_options(devices=None,
                             memory_budget_per_device=None,
                             enable_profiling_communiation=False,
                             enable_mesh_shape_search=False,
+                            mesh_shape_search_mode="cost_model",
                             cache_folder="~/.parax/"):
     """Set the global options for all @parallelize decorator.
     
@@ -42,8 +44,10 @@ def set_parallelize_options(devices=None,
       memory_budget_per_device: The memory budget of one device in bytes.
       enable_profiling_communiation: Whether to enable the profiling communication
         stage before the search.
-      enable_mesh_shape_search: Whether to include the choices of mesh_shape into
-        the search space.
+      enable_mesh_shape_search: Whether to include the choices of logical mesh shape
+        into the search space.
+      mesh_shape_search_mode: Whether to use cost model or real measurement to pick
+        the logical mesh shape. Possible choices: {"cost_model", "measurement"}.
       cache_folder: The folder to store cached profiling results and strategies.
     """
     global global_config
@@ -53,6 +57,7 @@ def set_parallelize_options(devices=None,
     global_config.memory_budget_per_device = memory_budget_per_device
     global_config.enable_profiling_communiation = enable_profiling_communiation
     global_config.enable_mesh_shape_search = enable_mesh_shape_search
+    global_config.mesh_shape_search_mode = mesh_shape_search_mode
     global_config.cache_folder = cache_folder
 
 

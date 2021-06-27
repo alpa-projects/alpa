@@ -22,7 +22,7 @@ MB = 1024 ** 2
 class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        set_parallelize_options(devices=tuple(jax.devices()[:4]))
+        set_parallelize_options(jax.devices()[:4])
 
     def test_donate_buffer(self):
         @parallelize(donate_argnums=(0,))
@@ -108,7 +108,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert hlo_ir.count("all-reduce(") == 1
 
     def test_one_by_one_mesh(self):
-        set_parallelize_options(devices=tuple(jax.devices()[0:1]))
+        set_parallelize_options(devices=jax.devices()[0:1])
 
         @parallelize
         def add_one(x):

@@ -1,6 +1,7 @@
 """Common utilities."""
 import os
 import subprocess
+import time
 
 import flax
 import numpy as np
@@ -142,3 +143,27 @@ def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
     return ret
+
+def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
+    """Measure the execution time of a function."""
+    for i in range(warmup):
+        func()
+
+    tic = time.time()
+    func()
+    toc = time.time()
+    cost = toc - tic
+
+    if min_repeat_second:
+        number = max(int(min_repeat_second / cost), 1)
+
+    costs = []
+    for i in range(repeat):
+        tic = time.time()
+        for j in range(number):
+            func()
+        toc = time.time()
+        costs.append((toc - tic) / number)
+
+    return costs
+

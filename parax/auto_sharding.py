@@ -70,6 +70,7 @@ def auto_sharding_callable(   # noqa MC0001
 
     # Set compile_options for XLA
     built = c.Build(out_tuple)
+    unoptimized_hlo_proto = built.as_serialized_hlo_module_proto()
     build_random_seed = 42
     num_replicas = 1
     num_partitions = physical_mesh.total_devices
@@ -100,9 +101,12 @@ def auto_sharding_callable(   # noqa MC0001
         if logical_mesh_search_mode == "cost_model":
             latency = objective
         else:
-            latency = physical_mesh.profile_executable(compiled, logical_mesh.id_mesh.shape,
+            latency = physical_mesh.profile_executable(
+                compiled, unoptimized_hlo_proto,
+                logical_mesh.id_mesh.shape,
                 strategy_vector, tuple_args, build_random_seed)
-        print(logical_mesh.id_mesh.shape, objective, latency)
+
+        #print(logical_mesh.id_mesh.shape, objective, latency)
 
         if latency < best_latency:
             best_logical_mesh, best_compiled, best_strategy_vector, best_objective = \
@@ -112,13 +116,13 @@ def auto_sharding_callable(   # noqa MC0001
     testing.last_compiled_executable = best_compiled
     testing.last_compiled_auto_sharding_objective = best_objective
     logical_mesh, compiled, strategy_vector = best_logical_mesh, best_compiled, best_strategy_vector
-
-    # Send code and sharding strategy to workers
     hlo_module = compiled.hlo_modules()[0]
+
+    # Send code and sharding strategy to remote workers
+    # TODO(lmzheng): move this to physical_mesh.get_callable_with_arg_handler
     if distributed_compilation_driver_node:
-        hlo_proto = built.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
-            hlo_proto, logical_mesh.id_mesh.shape, strategy_vector,
+            unoptimized_hlo_proto, logical_mesh.id_mesh.shape, strategy_vector,
             tuple_args, build_random_seed)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec

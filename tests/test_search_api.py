@@ -1,7 +1,8 @@
 """Test the search API."""
 
-import unittest
 from functools import partial
+import os
+import unittest
 
 import jax
 import jax.numpy as jnp
@@ -18,13 +19,10 @@ from parax.testing import assert_only_has_allreduce
 
 class SearchAPITest(unittest.TestCase):
     def setUp(self):
-        #ray.init(address="auto")
-        pass
+        ray.init(address="auto", ignore_reinit_error=True)
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 
-    def test_search_single_host(self):
-        batch_size = 16
-        hidden_dim = 128
-
+    def run_2_layer_mlp(self, batch_size, hidden_dim):
         class Model(nn.Module):
             @nn.compact
             def __call__(self, x):
@@ -51,19 +49,34 @@ class SearchAPITest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        # Set parallleize option
+        # Compile and run
+        optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
+
+    def test_search_single_host(self):
         parax.set_parallelize_options(
             devices=jax.devices(),
             enable_mesh_shape_search=True,
             mesh_shape_search_mode="measurement",
         )
 
-        optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
+        self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
+
+    def test_search_multi_host(self):
+        physical_mesh = DeviceCluster().get_physical_mesh()
+
+        parax.set_parallelize_options(
+            devices=physical_mesh,
+            enable_mesh_shape_search=True,
+            mesh_shape_search_mode="measurement",
+        )
+
+        self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(SearchAPITest("test_search_single_host"))
+    suite.addTest(SearchAPITest("test_search_multi_host"))
     return suite
 
 

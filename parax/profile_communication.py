@@ -1,5 +1,6 @@
 """Profiling communication cost."""
 from collections import defaultdict
+import time
 
 import numpy as np
 
@@ -150,7 +151,7 @@ def op_all_gather(builder, operand, replica_groups, channel_id):
 
 def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, primitive_name):
     """
-    Compile a xla executable for benchmarking collective primitives.
+    Compile a xla executable for benchmarking collective communication primitives.
 
     It is a while loop that calls the collective primitive for multiple times.
     """
@@ -221,3 +222,41 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     )
 
     return in_shape, out_shape, backend.compile(loop_computation, compile_options)
+
+def profile_collective_one_config(shape, dtype, replica_groups, primitive_name,
+                                  backend, num_devices, local_devices,
+                                  distributed_client, host_id, sync_func,
+                                  number=10, warmup=2):
+    """Profile the time cost of a collective communication primitive."""
+    in_shape, out_shape, compiled = compile_collective_hlo(
+        backend, num_devices, replica_groups, shape, dtype, primitive_name)
+    xla_client._xla.init_nccl_communicators(backend, distributed_client,
+                                            host_id, compiled)
+
+    #real_mem = compiled.total_allocation_size()
+    #print(compiled.hlo_modules()[0].to_string())
+    #print(f"{real_mem / GB:.3f} GB")
+
+    # Warm up
+    device_inputs = [
+        [backend.buffer_from_pyval(np.empty(in_shape, dtype), local_devices[i])
+            for i in range(len(local_devices))],
+        [backend.buffer_from_pyval(np.empty(out_shape, dtype), local_devices[i])
+            for i in range(len(local_devices))],
+        [backend.buffer_from_pyval(np.int32(warmup), local_devices[i])
+            for i in range(len(local_devices))]
+    ]
+    device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+    # Run profiling
+    device_inputs[2] = \
+        [backend.buffer_from_pyval(np.int32(number), local_devices[i])
+            for i in range(len(local_devices))]
+
+    sync_func()
+    tic = time.time()
+    compiled.execute_sharded_on_local_devices(device_inputs)
+    sync_func()
+    toc = time.time()
+
+    return (toc - tic) / number

@@ -17,10 +17,10 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
 from jax.lib import xla_client, xla_bridge
 
-from parax.profile_communication import compile_collective_hlo, ProfilingResult
+from parax.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.global_env import global_config
 from parax.util import (get_dim_last_value, get_compile_options, list_gpu_info, measure_func,
-                        to_int_tuple, GB)
+                        profile_xla_executable, to_int_tuple, GB)
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -363,42 +363,6 @@ class MeshHostWorker:
                     del self.local_buffers[input_uuids[i][j]]
 
     ##### Profiling Related Functions #####
-    def profile_collective_one_config(self, shape, dtype, replica_groups, primitive_name,
-                                      number=10, warmup=2):
-        num_devices = self.num_hosts * len(self.local_devices)
-        in_shape, out_shape, compiled = compile_collective_hlo(
-            self.backend, num_devices, replica_groups, shape, dtype, primitive_name)
-        xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
-                                                self.host_id, compiled)
-
-        #real_mem = compiled.total_allocation_size()
-        #print(compiled.hlo_modules()[0].to_string())
-        #print(f"{real_mem / GB:.3f} GB")
-
-        # Warm up
-        device_inputs = [
-            [self.backend.buffer_from_pyval(np.empty(in_shape, dtype), self.local_devices[i])
-                for i in range(len(self.local_devices))],
-            [self.backend.buffer_from_pyval(np.empty(out_shape, dtype), self.local_devices[i])
-                for i in range(len(self.local_devices))],
-            [self.backend.buffer_from_pyval(np.int32(warmup), self.local_devices[i])
-                for i in range(len(self.local_devices))]
-        ]
-        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
-
-        # Run profiling
-        device_inputs[2] = \
-            [self.backend.buffer_from_pyval(np.int32(number), self.local_devices[i])
-                for i in range(len(self.local_devices))]
-
-        self.sync()
-        tic = time.time()
-        compiled.execute_sharded_on_local_devices(device_inputs)
-        self.sync()
-        toc = time.time()
-
-        return (toc - tic) / number
-
     def profile_collective(self, primitive_name, size_range, number, verbose):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
         # Generate all possible communication groups
@@ -444,8 +408,12 @@ class MeshHostWorker:
             else:
                 number_ = number
 
-            time_cost = self.profile_collective_one_config((size,), dtype, replica_group,
-                                                           primitive_name, number_)
+            time_cost = profile_collective_one_config(
+                (size,), dtype, replica_group, primitive_name,
+                self.backend, self.num_hosts * len(self.local_devices),
+                self.local_devices, self.distributed_client, self.host_id,
+                self.sync, number_)
+
             num_devices = len(replica_group[0])
             array_size = size * np.dtype(dtype).itemsize
 
@@ -473,6 +441,10 @@ class MeshHostWorker:
         if self.host_id == 0:
             return prof_result
         return None
+
+    def profile_executable(self, executable_uuid: int):
+        return profile_xla_executable(self.executables[executable_uuid], self.backend,
+                                      self.local_devices, self.sync)
 
     ##### Other Functions #####
     def sync(self):
@@ -774,7 +746,7 @@ class PhysicalDeviceMesh:
         return outs_handler(output_bufs)
 
     def preshard_args(self, handler, avals, sharding_specs, indices, *args):
-        """Pre-shard the input args."""
+        """Pre-shard the input arguments."""
         input_bufs = handler(args)
         sharded_args = []
         for i in range(len(args)):
@@ -833,45 +805,37 @@ class PhysicalDeviceMesh:
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
-    def profile_executable(self, compiled, logical_mesh_shape, strategy_vector,
-            tuple_args, build_random_seed):
+    def profile_executable(self, compiled, unoptimized_hlo_proto, logical_mesh_shape,
+            strategy_vector, tuple_args, build_random_seed):
+        """Profile the time cost of an xla executable."""
         if self.is_distributed:
-            raise NotImplementedError
+            # Send the code and strategy to remote workers
+            compiled = self.compile_remote_executable(
+                unoptimized_hlo_proto, logical_mesh_shape, strategy_vector,
+                tuple_args, build_random_seed)
 
-        hlo_module = compiled.hlo_modules()[0]
-        backend = xla_bridge.get_backend("gpu")
+            # Run profiling
+            tasks = []
+            for worker in self.workers:
+                tasks.append(worker.profile_executable.remote(compiled.uuid))
+            costs = ray.get(tasks)[0]
+        else:
+            costs = profile_xla_executable(compiled, xla_bridge.get_backend("gpu"),
+                                           self.devices, self.sync_workers)
 
-        # Prepare input
-        input_shapes = hlo_module.parameter_shapes()
-        device_inputs = []
-        for shape in input_shapes:
-            device_inputs.append(
-                [backend.buffer_from_pyval(np.empty(shape.dimensions(), shape.numpy_dtype()),
-                                           self.devices[i], force_copy=True)
-                 for i in range(len(self.devices))]
-            )
-
-        def run_once():
-            device_outputs = compiled.execute_sharded_on_local_devices(device_inputs)
-
-            # Reset the value for donate buffers
-            for j in range(len(device_inputs)):
-                if device_inputs[j][0].is_deleted():
-                    device_inputs[j] = device_outputs[j]
-
-            self.sync_workers()
-
-        costs = measure_func(run_once, repeat=1, min_repeat_second=0.5)
         return np.mean(costs)
 
     def load_profiling_result(self, filename):
+        """Load profiling results from a file."""
         self.prof_result = pickle.load(open(filename, "rb"))
 
     def save_profiling_result(self, filename):
+        """Save profiling results to a file."""
         pickle.dump(self.prof_result, open(filename, "wb"))
 
     ##### Other Functions #####
     def sync_workers(self):
+        """Sync all device activities on workers."""
         if self.is_distributed:
             ray.get([w.sync.remote() for w in self.workers])
         else:

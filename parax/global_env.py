@@ -38,8 +38,9 @@ def set_parallelize_options(devices=None,
                             profile_communication=False,
                             cache_folder="parax_cache",
                             cache_auto_sharding_ilp_solution=False):
-    """Set the global options for all @parallelize decorator.
-    
+    """
+    Set the global options for all @parallelize decorator.
+
     Args:
       devices: The device cluster.
       strategy: The parallelization strategy.

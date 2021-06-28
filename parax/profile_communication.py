@@ -1,3 +1,4 @@
+# pylint: disable=no-self-use,consider-using-enumerate
 """Profiling communication cost."""
 from collections import defaultdict
 import time
@@ -117,7 +118,7 @@ class ProfilingResult:
         return ret
 
 
-def op_parameter(builder, num, shape, dtype):
+def _op_parameter(builder, num, shape, dtype):
     shape = xla_client.Shape.array_shape(np.dtype(dtype), shape)
     name = ""
     replicated = []
@@ -126,12 +127,12 @@ def op_parameter(builder, num, shape, dtype):
                          replicated)
 
 
-def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id):
+def _op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     if reduce_op == 'add':
         rc = xla_client.XlaBuilder("reduce_" + reduce_op)
-        x = op_parameter(rc, 0, (), dtype)
-        y = op_parameter(rc, 1, (), dtype)
+        x = _op_parameter(rc, 0, (), dtype)
+        y = _op_parameter(rc, 1, (), dtype)
         z = ops.Add(x, y)
         rc = rc.build(z)
     else:
@@ -142,7 +143,7 @@ def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id
     return ret
 
 
-def op_all_gather(builder, operand, replica_groups, channel_id):
+def _op_all_gather(builder, operand, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     ret = ops.AllGather(operand, 0, len(replica_groups[0]),
                         replica_groups_protos, channel_id, None, True)
@@ -183,12 +184,12 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     channel_id = backend.create_channel_handle()
     body.set_sharding(sharding)
     if primitive_name == "all-reduce":
-        out_buf = op_all_reduce(body, in_buf, dtype, "add", replica_groups, channel_id)
+        out_buf = _op_all_reduce(body, in_buf, dtype, "add", replica_groups, channel_id)
     elif primitive_name == "all-gather":
         if in_shape[0] == 0 or out_shape[0] == 0:
             pass
         else:
-            out_buf = op_all_gather(body, in_buf, replica_groups, channel_id)
+            out_buf = _op_all_gather(body, in_buf, replica_groups, channel_id)
     else:
         raise ValueError("Invalid primitive: " + primitive_name)
     counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
@@ -205,9 +206,9 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
 
     # while loop
     loop = xla_client.XlaBuilder("loop")
-    in_buf = op_parameter(loop, 0, in_shape, dtype)
-    out_buf = op_parameter(loop, 1, out_shape, dtype)
-    counter = op_parameter(loop, 2, (), np.int32)
+    in_buf = _op_parameter(loop, 0, in_shape, dtype)
+    out_buf = _op_parameter(loop, 1, out_shape, dtype)
+    counter = _op_parameter(loop, 2, (), np.int32)
     while_init = ops.Tuple(loop, [in_buf, out_buf, counter])
     ops.While(cond_computation, body_computation, while_init)
     loop.setup_alias((0,), 0, ())
@@ -222,6 +223,7 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     )
 
     return in_shape, out_shape, backend.compile(loop_computation, compile_options)
+
 
 def profile_collective_one_config(shape, dtype, replica_groups, primitive_name,
                                   backend, num_devices, local_devices,

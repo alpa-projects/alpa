@@ -9,17 +9,20 @@ from parax.util import to_int_tuple
 
 RECORD_VERSION = "v0.1"
 
+
 class SearchTask:
     """
     The input specification of an auto-parallelization search task.
 
     The input coantains a computation specification and a device cluster specification.
     """
+
     def __init__(self, compute_key, device_key):
         self.compute_key = compute_key
         self.device_key = device_key
 
     def get_task_key(self) -> str:
+        """Return a unique string as the query key of  this task."""
         return self.compute_key + self.device_key
 
     def to_jsonable(self):
@@ -33,6 +36,7 @@ class SearchTask:
 
 class StrategyConfig:
     """A configuration that specifies all details of a parallelization strategy."""
+
     def __init__(self,
                  build_random_seed: int,
                  logical_mesh_shape: Tuple[int],
@@ -49,7 +53,7 @@ class StrategyConfig:
     def from_jsonable(value):
         build_random_seed, logical_mesh_shape, auto_sharding_solution_vector = value
         return StrategyConfig(build_random_seed, logical_mesh_shape,
-            np.array(auto_sharding_solution_vector))
+                              np.array(auto_sharding_solution_vector))
 
 
 class MeasureInput(namedtuple("MeasureInput", ["task", "config"])):
@@ -78,10 +82,10 @@ def save_to_file(inputs, results, filename, protocol="json"):
     Save measurement records to a file.
 
     Args:
-      inputs (List[MeasureInput]):
-      results (List[MeasureResult]):
-      filename (str):
-      protocol (str):
+      inputs (List[MeasureInput]): 
+      results (List[MeasureResult]): 
+      filename (str): 
+      protocol (str): 
     """
     assert protocol == "json"
 
@@ -89,7 +93,7 @@ def save_to_file(inputs, results, filename, protocol="json"):
         for inp, res in zip(inputs, results):
             obj = (inp.task.to_jsonable(), inp.config.to_jsonable(),
                    res.time_costs, res.error_no, res.timestamp, RECORD_VERSION)
-            fout.write(json.dumps(json_dict) + "\n")
+            fout.write(json.dumps(obj) + "\n")
 
 
 def load_from_file(filename, protocol="json"):
@@ -108,7 +112,7 @@ def load_from_file(filename, protocol="json"):
 
     for line in open(filename, "r"):
         obj = json.loads(line)
-        task_jsonable, config_jsonable, time_costs, error_no, timestamp, version = obj 
+        task_jsonable, config_jsonable, time_costs, error_no, timestamp, _ = obj 
 
         inp = MeasureInput(SearchTask.from_jsonable(task_jsonable),
                            StrategyConfig.from_jsonable(config_jsonable))
@@ -118,8 +122,7 @@ def load_from_file(filename, protocol="json"):
 
 def load_best_record(search_task, filename):
     """
-    Load the the best record for a search task.
-    Best means the lowest time cost.
+    Load the the best record for a search task. Best means the lowest time cost.
 
     Args:
       search_task (SearchTask):
@@ -142,4 +145,3 @@ def load_best_record(search_task, filename):
                 best_cost = cost
 
     return best_inp, best_res
-

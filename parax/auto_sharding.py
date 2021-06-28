@@ -1,11 +1,10 @@
 """Use the auto sharding pass in XLA."""
-from enum import Enum, auto
 import logging
 import multiprocessing
 import time
 import traceback
-
 from warnings import warn
+
 import numpy as np
 from jax import linear_util as lu
 from jax._src.util import (partial, extend_name_stack, wrap_name)
@@ -14,7 +13,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
+from parax.device_mesh import LogicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.xla_pass_context import XlaPassContext
 from parax.util import to_int_tuple, get_compile_options
@@ -23,15 +22,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-# pylint: disable=too-many-arguments,too-many-locals
-def auto_sharding_callable(   # noqa MC0001
+def auto_sharding_callable(
         fun: lu.WrappedFun,
         in_tree,
         out_tree_thunk,
         donated_invars,
         physical_mesh,
         logical_mesh_search_mode,
-	logical_mesh_choices,
+        logical_mesh_choices,
         memory_budget_per_device,
         strategy_config,
         *avals):
@@ -62,7 +60,7 @@ def auto_sharding_callable(   # noqa MC0001
                             for a, d in zip(xla_args, donation_results) if d]
         warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
 
-    # Run XLA compliation
+    # Compile and optimize HLO to an executable
     built = c.Build(out_tuple)
     if strategy_config is None:
         compiled, strategy_config = compile_with_search(
@@ -109,6 +107,7 @@ def auto_sharding_callable(   # noqa MC0001
                                                        input_sharding_specs, output_sharding_specs,
                                                        donated_invars)
 
+
 def compile_with_search(backend,
                         xla_computation,
                         physical_mesh,
@@ -121,10 +120,7 @@ def compile_with_search(backend,
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
-    if physical_mesh.is_distributed:
-        by_pass_device_assignment_check = True
-    else:
-        by_pass_device_assignment_check = False
+    by_pass_device_assignment_check = physical_mesh.is_distributed
 
     build_random_seed = 42
     compile_options = get_compile_options(
@@ -226,8 +222,8 @@ def compile_with_given_strategy(backend,
         "auto_sharding::device_mesh_ids": tuple(range(num_devices)),
         "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
-         # Distributed compilation
-         "build_option::pass_through_device_assignment": by_pass_device_assignment_check,
+        # Distributed compilation
+        "build_option::pass_through_device_assignment": by_pass_device_assignment_check,
 
         # Other useless but required arguments
         "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
@@ -319,7 +315,7 @@ last_objective = None
 
 
 # pylint: disable=import-outside-toplevel
-def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
+def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,  # noqa
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
     """Call the solver with serailized arguments."""
@@ -337,6 +333,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     # pickle.dump([N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
     #              c_np, d_np, m_np, r_np, v_np, s_init_np],
     #              open("args.pkl", "wb"))
+    # TODO(lmzheng): cache the ILP solution.
 
     def get_non_zero_index(binary_vector):
         """Get the index of non-zero item in a vector."""

@@ -1,3 +1,4 @@
+# pylint: disable=consider-using-enumerate
 """Common utilities."""
 import os
 import subprocess
@@ -114,6 +115,7 @@ def get_compile_options(num_replicas,
     compile_options.executable_build_options.seed = build_random_seed
     return compile_options
 
+
 ########################################
 ##### Profiling Utilities
 ########################################
@@ -144,7 +146,8 @@ def profile_xla_executable(compiled, backend, local_devices, sync_func):
 
 
 def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
-    """Measure the execution time of a function.
+    """
+    Measure the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
     The return value is a array of `repeat` elements and each elements is 
@@ -153,7 +156,7 @@ def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
     If `min_repeat_second` is set, the function automatically picks a `number`
     so that one `repeat` lasts for at least `min_repeat_second` seconds.
     """
-    for i in range(warmup):
+    for _ in range(warmup):
         func()
 
     if min_repeat_second:
@@ -164,9 +167,9 @@ def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
         number = max(int(min_repeat_second / cost), 1)
 
     costs = []
-    for i in range(repeat):
+    for _ in range(repeat):
         tic = time.time()
-        for j in range(number):
+        for __ in range(number):
             func()
         toc = time.time()
         costs.append((toc - tic) / number)
@@ -202,4 +205,3 @@ def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
     return ret
-

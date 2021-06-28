@@ -1,3 +1,4 @@
+# flake8: noqa
 """Data parallel based on pmap or gshard."""
 from collections import OrderedDict
 

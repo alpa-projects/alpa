@@ -4,10 +4,10 @@ from functools import wraps
 from jax import linear_util as lu
 from jax.api import _check_callable
 from jax.api_util import (argnums_partial, donation_vector,
-    flatten_fun_nokwargs, rebase_donate_argnums)
+                          flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
-from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.lib import xla_bridge as xb
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_map, HashableFunction
 
@@ -33,7 +33,7 @@ def parallelize(fun=None,
     Automatically parallelize a jax function.
 
     Args:
-        func: The function to be parallelized.
+        fun: The function to be parallelized.
         donate_argnums: The same as the donated_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
@@ -43,7 +43,6 @@ def parallelize(fun=None,
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):
-            # pylint: disable=too-many-locals
             shard_args_only_mode = kwargs.pop("__shard_args_only_mode", False)
             assert not kwargs, "kwargs is not supported"
 
@@ -146,7 +145,7 @@ def auto_parallel_callable(
         elif isinstance(devices, (list, tuple)):
             devices = PhysicalDeviceMesh(devices=devices)
         elif isinstance(devices, DeviceCluster):
-            devices = DeviceCluster.get_physical_mesh()
+            devices = devices.get_physical_mesh()
 
         strategy_config = None
         if isinstance(devices, PhysicalDeviceMesh):
@@ -219,11 +218,12 @@ def auto_parallel_callable(
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)
 
+
 def clear_callable_cache():
     """Clear all cached auto_sharding_callable."""
     auto_sharding_callable.cache_clear()
 
-def get_compute_key(func, in_tree, donated_invars, *aval):
-    """Get the hashable key of devices"""
-    return "aha"
 
+def get_compute_key(func, in_tree, donated_invars, *aval):
+    """Get the hashable key of devices."""
+    return "aha"

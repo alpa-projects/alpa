@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterable
 from collections import defaultdict
 import pickle
-from typing import Union, List, Tuple
+from typing import Union, List 
 
 from operator import attrgetter
 import numpy as np
@@ -21,9 +21,7 @@ from jax.lib import xla_client, xla_bridge
 from parax.measure_record import StrategyConfig
 from parax.global_env import global_config
 from parax.profile_communication import profile_collective_one_config, ProfilingResult
-from parax.util import (get_dim_last_value, get_compile_options, list_gpu_info, measure_func,
-                        profile_xla_executable, GB)
-from parax.xla_pass_context import XlaPassContext
+from parax.util import (get_dim_last_value, list_gpu_info, profile_xla_executable, GB)
 
 
 logger = logging.getLogger(__name__)
@@ -299,6 +297,7 @@ class MeshHostWorker:
                            uuid: int,
                            hlo_proto: bytes,
                            strategy_config: StrategyConfig):
+        # pylint: disable=import-outside-toplevel
         from parax.auto_sharding import compile_with_given_strategy
 
         xla_computation = xla_client.XlaComputation(hlo_proto)
@@ -559,7 +558,7 @@ class PhysicalDeviceMesh:
             for j in range(mesh_shape[1]):
                 for i in range(mesh_shape[0]):
                     left = host_ids[i][j]
-                    right = host_ids[(i+1) % mesh_shape[0]][j]
+                    right = host_ids[(i + 1) % mesh_shape[0]][j]
                     if left != right:
                         if left > right:
                             left, right = right, left
@@ -571,7 +570,7 @@ class PhysicalDeviceMesh:
             bandwidth = intra_host_bandwidth
             for i in range(mesh_shape[0]):
                 left = host_ids[i][j]
-                right = host_ids[(i+1) % mesh_shape[0]][j]
+                right = host_ids[(i + 1) % mesh_shape[0]][j]
                 if left != right:
                     if left > right:
                         left, right = right, left
@@ -584,7 +583,7 @@ class PhysicalDeviceMesh:
             for i in range(mesh_shape[0]):
                 for j in range(mesh_shape[1]):
                     left = host_ids[i][j]
-                    right = host_ids[i][(j+1) % mesh_shape[1]]
+                    right = host_ids[i][(j + 1) % mesh_shape[1]]
                     if left != right:
                         if left > right:
                             left, right = right, left
@@ -594,7 +593,7 @@ class PhysicalDeviceMesh:
             bandwidth = intra_host_bandwidth
             for j in range(mesh_shape[1]):
                 left = host_ids[i][j]
-                right = host_ids[i][(j+1) % mesh_shape[1]]
+                right = host_ids[i][(j + 1) % mesh_shape[1]]
                 if left != right:
                     if left > right:
                         left, right = right, left

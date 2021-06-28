@@ -774,14 +774,12 @@ class PhysicalDeviceMesh:
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
-    def profile_executable(self, compiled, unoptimized_hlo_proto, logical_mesh_shape,
-            strategy_vector, tuple_args, build_random_seed):
+    def profile_executable(self, compiled, unoptimized_hlo_proto, strategy_config):
         """Profile the time cost of an xla executable."""
         if self.is_distributed:
             # Send the code and strategy to remote workers
             compiled = self.compile_remote_executable(
-                unoptimized_hlo_proto, logical_mesh_shape, strategy_vector,
-                tuple_args, build_random_seed)
+                unoptimized_hlo_proto, strategy_config)
 
             # Run profiling
             tasks = []

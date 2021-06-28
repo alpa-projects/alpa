@@ -183,6 +183,8 @@ def compile_with_search(backend,
             else:
                 latency = objective
 
+            #print(logical_mesh.id_mesh.shape, objective, latency)
+
             if latency < best_latency:
                 best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
                     logical_mesh, compiled, solution_vector, objective

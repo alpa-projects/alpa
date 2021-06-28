@@ -16,7 +16,7 @@ from parax.auto_sharding import auto_sharding_callable
 from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.global_env import global_config
-from parax.measure_record import SearchTask, StrategyConfig
+from parax.measure_record import SearchTask, load_best_record
 from parax.pipeline_parallel import pipeline_parallel_callable, \
     distributed_pipeline_parallel_callable
 from parax.three_d_parallel import three_d_parallel_callable
@@ -160,13 +160,14 @@ def auto_parallel_callable(
 
             if global_config.search_logical_mesh_shape:
                 # Check cached strategy folder
-                compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
-                device_key = physical_mesh.get_signature()
-                search_task = SearchTask(compute_key, device_key)
+                #compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
+                #device_key = physical_mesh.get_signature()
+                #search_task = SearchTask(compute_key, device_key)
+                #inp, res = load_best_record(search_task.get_task_key())
 
-                inp, res = load_best_record(search_task_key)
+                inp = None
                 if inp is None:
-                    # Generate the search space that contains all possible mesh shapes.
+                    # Generate a search space that contains all possible mesh shapes.
                     logical_mesh_choices = []
                     total_devices = physical_mesh.total_devices
                     for i in range(1, total_devices):
@@ -224,5 +225,5 @@ def clear_callable_cache():
 
 def get_compute_key(func, in_tree, donated_invars, *aval):
     """Get the hashable key of devices"""
-    return "nihao"
+    return "aha"
 

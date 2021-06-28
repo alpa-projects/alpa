@@ -19,8 +19,11 @@ from parax.testing import assert_only_has_allreduce
 
 class SearchAPITest(unittest.TestCase):
     def setUp(self):
-        ray.init(address="auto", ignore_reinit_error=True)
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+        ray.init(address="auto", ignore_reinit_error=True)
+
+    def tearDown(self):
+        ray.shutdown()
 
     def run_2_layer_mlp(self, batch_size, hidden_dim):
         class Model(nn.Module):
@@ -55,7 +58,7 @@ class SearchAPITest(unittest.TestCase):
     def test_search_single_host(self):
         parax.set_parallelize_options(
             devices=jax.devices(),
-            enable_mesh_shape_search=True,
+            search_logical_mesh_shape=True,
             mesh_shape_search_mode="measurement",
         )
 
@@ -66,11 +69,13 @@ class SearchAPITest(unittest.TestCase):
 
         parax.set_parallelize_options(
             devices=physical_mesh,
-            enable_mesh_shape_search=True,
+            search_logical_mesh_shape=True,
             mesh_shape_search_mode="measurement",
         )
 
         self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
+
+        physical_mesh.shutdown()
 
 
 def suite():

@@ -172,7 +172,7 @@ def compile_with_search(backend,
             "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
             "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
             "auto_sharding::device_mesh_prof_result":
-                logical_mesh.physical_mesh.prof_result,
+                getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # Distributed compilation
             "build_option::pass_through_device_assignment": by_pass_device_assignment_check,

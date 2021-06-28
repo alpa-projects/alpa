@@ -469,7 +469,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             val = inputs[key]
             if isinstance(val, DistributedArray):
                 mesh_idx = list(self.schedule.stage_placement(stage_idx))[0]
-                if val.device_mesh == self._physical_meshes[mesh_idx]:
+                if val.device_mesh == self.physical_meshes[mesh_idx]:
                     inputs_list.append(val)
                 else:
                     # TODO(Hao): change to NCCL here.

@@ -789,7 +789,7 @@ class PhysicalDeviceMesh:
             costs = profile_xla_executable(compiled, xla_bridge.get_backend("gpu"),
                                            self.devices, self.sync_workers)
 
-        return np.mean(costs)
+        return costs
 
     def load_profiling_result(self, filename):
         """Load profiling results from a file."""

@@ -1,5 +1,8 @@
 """Top-level user API."""
 from functools import wraps
+import hashlib
+import inspect
+import os
 
 from jax import linear_util as lu
 from jax.api import _check_callable
@@ -147,24 +150,24 @@ def auto_parallel_callable(
         elif isinstance(devices, DeviceCluster):
             devices = devices.get_physical_mesh()
 
+        search_task = None
+        record_file = None
         strategy_config = None
         if isinstance(devices, PhysicalDeviceMesh):
             physical_mesh = devices
 
-            # The priority of choosing logical mesh shape:
-            # 1. If find search records in the cached folder, use the mesh shape
-            #    of the best record.
-            # 2. If enable_mesh_shape_search is True, search over all mesh shapes.
-            # 3. Otherwise, use the default mesh_shape without search.
-
             if global_config.search_logical_mesh_shape:
                 # Check cached strategy folder
-                #compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
-                #device_key = physical_mesh.get_signature()
-                #search_task = SearchTask(compute_key, device_key)
-                #inp, res = load_best_record(search_task.get_task_key())
+                compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
+                device_key = physical_mesh.get_signature()
+                search_task = SearchTask(compute_key, device_key)
+                record_file = global_config.mesh_shape_search_log_file
 
-                inp = None
+                if record_file:
+                    inp, res = load_best_record(search_task, filename=record_file)
+                else:
+                    inp = None
+
                 if inp is None:
                     # Generate a search space that contains all possible mesh shapes.
                     logical_mesh_choices = []
@@ -183,7 +186,7 @@ def auto_parallel_callable(
                                 intra_host_bandwidth=30))
                 else:
                     logical_mesh_choices = []
-                    strategy_config = inp.conofig
+                    strategy_config = inp.config
             else:
                 logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
         elif isinstance(devices, LogicalDeviceMesh):
@@ -196,7 +199,7 @@ def auto_parallel_callable(
             fun, in_tree, out_tree_thunk, donated_invars,
             physical_mesh, global_config.mesh_shape_search_mode,
             logical_mesh_choices, memory_budget_per_device,
-            strategy_config, *avals
+            search_task, record_file, strategy_config, *avals
         )
     elif strategy == "shard_data_parallel":
         return shard_data_parallel_callable(
@@ -224,6 +227,22 @@ def clear_callable_cache():
     auto_sharding_callable.cache_clear()
 
 
-def get_compute_key(func, in_tree, donated_invars, *aval):
-    """Get the hashable key of devices."""
-    return "aha"
+def get_compute_key(fun, in_tree, donated_invars, *aval):
+    """Return a unique string as the query key of a computation definition."""
+
+    # Algorithm:
+    # Concatenate the definition location, source code,
+    # input arguments specification to a string.
+    # Then compute a hash value of this string.
+    #
+    # TOOD(lmzheng): use jaxpr or hlo instead of source code?
+
+    location = fun.f.__str__().split("at")[0]
+    source_code = inspect.getsource(fun.f)
+    donated_invars = str(donated_invars)
+    aval = "".join(x.str_short() for x in aval)
+
+    string = location + source_code + donated_invars + aval
+    hash_key = hashlib.md5(string.encode(encoding="utf-8")).hexdigest()
+    return hash_key
+

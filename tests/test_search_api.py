@@ -16,6 +16,12 @@ import parax
 from parax import parallelize, global_config, testing, PhysicalDeviceMesh, DeviceCluster
 from parax.testing import assert_only_has_allreduce
 
+def get_number_of_lines(filename):
+    ct = 0
+    for _ in open(filename):
+        ct += 1
+    return ct
+
 
 class SearchAPITest(unittest.TestCase):
     def setUp(self):
@@ -77,11 +83,37 @@ class SearchAPITest(unittest.TestCase):
 
         physical_mesh.shutdown()
 
+    def test_measurement_record(self):
+        filename = "tmp.json"
+        parax.set_parallelize_options(
+            devices=jax.devices(),
+            search_logical_mesh_shape=True,
+            mesh_shape_search_mode="measurement",
+            mesh_shape_search_log_file=filename,
+        )
+
+        if os.path.exists(filename):
+            os.remove(filename)
+
+        # Run search and dump results into the file
+        self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
+        before = get_number_of_lines(filename)
+
+        # Load the results without search
+        self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
+        after = get_number_of_lines(filename)
+        
+        print(before, after)
+
+        # The second call should not generate new records
+        assert before == after
+ 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(SearchAPITest("test_search_single_host"))
     suite.addTest(SearchAPITest("test_search_multi_host"))
+    suite.addTest(SearchAPITest("test_measurement_record"))
     return suite
 
 

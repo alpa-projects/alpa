@@ -1,6 +1,7 @@
 """Measurement records that serialize the tasks, strategies, and measurement results to files."""
 from collections import namedtuple
 import json
+import os
 from typing import Tuple
 
 import numpy as np
@@ -22,8 +23,8 @@ class SearchTask:
         self.device_key = device_key
 
     def get_task_key(self) -> str:
-        """Return a unique string as the query key of  this task."""
-        return self.compute_key + self.device_key
+        """Return a unique string as the query key of this task."""
+        return f"({self.compute_key}, {self.device_key})"
 
     def to_jsonable(self):
         return (self.compute_key, self.device_key)
@@ -61,19 +62,21 @@ class MeasureInput(namedtuple("MeasureInput", ["task", "config"])):
     Stores all the inputs of a measurement.
 
     Args:
-      task (SearchTask):
-      config (StrategyConfig):
+      task (SearchTask): The search task.
+      config (StrategyConfig): The parallelization strategy.
     """
 
 
-class MeasureResult(namedtuple("MeasureResult", ["time_costs", "error_no", "timestamp"])):
+class MeasureResult(namedtuple("MeasureResult",
+                               ["time_costs", "estimated_cost", "error_no", "timestamp"])):
     """
     Stores all the results of a measurement.
 
     Args:
-      time_costs (List[float]):
-      error_no (int):
-      timestamp (int):
+      time_costs (List[float]): The measured execution time.
+      estimated_cost: (float): The estimated cost by the cost model.
+      error_no (int): The error code.
+      timestamp (int): The time stamp of measurement.
     """
 
 
@@ -92,7 +95,8 @@ def save_to_file(inputs, results, filename, protocol="json"):
     with open(filename, "a") as fout:
         for inp, res in zip(inputs, results):
             obj = (inp.task.to_jsonable(), inp.config.to_jsonable(),
-                   res.time_costs, res.error_no, res.timestamp, RECORD_VERSION)
+                   res.time_costs, res.estimated_cost, res.error_no, res.timestamp,
+                   RECORD_VERSION)
             fout.write(json.dumps(obj) + "\n")
 
 
@@ -110,13 +114,17 @@ def load_from_file(filename, protocol="json"):
     """
     assert protocol == "json"
 
+    if not os.path.exists(filename):
+        return
+
     for line in open(filename, "r"):
         obj = json.loads(line)
-        task_jsonable, config_jsonable, time_costs, error_no, timestamp, _ = obj 
+        task_jsonable, config_jsonable, time_costs, estimated_cost, \
+            error_no, timestamp, _ = obj 
 
         inp = MeasureInput(SearchTask.from_jsonable(task_jsonable),
                            StrategyConfig.from_jsonable(config_jsonable))
-        res = MeasureResult(time_costs, error_no, timestamp)
+        res = MeasureResult(time_costs, estimated_cost, error_no, timestamp)
         yield inp, res
 
 

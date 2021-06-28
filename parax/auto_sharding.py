@@ -14,7 +14,7 @@ from jaxlib.xla_client import OpSharding
 
 from parax import testing
 from parax.device_mesh import LogicalDeviceMesh
-from parax.measure_record import StrategyConfig
+from parax.measure_record import MeasureInput, MeasureResult, StrategyConfig, save_to_file
 from parax.xla_pass_context import XlaPassContext
 from parax.util import to_int_tuple, get_compile_options
 
@@ -31,9 +31,20 @@ def auto_sharding_callable(
         logical_mesh_search_mode,
         logical_mesh_choices,
         memory_budget_per_device,
+        search_task,
+        record_file,
         strategy_config,
         *avals):
-    """Compile a callable with auto-sharding pass."""
+    """Compile a callable with auto-sharding pass.
+
+    Args:
+      search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
+        Used when dumping measurement records to the file.
+      record_file (Optional[str]): If is not None, dump measurement records into
+        this file.
+      strategy_config (Optional[StrategyConfig]): If is not None, do compilation
+        according to this configuration.
+    """
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -66,6 +77,7 @@ def auto_sharding_callable(
         compiled, strategy_config = compile_with_search(
             backend, built, physical_mesh,
             logical_mesh_search_mode, logical_mesh_choices, memory_budget_per_device,
+            search_task, record_file
         )
     else:
         compiled = compile_with_given_strategy(
@@ -113,8 +125,17 @@ def compile_with_search(backend,
                         physical_mesh,
                         logical_mesh_search_mode,
                         logical_mesh_choices,
-                        memory_budget_per_device):
-    """Compile an XLA computation with mesh shape search and auto sharding solver.""" 
+                        memory_budget_per_device,
+                        search_task,
+                        record_file):
+    """Compile an XLA computation with mesh shape search and auto sharding solver.
+    
+     Args:
+      search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
+        Used when dumping measurement records to the file.
+      record_file (Optional[str]): If is not None, dump measurement records into
+        this file.
+    """ 
     unoptimized_hlo_proto = xla_computation.as_serialized_hlo_module_proto()
 
     # Set compile options
@@ -166,25 +187,32 @@ def compile_with_search(backend,
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
     else:  # Search for the best logical mesh
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
-        best_latency = float("inf")
+        best_time_cost = float("inf")
         for logical_mesh in logical_mesh_choices:
             compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
+            strategy_config = StrategyConfig(
+                build_random_seed, logical_mesh.id_mesh.shape, solution_vector
+            )
 
             if logical_mesh_search_mode == "measurement":
-                strategy_config = StrategyConfig(
-                    build_random_seed, logical_mesh.id_mesh.shape, solution_vector
-                )
-                latency = physical_mesh.profile_executable(
+                time_costs = physical_mesh.profile_executable(
                     compiled, unoptimized_hlo_proto, strategy_config)
             else:
-                latency = objective
+                time_costs = objective
 
-            #print(logical_mesh.id_mesh.shape, objective, latency)
-
-            if latency < best_latency:
+            if np.mean(time_costs) < best_time_cost:
                 best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
                     logical_mesh, compiled, solution_vector, objective
-                best_latency = latency
+                best_time_cost = np.mean(time_costs)
+
+            # Save records to file
+            if record_file is not None:
+                assert search_task is not None
+                inp = MeasureInput(search_task, strategy_config)
+                res = MeasureResult(time_costs, objective, 0, int(time.time()))
+                save_to_file([inp], [res], record_file)
+            #print(logical_mesh.id_mesh.shape, objective, np.mean(time_costs))
+
         logical_mesh, compiled, solution_vector = \
             best_logical_mesh, best_compiled, best_solution_vector
 

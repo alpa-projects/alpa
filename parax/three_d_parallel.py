@@ -35,7 +35,7 @@ def three_d_parallel_callable(
     num_batch = 1
     n_stages = len(jax_pipeline_stages)
     dependency = gen_linear_dependency(n_stages)
-    schedule = GpipeSchedule(mesh=virtual_mesh, num_batch=num_batch)
+    schedule = GpipeSchedule(dependency=dependency, mesh=virtual_mesh, num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
     for i, mesh in enumerate(schedule.meshes):
@@ -56,7 +56,7 @@ def three_d_parallel_callable(
     for mesh_idx in range(n_meshes):
         sharded_xla_stages = generate_sharded_xla_stages(
             str(mesh_idx), stage_dict[mesh_idx],
-            physical_meshes[i].get_default_logical_mesh(), physical_meshes[i],
+            physical_meshes[mesh_idx].get_default_logical_mesh(), physical_meshes[mesh_idx],
             memory_budget_per_device=memory_budget_per_device)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage

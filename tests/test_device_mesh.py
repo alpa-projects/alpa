@@ -19,6 +19,9 @@ class DeviceMeshTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
 
+    def tearDown(self):
+        ray.shutdown()
+
     def test_add_one(self):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
@@ -46,7 +49,6 @@ class DeviceMeshTest(unittest.TestCase):
         assert_allclose(out._value, (np.ones_like(a) + 1) * 2)
 
         physical_mesh.shutdown()
-        ray.shutdown()
 
     def test_mlp(self):
         # Launch a multi-host device mesh
@@ -98,7 +100,6 @@ class DeviceMeshTest(unittest.TestCase):
         assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
         physical_mesh.shutdown()
-        ray.shutdown()
 
 
 def suite():

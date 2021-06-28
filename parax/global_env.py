@@ -10,10 +10,14 @@ class GlobalConfig:
         self.devices = None
         self.strategy = "auto_sharding_parallel"
         self.memory_budget_per_device = None
-        self.enable_profiling_communiation = False
-        self.enable_mesh_shape_search = False
+
+        # logical mesh shape related options
+        self.search_logical_mesh_shape = False
         self.mesh_shape_search_mode = "cost_model"
-        self.cache_folder = "~/.parax"
+        self.profile_communication = False
+
+        self.cache_folder = "parax_cache"
+        self.cache_auto_sharding_ilp_solution = False
 
         ########## Options for benchmark ########## 
         # If true, the system is allowed to use dummy values during
@@ -29,10 +33,11 @@ global_config = GlobalConfig()
 def set_parallelize_options(devices=None,
                             strategy="auto_sharding_parallel",
                             memory_budget_per_device=None,
-                            enable_profiling_communiation=False,
-                            enable_mesh_shape_search=False,
+                            search_logical_mesh_shape=False,
                             mesh_shape_search_mode="cost_model",
-                            cache_folder="~/.parax/"):
+                            profile_communication=False,
+                            cache_folder="parax_cache",
+                            cache_auto_sharding_ilp_solution=False):
     """Set the global options for all @parallelize decorator.
     
     Args:
@@ -42,23 +47,26 @@ def set_parallelize_options(devices=None,
         "pmap_data_parallel", "shard_data_parallel",
         "pipeline_parallel", "distributed_pipeline_parallel", "3d_parallel"}.
       memory_budget_per_device: The memory budget of one device in bytes.
-      enable_profiling_communiation: Whether to enable the profiling communication
-        stage before the search.
-      enable_mesh_shape_search: Whether to include the choices of logical mesh shape
+      search_logical_mesh_shape: Whether to include the choices of logical mesh shape
         into the search space.
       mesh_shape_search_mode: Whether to use cost model or real measurement to pick
         the logical mesh shape. Possible choices: {"cost_model", "measurement"}.
+      profile_communication: Whether to use the profiled communication cost
+        for the auto-sharding pass.
       cache_folder: The folder to store cached profiling results and strategies.
+      cache_auto_sharding_ilp_solution: Whether to cache the ilp solution
+        generated during auto-sharding pass.
     """
     global global_config
 
     global_config.devices = devices
     global_config.strategy = strategy
     global_config.memory_budget_per_device = memory_budget_per_device
-    global_config.enable_profiling_communiation = enable_profiling_communiation
-    global_config.enable_mesh_shape_search = enable_mesh_shape_search
+    global_config.search_logical_mesh_shape = search_logical_mesh_shape
     global_config.mesh_shape_search_mode = mesh_shape_search_mode
+    global_config.profile_communication = profile_communication
     global_config.cache_folder = cache_folder
+    global_config.cache_auto_sharding_ilp_solution = cache_auto_sharding_ilp_solution
 
 
 # Don't let the compilation on the driver node use GPUs.

@@ -16,6 +16,7 @@ from parax.auto_sharding import auto_sharding_callable
 from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.global_env import global_config
+from parax.measure_record import SearchTask, StrategyConfig
 from parax.pipeline_parallel import pipeline_parallel_callable, \
     distributed_pipeline_parallel_callable
 from parax.three_d_parallel import three_d_parallel_callable
@@ -137,13 +138,6 @@ def auto_parallel_callable(
         if store:
             store.reset()
 
-
-    # Check cached strategy folder
-    #compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
-    #device_key = get_device_key(global_config.devices)
-    #search_task_key = (compute_key, device_key)
-    #measure_record = load_best_record(search_task_key)
-
     # Choose parallel strategy
     if strategy == "auto_sharding_parallel":
         # Get physical mesh and logical mesh.
@@ -154,26 +148,44 @@ def auto_parallel_callable(
         elif isinstance(devices, DeviceCluster):
             devices = DeviceCluster.get_physical_mesh()
 
+        strategy_config = None
         if isinstance(devices, PhysicalDeviceMesh):
             physical_mesh = devices
-            logical_mesh_choices = []
-            if global_config.enable_mesh_shape_search:
-                logical_mesh_choices = []
-                total_devices = physical_mesh.total_devices
-                for i in range(1, total_devices + 1):
-                    if total_devices % i == 0:
-                        logical_mesh_shape = (total_devices // i, i)
-                        logical_mesh_choices.append(physical_mesh.get_logical_mesh(
-                            mesh_shape=logical_mesh_shape,
-                            # TODO(lmzheng): export this as an arugment in
-                            # set_parallelize_options
-                            #mesh_alpha=[1,1],
-                            #mesh_beta=[1,1]))
-                            mesh_topology="tree",
-                            inter_host_bandwidth=1,
-                            intra_host_bandwidth=30))
+
+            # The priority of choosing logical mesh shape:
+            # 1. If find search records in the cached folder, use the mesh shape
+            #    of the best record.
+            # 2. If enable_mesh_shape_search is True, search over all mesh shapes.
+            # 3. Otherwise, use the default mesh_shape without search.
+
+            if global_config.search_logical_mesh_shape:
+                # Check cached strategy folder
+                compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
+                device_key = physical_mesh.get_signature()
+                search_task = SearchTask(compute_key, device_key)
+
+                inp, res = load_best_record(search_task_key)
+                if inp is None:
+                    # Generate the search space that contains all possible mesh shapes.
+                    logical_mesh_choices = []
+                    total_devices = physical_mesh.total_devices
+                    for i in range(1, total_devices):
+                        if total_devices % i == 0:
+                            logical_mesh_shape = (total_devices // i, i)
+                            logical_mesh_choices.append(physical_mesh.get_logical_mesh(
+                                mesh_shape=logical_mesh_shape,
+                                # TODO(lmzheng): export this as an arugment in
+                                # set_parallelize_options or physical_mesh.
+                                #mesh_alpha=[1,1],
+                                #mesh_beta=[1,1]))
+                                mesh_topology="tree",
+                                inter_host_bandwidth=1,
+                                intra_host_bandwidth=30))
+                else:
+                    logical_mesh_choices = []
+                    strategy_config = inp.conofig
             else:
-                logical_mesh_choices.append(physical_mesh.get_default_logical_mesh())
+                logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
         elif isinstance(devices, LogicalDeviceMesh):
             physical_mesh = devices.physical_mesh
             logical_mesh_choices = [devices]
@@ -183,7 +195,8 @@ def auto_parallel_callable(
         return auto_sharding_callable(
             fun, in_tree, out_tree_thunk, donated_invars,
             physical_mesh, global_config.mesh_shape_search_mode,
-            logical_mesh_choices, memory_budget_per_device, *avals
+            logical_mesh_choices, memory_budget_per_device,
+            strategy_config, *avals
         )
     elif strategy == "shard_data_parallel":
         return shard_data_parallel_callable(
@@ -206,9 +219,10 @@ def auto_parallel_callable(
         raise ValueError("Invalid parallel strategy: " + strategy)
 
 def clear_callable_cache():
+    """Clear all cached auto_sharding_callable."""
     auto_sharding_callable.cache_clear()
 
-def get_device_key(devices):
+def get_compute_key(func, in_tree, donated_invars, *aval):
     """Get the hashable key of devices"""
-    pass
+    return "nihao"
 

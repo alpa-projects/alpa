@@ -11,7 +11,7 @@ from flax import linen as nn
 from flax import optim
 import ray
 
-from parax import parallelize, testing, global_config, DeviceCluster
+from parax import parallelize, set_parallelize_options, testing, global_config, DeviceCluster
 
 MB = 1024 ** 2
 
@@ -54,6 +54,9 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     physical_mesh = device_cluster.get_physical_mesh()
     assert physical_mesh.total_devices == dp_size * tensor_mp_size
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size])
+    set_parallelize_options(devices=logical_mesh.physical_mesh,
+                            enable_mesh_shape_search=True,
+                            mesh_shape_search_mode="measurement")
 
     if use_profiling:
         filename = physical_mesh.get_signature() + ".prof.pkl"
@@ -61,13 +64,12 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
             print(f"Load saved profiling results from {filename}")
             physical_mesh.load_profiling_result(filename)
             physical_mesh.prof_result.multiply_scale(1e7)
-
         else:
             physical_mesh.profile_collective("all-reduce")
             print(f"Save profiling results to {filename}")
             physical_mesh.save_profiling_result(filename)
 
-    @parallelize(devices=logical_mesh)
+    @parallelize
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])
@@ -127,6 +129,8 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     print(line)
     with open("result_mlp.tsv", "a") as fout:
         fout.write(line + "\n")
+
+    physical_mesh.shutdown()
 
 
 benchmark_suite = [

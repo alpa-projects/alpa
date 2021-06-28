@@ -13,7 +13,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 
 # pylint: disable=redefined-builtin
 from parax import testing
-from parax.auto_sharding import hlo_sharding_to_sharding_spec, _auto_sharding_internal
+from parax.auto_sharding import hlo_sharding_to_sharding_spec
 from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
 from parax.util import get_compile_options
 

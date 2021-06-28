@@ -14,13 +14,15 @@ from jax._src.util import (partial, unzip3)
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
-                                   ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
+                                   ShardedAxis, _as_slice_indices, _hashable_index,
+                                   ShardedDeviceArray)
 from jax.lib import xla_client, xla_bridge
 
-from parax.profile_communication import profile_collective_one_config, ProfilingResult
+from parax.measure_record import StrategyConfig
 from parax.global_env import global_config
+from parax.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.util import (get_dim_last_value, get_compile_options, list_gpu_info, measure_func,
-                        profile_xla_executable, to_int_tuple, GB)
+                        profile_xla_executable, GB)
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -296,45 +298,18 @@ class MeshHostWorker:
     def compile_executable(self,
                            uuid: int,
                            hlo_proto: bytes,
-                           logical_mesh_shape: Tuple[int],
-                           auto_sharding_strategy_vector: np.ndarray,
-                           is_tuple_args: bool,
-                           build_random_seed: int):
-        backend = self.backend
-        num_devices = np.prod(logical_mesh_shape)
+                           strategy_config: StrategyConfig):
+        from parax.auto_sharding import compile_with_given_strategy
 
-        assert num_devices == len(backend.devices())
+        xla_computation = xla_client.XlaComputation(hlo_proto)
+        num_devices = np.prod(strategy_config.logical_mesh_shape)
+        assert num_devices == len(self.backend.devices())
 
-        compile_options = get_compile_options(
-            num_replicas=1,
-            num_partitions=num_devices,
-            device_assignment=np.arange(num_devices).reshape((1, -1)),
-            use_spmd_partitioning=True,
-            parameter_is_tupled_arguments=is_tuple_args,
-            build_random_seed=build_random_seed
-        )
-        computation = xla_client.XlaComputation(hlo_proto)
-        with XlaPassContext({
-            # Solver options
-            "auto_sharding::enable": True,
-            "auto_sharding::load_strategy": True,
-            "auto_sharding::strategy_vector": to_int_tuple(auto_sharding_strategy_vector),
-
-            # Device mesh
-            "auto_sharding::device_mesh_ids": tuple(range(num_devices)),
-            "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
-
-            # Other useless but required arguments
-            "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
-            "auto_sharding::device_mesh_beta": (1.0,) * len(logical_mesh_shape),
-            "auto_sharding::device_mesh_prof_result": None,
-        }):
-            compiled_computation = backend.compile(computation, compile_options)
-
-        self.executables[uuid] = compiled_computation
-
+        compiled = compile_with_given_strategy(
+            self.backend, xla_computation, num_devices, False, strategy_config)
+        self.executables[uuid] = compiled
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
-                                                self.host_id, compiled_computation)
+                                                self.host_id, compiled)
 
     def execute(self,
                 executable_uuid: int,
@@ -526,7 +501,7 @@ class PhysicalDeviceMesh:
             self.workers.append(worker)
         self.sync_workers()
 
-    def get_signature(self):
+    def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU model."""
         gpu_type = list_gpu_info()
         gpu_name = gpu_type.split("\n")[0].split(" (UUID:")[0][7:]
@@ -664,20 +639,14 @@ class PhysicalDeviceMesh:
     ##### Executable Related Functions #####
     def compile_remote_executable(self,
                                   hlo_proto: bytes,
-                                  logical_mesh_shape: Tuple[int],
-                                  auto_sharding_strategy_vector: np.ndarray,
-                                  is_tuple_args: bool,
-                                  build_random_seed: int):
+                                  strategy_config: StrategyConfig):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
             w.compile_executable.remote(
                 executable.uuid,
                 hlo_proto,
-                logical_mesh_shape,
-                auto_sharding_strategy_vector,
-                is_tuple_args,
-                build_random_seed)
+                strategy_config)
         return executable
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):

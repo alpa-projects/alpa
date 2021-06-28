@@ -2,7 +2,6 @@
 from functools import wraps
 import hashlib
 import inspect
-import os
 
 from jax import linear_util as lu
 from jax.api import _check_callable
@@ -164,7 +163,7 @@ def auto_parallel_callable(
                 record_file = global_config.mesh_shape_search_log_file
 
                 if record_file:
-                    inp, res = load_best_record(search_task, filename=record_file)
+                    inp, _ = load_best_record(search_task, filename=record_file)
                 else:
                     inp = None
 
@@ -229,7 +228,6 @@ def clear_callable_cache():
 
 def get_compute_key(fun, in_tree, donated_invars, *aval):
     """Return a unique string as the query key of a computation definition."""
-
     # Algorithm:
     # Concatenate the definition location, source code,
     # input arguments specification to a string.
@@ -245,4 +243,3 @@ def get_compute_key(fun, in_tree, donated_invars, *aval):
     string = location + source_code + donated_invars + aval
     hash_key = hashlib.md5(string.encode(encoding="utf-8")).hexdigest()
     return hash_key
-

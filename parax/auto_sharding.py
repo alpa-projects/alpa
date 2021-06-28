@@ -35,7 +35,8 @@ def auto_sharding_callable(
         record_file,
         strategy_config,
         *avals):
-    """Compile a callable with auto-sharding pass.
+    """
+    Compile a callable with auto-sharding pass.
 
     Args:
       search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
@@ -128,9 +129,10 @@ def compile_with_search(backend,
                         memory_budget_per_device,
                         search_task,
                         record_file):
-    """Compile an XLA computation with mesh shape search and auto sharding solver.
-    
-     Args:
+    """
+    Compile an XLA computation with mesh shape search and auto sharding solver.
+
+    Args:
       search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
         Used when dumping measurement records to the file.
       record_file (Optional[str]): If is not None, dump measurement records into
@@ -213,8 +215,8 @@ def compile_with_search(backend,
                 save_to_file([inp], [res], record_file)
             #print(logical_mesh.id_mesh.shape, objective, np.mean(time_costs))
 
-        logical_mesh, compiled, solution_vector = \
-            best_logical_mesh, best_compiled, best_solution_vector
+        logical_mesh, compiled, solution_vector, objective = \
+            best_logical_mesh, best_compiled, best_solution_vector, best_objective
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective

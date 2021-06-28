@@ -103,8 +103,6 @@ class SearchAPITest(unittest.TestCase):
         self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
         after = get_number_of_lines(filename)
         
-        print(before, after)
-
         # The second call should not generate new records
         assert before == after
  

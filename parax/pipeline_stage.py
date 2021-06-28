@@ -362,9 +362,11 @@ class XlaShardedPipelineStage(PipelineStage):
                                 *,
                                 jax_pipeline_stage: JaxPipelineStage,
                                 auto_sharded_hlo_proto: xc.XlaComputation,
-                                donated_invars: bool=False):
+                                donated_invars=None):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline stage."""
+        if not donated_invars:
+            donated_invars = (False, ) * len(jax_pipeline_stage.invars)
         return cls(
             name=jax_pipeline_stage.name,
             hlo_proto=auto_sharded_hlo_proto,

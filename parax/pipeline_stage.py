@@ -289,8 +289,14 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
             new_stage.invars = invars
         elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
             global_and_local_outvars = list(it.chain(stage.global_outvars, stage.local_outvars))
-            invars = [get_alias(var) for var in eqn.invars + global_and_local_outvars]
-            outvars = eqn.outvars + global_and_local_outvars
+            eqn_invars_without_dropvar = []
+            eqn_outvars_without_dropvar = []
+            for invar, outvar in zip(eqn.invars, eqn.outvars):
+                if not isinstance(invar, DropVar):
+                    eqn_invars_without_dropvar.append(invar)
+                    eqn_outvars_without_dropvar.append(outvar)
+            invars = [get_alias(var) for var in eqn_invars_without_dropvar + global_and_local_outvars]
+            outvars = eqn_outvars_without_dropvar + global_and_local_outvars
             new_stage.outvars = outvars
         else:
             invars = [get_alias(var) for var in eqn.invars]

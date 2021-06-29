@@ -292,7 +292,7 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
             eqn_invars_without_dropvar = []
             eqn_outvars_without_dropvar = []
             for invar, outvar in zip(eqn.invars, eqn.outvars):
-                if not isinstance(invar, DropVar):
+                if not isinstance(outvar, DropVar):
                     eqn_invars_without_dropvar.append(invar)
                     eqn_outvars_without_dropvar.append(outvar)
             invars = [get_alias(var) for var in eqn_invars_without_dropvar + global_and_local_outvars]

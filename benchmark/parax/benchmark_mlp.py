@@ -11,9 +11,12 @@ from flax import linen as nn
 from flax import optim
 import ray
 
-from parax import parallelize, testing, global_config, DeviceCluster
+from parax import parallelize, set_parallelize_options, testing, global_config, DeviceCluster
+from parax.util import write_tsv
 
 MB = 1024 ** 2
+GB = 1024 ** 3
+
 
 def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
     """For debugging usage."""
@@ -34,7 +37,7 @@ def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
 
 def benchmark_mlp_one_case(benchmark_case, use_profiling):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
+    batch_size, seq_len, hidden_size, num_layers, dp_size, tensor_mp_size =\
         benchmark_case
 
     class Model(nn.Module):
@@ -54,6 +57,9 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     physical_mesh = device_cluster.get_physical_mesh()
     assert physical_mesh.total_devices == dp_size * tensor_mp_size
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size])
+    set_parallelize_options(devices=logical_mesh)
+                            #search_logical_mesh_shape=True,
+                            #mesh_shape_search_mode="measurement")
 
     if use_profiling:
         filename = physical_mesh.get_signature() + ".prof.pkl"
@@ -61,13 +67,12 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
             print(f"Load saved profiling results from {filename}")
             physical_mesh.load_profiling_result(filename)
             physical_mesh.prof_result.multiply_scale(1e7)
-
         else:
             physical_mesh.profile_collective("all-reduce")
             print(f"Save profiling results to {filename}")
             physical_mesh.save_profiling_result(filename)
 
-    @parallelize(devices=logical_mesh)
+    @parallelize
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])
@@ -118,25 +123,23 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
-    line = f"Case: {benchmark_case}\t"\
-           f"PeakMem: {real_mem/MB:.2f}\t"\
-           f"Mean Time: {np.mean(costs):.2f}\t"\
-           f"Std Time: {np.std(costs):.2f}\t"\
-           f"Objective: {objective:.2f}\t"
+    # Log benchmark results
+    heads = ["Case", "PeakMem", "Objective", "Mean Time", "Std Time"]
+    values = [str(benchmark_case), f"{real_mem/GB:.2f}", f"{objective:.2f}",
+             f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
+    write_tsv(heads, values, "result_mlp.tsv")
 
-    print(line)
-    with open("result_mlp.tsv", "a") as fout:
-        fout.write(line + "\n")
+    physical_mesh.shutdown()
 
 
 benchmark_suite = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (16,          1024,    2304,        4,          2304//96,  4,       1),
-    (16,          1024,    2304,        4,          2304//96,  2,       2),
+    # Batch size, seq_len, hidden size, num_layers, dp_size, tensor_mp_size,
+    (16,          1024,    2304,        4,          4,       1),
+    (16,          1024,    2304,        4,          2,       2),
 
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           256,     2304,        4,          2304//96,  4,       1),
-    (8,           256,     2304,        4,          2304//96,  2,       2),
+    # Batch size, seq_len, hidden size, num_layers, dp_size, tensor_mp_size,
+    (8,           256,     5760,        4,          4,       1),
+    (8,           256,     5760,        4,          2,       2),
 ]
 
 

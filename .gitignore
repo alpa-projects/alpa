@@ -19,3 +19,4 @@ dist
 
 # Profiling result cache
 *.prof.pkl
+tests/*.json

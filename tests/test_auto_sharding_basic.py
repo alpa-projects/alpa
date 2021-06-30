@@ -13,7 +13,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, global_config, testing, PhysicalDeviceMesh
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 
 from test_auto_sharding_mlp import assert_close, all_reduce_cost
 
@@ -22,26 +22,10 @@ MB = 1024 ** 2
 class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = tuple(jax.local_devices()[:4])
-        global_config.shard_parallel_strategy = "auto_sharding"
-
-
-    def test_one_by_one_mesh(self):
-        @parallelize(donate_argnums=(0,),
-                     devices=self.devices[0:1])
-        def add_one(x):
-            x = x + 1
-            return x
-
-        a = jnp.ones((128, 128))
-        b = add_one(a)
-
-        np.testing.assert_allclose(b, a + 1)
-
+        set_parallelize_options(jax.devices()[:4])
 
     def test_donate_buffer(self):
-        @parallelize(donate_argnums=(0,),
-                     devices=self.devices)
+        @parallelize(donate_argnums=(0,))
         def add_one(x):
             x = x + 1
             return x
@@ -62,19 +46,21 @@ class AutoShardingBasicTest(unittest.TestCase):
             mesh_mapping=(Replicated(1), ShardedAxis(0)))
 
     def test_dot_reshape_transpose(self):
+        set_parallelize_options(memory_budget_per_device=1 * MB)
         dim_0 = 64
         dim_1 = 1024
 
         def func(a, b):
+            a = jnp.transpose(a, [0, 2, 1])
             a = jnp.reshape(a, (dim_0, dim_1))
             b = jnp.reshape(b, (dim_1, dim_0))
             out = a @ b
             out = -out
             return out
 
-        para_func = parallelize(memory_budget_per_device=1 * MB, devices=self.devices)(func)
+        para_func = parallelize(func)
 
-        a = jnp.ones((dim_0, 4, dim_1 // 4))
+        a = jnp.ones((dim_0, dim_1 // 4, 4))
         b = jnp.ones((dim_1, dim_0 // 4, 4))
 
         # Check correctness
@@ -121,90 +107,25 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert hlo_ir.count("channel_id") == 1
         assert hlo_ir.count("all-reduce(") == 1
 
-    def test_all_reduce_simplification(self):
-        # This test is deprecated.
-        # This requires partial_reduction, which is not in our current plan
-        return
+    def test_one_by_one_mesh(self):
+        set_parallelize_options(devices=jax.devices()[0:1])
 
-        dim_0 = 128
-        dim_1 = 2048
+        @parallelize
+        def add_one(x):
+            x = x + 1
+            return x
 
-        def func(a, b, c, d, e, f):
-            h1 = a @ b
-            h2 = c @ d
-            h3 = e @ f
-            out = h1 + h2 + h3
-            out = jnp.exp(out)
-            return out
+        a = jnp.ones((128, 128))
+        b = add_one(a)
 
-        para_func = parallelize(memory_budget_per_device=2 * MB, devices=self.devices)(func)
-
-        a = jnp.ones((dim_0, dim_1))
-        b = jnp.ones((dim_1, dim_0))
-        c = jnp.ones((dim_0, dim_1))
-        d = jnp.ones((dim_1, dim_0))
-        e = jnp.ones((dim_0, dim_1))
-        f = jnp.ones((dim_1, dim_0))
-
-        # Check correctness
-        expected = func(a, b, c, d, e, f)
-        actual = para_func(a, b, c, d, e, f)
-        np.testing.assert_allclose(expected, actual)
-
-        # Check sharding strategy
-        expected = all_reduce_cost(len(self.devices), dim_0 * dim_0 * 4)
-        assert_close(testing.last_compiled_auto_sharding_objective, expected)
-
-    def test_all_reduce_simplification_out_reuse(self):
-        # This test is deprecated.
-        # This requires partial_reduction, which is not in our current plan
-        return
-
-        dim_0 = 128
-        dim_1 = 2048
-
-        def func(a, b, c, d, e, f, g):
-            h1 = a @ b
-            h2 = c @ d
-            h3 = e @ f
-            h1 = jnp.reshape(h1, [dim_0 // 4, 4, dim_0])
-            h2 = jnp.reshape(h2, [dim_0 // 4, 4, dim_0])
-            h3 = jnp.reshape(h3, [dim_0 // 4, 4, dim_0])
-            out = jnp.negative(g)
-            out = out + h1
-            out = out + h2
-            out = out + h3
-            out = jnp.negative(out)
-            return out
-
-        para_func = parallelize(memory_budget_per_device=2 * MB, devices=self.devices)(func)
-
-        a = jnp.ones((dim_0, dim_1))
-        b = jnp.ones((dim_1, dim_0))
-        c = jnp.ones((dim_0, dim_1))
-        d = jnp.ones((dim_1, dim_0))
-        e = jnp.ones((dim_0, dim_1))
-        f = jnp.ones((dim_1, dim_0))
-        g = jnp.ones((dim_0 // 4, 4, dim_0))
-
-        # Check correctness
-        expected = func(a, b, c, d, e, f, g)
-        actual = para_func(a, b, c, d, e, f, g)
-        np.testing.assert_allclose(expected, actual)
-
-        # Check sharding strategy
-        expected = all_reduce_cost(len(self.devices), dim_0 * dim_0 * 4)
-        assert_close(testing.last_compiled_auto_sharding_objective, expected)
-
+        np.testing.assert_allclose(b, a + 1)
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
     suite.addTest(AutoShardingBasicTest("test_donate_buffer"))
     suite.addTest(AutoShardingBasicTest("test_dot_reshape_transpose"))
     suite.addTest(AutoShardingBasicTest("test_dropout"))
-    suite.addTest(AutoShardingBasicTest("test_all_reduce_simplification"))
-    suite.addTest(AutoShardingBasicTest("test_all_reduce_simplification_out_reuse"))
+    suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
     return suite
 
 

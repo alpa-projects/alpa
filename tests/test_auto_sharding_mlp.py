@@ -9,7 +9,7 @@ from flax import linen as nn
 from flax import optim
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 
-from parax import parallelize, global_config, testing, PhysicalDeviceMesh
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 from parax.testing import assert_only_has_allreduce
 
 MB = 1024 ** 2
@@ -65,7 +65,6 @@ class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
-        global_config.shard_parallel_strategy = "auto_sharding"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(devices=self.devices)
@@ -73,18 +72,17 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def run_2_layer_mlp(self, batch_size, input_dim, output_dim, hidden_dim,
                         device_mesh):
-        class Model(nn.Module):
-            hidden_dim: int
-            output_dim: int
+        set_parallelize_options(devices=device_mesh)
 
+        class Model(nn.Module):
             @nn.compact
             def __call__(self, x):
-                x = nn.Dense(features=self.hidden_dim)(x)
+                x = nn.Dense(features=hidden_dim)(x)
                 x = nn.relu(x)
-                x = nn.Dense(features=self.output_dim)(x)
+                x = nn.Dense(features=output_dim)(x)
                 return x
 
-        @parallelize(devices=device_mesh)
+        @parallelize
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
                 out = apply_fn(params, batch["x"])
@@ -98,7 +96,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         y = jnp.ones((batch_size, output_dim))
 
         # Init model and optimizer
-        model = Model(hidden_dim=hidden_dim, output_dim=output_dim)
+        model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
@@ -114,20 +112,18 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def run_n_layer_mlp(self, num_layers, batch_size,
                         input_dim, output_dim, hidden_dim, device_mesh):
-        class Model(nn.Module):
-            hidden_dim: int
-            output_dim: int
-            num_layers: int
+        set_parallelize_options(devices=device_mesh)
 
+        class Model(nn.Module):
             @nn.compact
             def __call__(self, x):
-                for i in range(self.num_layers-1):
-                    x = nn.Dense(features=self.hidden_dim)(x)
+                for i in range(num_layers-1):
+                    x = nn.Dense(features=hidden_dim)(x)
                     x = nn.relu(x)
-                x = nn.Dense(features=self.output_dim)(x)
+                x = nn.Dense(features=output_dim)(x)
                 return x
 
-        @parallelize(devices=device_mesh)
+        @parallelize
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
                 out = apply_fn(params, batch["x"])
@@ -141,8 +137,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         y = jnp.ones((batch_size, output_dim))
 
         # Init model and optimizer
-        model = Model(num_layers=num_layers,
-                      hidden_dim=hidden_dim, output_dim=output_dim)
+        model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)

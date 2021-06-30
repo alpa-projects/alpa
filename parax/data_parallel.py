@@ -1,28 +1,34 @@
-"""pmap based data parallel"""
-from functools import wraps
+# flake8: noqa
+"""Data parallel based on pmap or gshard."""
+from collections import OrderedDict
 
-import numpy as np
-
+import flax
 import jax
 from jax import linear_util as lu
 from jax.api_util import (
+    argnums_partial,
     flatten_axes,
     flatten_fun_nokwargs,
-    argnums_partial,
 )
 from jax.core import ShapedArray
+from jax.experimental.maps import mesh
 from jax.interpreters import xla, partial_eval as pe
-from jax.interpreters.pxla import parallel_callable
+from jax.interpreters.pxla import parallel_callable, mesh_callable, Mesh
+from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 from jax._src.util import (
+    extend_name_stack,
     safe_map,
-    prod,
+    safe_zip,
+    partial,
     wraps,
+    wrap_name,
     HashableFunction,
 )
-import flax
+import numpy as np
 
-from parax import util
+from parax import util, testing
+
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -41,43 +47,6 @@ def annotate_gradient(gradients):
         return jax.lax.pmean(gradients, "data_parallel_batch")
     else:
         return gradients
-
-
-def pmap_data_parallel(fun, static_argnums="auto", devices=None):
-    """Use pmap to implement data parallelism"""
-
-    @wraps(fun)
-    def ret_func(*args, **kwargs):
-        assert not kwargs, "kwargs not supported"
-
-        f = lu.wrap_init(fun)
-
-        # Deal with static arguments
-        nonlocal static_argnums
-        if static_argnums == "auto":
-            static_argnums = util.auto_static_argnums(args)
-
-        if static_argnums:
-            dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-            f, dyn_args = argnums_partial(f, dyn_argnums, args)
-        else:
-            dyn_args = args
-
-        # Flatten pytree arguments
-        args_flat, in_tree = tree_flatten(dyn_args)
-        f, out_tree = flatten_fun_nokwargs(f, in_tree)
-        out_tree_thunk = HashableFunction(lambda: out_tree(), closure=None)
-
-        # JIT compile and call the compiled func
-        abstract_args = unsafe_map(xla.abstractify, args_flat)
-        compiled_func = pmap_data_parallel_callable(
-            f, in_tree, out_tree_thunk, devices, *abstract_args
-        )
-        out = compiled_func(*args_flat)
-
-        return tree_unflatten(out_tree(), out)
-
-    return ret_func
 
 
 def data_parallel_split(x, axis_size):
@@ -123,7 +92,7 @@ def pmap_data_parallel_callable(
     # Detect weight tensors and mark them as "should_replicate"
     dyn_args = tree_unflatten(in_tree, avals)
     should_replicate = tree_map(
-        should_replicate_map, dyn_args, should_replicate_is_leaf
+        should_replicate_map, dyn_args, is_leaf=should_replicate_is_leaf
     )
     should_replicate = tuple(
         flatten_axes("pmap_data_parallel_callable should_replicate", in_tree, should_replicate)
@@ -134,12 +103,11 @@ def pmap_data_parallel_callable(
 
     # Get jaxpr and XLA hlo
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
-    # c = jaxpr_to_xla_computation(jaxpr, avals, consts, fun_name)
 
     # Create out_axes paritition spec
     unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
     out_should_replicate = tree_map(
-        should_replicate_map, unflatten_out_avals, should_replicate_is_leaf
+        should_replicate_map, unflatten_out_avals, is_leaf=should_replicate_is_leaf
     )
     out_should_replicate = flatten_axes(
         "pmap_data_parallel_callable out_should_replicate",
@@ -182,6 +150,7 @@ def pmap_data_parallel_callable(
         global_arg_shapes,
         *split_avals
     )
+    testing.last_compiled_executable = compiled_fun.args[0]
 
     def ret_func(*args):
         split_args = (
@@ -191,3 +160,70 @@ def pmap_data_parallel_callable(
         return compiled_fun(*split_args)
 
     return ret_func
+
+unsafe_map, map = map, safe_map  # type: ignore
+
+
+def shard_first_dim(x):
+    if util.compute_bytes(x) < 128:
+        return OrderedDict()
+    return OrderedDict([('mesh_x', 0)])
+
+
+@lu.cache
+def shard_data_parallel_callable(
+    fun: lu.WrappedFun,
+    in_tree,
+    out_tree_thunk,
+    devices,
+    donated_invars,
+    *avals
+):
+    fun_name = fun.__name__
+    devices = devices or np.array(jax.devices())
+
+    # Get jaxpr and XLA hlo
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
+
+    # Detect weight tensors and mark them as "should_replicate"
+    dyn_args = tree_unflatten(in_tree, avals)
+    should_replicate = tree_map(
+        should_replicate_map, dyn_args, is_leaf=should_replicate_is_leaf
+    )
+    should_replicate = tuple(
+        flatten_axes("shard_parallel_callable should_replicate", in_tree, should_replicate)
+    )
+
+    # Create in_axes paritition spec
+    in_axes = tuple(OrderedDict() if should_replicate[i] else shard_first_dim(avals[i])
+                    for i in range(len(avals)))
+
+    # Create out_axes paritition spec
+    unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
+    out_should_replicate = tree_map(
+        should_replicate_map, unflatten_out_avals, is_leaf=should_replicate_is_leaf
+    )
+    out_should_replicate = flatten_axes(
+        "shard_parallel_callable out_should_replicate",
+        out_tree_thunk(),
+        out_should_replicate,
+    )
+    out_axes = tuple(OrderedDict() if out_should_replicate[i] else shard_first_dim(out_avals[i])
+                    for i in range(len(out_avals)))
+
+    devices = np.array(devices)
+    mesh = Mesh(devices, ('mesh_x',))
+    out_axes_thunk = lambda: out_axes
+
+    # Clean stores for the next call
+    for store in fun.stores:
+        store and store.reset()
+
+    # Lower to mesh_callable
+    compiled_func = mesh_callable(fun, fun_name, None, mesh,
+                                  in_axes, out_axes_thunk, donated_invars,
+                                  True, *avals, tile_by_mesh_axes=False,
+                                  do_resource_typecheck=None)
+    testing.last_compiled_executable = compiled_func.args[0]
+    return compiled_func
+

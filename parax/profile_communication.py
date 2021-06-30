@@ -1,5 +1,7 @@
+# pylint: disable=no-self-use,consider-using-enumerate
 """Profiling communication cost."""
 from collections import defaultdict
+import time
 
 import numpy as np
 
@@ -116,7 +118,7 @@ class ProfilingResult:
         return ret
 
 
-def op_parameter(builder, num, shape, dtype):
+def _op_parameter(builder, num, shape, dtype):
     shape = xla_client.Shape.array_shape(np.dtype(dtype), shape)
     name = ""
     replicated = []
@@ -125,12 +127,12 @@ def op_parameter(builder, num, shape, dtype):
                          replicated)
 
 
-def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id):
+def _op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     if reduce_op == 'add':
         rc = xla_client.XlaBuilder("reduce_" + reduce_op)
-        x = op_parameter(rc, 0, (), dtype)
-        y = op_parameter(rc, 1, (), dtype)
+        x = _op_parameter(rc, 0, (), dtype)
+        y = _op_parameter(rc, 1, (), dtype)
         z = ops.Add(x, y)
         rc = rc.build(z)
     else:
@@ -141,7 +143,7 @@ def op_all_reduce(builder, operand, dtype, reduce_op, replica_groups, channel_id
     return ret
 
 
-def op_all_gather(builder, operand, replica_groups, channel_id):
+def _op_all_gather(builder, operand, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     ret = ops.AllGather(operand, 0, len(replica_groups[0]),
                         replica_groups_protos, channel_id, None, True)
@@ -150,7 +152,7 @@ def op_all_gather(builder, operand, replica_groups, channel_id):
 
 def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, primitive_name):
     """
-    Compile a xla executable for benchmarking collective primitives.
+    Compile a xla executable for benchmarking collective communication primitives.
 
     It is a while loop that calls the collective primitive for multiple times.
     """
@@ -182,12 +184,12 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     channel_id = backend.create_channel_handle()
     body.set_sharding(sharding)
     if primitive_name == "all-reduce":
-        out_buf = op_all_reduce(body, in_buf, dtype, "add", replica_groups, channel_id)
+        out_buf = _op_all_reduce(body, in_buf, dtype, "add", replica_groups, channel_id)
     elif primitive_name == "all-gather":
         if in_shape[0] == 0 or out_shape[0] == 0:
             pass
         else:
-            out_buf = op_all_gather(body, in_buf, replica_groups, channel_id)
+            out_buf = _op_all_gather(body, in_buf, replica_groups, channel_id)
     else:
         raise ValueError("Invalid primitive: " + primitive_name)
     counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
@@ -204,9 +206,9 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
 
     # while loop
     loop = xla_client.XlaBuilder("loop")
-    in_buf = op_parameter(loop, 0, in_shape, dtype)
-    out_buf = op_parameter(loop, 1, out_shape, dtype)
-    counter = op_parameter(loop, 2, (), np.int32)
+    in_buf = _op_parameter(loop, 0, in_shape, dtype)
+    out_buf = _op_parameter(loop, 1, out_shape, dtype)
+    counter = _op_parameter(loop, 2, (), np.int32)
     while_init = ops.Tuple(loop, [in_buf, out_buf, counter])
     ops.While(cond_computation, body_computation, while_init)
     loop.setup_alias((0,), 0, ())
@@ -221,3 +223,42 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype, p
     )
 
     return in_shape, out_shape, backend.compile(loop_computation, compile_options)
+
+
+def profile_collective_one_config(shape, dtype, replica_groups, primitive_name,
+                                  backend, num_devices, local_devices,
+                                  distributed_client, host_id, sync_func,
+                                  number=10, warmup=2):
+    """Profile the time cost of a collective communication primitive."""
+    in_shape, out_shape, compiled = compile_collective_hlo(
+        backend, num_devices, replica_groups, shape, dtype, primitive_name)
+    xla_client._xla.init_nccl_communicators(backend, distributed_client,
+                                            host_id, compiled)
+
+    #real_mem = compiled.total_allocation_size()
+    #print(compiled.hlo_modules()[0].to_string())
+    #print(f"{real_mem / GB:.3f} GB")
+
+    # Warm up
+    device_inputs = [
+        [backend.buffer_from_pyval(np.empty(in_shape, dtype), local_devices[i])
+            for i in range(len(local_devices))],
+        [backend.buffer_from_pyval(np.empty(out_shape, dtype), local_devices[i])
+            for i in range(len(local_devices))],
+        [backend.buffer_from_pyval(np.int32(warmup), local_devices[i])
+            for i in range(len(local_devices))]
+    ]
+    device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+    # Run profiling
+    device_inputs[2] = \
+        [backend.buffer_from_pyval(np.int32(number), local_devices[i])
+            for i in range(len(local_devices))]
+
+    sync_func()
+    tic = time.time()
+    compiled.execute_sharded_on_local_devices(device_inputs)
+    sync_func()
+    toc = time.time()
+
+    return (toc - tic) / number

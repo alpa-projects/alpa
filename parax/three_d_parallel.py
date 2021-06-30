@@ -33,6 +33,7 @@ def three_d_parallel_callable(
         "donated_invars": donated_invars,
         "memory_budget_per_device": memory_budget_per_device
     }
+
     jp = Jax3DPipeline(pipeline_stages=jax_pipeline_stages,
                        global_invars=global_invars,
                        global_outvars=global_outvars,

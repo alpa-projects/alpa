@@ -14,7 +14,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 # pylint: disable=redefined-builtin
 from parax import testing
 from parax.auto_sharding import hlo_sharding_to_sharding_spec, _auto_sharding_internal
-from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
+from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh, LogicalDeviceMesh
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -296,6 +296,25 @@ class XlaShardedPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
+    def input_sharding_specs_on_mesh(self, logical_mesh):
+        """Return the input sharding spec on a given logical mesh."""
+        if not isinstance(logical_mesh, LogicalDeviceMesh):
+            raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
+        avals = [var.aval for var in self.invars]
+        input_shardings = self.hlo_module.spmd_parameters_shardings()
+        input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
+                                for (proto_tuple, aval) in zip(input_shardings, avals)]
+        return input_sharding_specs
+
+    def output_sharding_specs_on_mesh(self, logical_mesh):
+        """Return the output sharding spec on a given logical mesh."""
+        if not isinstance(logical_mesh, LogicalDeviceMesh):
+            raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
+        out_avals = [var.aval for var in self.outvars]
+        output_sharding = self.hlo_module.spmd_output_sharding()
+        output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+        return output_sharding_specs
+
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
         if not isinstance(mesh, PhysicalDeviceMesh):
@@ -312,11 +331,8 @@ class XlaShardedPipelineStage(PipelineStage):
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        input_shardings = self.hlo_module.spmd_parameters_shardings()
-        input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
-                                for (proto_tuple, aval) in zip(input_shardings, avals)]
-        output_sharding = self.hlo_module.spmd_output_sharding()
-        output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+        input_sharding_specs = self.input_sharding_specs_on_mesh(logical_mesh)
+        output_sharding_specs = self.output_sharding_specs_on_mesh(logical_mesh)
 
         # Return the final callable
         return mesh.get_callable_with_arg_handler(compiled, avals, out_avals,

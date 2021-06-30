@@ -205,3 +205,15 @@ def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
     return ret
+
+
+def write_tsv(heads, values, filename, print_line=True):
+    """Write tsv data to a file."""
+    with open(filename, "a") as fout:
+        fout.write("\t".join(values) + "\n")
+
+    if print_line:
+        line = ""
+        for i in range(len(heads)):
+            line += heads[i] + ": " + values[i] + "  "
+        print(line)

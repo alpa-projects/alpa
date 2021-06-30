@@ -12,8 +12,11 @@ from flax import optim
 import ray
 
 from parax import parallelize, set_parallelize_options, testing, global_config, DeviceCluster
+from parax.util import write_tsv
 
 MB = 1024 ** 2
+GB = 1024 ** 3
+
 
 def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
     """For debugging usage."""
@@ -34,7 +37,7 @@ def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
 
 def benchmark_mlp_one_case(benchmark_case, use_profiling):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
+    batch_size, seq_len, hidden_size, num_layers, dp_size, tensor_mp_size =\
         benchmark_case
 
     class Model(nn.Module):
@@ -120,27 +123,23 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
-    line = f"Case: {benchmark_case}\t"\
-           f"PeakMem: {real_mem/MB:.2f}\t"\
-           f"Mean Time: {np.mean(costs):.2f}\t"\
-           f"Std Time: {np.std(costs):.2f}\t"\
-           f"Objective: {objective:.2f}\t"
-
-    print(line)
-    with open("result_mlp.tsv", "a") as fout:
-        fout.write(line + "\n")
+    # Log benchmark results
+    heads = ["Case", "PeakMem", "Objective", "Mean Time", "Std Time"]
+    values = [str(benchmark_case), f"{real_mem/GB:.2f}", f"{objective:.2f}",
+             f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
+    write_tsv(heads, values, "result_mlp.tsv")
 
     physical_mesh.shutdown()
 
 
 benchmark_suite = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (16,          1024,    2304,        4,          2304//96,  4,       1),
-    (16,          1024,    2304,        4,          2304//96,  2,       2),
+    # Batch size, seq_len, hidden size, num_layers, dp_size, tensor_mp_size,
+    (16,          1024,    2304,        4,          4,       1),
+    (16,          1024,    2304,        4,          2,       2),
 
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           256,     2304,        4,          2304//96,  4,       1),
-    (8,           256,     2304,        4,          2304//96,  2,       2),
+    # Batch size, seq_len, hidden size, num_layers, dp_size, tensor_mp_size,
+    (8,           256,     5760,        4,          4,       1),
+    (8,           256,     5760,        4,          2,       2),
 ]
 
 

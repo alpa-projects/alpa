@@ -14,7 +14,7 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from parax.testing import assert_only_has_allreduce
-from parax.util import run_cmd
+from parax.util import run_cmd, write_tsv
 
 import timeit
 
@@ -152,12 +152,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
              f"{real_mem/GB:.3f}", f"{objective:.2f}",
              f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
-    with open("result_trans.tsv", "a") as fout:
-        fout.write("\t".join(values) + "\n")
-    line = ""
-    for i in range(len(heads)):
-        line += heads[i] + ": " + values[i] + "  "
-    print(line)
+    write_tsv(heads, values, "result_trans.tsv")
 
     physical_mesh.shutdown()
 

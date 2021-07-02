@@ -232,8 +232,6 @@ def profile_collective_one_config(shape, dtype, replica_groups, primitive_name,
     """Profile the time cost of a collective communication primitive."""
     in_shape, out_shape, compiled = compile_collective_hlo(
         backend, num_devices, replica_groups, shape, dtype, primitive_name)
-    xla_client._xla.init_nccl_communicators(backend, distributed_client,
-                                            host_id, compiled)
 
     #real_mem = compiled.total_allocation_size()
     #print(compiled.hlo_modules()[0].to_string())

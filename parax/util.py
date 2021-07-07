@@ -1,6 +1,8 @@
+# pylint: disable=consider-using-enumerate
 """Common utilities."""
 import os
 import subprocess
+import time
 
 import flax
 import numpy as np
@@ -115,6 +117,67 @@ def get_compile_options(num_replicas,
 
 
 ########################################
+##### Profiling Utilities
+########################################
+
+def profile_xla_executable(compiled, backend, local_devices, sync_func):
+    """Measure the time costs of a xla executable."""
+    hlo_module = compiled.hlo_modules()[0]
+    input_shapes = hlo_module.parameter_shapes()
+    device_inputs = []
+    for shape in input_shapes:
+        device_inputs.append(
+            [backend.buffer_from_pyval(np.empty(shape.dimensions(), shape.numpy_dtype()),
+                                       local_devices[i])
+             for i in range(len(local_devices))]
+        )
+
+    def run_once():
+        device_outputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+        # Reset the value for donate buffers
+        for j in range(len(device_inputs)):
+            if device_inputs[j][0].is_deleted():
+                device_inputs[j] = device_outputs[j]
+        sync_func()
+
+    costs = measure_func(run_once, repeat=1, min_repeat_second=0.5)
+    return costs
+
+
+def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
+    """
+    Measure the execution time of a function.
+
+    The function is executed for (warmup + number * repeat) times.
+    The return value is a array of `repeat` elements and each elements is 
+    the avarage execution time of `number` executions.
+
+    If `min_repeat_second` is set, the function automatically picks a `number`
+    so that one `repeat` lasts for at least `min_repeat_second` seconds.
+    """
+    for _ in range(warmup):
+        func()
+
+    if min_repeat_second:
+        tic = time.time()
+        func()
+        toc = time.time()
+        cost = toc - tic
+        number = max(int(min_repeat_second / cost), 1)
+
+    costs = []
+    for _ in range(repeat):
+        tic = time.time()
+        for __ in range(number):
+            func()
+        toc = time.time()
+        costs.append((toc - tic) / number)
+
+    return costs
+
+
+########################################
 ##### Other Utilities
 ########################################
 
@@ -142,3 +205,15 @@ def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
     return ret
+
+
+def write_tsv(heads, values, filename, print_line=True):
+    """Write tsv data to a file."""
+    with open(filename, "a") as fout:
+        fout.write("\t".join(values) + "\n")
+
+    if print_line:
+        line = ""
+        for i in range(len(heads)):
+            line += heads[i] + ": " + values[i] + "  "
+        print(line)

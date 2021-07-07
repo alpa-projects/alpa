@@ -1,3 +1,4 @@
+# flake8: noqa
 """Model definition of BERT.
 Copied from https://github.com/huggingface/transformers/blob/master/src/transformers/models/bert/modeling_flax_bert.py"""
 from dataclasses import dataclass

@@ -10,10 +10,11 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import parallelize, global_config, testing, DeviceCluster, PhysicalDeviceMesh
+from parax import (parallelize, global_config, set_parallelize_options, testing,
+                   DeviceCluster, PhysicalDeviceMesh)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from parax.testing import assert_only_has_allreduce
-from parax.util import run_cmd
+from parax.util import run_cmd, write_tsv
 
 import timeit
 
@@ -63,6 +64,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
+    set_parallelize_options(devices=logical_mesh)
 
     # Load profiling results
     if use_profiling:
@@ -77,7 +79,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             print(f"Save profiling results to {filename}")
             physical_mesh.save_profiling_result(filename)
 
-    @parallelize(devices=logical_mesh)
+    @parallelize
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             rngs = {"dropout": batch["rng"]}
@@ -150,12 +152,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
              f"{real_mem/GB:.3f}", f"{objective:.2f}",
              f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
-    with open("result_trans.tsv", "a") as fout:
-        fout.write("\t".join(values) + "\n")
-    line = ""
-    for i in range(len(heads)):
-        line += heads[i] + ": " + values[i] + "  "
-    print(line)
+    write_tsv(heads, values, "result_trans.tsv")
 
     physical_mesh.shutdown()
 

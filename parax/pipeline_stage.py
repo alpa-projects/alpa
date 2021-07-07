@@ -4,6 +4,7 @@ from copy import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
+import numpy as np
 
 from abc import ABC, abstractmethod
 from jax import jit
@@ -13,11 +14,12 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
 
 from parax.pipeline_primitive_def import pipeline_p
-from parax.auto_sharding import analyze_device_mesh, auto_sharding_compile, get_auto_sharded_hlo_stages
+from parax.auto_sharding import compile_without_auto_sharding
 
 # pylint: disable=redefined-builtin
 from parax import testing
-from parax.auto_sharding import hlo_sharding_to_sharding_spec, _auto_sharding_internal
+from parax.auto_sharding import compile_with_search, hlo_sharding_to_sharding_spec
+from parax.measure_record import StrategyConfig
 from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
 from parax.util import get_compile_options
 
@@ -310,7 +312,8 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     return new_stage
 
 
-def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage], logical_mesh, physical_mesh, memory_budget_per_device=None):
+def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage], physical_mesh, logical_mesh_search_mode,
+                                logical_mesh_choices, memory_budget_per_device, search_task, record_file):
     invars = set()
     outvars = set()
     eqns = []
@@ -328,12 +331,13 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     )
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
+    backend = xb.get_backend(backend_name)
     built_computation = build_hlo_computation_from_jaxpr(name, closed_jaxpr, backend_name=backend_name)
-    auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
-                          memory_budget_per_device=memory_budget_per_device,
-                          tuple_args=False, multi_stage_compilation=True)
-    stage_protos = get_auto_sharded_hlo_stages()
-    stages = [XlaShardedPipelineStage.from_auto_sharded_stage(auto_sharded_hlo_proto=proto, jax_pipeline_stage=stage)
+    stage_protos, strategy_config = compile_with_search(backend, built_computation, physical_mesh, logical_mesh_search_mode,
+                                       logical_mesh_choices, memory_budget_per_device, search_task, record_file,
+                                       multiple_stages=True)
+    stages = [XlaShardedPipelineStage.from_auto_sharded_stage(auto_sharded_hlo_proto=proto, jax_pipeline_stage=stage,
+                                                              strategy_config=strategy_config)
               for stage, proto in zip(jax_stages, stage_protos)]
     return stages
 
@@ -376,12 +380,14 @@ class XlaShardedPipelineStage(PipelineStage):
 
     hlo_proto: Any = None
     donated_invars: Any = None  # TODO(Hao): figure out donated_invars
+    strategy_config: StrategyConfig = None
 
     @classmethod
     def from_auto_sharded_stage(cls,
                                 *,
                                 jax_pipeline_stage: JaxPipelineStage,
                                 auto_sharded_hlo_proto: xc.XlaComputation,
+                                strategy_config: StrategyConfig,
                                 donated_invars=None):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline stage."""
@@ -390,6 +396,7 @@ class XlaShardedPipelineStage(PipelineStage):
         return cls(
             name=jax_pipeline_stage.name,
             hlo_proto=auto_sharded_hlo_proto,
+            strategy_config=strategy_config,
             donated_invars=donated_invars,
             invars=jax_pipeline_stage.invars,
             pipeline_invars=jax_pipeline_stage.pipeline_invars,
@@ -406,20 +413,26 @@ class XlaShardedPipelineStage(PipelineStage):
         """Return a callable of the pipeline stage."""
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError("Require a pre-allocated physical mesh to compile the runnable.")
-        logical_mesh = mesh.get_default_logical_mesh()
+
+        strategy_config = self.strategy_config
+        logical_mesh_shape = strategy_config.logical_mesh_shape
         xla_computation = xc.XlaComputation(self.hlo_proto)
         tuple_args = False
-        compiled, hlo_module = auto_sharding_compile(xla_computation, logical_mesh, mesh,
-                                                     tuple_args=tuple_args, enable_auto_sharding=False)
-        # TODO(lmzheng): get this random seed from the above function (from_jax_pipeline_stage).
+        backend_name = 'gpu'
+        backend = xb.get_backend(backend_name)
+        num_devices = np.prod(strategy_config.logical_mesh_shape)
+        compiled = compile_without_auto_sharding(backend, xla_computation, num_devices, mesh.is_distributed, self.strategy_config)
+        hlo_module = compiled.hlo_modules()[0]
+        if mesh.is_distributed:
+            compiled = mesh.compile_remote_executable(self.hlo_proto, self.strategy_config)
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         input_shardings = hlo_module.spmd_parameters_shardings()
-        input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
+        input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
                                 for (proto_tuple, aval) in zip(input_shardings, avals)]
         output_sharding = hlo_module.spmd_output_sharding()
-        output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+        output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh_shape)
 
         # Return the final callable
         return mesh.get_callable_with_arg_handler(compiled, avals, out_avals,

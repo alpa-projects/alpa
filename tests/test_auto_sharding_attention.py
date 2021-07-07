@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import optim
 
-from parax import parallelize, global_config, testing, PhysicalDeviceMesh
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from test_auto_sharding_mlp import (assert_close, assert_all_replicated,
                                     assert_column_partitioned,
@@ -25,8 +25,7 @@ MB = 1024 ** 2
 class AutoShardingAttentionTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = tuple(jax.local_devices()[:4])
-        global_config.shard_parallel_strategy = "auto_sharding"
+        self.devices = jax.local_devices()[:4]
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(self.devices)
@@ -34,7 +33,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_attention(self, batch_size, seq_len, hidden_size, num_heads,
                       deterministic, device_mesh):
-        @parallelize(devices=device_mesh)
+        set_parallelize_options(devices=device_mesh)
+
+        @parallelize
         def train_step(optimizer, batch, deterministic, apply_fn):
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}
@@ -76,7 +77,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_bert_layers(self, num_layers, batch_size, seq_len, hidden_size,
                         num_heads, deterministic, device_mesh):
-        @parallelize(devices=device_mesh)
+        set_parallelize_options(devices=device_mesh)
+
+        @parallelize
         def train_step(optimizer, batch, deterministic, apply_fn):
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}

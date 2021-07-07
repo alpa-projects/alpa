@@ -7,7 +7,7 @@ from flax import linen as nn
 from flax import optim
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from jax.experimental.maps import FrozenDict as FrozenDictJax
-from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection, FlaxBertLayer
+from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection, FlaxBertLayer, FlaxBertOutput, FlaxBertSelfOutput
 
 from parax import mark_pipeline
 from parax import parallelize, DeviceCluster
@@ -45,7 +45,7 @@ def assert_allclose(x, y):
         assert hasattr(y, '__array__') or np.isscalar(y)
         x = np.asarray(x)
         y = np.asarray(y)
-        assert np.allclose(x, y)
+        assert np.allclose(x, y, rtol=1e-3, atol=5e-06), f"{x}, {y}"
     elif x == y:
         return
     else:
@@ -80,7 +80,7 @@ def train_step(optimizer, batch, apply_fn):
         loss, = mark_pipeline(loss, name='2', mark_type='end')
         return loss
 
-    grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'], batch['attention_mask'])
+    grad_param, grad_x, grad_mask = jax.grad(loss_func, argnums = (0, 1, 2))(optimizer.target, batch['x'], batch['y'], batch['attention_mask'])
     # FIXME (zhuohan): make the pipeline work with apply_gradient
     # new_optimizer = optimizer.apply_gradient(grad_param)
     return grad_param
@@ -90,13 +90,13 @@ ray.init(address="auto", ignore_reinit_error=True)
 
 device_cluster = DeviceCluster()
 mesh = device_cluster.get_virtual_mesh()
-batch_size = 8
-seq_len = 8
-hidden_size = 256
-num_heads = 8
+batch_size = 4
+seq_len = 2048
+hidden_size = 1024
+num_heads = 1024 // 64
 
 x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
-y = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
+y = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23 # * np.arange(hidden_size)[None, None, :]
 attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
 
 # Init model and optimizer
@@ -110,7 +110,14 @@ optimizer = optim.GradientDescent(1e-2).create(params)
 gradients = train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_mask}, model.apply)
 strategy = "3d_parallel"
 
-assert_allclose(x, y)
 pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
-gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
+import time
+for i in range(10):
+    start = time.time()
+    gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_mask}, model.apply)
+    duration = time.time() - start
+    print(i, duration)
+
+# print("gradients", gradients)
+# print("gradients_with_pipeline", gradients_with_pipeline)
 assert_allclose(gradients, gradients_with_pipeline)

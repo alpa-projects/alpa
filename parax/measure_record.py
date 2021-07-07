@@ -47,7 +47,7 @@ class StrategyConfig:
         self.auto_sharding_solution_vector = auto_sharding_solution_vector
 
     def to_jsonable(self):
-        return (self.build_random_seed, tuple(self.logical_mesh_shape), 
+        return (self.build_random_seed, tuple(self.logical_mesh_shape),
                 to_int_tuple(self.auto_sharding_solution_vector))
 
     @staticmethod
@@ -85,10 +85,10 @@ def save_to_file(inputs, results, filename, protocol="json"):
     Save measurement records to a file.
 
     Args:
-      inputs (List[MeasureInput]): 
-      results (List[MeasureResult]): 
-      filename (str): 
-      protocol (str): 
+      inputs (List[MeasureInput]):
+      results (List[MeasureResult]):
+      filename (str):
+      protocol (str):
     """
     assert protocol == "json"
 
@@ -120,7 +120,7 @@ def load_from_file(filename, protocol="json"):
     for line in open(filename, "r"):
         obj = json.loads(line)
         task_jsonable, config_jsonable, time_costs, estimated_cost, \
-            error_no, timestamp, _ = obj 
+            error_no, timestamp, _ = obj
 
         inp = MeasureInput(SearchTask.from_jsonable(task_jsonable),
                            StrategyConfig.from_jsonable(config_jsonable))

@@ -54,10 +54,15 @@ def three_d_parallel_callable(
 
     xla_stages = [None] * n_stages
     for mesh_idx in range(n_meshes):
+        # TODO (zhuohan): Support search logical device shape for 3d parallel
+        physical_mesh = physical_meshes[mesh_idx]
+        logical_mesh_search_mode = "cost_model"
+        logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+        search_task = None
+        record_file = None
         sharded_xla_stages = generate_sharded_xla_stages(
-            str(mesh_idx), stage_dict[mesh_idx],
-            physical_meshes[mesh_idx].get_default_logical_mesh(), physical_meshes[mesh_idx],
-            memory_budget_per_device=memory_budget_per_device)
+            str(mesh_idx), stage_dict[mesh_idx], physical_mesh, logical_mesh_search_mode,
+            logical_mesh_choices, memory_budget_per_device, search_task, record_file)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 

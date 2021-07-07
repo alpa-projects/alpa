@@ -251,7 +251,7 @@ class MeshHostWorker:
         self.distributed_client = \
             xla_client._xla.get_distributed_runtime_client(server_address, host_id)
         self.distributed_client.connect()
-        self.backend = xla_client._gpu_backend_factory(
+        self.backend = xla_client.make_gpu_client(
             self.distributed_client, node_id=host_id)
 
         self.local_devices = self.backend.local_devices()

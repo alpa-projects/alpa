@@ -370,8 +370,13 @@ class MeshHostWorker:
     def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
         assert uuid in self.local_buffers
         src_array = self.local_buffers[uuid]
-        assert isinstance(src_array, xla._DeviceArray)
+        print(type(src_array))
+        print(src_array.shape)
+        print(offset)
+        print(src_array[tuple(offset)])
+        print("reach here 22....")
         to_send = to_cupy(src_array[tuple(offset)])
+        print(to_send)
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -400,9 +405,12 @@ class MeshHostWorker:
 
 def to_cupy(tensors):
     """Convert a Jax DeviceArray to cupy tensor."""
+    print("reach here...1")
     if isinstance(tensors, list):
         return list(map(to_cupy, tensors))
+    print("reach here...2")
     ctensor = cp.fromDlpack(get_jax_dlpack(tensors))
+    print("reach here...3")
     return ctensor
 
 def get_jax_dlpack(tensor):

@@ -162,7 +162,7 @@ class ReshardingTask:
         # according to task_spec, launch send/recv operations
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
-        for i, dst_tile, src_tiles, indices_in_dst_tiles in enumerate(self.task_spec.dst_tile_to_src_tiles_map):
+        for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(self.task_spec.dst_tile_to_src_tiles_map):
             # Loop over each dst tile for this shard
             s = self.task_spec.strategy[i]
             # strategy is len(dst_tile.device_strs) by len(src_tiles)
@@ -171,7 +171,7 @@ class ReshardingTask:
                 senders = [s[replica_index][src_tile_index]
                            for src_tile_index, src_tile in enumerate(src_tiles)]
                 device_str_to_buf_map[receiver] = self.same_destination_group_send_recv(
-                    senders, src_tiles, dst_tile.tile_shape, indices_in_dst_tiles, receiver)
+                    senders, src_tiles, dst_tile, indices_in_dst_tiles, receiver)
             # for each tile, assemble the results and generate a RemoteBufRef
 
 
@@ -195,14 +195,14 @@ class ReshardingTask:
                                          indices_in_dst_tiles,
                                          receiver):
         # construct a remote buf for this tile
-        result_buf = RemoteBufferRef(self.dst_mesh,
-                                     self.collective_group.device_str_to_host_id_map[receiver],
-                                     self.collective_group.device_str_to_device_id_map[receiver])
-        # Put an empty buffer first.
-        ray.get(self.dst_mesh.put_empty_buffer.remote(result_buf.uuid, result_buf.device_id, dst_tile.tile_shape))
-
-        receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[receiver]
+        receiver_host_id = self.collective_group.device_str_to_host_id_map[receiver]
+        receiver_device_id = self.collective_group.device_str_to_device_id_map[receiver]
         receiver_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
+        result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id, receiver_device_id)
+        # Put an empty buffer first.
+        ray.get(receiver_worker.put_empty_buffer.remote(
+            result_buf.uuid, result_buf.device_id, dst_tile.tile_shape))
+        receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[receiver]
         for i, sender in enumerate(senders):
             # send is a device_str in src_mesh
             # we need to find out its mesh_worker, and the corresponded sender remotebuf (uuid-indexed).
@@ -340,7 +340,7 @@ class CollectiveGroup:
         # TODO(Hao): incorrect assertion
         assert set(self.device_strs) == set(all_device_strs)
 
-class ReshardTaskSpec:
+class ReshardingTaskSpec:
     def __init__(self, src_array, dst_array):
         self.src = src_array
         self.dst = dst_array
@@ -363,6 +363,11 @@ class ReshardTaskSpec:
     @property
     def src_indices(self):
         return self.src.indices
+
+    @property
+    def dst_indices(self):
+        """This `indices` is the most original (flattened) one in distributed array."""
+        return self.dst.indices
 
     @property
     def dst_tile_to_src_tiles_map(self):
@@ -577,7 +582,7 @@ class CrossMeshCommunicator:
                 dst_array = VDA(device_mesh=dst_mesh,
                                 aval=var.aval,
                                 sharding_spec=dst_sharding_spec)
-                task_spec = ReshardTaskSpec(src_array, dst_array)
+                task_spec = ReshardingTaskSpec(src_array, dst_array)
                 self.resharding_specs[src_mesh_index][dst_mesh_index][repr(var)] = task_spec
 
     def _generate_resharding_strategy(self):

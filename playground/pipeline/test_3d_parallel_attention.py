@@ -1,3 +1,5 @@
+# TODO (zhuohan): Move this file to tests/
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +12,7 @@ from jax.experimental.maps import FrozenDict as FrozenDictJax
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection, FlaxBertLayer, FlaxBertOutput, FlaxBertSelfOutput
 
 from parax import mark_pipeline
-from parax import parallelize, DeviceCluster
+from parax import parallelize, set_parallelize_options, DeviceCluster
 
 MB = 1024 ** 2
 num_gpus = 2
@@ -110,6 +112,7 @@ optimizer = optim.GradientDescent(1e-2).create(params)
 gradients = train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_mask}, model.apply)
 strategy = "3d_parallel"
 
+set_parallelize_options(devices=mesh, strategy=strategy)
 pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
 import time
 for i in range(10):

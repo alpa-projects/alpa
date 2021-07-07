@@ -116,7 +116,7 @@ def benchmark_transfomer_one_case(benchmark_case):
     # Record peak memory
     func(True)
     func(True)
-    peak_mem = torch.cuda.max_memory_allocated(0) - input_mem - weight_mem
+    peak_mem = torch.cuda.max_memory_allocated(0)
 
     # Benchmark time cost
     stmt = "func()"

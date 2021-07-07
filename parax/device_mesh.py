@@ -2,6 +2,8 @@
 import time
 import logging
 from collections.abc import Iterable
+from collections import defaultdict
+import pickle
 from typing import Union, List, Tuple
 
 from operator import attrgetter
@@ -13,10 +15,11 @@ from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client
 
+from parax.profile_communication import compile_collective_hlo, ProfilingResult
 from parax.global_env import global_config
-from parax.util import get_dim_last_value, to_int_tuple
+from parax.util import get_dim_last_value, get_compile_options, list_gpu_info, to_int_tuple, GB
 from parax.xla_pass_context import XlaPassContext
 
 
@@ -242,26 +245,27 @@ def get_uuid_np_array(array):
 class MeshHostWorker:
     """A ray actor to manage the xla computation on a single host."""
 
-    def __init__(self, server_address, num_hosts, node_id):
+    def __init__(self, server_address, num_hosts, host_id):
         self.num_hosts = num_hosts
-        self.node_id = node_id
+        self.host_id = host_id
         self.distributed_client = \
-            xla_client._xla.get_distributed_runtime_client(server_address, node_id)
+            xla_client._xla.get_distributed_runtime_client(server_address, host_id)
         self.distributed_client.connect()
         self.backend = xla_client._gpu_backend_factory(
-            self.distributed_client, node_id=node_id)
+            self.distributed_client, node_id=host_id)
 
         self.local_devices = self.backend.local_devices()
         self.local_buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> Executable]
 
+    ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
     def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
         self.local_buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.ones(shape, dtype),
+            self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
 
     def get_buffers(self, uuids: Union[List[int], int]):
@@ -283,6 +287,7 @@ class MeshHostWorker:
         else:
             self.local_buffers[uuids].block_until_ready()
 
+    ##### Executable Related Functions #####
     def delete_executable(self, uuid: int):
         self.executables[uuid].delete()
         del self.executables[uuid]
@@ -293,20 +298,21 @@ class MeshHostWorker:
                            logical_mesh_shape: Tuple[int],
                            auto_sharding_strategy_vector: np.ndarray,
                            is_tuple_args: bool,
+                           build_random_seed: int,
                            enable_auto_sharding: bool=False):
         backend = self.backend
         num_devices = np.prod(logical_mesh_shape)
 
         assert num_devices == len(backend.devices())
 
-        compile_options = xla_bridge.get_compile_options(
+        compile_options = get_compile_options(
             num_replicas=1,
             num_partitions=num_devices,
             device_assignment=np.arange(num_devices).reshape((1, -1)),
             use_spmd_partitioning=True,
+            parameter_is_tupled_arguments=is_tuple_args,
+            build_random_seed=build_random_seed
         )
-        compile_options.parameter_is_tupled_arguments = is_tuple_args
-
         computation = xla_client.XlaComputation(hlo_proto)
         with XlaPassContext({
             "auto_sharding::enable": enable_auto_sharding,
@@ -320,13 +326,14 @@ class MeshHostWorker:
             # Other useless but required arguments
             "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
             "auto_sharding::device_mesh_beta": (1.0,) * len(logical_mesh_shape),
+            "auto_sharding::device_mesh_prof_result": None,
         }):
             compiled_computation = backend.compile(computation, compile_options)
 
         self.executables[uuid] = compiled_computation
 
         xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
-                                                self.node_id, compiled_computation)
+                                                self.host_id, compiled_computation)
 
     def execute(self,
                 executable_uuid: int,
@@ -354,6 +361,119 @@ class MeshHostWorker:
                 if device_inputs[i][j].is_deleted():
                     del self.local_buffers[input_uuids[i][j]]
 
+    ##### Profiling Related Functions #####
+    def profile_collective_one_config(self, shape, dtype, replica_groups, primitive_name,
+                                      number=10, warmup=2):
+        num_devices = self.num_hosts * len(self.local_devices)
+        in_shape, out_shape, compiled = compile_collective_hlo(
+            self.backend, num_devices, replica_groups, shape, dtype, primitive_name)
+        xla_client._xla.init_nccl_communicators(self.backend, self.distributed_client,
+                                                self.host_id, compiled)
+
+        #real_mem = compiled.total_allocation_size()
+        #print(compiled.hlo_modules()[0].to_string())
+        #print(f"{real_mem / GB:.3f} GB")
+
+        # Warm up
+        device_inputs = [
+            [self.backend.buffer_from_pyval(np.empty(in_shape, dtype), self.local_devices[i])
+                for i in range(len(self.local_devices))],
+            [self.backend.buffer_from_pyval(np.empty(out_shape, dtype), self.local_devices[i])
+                for i in range(len(self.local_devices))],
+            [self.backend.buffer_from_pyval(np.int32(warmup), self.local_devices[i])
+                for i in range(len(self.local_devices))]
+        ]
+        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+        # Run profiling
+        device_inputs[2] = \
+            [self.backend.buffer_from_pyval(np.int32(number), self.local_devices[i])
+                for i in range(len(self.local_devices))]
+
+        self.sync()
+        tic = time.time()
+        compiled.execute_sharded_on_local_devices(device_inputs)
+        self.sync()
+        toc = time.time()
+
+        return (toc - tic) / number
+
+    def profile_collective(self, primitive_name, size_range, number, verbose):
+        """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
+        # Generate all possible communication groups
+        prof_result = ProfilingResult()
+        size_configs = []
+        size_configs.append((0, "float32"))
+        for i in size_range or range(30):
+            size_configs.append((1 << i, "float32"))
+
+        logical_mesh_shapes = []
+        total_devices = self.num_hosts * len(self.local_devices)
+        for i in range(1, total_devices + 1):
+            if total_devices % i == 0:
+                logical_mesh_shapes.append((total_devices // i, i))
+
+        all_keys = set()
+        for logical_mesh_shape in logical_mesh_shapes:
+            # dim 0
+            replica_groups = []
+            tmp_group = []
+            for i in range(logical_mesh_shape[0]):
+                tmp_group.append(
+                    tuple(i * logical_mesh_shape[1] + j for j in range(logical_mesh_shape[1])))
+            replica_groups.append(tuple(tmp_group))
+
+            # dim 1
+            tmp_group = []
+            for j in range(logical_mesh_shape[1]):
+                tmp_group.append(
+                    tuple(i * logical_mesh_shape[1] + j for i in range(logical_mesh_shape[0])))
+            replica_groups.append(tuple(tmp_group))
+
+            for replica_group in replica_groups:
+                for size, dtype in size_configs:
+                    all_keys.add((replica_group, size, dtype))
+        all_keys = list(all_keys)
+        all_keys.sort()
+
+        for replica_group, size, dtype in all_keys:
+            if number == "auto":
+                number_ = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))),
+                              1 << 13)
+            else:
+                number_ = number
+
+            time_cost = self.profile_collective_one_config((size,), dtype, replica_group,
+                                                           primitive_name, number_)
+            num_devices = len(replica_group[0])
+            array_size = size * np.dtype(dtype).itemsize
+
+            if primitive_name == "all-reduce":
+                prof_result.record_all_reduce(replica_group, size, dtype, time_cost)
+                communication_size = 2 * array_size * (num_devices - 1) / num_devices
+            elif primitive_name == "all-gather":
+                prof_result.record_all_gather(replica_group, size, dtype, time_cost)
+                communication_size = array_size * (num_devices - 1) / num_devices
+            else:
+                raise ValueError("Invalid primitive: " + primitive_name)
+
+            bandwidth = communication_size / time_cost
+
+            if self.host_id == 0 and verbose >= 1:
+                heads = [primitive_name, "Size (GB)", "Time", "Bandwidth (GB/s)"]
+                values = [str(replica_group), f"{array_size / GB:.5f}",
+                          f"{time_cost:.5f}", f"{bandwidth / GB:.2f}"]
+
+                line = ""
+                for head, value in zip(heads, values):
+                    line += head + ": " + value + "  "
+                print(line)
+
+        if self.host_id == 0:
+            return prof_result
+        return None
+
+    ##### Other Functions #####
     def sync(self):
         for device in self.local_devices:
             device.synchronize_all_activity()
@@ -382,6 +502,7 @@ class PhysicalDeviceMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
+        self.prof_result = ProfilingResult()
 
         # Do some argument check
         if not use_ray and not devices:
@@ -419,8 +540,8 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                "XLA_FLAGS": "--xla_gpu_autotune_level=0",
-                # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
+                #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
             }
 
             # Launch a ray actor
@@ -432,11 +553,107 @@ class PhysicalDeviceMesh:
             self.workers.append(worker)
         self.sync_workers()
 
-    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
-        """Generate a logical mesh."""
+    def get_signature(self):
+        """Return a signature string that contains the mesh shape and GPU model."""
+        gpu_type = list_gpu_info()
+        gpu_name = gpu_type.split("\n")[0].split(" (UUID:")[0][7:]
+        ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
+        ret = ret.replace(" ", "-")
+        return ret
+
+    @property
+    def total_devices(self):
+        """Return the total number of GPUs on this mesh."""
+        return len(self.device_ids)
+
+    @property
+    def num_hosts(self):
+        """Return the number of hosts in the mesh."""
+        return len(self.host_ids)
+
+    @property
+    def device_ids(self):
+        """Return the device ids (does not distinguish host IPs)."""
+        return [device_str_to_id(device_str) for device_str in self.devices_str]
+
+    @property
+    def is_distributed(self):
+        """Whether this mesh should be considered as a distributed mesh."""
+        return not (self.num_hosts == 1 and not self.use_ray)
+
+    ##### Mesh Related Functions #####
+    def get_logical_mesh(self,
+                         mesh_shape,
+                         mesh_alpha=None,
+                         mesh_beta=None,
+                         mesh_topology=None,
+                         intra_host_bandwidth=None,
+                         inter_host_bandwidth=None):
+        """Return a logical mesh and parameters of the alpha-beta communication cost model."""
         id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
-        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
-        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+
+        if mesh_topology is None:
+            mesh_alpha = mesh_alpha or (1,) * len(mesh_shape)
+            mesh_beta = mesh_beta or (1,) * len(mesh_shape)
+        elif mesh_topology == "tree":
+            assert mesh_alpha is None
+            assert mesh_beta is None
+            mesh_alpha = [1] * 2
+            mesh_beta = [None] * 2
+            host_ids = np.tile(np.arange(self.num_hosts).reshape(-1, 1),
+                               self.num_devices_per_host)
+            host_ids = host_ids.reshape(mesh_shape)
+
+            # Compute bandwidth of doing communication along dim 0.
+            # 1. Compute the number of links between each host pairs.
+            #    Assume using ring-based algorithms.
+            host_link_ct = defaultdict(int)
+            for j in range(mesh_shape[1]):
+                for i in range(mesh_shape[0]):
+                    left = host_ids[i][j]
+                    right = host_ids[(i+1) % mesh_shape[0]][j]
+                    if left != right:
+                        if left > right:
+                            left, right = right, left
+                        host_link_ct[(left, right)] += 1
+
+            j = 0
+            # 2. Bandwidth between two hosts = total_bandwidth / number_of_links.
+            #    Bandwdith along a communication dimension = min bandwidth of all links.
+            bandwidth = intra_host_bandwidth
+            for i in range(mesh_shape[0]):
+                left = host_ids[i][j]
+                right = host_ids[(i+1) % mesh_shape[0]][j]
+                if left != right:
+                    if left > right:
+                        left, right = right, left
+                    bandwidth = min(bandwidth,
+                                    inter_host_bandwidth / host_link_ct[(left, right)])
+            mesh_beta[0] = 1 / bandwidth
+
+            # Compute bandwidth of doing communication along dim 1.
+            host_link_ct = defaultdict(int)
+            for i in range(mesh_shape[0]):
+                for j in range(mesh_shape[1]):
+                    left = host_ids[i][j]
+                    right = host_ids[i][(j+1) % mesh_shape[1]]
+                    if left != right:
+                        if left > right:
+                            left, right = right, left
+                        host_link_ct[(left, right)] += 1
+
+            i = 0
+            bandwidth = intra_host_bandwidth
+            for j in range(mesh_shape[1]):
+                left = host_ids[i][j]
+                right = host_ids[i][(j+1) % mesh_shape[1]]
+                if left != right:
+                    if left > right:
+                        left, right = right, left
+                    bandwidth = min(bandwidth,
+                                    inter_host_bandwidth / host_link_ct[(left, right)])
+            mesh_beta[1] = 1 / bandwidth
+
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_default_logical_mesh(self):
@@ -447,6 +664,57 @@ class PhysicalDeviceMesh:
         else:
             return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
                                          [1, 1], [1, 0.01])
+
+    ##### Buffer Related Functions #####
+    def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        obj_refs = []
+        for buf_ref in buf_refs:
+            obj_refs.append(self.workers[buf_ref.host_id].
+                            get_buffers.remote(buf_ref.uuid))
+
+        return ray.get(obj_refs)
+
+    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        if self.workers is None or not ray.is_initialized():
+            return
+
+        for buf_ref in buf_refs:
+            self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
+
+    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        tasks = []
+        for buf_ref in buf_refs:
+            tasks.append(self.workers[buf_ref.host_id].
+                         block_until_ready_buffers.remote(buf_ref.uuid))
+        ray.get(tasks)
+
+    ##### Executable Related Functions #####
+    def compile_remote_executable(self,
+                                  hlo_proto: bytes,
+                                  logical_mesh_shape: Tuple[int],
+                                  auto_sharding_strategy_vector: np.ndarray,
+                                  is_tuple_args: bool,
+                                  build_random_seed: int,
+                                  enable_auto_sharding: bool=True):
+        """Compile the remote executable."""
+        executable = RemoteExecutableRef(self)
+        for w in self.workers:
+            w.compile_executable.remote(
+                executable.uuid,
+                hlo_proto,
+                logical_mesh_shape,
+                auto_sharding_strategy_vector,
+                is_tuple_args,
+                build_random_seed,
+                enable_auto_sharding)
+        return executable
+
+    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
+        if self.workers is None or not ray.is_initialized():
+            return
+
+        for i in range(self.num_hosts):
+            self.workers[i].delete_executable.remote(exe_ref.uuid)
 
     def get_callable_with_arg_handler(self, compiled_executable, avals, out_avals,
                                       input_sharding_specs, output_sharding_specs,
@@ -537,83 +805,6 @@ class PhysicalDeviceMesh:
 
             return input_bufs
 
-    @property
-    def total_devices(self):
-        """Return the total number of GPUs on this mesh."""
-        return len(self.device_ids)
-
-    @property
-    def num_hosts(self):
-        """Return the number of hosts in the mesh."""
-        return len(self.host_ids)
-
-    @property
-    def device_ids(self):
-        """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.devices_str]
-
-    @property
-    def is_distributed(self):
-        """Whether this mesh should be considered as a distributed mesh."""
-        return not (self.num_hosts == 1 and not self.use_ray)
-
-    def compile_remote_executable(self,
-                                  hlo_proto: bytes,
-                                  logical_mesh_shape: Tuple[int],
-                                  auto_sharding_strategy_vector: np.ndarray,
-                                  is_tuple_args: bool,
-                                  enable_auto_sharding: bool=True):
-        """Compile the remote executable."""
-        executable = RemoteExecutableRef(self)
-        for w in self.workers:
-            w.compile_executable.remote(
-                executable.uuid,
-                hlo_proto,
-                logical_mesh_shape,
-                auto_sharding_strategy_vector,
-                is_tuple_args,
-                enable_auto_sharding=enable_auto_sharding)
-        return executable
-
-    def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        obj_refs = []
-        for buf_ref in buf_refs:
-            obj_refs.append(self.workers[buf_ref.host_id].
-                            get_buffers.remote(buf_ref.uuid))
-
-        return ray.get(obj_refs)
-
-    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        if self.workers is None or not ray.is_initialized():
-            return
-
-        for buf_ref in buf_refs:
-            self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
-
-    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
-        tasks = []
-        for buf_ref in buf_refs:
-            tasks.append(self.workers[buf_ref.host_id].
-                         block_until_ready_buffers.remote(buf_ref.uuid))
-        ray.get(tasks)
-
-    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
-        if self.workers is None or not ray.is_initialized():
-            return
-
-        for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(exe_ref.uuid)
-
-    def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
-
-    def shutdown(self):
-        """Shut down the mesh."""
-        ray.get([w.shutdown.remote() for w in self.workers])
-        for worker in self.workers:
-            ray.kill(worker)
-        self.workers = None
-
     def _gather_outs(self, avals, sharding_specs, indices, bufs):
         ret = []
         for i, _ in enumerate(avals):
@@ -627,6 +818,45 @@ class PhysicalDeviceMesh:
             ret.append(dis_array)
 
         return ret
+
+    ##### Profling related Functions #####
+    def profile_collective(self, primitive_name, size_range=None, number="auto", verbose=1):
+        """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
+        tasks = []
+        for worker in self.workers:
+            tasks.append(worker.profile_collective.remote(
+                primitive_name, size_range, number, verbose))
+        prof_result = ray.get(tasks)[0]
+        if primitive_name == "all-reduce":
+            self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict
+        elif primitive_name == "all-gather":
+            self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
+        else:
+            raise ValueError("Invalid primitive_name: " + primitive_name)
+
+    def load_profiling_result(self, filename):
+        self.prof_result = pickle.load(open(filename, "rb"))
+
+    def save_profiling_result(self, filename):
+        pickle.dump(self.prof_result, open(filename, "wb"))
+
+    ##### Other Functions #####
+    def sync_workers(self):
+        if self.is_distributed:
+            ray.get([w.sync.remote() for w in self.workers])
+        else:
+            for device in self.devices:
+                device.synchronize_all_activity()
+
+    def shutdown(self):
+        """Shut down the mesh."""
+        if self.is_distributed:
+            ray.get([w.shutdown.remote() for w in self.workers])
+            for worker in self.workers:
+                ray.kill(worker)
+            self.workers = None
+        else:
+            self.sync_workers()
 
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.

@@ -1,6 +1,5 @@
 """Test distributed mulit-host device mesh."""
 
-from functools import partial
 import os
 import unittest
 
@@ -11,14 +10,14 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import parallelize, DeviceCluster, global_config, testing
+from parax import parallelize, DeviceCluster, testing
 from parax.testing import assert_allclose
 
 
 class DeviceMeshTest(unittest.TestCase):
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        ray.init(address='auto', ignore_reinit_error=True)
+        ray.init(address="auto", ignore_reinit_error=True)
 
     def test_add_one(self):
         # Launch a multi-host device mesh
@@ -66,14 +65,14 @@ class DeviceMeshTest(unittest.TestCase):
 
         def train_step(optimizer, batch, apply_fn):
             def loss_func(params):
-                out = apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y']) ** 2)
+                out = apply_fn(params, batch["x"])
+                return jnp.mean((out - batch["y"]) ** 2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        batch_size = 512
+        batch_size = 32
         input_dim = hidden_dim = output_dim = 32
 
         # One batch of data and label
@@ -85,7 +84,7 @@ class DeviceMeshTest(unittest.TestCase):
         # Init model and optimizer
         model = Model(hidden_dim=hidden_dim, output_dim=output_dim)
         rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, batch['x'])
+        params = model.init(rngkey, batch["x"])
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         # Serial execution
@@ -104,13 +103,13 @@ class DeviceMeshTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DeviceMeshTest('test_add_one'))
-    suite.addTest(DeviceMeshTest('test_mlp'))
+    suite.addTest(DeviceMeshTest("test_add_one"))
+    suite.addTest(DeviceMeshTest("test_mlp"))
 
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

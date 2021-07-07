@@ -29,12 +29,12 @@ class DistributedArrayTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DistributedArrayTest('test_distributed_array'))
+    suite.addTest(DistributedArrayTest("test_distributed_array"))
 
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

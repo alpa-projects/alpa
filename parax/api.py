@@ -29,7 +29,8 @@ def parallelize(fun=None,
                 devices=None,
                 memory_budget_per_device=None,
                 strategy="shard_parallel"):
-    """Automatically parallelize a jax function.
+    """
+    Automatically parallelize a jax function.
 
     Args:
         donate_argnums: The same as the donated_argnums in jax.jit. If is "auto",

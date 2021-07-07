@@ -16,6 +16,7 @@ from jaxlib.xla_client import OpSharding
 from parax import testing
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.xla_pass_context import XlaPassContext
+from parax.util import get_compile_options
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -48,7 +49,6 @@ def auto_sharding_callable(   # noqa MC0001
     """Perform sharding optimization."""
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    # tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
     tuple_args = False
 
     # Make xla arguments
@@ -83,6 +83,8 @@ def auto_sharding_callable(   # noqa MC0001
     # print(built.as_hlo_text())
     # exit()
 
+
+
     # Read HloSharding from HloModule and convert them to ShardingSpec
     if len(logical_mesh.flatten_ids) != 1:
         input_shardings = hlo_module.spmd_parameters_shardings()
@@ -98,22 +100,25 @@ def auto_sharding_callable(   # noqa MC0001
 
     # Return the final callable
     return physical_mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                       input_sharding_specs, output_sharding_specs, donated_invars)
+                                                       input_sharding_specs, output_sharding_specs,
+                                                       donated_invars)
 
 
 def auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
                           memory_budget_per_device=None, tuple_args=False,
                           multi_stage_compilation=False, enable_auto_sharding=True):
     distributed_compilation_head = physical_mesh.is_distributed
+    build_random_seed = 42
     num_replicas = 1
     num_partitions = len(logical_mesh.flatten_ids)
-    compile_options = xb.get_compile_options(
+    compile_options = get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
         device_assignment=logical_mesh.id_mesh.reshape((1, -1)),
         use_spmd_partitioning=True,
+        parameter_is_tupled_arguments=tuple_args,
+        build_random_seed=build_random_seed
     )
-    compile_options.parameter_is_tupled_arguments = tuple_args
 
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
@@ -121,7 +126,7 @@ def auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
     if distributed_compilation_head:
         pass_through_device_assignment = True
 
-    # Invoke the auto-sharding optimizer
+    # Invoke the auto-sharding compilation pass
     compiled, sharding_strategy_vector = \
         _auto_sharding_internal(logical_mesh, built_computation, compile_options,
                                 memory_budget_per_device,
@@ -136,7 +141,7 @@ def auto_sharding_compile(built_computation, logical_mesh, physical_mesh,
         hlo_proto = built_computation.as_serialized_hlo_module_proto()
         compiled = physical_mesh.compile_remote_executable(
             hlo_proto, logical_mesh.id_mesh.shape, sharding_strategy_vector, tuple_args,
-            enable_auto_sharding=enable_auto_sharding)
+            build_random_seed, enable_auto_sharding=enable_auto_sharding)
 
     return compiled, hlo_module
 
@@ -164,6 +169,8 @@ def _auto_sharding_internal(logical_mesh,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh.id_mesh.shape),
         "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
         "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
+        "auto_sharding::device_mesh_prof_result":
+            logical_mesh.physical_mesh.prof_result,
 
         # Distributed compilation
         "build_option::pass_through_device_assignment": pass_through_device_assignment,
@@ -240,7 +247,7 @@ def call_solver_serialized_args(*args):
     except AssertionError:
         ret = None
         info = str(traceback.format_exc()[:-1])
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         ret = None
         info = str(traceback.format_exc()[:-1])
 
@@ -250,10 +257,11 @@ def call_solver_serialized_args(*args):
     return ret
 
 
-# The last solution vector of auto sharding
+# The last solution vector of auto sharding.
 last_s_val = None
 
 
+# pylint: disable=import-outside-toplevel
 def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
                                  c_np, d_np, m_np, r_np, v_np,
                                  s_init_np=None):
@@ -277,8 +285,8 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         """Get the index of non-zero item in a vector."""
         ct = 0
         ret = None
-        for i in range(len(binary_vector)):
-            if pulp.value(binary_vector[i]):
+        for i, elem in enumerate(binary_vector):
+            if pulp.value(elem):
                 ret = i
                 ct += 1
 
@@ -428,9 +436,9 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         C = len(s[j])
         if (i, j) in alias_set:
             raise ValueError(f"Duplicated edges: {(i, j)}")
-        else:
-            alias_set.add((i, j))
-            alias_set.add((j, i))
+
+        alias_set.add((i, j))
+        alias_set.add((j, i))
 
         for row in range(len(s[i])):
             for col in range(len(s[j])):

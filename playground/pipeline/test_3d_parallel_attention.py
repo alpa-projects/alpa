@@ -113,7 +113,7 @@ gradients = train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_m
 strategy = "3d_parallel"
 
 set_parallelize_options(devices=mesh, strategy=strategy)
-pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
+pipelined_train_step = parallelize(train_step)
 import time
 for i in range(10):
     start = time.time()

@@ -5,6 +5,7 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
+from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster
@@ -16,7 +17,11 @@ class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         assert len(jax.local_devices()) >= 4
-        self.devices = tuple(jax.local_devices()[:4])
+        # self.devices = tuple(jax.local_devices()[:4])
+        self.devices = FrozenDict({
+            "1": tuple(jax.local_devices()[0:2]),
+            "2": tuple(jax.local_devices()[2:4]),
+        })
         ray.init(address='auto')
 
     def tearDown(self):

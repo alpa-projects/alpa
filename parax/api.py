@@ -209,10 +209,12 @@ def auto_parallel_callable(
             fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
         )
     elif strategy == "pipeline_parallel":
-        return pipeline_parallel_callable(fun, *avals)
+        return pipeline_parallel_callable(fun, devices, *avals)
     elif strategy == "distributed_pipeline_parallel":
         return distributed_pipeline_parallel_callable(fun, *avals)
     elif strategy == "3d_parallel":
+        # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
+        assert not global_config.search_logical_mesh_shape
         return three_d_parallel_callable(
             fun, in_tree, out_tree_thunk, devices, donated_invars,
             memory_budget_per_device, *avals
@@ -222,8 +224,8 @@ def auto_parallel_callable(
 
 
 def clear_callable_cache():
-    """Clear all cached auto_sharding_callable."""
-    auto_sharding_callable.cache_clear()
+    """Clear all cached auto_parallel_callable."""
+    auto_parallel_callable.cache_clear()
 
 
 def get_compute_key(fun, in_tree, donated_invars, *aval):

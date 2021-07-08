@@ -46,6 +46,7 @@ def auto_sharding_callable(
       strategy_config (Optional[StrategyConfig]): If is not None, do compilation
         according to this configuration.
     """
+
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -128,7 +129,8 @@ def compile_with_search(backend,
                         logical_mesh_choices,
                         memory_budget_per_device,
                         search_task,
-                        record_file):
+                        record_file,
+                        multiple_stages=False):
     """
     Compile an XLA computation with mesh shape search and auto sharding solver.
 
@@ -137,7 +139,7 @@ def compile_with_search(backend,
         Used when dumping measurement records to the file.
       record_file (Optional[str]): If is not None, dump measurement records into
         this file.
-    """ 
+    """
     unoptimized_hlo_proto = xla_computation.as_serialized_hlo_module_proto()
 
     # Set compile options
@@ -187,11 +189,17 @@ def compile_with_search(backend,
     if len(logical_mesh_choices) == 1:  # Compile with the given logical mesh
         logical_mesh = logical_mesh_choices[0]
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
+        if multiple_stages:
+            hlo_stages = get_auto_sharded_hlo_stages()
     else:  # Search for the best logical mesh
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
+        if multiple_stages:
+            best_hlo_stages = None
         best_time_cost = float("inf")
         for logical_mesh in logical_mesh_choices:
             compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
+            if multiple_stages:
+                hlo_stages = get_auto_sharded_hlo_stages()
             strategy_config = StrategyConfig(
                 build_random_seed, logical_mesh.id_mesh.shape, solution_vector
             )
@@ -205,6 +213,8 @@ def compile_with_search(backend,
             if np.mean(time_costs) < best_time_cost:
                 best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
                     logical_mesh, compiled, solution_vector, objective
+                if multiple_stages:
+                    best_hlo_stages = hlo_stages
                 best_time_cost = np.mean(time_costs)
 
             # Save records to file
@@ -217,19 +227,23 @@ def compile_with_search(backend,
 
         logical_mesh, compiled, solution_vector, objective = \
             best_logical_mesh, best_compiled, best_solution_vector, best_objective
+        if multiple_stages:
+            hlo_stages = best_hlo_stages
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
     strategy_config = StrategyConfig(
         build_random_seed, logical_mesh.id_mesh.shape, solution_vector
     )
+    if multiple_stages:
+        return hlo_stages, strategy_config
     return compiled, strategy_config
 
 
 def compile_with_given_strategy(backend,
                                 xla_computation,
                                 num_devices,
-                                by_pass_device_assignment_check,
+                                bypass_device_assignment_check,
                                 strategy_config):
     """Compile an XLA computation with a given auto sharding strategy."""
     compile_options = get_compile_options(
@@ -253,12 +267,37 @@ def compile_with_given_strategy(backend,
         "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
         # Distributed compilation
-        "build_option::pass_through_device_assignment": by_pass_device_assignment_check,
+        "build_option::pass_through_device_assignment": bypass_device_assignment_check,
 
         # Other useless but required arguments
         "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
         "auto_sharding::device_mesh_beta": (1.0,) * len(logical_mesh_shape),
         "auto_sharding::device_mesh_prof_result": None,
+    }):
+        compiled = backend.compile(xla_computation, compile_options)
+    return compiled
+
+
+def compile_without_auto_sharding(backend,
+                                  xla_computation,
+                                  num_devices,
+                                  bypass_device_assignment_check,
+                                  strategy_config):
+    """Compile an XLA computation with a given auto sharding strategy."""
+    compile_options = get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+        parameter_is_tupled_arguments=False,
+        build_random_seed=strategy_config.build_random_seed
+    )
+    with XlaPassContext({
+        # Solver options
+        "auto_sharding::enable": False,
+
+        # Distributed compilation
+        "build_option::pass_through_device_assignment": bypass_device_assignment_check,
     }):
         compiled = backend.compile(xla_computation, compile_options)
     return compiled
@@ -569,3 +608,15 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np, 
     last_objective = objective
     last_s_val = s_val
     return s_val, e_val, objective, status
+
+# Auto-sharded pipeline stages
+auto_sharded_hlo_stages = None
+
+
+def set_auto_sharded_hlo_stages(hlo_module_protos):
+    global auto_sharded_hlo_stages
+    auto_sharded_hlo_stages = hlo_module_protos
+
+
+def get_auto_sharded_hlo_stages():
+    return auto_sharded_hlo_stages

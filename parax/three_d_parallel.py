@@ -2,12 +2,12 @@
 
 import jax
 from jax import linear_util as lu
-from jax.core import ClosedJaxpr
+from jax.core import ClosedJaxpr, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
-from parax.pipe import Jax3DPipeline
-from parax.pipeline_parallel import slice_closed_jaxpr_by_pipeline_marks
+from parax.pipe import Jax3DPipeline, GpipeSchedule, gen_linear_dependency
+from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage, generate_sharded_xla_stages, mark_global_and_local_vars, slice_closed_jaxpr_by_pipeline_marks
 
 
 @lu.cache
@@ -21,23 +21,58 @@ def three_d_parallel_callable(
         *avals
 ):
     """End-to-end 3d parallel combining pipelining and sharding."""
-    # pylint: disable=too-many-arguments
     if not isinstance(devices, VirtualMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
                            "expected type: {}.".format(type(devices), "VirtualMesh"))
     virtual_mesh = devices
-    jax_pipeline_stages, global_invars, global_outvars = \
-        mock_slicing_algo(fun, avals, virtual_mesh)
+    with jax.disable_jit():
+        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    gensym_func = gensym([closed_jaxpr.jaxpr])
+    jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    jax_pipeline_stages = [mark_global_and_local_vars(stage, gensym_func) for stage in jax_pipeline_stages]
 
-    sharding_compilation_kwargs = {
-        "donated_invars": donated_invars,
-        "memory_budget_per_device": memory_budget_per_device
-    }
-    jp = Jax3DPipeline(pipeline_stages=jax_pipeline_stages,
+    num_batch = 1
+    n_stages = len(jax_pipeline_stages)
+    dependency = gen_linear_dependency(n_stages)
+    schedule = GpipeSchedule(dependency=dependency, mesh=virtual_mesh, num_batch=num_batch)
+    physical_meshes = []
+    n_meshes = len(schedule.meshes)
+    for i, mesh in enumerate(schedule.meshes):
+        physical_meshes.append(mesh.get_physical_mesh())
+
+    global_invars = closed_jaxpr.jaxpr.invars
+    global_outvars = closed_jaxpr.jaxpr.outvars
+    stage_dict = [[] for _ in range(n_meshes)]
+    stage_id_dict = [[] for _ in range(n_meshes)]
+    for i, stage in enumerate(jax_pipeline_stages):
+        mesh_indices = list(schedule.stage_placement(i))
+        assert len(mesh_indices) == 1
+        mesh_idx = mesh_indices[0]
+        stage_id_dict[mesh_idx].append(i)
+        stage_dict[mesh_idx].append(stage)
+
+    xla_stages = [None] * n_stages
+    for mesh_idx in range(n_meshes):
+        # TODO (zhuohan): Support search logical device shape for 3d parallel
+        physical_mesh = physical_meshes[mesh_idx]
+        logical_mesh_search_mode = "cost_model"
+        logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+        search_task = None
+        record_file = None
+        sharded_xla_stages = generate_sharded_xla_stages(
+            str(mesh_idx), stage_dict[mesh_idx], physical_mesh, logical_mesh_search_mode,
+            logical_mesh_choices, memory_budget_per_device, search_task, record_file)
+        for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
+            xla_stages[i] = xla_stage
+
+    jp = Jax3DPipeline(pipeline_stages=xla_stages,
                        global_invars=global_invars,
                        global_outvars=global_outvars,
-                       mesh=virtual_mesh,
-                       sharding_compilation_kwargs=sharding_compilation_kwargs)
+                       physical_meshes=physical_meshes,
+                       dependency=dependency,
+                       schedule=schedule,
+                       num_batch=num_batch)
 
     return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda
 

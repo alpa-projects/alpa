@@ -94,7 +94,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         hidden_states = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-        label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
+        label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23.0 * np.arange(hidden_size)[None, None, :]
 
         # Init model and optimizer
         model = FlaxBertLayerCollection(BertConfig(

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterable
 from collections import defaultdict
 import pickle
-from typing import Union, List 
+from typing import Union, List
 
 from operator import attrgetter
 import numpy as np
@@ -298,13 +298,13 @@ class MeshHostWorker:
                            hlo_proto: bytes,
                            strategy_config: StrategyConfig):
         # pylint: disable=import-outside-toplevel
-        from parax.auto_sharding import compile_with_given_strategy
+        from parax.auto_sharding import compile_without_auto_sharding
 
         xla_computation = xla_client.XlaComputation(hlo_proto)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(self.backend.devices())
 
-        compiled = compile_with_given_strategy(
+        compiled = compile_without_auto_sharding(
             self.backend, xla_computation, num_devices, False, strategy_config)
         self.executables[uuid] = compiled
 

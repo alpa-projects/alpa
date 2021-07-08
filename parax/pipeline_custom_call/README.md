@@ -1,6 +1,6 @@
-# XLA Pipeline Marker Demo
+# XLA Pipeline Marker Custom Call
 
-To build and test:
+To build the custom call for pipeline marker in XLA:
 ~~~bash
 mkdir build
 cd build

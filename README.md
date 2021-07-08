@@ -15,7 +15,7 @@ This repo depends on our private fork of jax and tensorflow.
   git clone git@github.com:parax-project/tensorflow-parax.git
   ```
 
-- Step 2. Install dependencies  
+- Step 2. Install dependencies
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
@@ -27,7 +27,7 @@ This repo depends on our private fork of jax and tensorflow.
     sudo apt install coinor-cbc glpk-utils
     pip3 install pulp
     ```
-      
+
 - Step 3. Build and install jaxlib
   ```bash
   cd jax-parax
@@ -47,6 +47,18 @@ This repo depends on our private fork of jax and tensorflow.
   ```bash
   cd parax
   pip3 install -e .
+  ```
+
+- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_custom_call/README.md))
+  ```bash
+  cd parax/pipeline_custom_call
+  # Follow the steps in parax/pipeline_custom_call/README.md
+  mkdir build
+  cd build
+  cmake .. -Dpybind11_ROOT=$(pybind11-config --cmakedir)
+  export PATH=/usr/local/cuda/bin:$PATH
+  export CPATH=/usr/local/cuda/targets/x86_64-linux/include/:$CPATH
+  make
   ```
 
 Note:

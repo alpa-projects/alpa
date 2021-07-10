@@ -12,6 +12,7 @@ from flax import optim
 import ray
 
 from parax import parallelize, set_parallelize_options, testing, global_config, DeviceCluster
+from parax.testing import assert_only_has_allreduce
 from parax.util import write_tsv
 
 MB = 1024 ** 2
@@ -108,7 +109,7 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     func()
     stmt = "func()"
     repeat = 2
-    number = 10
+    number = args.number
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
     real_mem = testing.last_compiled_executable.total_allocation_size()
@@ -117,6 +118,7 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
+    assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
 
@@ -124,9 +126,9 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     # Log benchmark results
-    heads = ["Case", "PeakMem", "Objective", "Mean Time", "Std Time"]
-    values = [str(benchmark_case), f"{real_mem/GB:.2f}", f"{objective:.2f}",
-             f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
+    heads = ["Type", "Case", "PeakMem", "Objective", "Mean Time", "Std Time"]
+    values = ["mlp", str(benchmark_case), f"{real_mem/GB:.2f}", f"{objective:.2f}",
+             f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
     write_tsv(heads, values, "result_mlp.tsv")
 
     physical_mesh.shutdown()
@@ -134,8 +136,8 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
 
 benchmark_suite = [
     # Batch size, seq_len, hidden size, num_layers, dp_size, tensor_mp_size,
-    (16,          1024,    2304,        4,          4,       1),
-    (16,          1024,    2304,        4,          2,       2),
+    (32,          1024,    2304,        4,          4,       1),
+    (32,          1024,    2304,        4,          2,       2),
 
     # Batch size, seq_len, hidden size, num_layers, dp_size, tensor_mp_size,
     (8,           256,     5760,        4,          4,       1),
@@ -151,6 +153,7 @@ def benchmark_all(use_profiling):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
+    parser.add_argument("--number", type=int, default=10)
     args = parser.parse_args()
 
     ray.init(address="auto")

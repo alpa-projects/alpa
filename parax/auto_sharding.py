@@ -15,6 +15,7 @@ from jaxlib.xla_client import OpSharding
 from parax import testing
 from parax.device_mesh import LogicalDeviceMesh
 from parax.measure_record import MeasureInput, MeasureResult, StrategyConfig, save_to_file
+from parax.global_env import global_config
 from parax.xla_pass_context import XlaPassContext
 from parax.util import to_int_tuple, get_compile_options
 
@@ -75,6 +76,7 @@ def auto_sharding_callable(
 
     # Compile and optimize HLO to an executable
     built = c.Build(out_tuple)
+    #print(built.as_hlo_text())
     if strategy_config is None:
         compiled, strategy_config = compile_with_search(
             backend, built, physical_mesh,
@@ -165,8 +167,9 @@ def compile_with_search(backend,
             # Solver options
             "auto_sharding::enable": True,
             "auto_sharding::memory_budget_per_device": memory_budget_per_device,
-            "auto_sharding::force_all_gather_cost": False,
+            "auto_sharding::force_all_gather_cost": not global_config.allow_all_gather,
             "auto_sharding::all_gather_cost": 1e10,
+            "auto_sharding::allow_recompute_heavy_op": global_config.allow_recompute_heavy_op,
 
             # Device mesh
             "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
@@ -182,6 +185,9 @@ def compile_with_search(backend,
             # Debug options
             "auto_sharding::simplify_graph": True,
             "auto_sharding::print_strategy": False,
+            "auto_sharding::force_strategy": False,
+            "auto_sharding::force_strategy_inst_indices": [],
+            "auto_sharding::force_strategy_stra_names": [],
         }):
             compiled = xla.backend_compile(backend, xla_computation, compile_options)
         return compiled, last_s_val, last_objective
@@ -567,6 +573,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np, 
             for col in range(len(s[j])):
                 if v[idx][row * C + col] > 0.5:
                     prob += s[i][row] + s[j][col] <= 1
+
     verbose = False
 
     msg = verbose

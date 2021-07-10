@@ -22,6 +22,16 @@ jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
 
+# Monkey patch the nn.Embed in flax to use onehot + matmul instead of gather/scatter.
+# Because we currently do not support 2d partition of gather/scatter.
+def embed_call_one_hot(self, inputs):
+    expanded = jax.nn.one_hot(inputs, self.num_embeddings)
+    return expanded @ self.embedding
+
+
+setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
+
+
 # Mondey patch a new method "init_dummy" to flax's Module.
 # This function initializes all weights with ones for testing/benchmark purposes.
 # This function is much faster than the standard initialization.

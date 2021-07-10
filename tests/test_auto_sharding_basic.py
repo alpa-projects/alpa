@@ -120,6 +120,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         np.testing.assert_allclose(b, a + 1)
 
+
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingBasicTest("test_donate_buffer"))

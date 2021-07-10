@@ -251,7 +251,28 @@ def test_dropout():
     mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
     with mesh(mesh_devices, ('x', 'y')):
         actual = func(inputs, rngkey)
-        print(actual)
+        #print(actual)
+
+
+def test_embedding():
+    vocab_size = 8192
+    hidden_size = 768
+    batch_size = 4
+    seq_len = 128
+
+    @partial(pjit,
+             in_axis_resources=(P(None, 'y'), P('x', None)),
+             out_axis_resources=P('x', None, 'y'))
+    def func(embedding, inputs):
+      ret = jnp.take(embedding, inputs, axis=0)
+      return ret
+
+    embedding = jnp.ones((vocab_size, hidden_size), dtype=np.float32)
+    inputs = jnp.ones((batch_size, seq_len), dtype=np.int32)
+
+    mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
+    with mesh(mesh_devices, ('x', 'y')):
+        actual = func(embedding, inputs)
 
 
 if __name__ == "__main__":
@@ -264,5 +285,7 @@ if __name__ == "__main__":
     #test_mlp_grad()
 
     #test_random_bits()
-    test_dropout()
+    #test_dropout()
+
+    test_embedding()
 

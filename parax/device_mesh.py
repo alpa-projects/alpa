@@ -296,16 +296,18 @@ class MeshHostWorker:
     def compile_executable(self,
                            uuid: int,
                            hlo_proto: bytes,
-                           strategy_config: StrategyConfig):
+                           strategy_config: StrategyConfig,
+                           hlo_proto_is_sharded: bool):
         # pylint: disable=import-outside-toplevel
-        from parax.auto_sharding import compile_without_auto_sharding
+        from parax.auto_sharding import compile_with_given_strategy
 
         xla_computation = xla_client.XlaComputation(hlo_proto)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(self.backend.devices())
 
-        compiled = compile_without_auto_sharding(
-            self.backend, xla_computation, num_devices, False, strategy_config)
+        compiled = compile_with_given_strategy(
+            self.backend, xla_computation, strategy_config, num_devices,
+            False, xla_computation_is_sharded=hlo_proto_is_sharded)
         self.executables[uuid] = compiled
 
     def execute(self,
@@ -636,14 +638,16 @@ class PhysicalDeviceMesh:
     ##### Executable Related Functions #####
     def compile_remote_executable(self,
                                   hlo_proto: bytes,
-                                  strategy_config: StrategyConfig):
+                                  strategy_config: StrategyConfig,
+                                  hlo_proto_is_sharded: bool):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
             w.compile_executable.remote(
                 executable.uuid,
                 hlo_proto,
-                strategy_config)
+                strategy_config,
+                hlo_proto_is_sharded)
         return executable
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
@@ -776,7 +780,7 @@ class PhysicalDeviceMesh:
         if self.is_distributed:
             # Send the code and strategy to remote workers
             compiled = self.compile_remote_executable(
-                unoptimized_hlo_proto, strategy_config)
+                unoptimized_hlo_proto, strategy_config, hlo_proto_is_sharded=False)
 
             # Run profiling
             tasks = []
@@ -902,14 +906,15 @@ class VirtualMesh:
                                          [1, 1], [1, 1])
         else:
             return self.get_logical_mesh((self.num_hosts, self.num_devices_per_host),
-                                         [1, 1], [1, 0.01])
+                                         [1, 1], [1, 0.1])
 
 
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 
     def __init__(self):
-        from ray.worker import _global_node as ray_global_node  # pylint: disable=import-outside-toplevel
+        # pylint: disable=import-outside-toplevel
+        from ray.worker import _global_node as ray_global_node
         self.head_info = ray_global_node.address_info
         self.head_ip = self.head_info['node_ip_address']
 
@@ -947,7 +952,6 @@ class DeviceCluster:
         for host_id in host_ids:
             assert self.num_devices[host_id] >= num_devices_per_host
 
-        # return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
         return PhysicalDeviceMesh(host_ids=host_ids,
                                   host_info=host_info,
                                   num_devices_per_host=num_devices_per_host,
@@ -970,7 +974,6 @@ class DeviceCluster:
         for host_id in host_ids:
             assert self.num_devices[host_id] >= num_devices_per_host
 
-        # return MultiHostDeviceMesh(host_ids, host_info, num_devices_per_host, self.head_ip)
         return VirtualMesh(host_ids=host_ids,
                            host_info=host_info,
                            num_devices_per_host=num_devices_per_host,
@@ -1025,60 +1028,3 @@ shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 shard_arg_handlers[DistributedArray] = _shard_distributed_array
 shard_arg_handlers[ShardedDeviceArray] = _shard_distributed_array
 
-
-########################################
-# To be Deprecated
-########################################
-class SingleHostDeviceMesh:
-    """A physical device mesh that presents devices on a single node."""
-
-    def __init__(self, devices):
-        self.devices = devices
-        logger.warning("`SingleHostDeviceMesh` has been deprecated, "
-                       "use `PhysicalDeviceMesh` instead.")
-
-    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
-        """Get a mapping to logoical mesh."""
-        device_ids = np.array([d.id for d in self.devices])
-        device_ids = device_ids.reshape(mesh_shape)
-        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
-        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
-        return LogicalDeviceMesh(self, device_ids, mesh_alpha, mesh_beta)
-
-    def get_default_logical_mesh(self):
-        return self.get_logical_mesh((1, len(self.devices)))
-
-    def get_callable_with_arg_handler(self, compiled, avals, out_avals,
-                                      input_sharding_specs, output_sharding_specs, donated_invars):
-        input_indices = [pxla.spec_to_indices(aval.shape, spec) for
-                         aval, spec in zip(avals, input_sharding_specs)]
-        args_handler = partial(pxla.shard_args, self.devices, input_indices)
-        outs_handler = pxla.avals_to_results_handler(1, len(self.devices),
-                                                     output_sharding_specs, out_avals)
-
-        ret = partial(SingleHostDeviceMesh._execute_with_handler,
-                      compiled, args_handler, outs_handler)
-        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
-                                      input_sharding_specs, input_indices)
-        return ret
-
-    @staticmethod
-    def preshard_args(handler, avals, sharding_specs, indices, *args):
-        input_bufs = handler(args)
-
-        sharded_args = []
-        for i in range(len(args)):
-            sharded_args.append(ShardedDeviceArray(
-                avals[i],
-                sharding_specs[i],
-                input_bufs[i],
-                indices[i],
-            ))
-
-        return sharded_args
-
-    @staticmethod
-    def _execute_with_handler(compiled, args_handler, outs_handler, *args):
-        input_bufs = args_handler(args)
-        out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
-        return outs_handler(out_bufs)

@@ -196,8 +196,9 @@ def auto_parallel_callable(
 
         return auto_sharding_callable(
             fun, in_tree, out_tree_thunk, donated_invars,
-            physical_mesh, global_config.mesh_shape_search_mode,
-            logical_mesh_choices, memory_budget_per_device,
+            physical_mesh, logical_mesh_choices,
+            global_config.mesh_shape_search_mode,
+            memory_budget_per_device,
             search_task, record_file, strategy_config, *avals
         )
     elif strategy == "shard_data_parallel":
@@ -235,7 +236,7 @@ def get_compute_key(fun, in_tree, donated_invars, *aval):
     # input arguments specification to a string.
     # Then compute a hash value of this string.
     #
-    # TOOD(lmzheng): use jaxpr or hlo instead of source code?
+    # TODO(lmzheng): use jaxpr or hlo instead of source code?
 
     location = fun.f.__str__().split("at")[0]
     source_code = inspect.getsource(fun.f)

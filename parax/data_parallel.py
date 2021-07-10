@@ -1,5 +1,8 @@
 # flake8: noqa
-"""Data parallel based on pmap or gshard."""
+"""Data parallel based on pmap or gshard.
+
+This file is going to be DEPRECATED.
+"""
 from collections import OrderedDict
 
 import flax

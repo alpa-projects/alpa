@@ -191,7 +191,7 @@ def compile_with_search(backend,
                 getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # Distributed compilation
-            "build_option::pass_through_device_assignment": by_pass_device_assignment_check,
+            "build_option::bypass_device_assignment": by_pass_device_assignment_check,
 
             # Debug options
             "auto_sharding::simplify_graph": True,
@@ -290,14 +290,14 @@ def compile_with_given_strategy(backend,
         # Solver options
         "auto_sharding::enable": not xla_computation_is_sharded,
         "auto_sharding::load_strategy": True,
-        "auto_sharding::strategy_vector": to_int_tuple(solution_vector),
+        "auto_sharding::solution_vector": to_int_tuple(solution_vector),
 
         # Device mesh
         "auto_sharding::device_mesh_ids": tuple(range(num_devices)),
         "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
         # Distributed compilation
-        "build_option::pass_through_device_assignment": bypass_device_assignment_check,
+        "build_option::bypass_device_assignment": bypass_device_assignment_check,
 
         # Other useless but required arguments
         "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),

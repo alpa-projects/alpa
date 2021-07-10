@@ -14,6 +14,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
 
 from timeit_v2 import py_benchmark
+from benchmark_mlp_one_case import write_tsv
 
 GB = 1024 ** 3
 
@@ -127,21 +128,14 @@ def benchmark_transfomer_one_case(benchmark_case):
 
     # Print results
     if rank == 0:
-        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Peak Mem",
-                 "Weight Mem", "ActMem", "Mean Time", "Std Time"]
+        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
+                 "Peak Mem", "Mean Time", "Std Time"]
         values = ["transformer-layer", str(benchmark_case[:-3]),
                   str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
-                  f"{peak_mem/GB:5.3f}", f"{weight_mem/GB:5.3f}",
-                  f"{act_mem[0]/GB:5.3f}",
-                  f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
+                  f"{weight_mem/GB:5.3f}", f"{peak_mem/GB:5.3f}",
+                  f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+        write_tsv(heads, values, "result_trans.tsv")
 
-        line = ""
-        for i in range(len(heads)):
-            line += heads[i] + ": " + values[i] + "  "
-        print(line)
-
-        with open("results.tsv", "a") as fout:
-            fout.write("\t".join(values) + "\n")
 
 
 if __name__ == "__main__":

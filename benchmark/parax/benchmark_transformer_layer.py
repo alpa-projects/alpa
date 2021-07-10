@@ -132,7 +132,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     func()
     stmt = "func()"
     repeat = 2
-    number = 10
+    number = args.number
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
     real_mem = testing.last_compiled_executable.total_allocation_size()
@@ -151,7 +151,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
              f"{real_mem/GB:.3f}", f"{objective:.2f}",
-             f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}"]
+             f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
     write_tsv(heads, values, "result_trans.tsv")
 
     physical_mesh.shutdown()
@@ -195,6 +195,7 @@ def benchmark_all(use_profiling):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
+    parser.add_argument("--number", type=int, default=10)
     args = parser.parse_args()
 
     ray.init(address="auto")

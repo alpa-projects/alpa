@@ -1,7 +1,7 @@
 #include"kernel.h"
 #include<stdio.h>
 
-namespace kernel{
+namespace kernel {
 void pipelineMarker(cudaStream_t stream, void **buffers, const char *opaque, size_t opaque_len) {
     const int64_t *sizes = reinterpret_cast<const int64_t *>(opaque);
     size_t n_inputs = opaque_len / sizeof(int64_t);
@@ -11,4 +11,4 @@ void pipelineMarker(cudaStream_t stream, void **buffers, const char *opaque, siz
         cudaMemcpy(output, input, sizes[i], cudaMemcpyDeviceToDevice);
     }
 }
-};  //end namespace kernel
+};  // end namespace kernel

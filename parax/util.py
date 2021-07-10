@@ -1,14 +1,17 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
+import itertools as it
 import os
 import subprocess
 import time
 
 import flax
 import numpy as np
+from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
 from jax.experimental.maps import FrozenDict
-from jax.lib import xla_bridge as xb
+from jax.interpreters import xla
+from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_map, tree_flatten
 
 
@@ -114,6 +117,27 @@ def get_compile_options(num_replicas,
     compile_options.parameter_is_tupled_arguments = parameter_is_tupled_arguments
     compile_options.executable_build_options.seed = build_random_seed
     return compile_options
+
+
+def jaxpr_to_hlo_computation(name, closed_jaxpr, backend_name='gpu'):
+    """Convert a jaxpr to a XLA HLO computation."""
+    in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
+    consts = closed_jaxpr.consts
+    map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+
+    # tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
+    tuple_args = False
+
+    c = xb.make_computation_builder("pipeline_stage_{}".format(name))
+    xla_consts = xla._xla_consts(c, consts)
+    xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
+    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
+    out_nodes = xla.jaxpr_subcomp(
+        c, closed_jaxpr.jaxpr, backend_name, axis_env, xla_consts,
+        extend_name_stack(wrap_name(name, 'stage')), *xla_args)
+    out_tuple = xc.ops.Tuple(c, out_nodes)
+    built = c.build(out_tuple)
+    return built
 
 
 ########################################

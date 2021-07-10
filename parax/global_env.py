@@ -20,6 +20,10 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
+        ########## Options for auto-sharding solver ########## 
+        self.allow_all_gather = True  # Do not allow all-gather during re-sharding.
+        self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+
         ########## Options for benchmark ########## 
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.

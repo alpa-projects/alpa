@@ -13,7 +13,6 @@ import numpy as np
 import ray
 
 from parax import DeviceCluster, parallelize, set_parallelize_options, testing
-from parax.testing import assert_allclose
 
 
 class ProfilingTest(unittest.TestCase):

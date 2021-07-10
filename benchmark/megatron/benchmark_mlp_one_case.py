@@ -16,6 +16,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 from timeit_v2 import py_benchmark
 
 MB = 1024 ** 2
+GB = 1024 ** 3
 
 
 def get_memory_usage(print_info=False):
@@ -28,6 +29,18 @@ def get_memory_usage(print_info=False):
         print("allocated: %.2f MB" % (allocated / 1024 / 1024), flush=True)
         print("reserved:  %.2f MB" % (reserved / 1024 / 1024), flush=True)
     return allocated
+
+
+def write_tsv(heads, values, filename, print_line=True):
+    """Write tsv data to a file."""
+    with open(filename, "a") as fout:
+        fout.write("\t".join(values) + "\n")
+
+    if print_line:
+        line = ""
+        for i in range(len(heads)):
+            line += heads[i] + ": " + values[i] + "  "
+        print(line)
 
 
 class MultiLayerMLP(torch.nn.Module):
@@ -133,17 +146,10 @@ def benchmark_mlp_one_case(benchmark_case):
     # Print results
     if rank == 0:
         peak_mem = torch.cuda.max_memory_allocated(0)
-        line = f"Type: mlp\t"\
-               f"Case: {benchmark_case}\t"\
-               f"WeightMem: {weight_mem/MB:.2f}\t"\
-               f"PeakMem: {peak_mem/MB:.2f}\t"\
-               f"BackwardMem: {before_backward_mem/MB:.2f}\t"\
-               f"Mean Time: {np.mean(costs):.2f}\t"\
-               f"Std Time: {np.std(costs):.2f}"
-
-        print(line)
-        with open("results.tsv", "a") as fout:
-            fout.write(line + "\n")
+        heads = ["Type", "Case", "WeightMem", "PeakMem", "Mean Time", "Std Time"]
+        values = ["mlp", str(benchmark_case), f"{weight_mem/GB:.2f}", f"{peak_mem/GB:.2f}",
+                  f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+        write_tsv(heads, values, "result_mlp.tsv")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,5 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
 
 def assert_only_has_allreduce(hlo_ir):
     """Assert all communication primitives in a HLO IR are all-reduce."""
-    assert "all-gather(" not in hlo_ir
-    assert "all-to-all(" not in hlo_ir
-    assert hlo_ir.count("all-reduce(") == hlo_ir.count("channel_id")
+    assert hlo_ir.count("channel_id") == \
+           hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")

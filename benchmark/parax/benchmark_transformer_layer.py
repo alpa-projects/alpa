@@ -37,16 +37,11 @@ def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
     cost = 0
     print(logical_mesh.mesh_beta)
     for size in sizes:
-        cost += logical_mesh.all_reduce_cost(size * 4 / tensor_mp_size, 0)
+        cost += logical_mesh.all_reduce_cost(size * 4, 0)
         #cost += physical_mesh.prof_result.estimate_all_reduce(((0,4), (1,5), (2,6), (3,7),), size / 4, "float32")
         #cost += physical_mesh.prof_result.estimate_all_reduce(((0,2,4,6,), (1,3,5,7)), size / 2, "float32")
         #cost += physical_mesh.prof_result.estimate_all_reduce(((0,1,2,3,4,5,6,7),), size, "float32")
     print(cost)
-
-
-def assert_only_has_allreduce(hlo_ir):
-    assert "all-gather(" not in hlo_ir, hlo_ir
-    assert "all-to-all(" not in hlo_ir, hlo_ir
 
 
 def benchmark_transformer_one_case(benchmark_case, use_profiling):
@@ -59,7 +54,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Mesh configs
     device_cluster = DeviceCluster()
     physical_mesh = device_cluster.get_physical_mesh()
-    #physical_mesh = PhysicalDeviceMesh(jax.devices())
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
@@ -78,6 +72,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             physical_mesh.profile_collective("all-reduce")
             print(f"Save profiling results to {filename}")
             physical_mesh.save_profiling_result(filename)
+    log_time_stamp("Setup device mesh")
 
     @parallelize
     def train_step(optimizer, batch, apply_fn):
@@ -93,9 +88,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Prepare model and input
     batch = {
-        "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32),
+        "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=np.int32),
+        "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
         "rng": jax.random.PRNGKey(0),
     }
     log_time_stamp("Prepare input")
@@ -129,7 +124,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Benchmark time cost
     func()
-    func()
     stmt = "func()"
     repeat = 2
     number = args.number
@@ -141,6 +135,10 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
+    print(f"#comm {hlo_ir.count('channel_id')}," +
+          f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
+    #print(hlo_ir)
+
     assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
@@ -195,7 +193,7 @@ def benchmark_all(use_profiling):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
-    parser.add_argument("--number", type=int, default=10)
+    parser.add_argument("--number", type=int, default=5)
     args = parser.parse_args()
 
     ray.init(address="auto")

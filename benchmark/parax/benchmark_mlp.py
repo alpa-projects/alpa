@@ -106,7 +106,6 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
 
     # Benchmark time cost
     func()
-    func()
     stmt = "func()"
     repeat = 2
     number = args.number

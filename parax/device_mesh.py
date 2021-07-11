@@ -1008,6 +1008,7 @@ def _shard_array(x, device_mesh, indices):
 
 def _shard_device_array(array, device_mesh, indices):
     # Create shards according to indices for a DeviceArray
+    # TODO(lmzheng): optimize this funcion for the case when use_dummy_value_for_benchmarking == True
     start_indices, limit_indices, removed_dims = map(tuple, unzip3(
         _as_slice_indices(array, idx) for idx in indices))
     shards = array._multi_slice(start_indices, limit_indices, removed_dims)

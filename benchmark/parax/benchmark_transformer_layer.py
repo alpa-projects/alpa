@@ -135,11 +135,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print(f"#comm {hlo_ir.count('channel_id')}," +
+    print(f"#comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
     #print(hlo_ir)
 
-    assert_only_has_allreduce(hlo_ir)
+    #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
     #optimizer = closure[0]

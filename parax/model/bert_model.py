@@ -10,7 +10,6 @@ import numpy as np
 import flax
 from flax import optim
 from flax.linen.attention import dot_product_attention_weights
-from flax.training.common_utils import onehot
 import flax.linen as nn
 import jax
 from jax import lax
@@ -86,12 +85,14 @@ class FlaxBertEmbeddings(nn.Module):
             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
             dtype=self.dtype,
         )
-        self.token_type_embeddings = nn.Embed(
-            self.config.type_vocab_size,
-            self.config.hidden_size,
-            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
-            dtype=self.dtype,
-        )
+
+        if self.config.type_vocab_size > 0:
+            self.token_type_embeddings = nn.Embed(
+                self.config.type_vocab_size,
+                self.config.hidden_size,
+                embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+                dtype=self.dtype,
+            )
         self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
         self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
 
@@ -99,7 +100,11 @@ class FlaxBertEmbeddings(nn.Module):
         # Embed
         inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
         position_embeds = self.position_embeddings(position_ids.astype("i4"))
-        token_type_embeddings = self.token_type_embeddings(token_type_ids.astype("i4"))
+
+        if self.config.type_vocab_size > 0:
+            token_type_embeddings = self.token_type_embeddings(token_type_ids.astype("i4"))
+        else:
+            token_type_embeddings = 0.0
 
         # Sum all embeddings
         hidden_states = inputs_embeds + token_type_embeddings + position_embeds
@@ -663,13 +668,33 @@ def test_bert_mlm():
     num_hidden_layers = 2
     vocab_size = 1024
 
+    @partial(jax.jit, static_argnums=(2,))
+    def train_step(optimizer, batch, apply_func):
+        def loss_func(params):
+            rngs = {"dropout": batch["rng"]}
+            logits = apply_func(params,
+                                batch["input_ids"],
+                                batch["attention_mask"],
+                                batch["token_type_ids"],
+                                batch["position_ids"],
+                                rngs=rngs)[0]
+            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+            loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+            loss = (label_mask * loss).sum() / label_mask.sum()
+            return loss
+
+        grad = jax.grad(loss_func)(optimizer.target)
+        new_optimizer = optimizer.apply_gradient(grad)
+        return new_optimizer
+
+    # Init model and optimizer
     input_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
     attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
     token_type_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
     position_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
     labels = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
 
-    # Init model and optimizer
     model = FlaxBertForMaskedLMModule(BertConfig(
         vocab_size=vocab_size,
         hidden_size=hidden_size,
@@ -681,26 +706,6 @@ def test_bert_mlm():
     params = model.init(rngkey, input_ids, attention_mask, token_type_ids, position_ids)
     optimizer = optim.GradientDescent(1e-2).create(params)
 
-    @jax.jit
-    def train_step(optimizer, batch):
-        def loss_func(params):
-            rngs = {"dropout": batch["rng"]}
-            logits = model.apply(params,
-                                 batch["input_ids"],
-                                 batch["attention_mask"],
-                                 batch["token_type_ids"],
-                                 batch["position_ids"],
-                                 rngs=rngs)[0]
-            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
-            labels = onehot(batch["labels"], logits.shape[-1])
-            loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
-            loss = (label_mask * loss).sum() / label_mask.sum()
-            return loss
-
-        grad = jax.grad(loss_func)(optimizer.target)
-        new_optimizer = optimizer.apply_gradient(grad)
-        return new_optimizer
-
     # JIT compile
     train_step(optimizer,
                {"input_ids": input_ids,
@@ -708,7 +713,8 @@ def test_bert_mlm():
                 "token_type_ids": token_type_ids,
                 "position_ids": position_ids,
                 "labels": labels,
-                "rng": rngkey})
+                "rng": rngkey},
+               model.apply)
 
 
 if __name__ == "__main__":

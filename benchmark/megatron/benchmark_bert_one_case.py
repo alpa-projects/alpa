@@ -5,9 +5,8 @@ import timeit
 
 
 import numpy as np
-from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
-from megatron.model import DistributedDataParallel as LocalDDP
+from megatron.model import BertModel, DistributedDataParallel as LocalDDP
 from megatron import mpu, initialize_megatron, get_args
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
@@ -31,7 +30,7 @@ def get_memory_usage(print_info=False):
     return allocated
 
 
-def benchmark_transformer_layer_one_case(benchmark_case):
+def benchmark_bert_one_case(benchmark_case):
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size,\
         ddp_impl = benchmark_case
@@ -49,6 +48,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     sys.argv += ["--max-position-embeddings", str(seq_len)]
     sys.argv += ["--encoder-seq-length", str(seq_len)]
     initialize_megatron()
+    get_args().padded_vocab_size = 51200
     rank = torch.distributed.get_rank()
 
     # Check initialization
@@ -59,8 +59,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     init_method_std = 0.02
     init_method = init_method_normal(init_method_std)
     scaled_init_method = scaled_init_method_normal(init_method_std, num_layers)
-    model = ParallelTransformer(init_method, scaled_init_method, 0,
-                                pre_process=False, post_process=False)
+    model = BertModel(add_binary_head=False)
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
@@ -77,10 +76,10 @@ def benchmark_transformer_layer_one_case(benchmark_case):
 
     weight_mem = get_memory_usage() 
 
-    x = torch.randn(seq_len, micro_batch_size, hidden_size).cuda(i)
-    y = torch.randn(seq_len, micro_batch_size, hidden_size).cuda(i)
-    attention_mask = torch.ones(micro_batch_size, 1, 1, seq_len).\
-        to(torch.bool).cuda(i)
+    tokens = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
+    attention_mask = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
+    tokentype_ids = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
+    lm_labels = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
 
     input_mem = get_memory_usage() - weight_mem
     act_mem = [None]
@@ -92,10 +91,9 @@ def benchmark_transformer_layer_one_case(benchmark_case):
         else:
             optimizer.zero_grad()
 
-        model.module.set_input_tensor(x)
-        output = model(x, attention_mask)
-        loss = ((output - y) ** 2)
-        loss = loss.mean()
+        lm_loss, binary_logits = model(tokens, attention_mask,
+                                       tokentype_ids, lm_labels)
+        loss = lm_loss.mean()
 
         if record_act_mem:
             before_backward_mem = get_memory_usage()
@@ -130,16 +128,16 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     if rank == 0:
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
                  "Peak Mem", "Mean Time", "Std Time"]
-        values = ["transformer-layer", str(benchmark_case[:-3]),
+        values = ["bert", str(benchmark_case[:-3]),
                   str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
                   f"{weight_mem/GB:5.3f}", f"{peak_mem/GB:5.3f}",
                   f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
-        write_tsv(heads, values, "result_trans.tsv")
+        write_tsv(heads, values, "result_bert.tsv")
 
 
 
 if __name__ == "__main__":
     case = eval(sys.argv[-1])
     del sys.argv[-1]
-    benchmark_transformer_layer_one_case(case)
+    benchmark_bert_one_case(case)
 

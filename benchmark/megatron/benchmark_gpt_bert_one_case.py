@@ -6,7 +6,7 @@ import timeit
 
 import numpy as np
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
-from megatron.model import BertModel, DistributedDataParallel as LocalDDP
+from megatron.model import BertModel, GPTModel, DistributedDataParallel as LocalDDP
 from megatron import mpu, initialize_megatron, get_args
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
@@ -30,10 +30,10 @@ def get_memory_usage(print_info=False):
     return allocated
 
 
-def benchmark_bert_one_case(benchmark_case):
+def benchmark_gpt_bert_one_case(benchmark_case):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size,\
-        ddp_impl = benchmark_case
+    model_type, batch_size, seq_len, hidden_size, num_layers, num_heads, \
+        vocab_size, dp_size, tensor_mp_size, ddp_impl = benchmark_case
 
     # Parallel configs
     micro_batch_size = batch_size // dp_size
@@ -48,7 +48,7 @@ def benchmark_bert_one_case(benchmark_case):
     sys.argv += ["--max-position-embeddings", str(seq_len)]
     sys.argv += ["--encoder-seq-length", str(seq_len)]
     initialize_megatron()
-    get_args().padded_vocab_size = 51200
+    get_args().padded_vocab_size = vocab_size
     rank = torch.distributed.get_rank()
 
     # Check initialization
@@ -59,7 +59,12 @@ def benchmark_bert_one_case(benchmark_case):
     init_method_std = 0.02
     init_method = init_method_normal(init_method_std)
     scaled_init_method = scaled_init_method_normal(init_method_std, num_layers)
-    model = BertModel(add_binary_head=False)
+    if model_type == "bert":
+        model = BertModel(add_binary_head=False)
+    elif model_type == "gpt":
+        model = GPTModel()
+    else:
+        raise ValueError(f"Invalid model type: {model_type}")
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
@@ -76,10 +81,16 @@ def benchmark_bert_one_case(benchmark_case):
 
     weight_mem = get_memory_usage() 
 
-    tokens = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
-    attention_mask = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
-    tokentype_ids = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
-    lm_labels = torch.ones((seq_len, micro_batch_size)).cuda(i).long()
+    input_ids = torch.ones((micro_batch_size, seq_len)).cuda(i).long()
+    position_ids = torch.ones((micro_batch_size, seq_len)).cuda(i).long()
+    tokentype_ids = torch.ones((micro_batch_size, seq_len)).cuda(i).long()
+    lm_labels = torch.ones((micro_batch_size, seq_len)).cuda(i).long()
+    if model_type == "bert":
+        attention_mask = \
+            torch.ones(micro_batch_size, seq_len).cuda().long()
+    elif model_type == "gpt":
+        attention_mask = \
+            torch.ones(micro_batch_size, 1, seq_len, seq_len).cuda().bool()
 
     input_mem = get_memory_usage() - weight_mem
     act_mem = [None]
@@ -91,8 +102,12 @@ def benchmark_bert_one_case(benchmark_case):
         else:
             optimizer.zero_grad()
 
-        lm_loss, binary_logits = model(tokens, attention_mask,
-                                       tokentype_ids, lm_labels)
+        if model_type == "bert":
+            lm_loss, binary_logits = model(input_ids, attention_mask,
+                                           tokentype_ids, lm_labels)
+        elif model_type == "gpt":
+            lm_loss = model(input_ids, position_ids, attention_mask, lm_labels)
+
         loss = lm_loss.mean()
 
         if record_act_mem:
@@ -128,16 +143,15 @@ def benchmark_bert_one_case(benchmark_case):
     if rank == 0:
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
                  "Peak Mem", "Mean Time", "Std Time"]
-        values = ["bert", str(benchmark_case[:-3]),
+        values = [model_type, str(benchmark_case[1:-3]),
                   str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
                   f"{weight_mem/GB:5.3f}", f"{peak_mem/GB:5.3f}",
                   f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
-        write_tsv(heads, values, "result_bert.tsv")
-
+        write_tsv(heads, values, f"result_{model_type}.tsv")
 
 
 if __name__ == "__main__":
     case = eval(sys.argv[-1])
     del sys.argv[-1]
-    benchmark_bert_one_case(case)
+    benchmark_gpt_bert_one_case(case)
 

@@ -8,37 +8,45 @@ def run_cmd(cmd):
 
 
 # B = Batch size, S = seq_len, H = hidden size, L = num_layers,
-# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DDP = ddp_implementation
+# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DP_IMP = ddp_implementation
 
-benchmark_suite_single_node = [
-    # B, S,    H,    L, #head,    V,     DP, TMP, DDP
-    (16, 1024, 1536, 6, 1536//96, 51200, 4,  1,   0),
-    (16, 1024, 1536, 6, 1536//96, 51200, 2,  2,   0),
-    (16, 1024, 1536, 6, 1536//96, 51200, 1,  4,   0),
-
-    (8,  512,  3072, 6, 3072//96, 51200, 4,  1,   0),
-    (8,  512,  3072, 6, 3072//96, 51200, 2,  2,   0),
-    (8,  512,  3072, 6, 3072//96, 51200, 1,  4,   0),
+benchmark_suite_1_gpu = [
+    # B, S,   H,    L,  #head,    V,     DP, TMP, DP_IMP
+    (4, 512,  1024, 22, 1024//64, 51200, 1,  1,   1),  # bert-large
+    (4, 1024, 1536, 6,  1536//96, 51200, 1,  1,   1),  # megatron 1.2B
 ]
 
-benchmark_suite_multi_node = [
-    # B, S,    H,    L, #head,     V,     DP, TMP, DDP
-    (32, 1024, 1536, 6, 1536//96,  51200, 8,  1,   0),
-    (32, 1024, 1536, 6, 1536//96,  51200, 4,  2,   0),
-    (32, 1024, 1536, 6, 1536//96,  51200, 2,  4,   0),
-    (32, 1024, 1536, 6, 1536//96,  51200, 1,  8,   0),
+benchmark_suite_4_gpu = [
+    # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
+    (16, 512,  1024, 22, 1024//64, 51200, 4,  1,   1),
+    (16, 512,  1024, 22, 1024//64, 51200, 2,  2,   1),
+    (16, 512,  1024, 22, 1024//64, 51200, 1,  4,   1),
 
-    (16,  512, 3072, 6, 3072//96, 51200, 8,  1,   0),
-    (16,  512, 3072, 6, 3072//96, 51200, 4,  2,   0),
-    (16,  512, 3072, 6, 3072//96, 51200, 2,  4,   0),
-    (16,  512, 3072, 6, 3072//96, 51200, 1,  8,   0),
+    (4,  1024, 3072, 8,  3072//96, 51200, 4,  1,   1),
+    (4,  1024, 3072, 8,  3072//96, 51200, 2,  2,   1),
+    (4,  1024, 3072, 8,  3072//96, 51200, 1,  4,   1),
+]
+
+benchmark_suite_8_gpu = [
+    # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
+    (32, 512,  1024, 22, 1024//64, 51200, 8,  1,   1),
+    (32, 512,  1024, 22, 1024//64, 51200, 4,  2,   1),
+    (32, 512,  1024, 22, 1024//64, 51200, 2,  4,   1),
+    (32, 512,  1024, 22, 1024//64, 51200, 1,  8,   1),
+
+    (8,  1024, 3072, 8,  3072//96, 51200, 8,  1,   1),
+    (8,  1024, 3072, 8,  3072//96, 51200, 4,  2,   1),
+    (8,  1024, 3072, 8,  3072//96, 51200, 2,  4,   1),
+    (8,  1024, 3072, 8,  3072//96, 51200, 1,  8,   1),
 ]
 
 def benchmark_all(args):
-    if args.master_addr is None:
-        benchmark_suite = benchmark_suite_single_node
+    if args.nproc_per_node == 1:
+        benchmark_suite = benchmark_suite_1_gpu
+    elif args.nnodes is None or args.nnodes == 1:
+        benchmark_suite = benchmark_suite_4_gpu
     else:
-        benchmark_suite = benchmark_suite_multi_node
+        benchmark_suite = benchmark_suite_8_gpu
 
     for case in benchmark_suite:
         case_str = str((args.model,) + case)

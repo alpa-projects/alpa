@@ -1,4 +1,5 @@
 import argparse
+import gc
 import os
 import sys
 import timeit
@@ -67,19 +68,26 @@ def benchmark_gpt_bert_one_case(benchmark_case):
         raise ValueError(f"Invalid model type: {model_type}")
     model.cuda(torch.cuda.current_device())
 
+    weight_mem = get_memory_usage()
+
     i = torch.cuda.current_device()
     if ddp_impl == 0:
         model = torchDDP(model, device_ids=[i], output_device=i,
                          process_group=mpu.get_data_parallel_group())
     elif ddp_impl == 1:
-        model = LocalDDP(model, False, True)
+        use_contiguous_buffers_in_ddp = False
+        model = LocalDDP(model, False, use_contiguous_buffers_in_ddp)
     else:
         raise ValueError(f"Invalid ddp implementation: {ddp_impl}")
 
+    weight_size = 0
+    for p in model.parameters():
+        weight_size += np.prod(p.shape)
+
     if rank == 0:
         print(model)
-
-    weight_mem = get_memory_usage() 
+        print(f"Weight mem {weight_mem/GB:.2f} GB, " +
+              f"Weight size {weight_size/GB:.2f} B")
 
     input_ids = torch.ones((micro_batch_size, seq_len)).cuda(i).long()
     position_ids = torch.ones((micro_batch_size, seq_len)).cuda(i).long()
@@ -97,7 +105,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
 
     def func(record_act_mem=False):
-        if isinstance(model, LocalDDP):
+        if isinstance(model, LocalDDP) and use_contiguous_buffers_in_ddp:
             model.zero_grad_buffer()
         else:
             optimizer.zero_grad()
@@ -135,18 +143,23 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     # Benchmark time cost
     stmt = "func()"
     repeat = 3
-    number = 4
+    number = 3
     costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
         repeat=repeat, number=number)) / number
+    total_flop = 72 * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
+      (1 + seq_len / (6 * hidden_size)) \
+      + 6 * batch_size * seq_len * hidden_size * vocab_size
+    tflops = total_flop / np.mean(costs) / torch.distributed.get_world_size() / 1e12
 
     # Print results
     if rank == 0:
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
-                 "Peak Mem", "Mean Time", "Std Time"]
+                 "Peak Mem", "Mean Time", "Std Time", "TFLOPS"]
         values = [model_type, str(benchmark_case[1:-3]),
                   str(benchmark_case[-3:-1]), str(benchmark_case[-1]),
                   f"{weight_mem/GB:5.3f}", f"{peak_mem/GB:5.3f}",
-                  f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+                  f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
+                  f"{tflops:.2f}"]
         write_tsv(heads, values, f"result_{model_type}.tsv")
 
 

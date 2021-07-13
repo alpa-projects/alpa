@@ -337,7 +337,7 @@ class MeshHostWorker:
                     del self.local_buffers[input_uuids[i][j]]
 
     ##### Profiling Related Functions #####
-    def profile_collective(self, primitive_name, size_range, number, verbose):
+    def profile_collective(self, primitive_name, size_range, replica_groups, number, verbose):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
         # Generate all possible communication groups
         prof_result = ProfilingResult()
@@ -353,23 +353,28 @@ class MeshHostWorker:
                 logical_mesh_shapes.append((total_devices // i, i))
 
         all_keys = set()
-        for logical_mesh_shape in logical_mesh_shapes:
-            # dim 0
-            replica_groups = []
-            tmp_group = []
-            for i in range(logical_mesh_shape[0]):
-                tmp_group.append(
-                    tuple(i * logical_mesh_shape[1] + j for j in range(logical_mesh_shape[1])))
-            replica_groups.append(tuple(tmp_group))
+        if replica_groups is None:
+            for logical_mesh_shape in logical_mesh_shapes:
+                # dim 0
+                replica_groups = []
+                tmp_group = []
+                for i in range(logical_mesh_shape[0]):
+                    tmp_group.append(
+                        tuple(i * logical_mesh_shape[1] + j for j in range(logical_mesh_shape[1])))
+                replica_groups.append(tuple(tmp_group))
 
-            # dim 1
-            tmp_group = []
-            for j in range(logical_mesh_shape[1]):
-                tmp_group.append(
-                    tuple(i * logical_mesh_shape[1] + j for i in range(logical_mesh_shape[0])))
-            replica_groups.append(tuple(tmp_group))
+                # dim 1
+                tmp_group = []
+                for j in range(logical_mesh_shape[1]):
+                    tmp_group.append(
+                        tuple(i * logical_mesh_shape[1] + j for i in range(logical_mesh_shape[0])))
+                replica_groups.append(tuple(tmp_group))
 
-            for replica_group in replica_groups:
+                for replica_group in replica_groups:
+                    for size, dtype in size_configs:
+                        all_keys.add((replica_group, size, dtype))
+        else:
+           for replica_group in replica_groups:
                 for size, dtype in size_configs:
                     all_keys.add((replica_group, size, dtype))
         all_keys = list(all_keys)
@@ -761,12 +766,13 @@ class PhysicalDeviceMesh:
         return ret
 
     ##### Profling related Functions #####
-    def profile_collective(self, primitive_name, size_range=None, number="auto", verbose=1):
+    def profile_collective(self, primitive_name, size_range=None, replica_groups=None,
+                           number="auto", verbose=1):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
         tasks = []
         for worker in self.workers:
             tasks.append(worker.profile_collective.remote(
-                primitive_name, size_range, number, verbose))
+                primitive_name, size_range, replica_groups, number, verbose))
         prof_result = ray.get(tasks)[0]
         if primitive_name == "all-reduce":
             self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict

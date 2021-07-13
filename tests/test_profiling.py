@@ -1,18 +1,12 @@
 """Test profiling of communication and compute costs."""
 
-from functools import partial
 import os
-import pickle
 import unittest
 
-from flax import linen as nn
-from flax import optim
-import jax
 import jax.numpy as jnp
-import numpy as np
 import ray
 
-from parax import DeviceCluster, parallelize, set_parallelize_options, testing
+from parax import DeviceCluster, parallelize, set_parallelize_options
 
 
 class ProfilingTest(unittest.TestCase):
@@ -45,7 +39,7 @@ class ProfilingTest(unittest.TestCase):
         def add_one(x):
             return x + 1
 
-        add_one(jnp.ones(12))
+        add_one(jnp.ones(16))
 
         physical_mesh.shutdown()
 

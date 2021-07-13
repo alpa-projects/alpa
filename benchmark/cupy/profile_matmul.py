@@ -22,11 +22,13 @@ def benchmark(n, k, m, dtype):
     cost = (toc - tic) / number
     shape = (n, k, m, dtype)
 
-    print(f"shape: {shape}, TFLOP: {total_flops / 1e12:.2f},"
+    print(f"shape: {shape}, TFLOP: {total_flops / 1e12:.2f}, "
           f"cost: {cost:3f}, "
           f"TFLOPS : {total_flops / cost / 1e12:.2f}""")
 
+benchmark(1024, 1024, 1024, "float32")
 benchmark(4096, 4096, 4096, "float32")
+benchmark(8192, 8192, 8192, "float32")
 benchmark(4096, 4096, 4096, "float16")
 
 #benchmark(4096, 2304, 9216, "float32")

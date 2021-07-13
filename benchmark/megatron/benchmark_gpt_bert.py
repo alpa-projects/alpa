@@ -41,11 +41,13 @@ benchmark_suite_8_gpu = [
 ]
 
 def benchmark_all(args):
-    if args.nproc_per_node == 1:
+    num_gpus = args.nproc_per_node * args.nnodes
+
+    if num_gpus == 1:
         benchmark_suite = benchmark_suite_1_gpu
-    elif args.nnodes is None or args.nnodes == 1:
+    elif num_gpus == 4:
         benchmark_suite = benchmark_suite_4_gpu
-    else:
+    elif num_gpus == 8:
         benchmark_suite = benchmark_suite_8_gpu
 
     for case in benchmark_suite:
@@ -59,7 +61,8 @@ def benchmark_all(args):
                          f'"{case_str}"')
         else:
             # Multiple nodes
-            ret = run_cmd('python3 -m torch.distributed.launch '
+            ret = run_cmd('CUDA_VISIBLE_DEVICES=0,1,2,3 '
+                         'python3 -m torch.distributed.launch '
                          f'--nproc_per_node {args.nproc_per_node} '
                          f'--nnodes {args.nnodes} '
                          f'--node_rank {args.node_rank} '
@@ -76,8 +79,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--nproc_per_node", type=int, required=True)
-    parser.add_argument("--nnodes", type=str)
-    parser.add_argument("--node_rank", type=str)
+    parser.add_argument("--nnodes", type=int, default=1)
+    parser.add_argument("--node_rank", type=int)
     parser.add_argument("--master_addr", type=str)
     parser.add_argument("--master_port", type=str)
     args = parser.parse_args()

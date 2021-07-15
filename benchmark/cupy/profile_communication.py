@@ -144,8 +144,8 @@ class GpuHost:
     def profile(self):
         # All-reduce
         for i in range(28, 29):
-            self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size//2))])
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size))])
+            self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size//2))])
 
             #self.profile_allreduce(1 << i, cp.float32, [[0, 3]])
             #self.profile_allreduce(1 << i, cp.float32, [[0, 4], [1, 5], [2, 6], [3, 7]])
@@ -174,6 +174,7 @@ if __name__ == "__main__":
     for i in range(num_gpus):
         env_vars = {
             #"NCCL_SOCKET_NTHREADS": "4",
+            #"NCCL_NSOCKS_PERTHREAD": "8",
             #"NCCL_ALGO": "tree",
             #"NCCL_DEBUG": "INFO",
         }

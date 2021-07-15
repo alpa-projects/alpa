@@ -190,25 +190,34 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 benchmark_suite_4_gpu = [
     # B, S,    H,    L, #head,    V,     DP, TMP
-    (16, 1024, 1536, 6, 1536//96, 51200, 4,  1,),
-    (16, 1024, 1536, 6, 1536//96, 51200, 2,  2,),
+    #(16, 1024, 1536, 6, 1536//96, 51200, 4,  1,),
+    #(16, 1024, 1536, 6, 1536//96, 51200, 2,  2,),
 
-    (8,  512,  3072, 6, 3072//96, 51200, 4,  1,),
-    (8,  512,  3072, 6, 3072//96, 51200, 2,  2,),
+    (4,  1024, 3072, 8,  3072//96, 51200, 4,  1),
+    (4,  1024, 3072, 8,  3072//96, 51200, 2,  2),
 ]
 
+benchmark_suite_8_gpu = [
+    # B, S,    H,    L,  #head,    V,     DP, TMP
+    #(32, 512,  1024, 22, 1024//64, 51200, 8,  1),
+    (8,  1024, 3072, 8,  3072//96, 51200, 1,  8),
+]
+
+benchmark_suite_16_gpu = [
+    # B, S,    H,    L,  #head,    V,     DP, TMP
+    #(64, 512,  1024, 22, 1024//64, 51200, 16, 1),
+
+    (16, 1024, 3072, 8,  3072//96, 51200, 2,  8),
+]
 
 def benchmark_all(use_profiling):
     num_gpus = ray.cluster_resources()["GPU"]
+    benchmark_suites = {
+        8 : benchmark_suite_8_gpu,
+        16 : benchmark_suite_16_gpu,
+    }
 
-    if num_gpus == 4:
-        benchmark_suite = benchmark_suite_4_gpu
-    elif num_gpus == 8:
-        benchmark_suite = benchmark_suite_8_gpu
-    else:
-        raise ValueError(f"No benchmark suite for gpu number: {num_gpus}")
-
-    for case in benchmark_suite:
+    for case in benchmark_suites[int(num_gpus)]:
         benchmark_transformer_one_case(case, use_profiling)
 
 

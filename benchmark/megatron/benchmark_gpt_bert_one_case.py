@@ -7,7 +7,7 @@ import timeit
 
 import numpy as np
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
-from megatron.model import BertModel, GPTModel, DistributedDataParallel as LocalDDP
+from megatron.model import BertModel, GPTModel, Float16Module, DistributedDataParallel as LocalDDP
 from megatron import mpu, initialize_megatron, get_args
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
@@ -48,6 +48,8 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     sys.argv += ["--num-attention-heads", str(num_heads)]
     sys.argv += ["--max-position-embeddings", str(seq_len)]
     sys.argv += ["--encoder-seq-length", str(seq_len)]
+    #sys.argv += ["--checkpoint-activations"]
+    #sys.argv += ["--fp16"]
     initialize_megatron()
     get_args().padded_vocab_size = vocab_size
     rank = torch.distributed.get_rank()
@@ -67,6 +69,10 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     else:
         raise ValueError(f"Invalid model type: {model_type}")
     model.cuda(torch.cuda.current_device())
+
+    args = get_args()
+    if args.fp16:
+        model = Float16Module(model, args)
 
     weight_mem = get_memory_usage()
 

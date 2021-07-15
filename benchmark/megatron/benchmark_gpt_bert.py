@@ -12,45 +12,45 @@ def run_cmd(cmd):
 
 benchmark_suite_1_gpu = [
     # B, S,   H,    L,  #head,    V,     DP, TMP, DP_IMP
-    (4, 512,  1024, 22, 1024//64, 51200, 1,  1,   1),  # bert-large
-    (4, 1024, 1536, 6,  1536//96, 51200, 1,  1,   1),  # megatron 1.2B
+    (32, 512,  1024, 24, 1024//64, 51200, 1,  1,   1),  # bert-large
+
+    #(8, 1024, 1536, 40, 1536//96, 51200, 1,  1,   1),  # megatron 1.2B
 ]
 
 benchmark_suite_4_gpu = [
     # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
-    (16, 512,  1024, 22, 1024//64, 51200, 4,  1,   1),
-    (16, 512,  1024, 22, 1024//64, 51200, 2,  2,   1),
-    (16, 512,  1024, 22, 1024//64, 51200, 1,  4,   1),
-
-    (4,  1024, 3072, 8,  3072//96, 51200, 4,  1,   1),
-    (4,  1024, 3072, 8,  3072//96, 51200, 2,  2,   1),
-    (4,  1024, 3072, 8,  3072//96, 51200, 1,  4,   1),
 ]
 
 benchmark_suite_8_gpu = [
     # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
-    (32, 512,  1024, 22, 1024//64, 51200, 8,  1,   1),
-    (32, 512,  1024, 22, 1024//64, 51200, 4,  2,   1),
-    (32, 512,  1024, 22, 1024//64, 51200, 2,  4,   1),
-    (32, 512,  1024, 22, 1024//64, 51200, 1,  8,   1),
+    (256, 512,  1024, 24, 1024//64, 51200, 8,  1,   1),
 
-    (8,  1024, 3072, 8,  3072//96, 51200, 8,  1,   1),
-    (8,  1024, 3072, 8,  3072//96, 51200, 4,  2,   1),
-    (8,  1024, 3072, 8,  3072//96, 51200, 2,  4,   1),
-    (8,  1024, 3072, 8,  3072//96, 51200, 1,  8,   1),
+    #(8,  1024, 3072, 72,  3072//96, 51200, 1,  8,   1),
 ]
+
+benchmark_suite_16_gpu = [
+    # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
+    #(512, 512,  1024, 24, 1024//64, 51200, 16,  1,   1),
+
+    (16,  1024, 3072, 8,  3072//96, 51200, 2,  8,   1),
+
+    #(16,  1024, 3072, 72,  3072//96, 51200, 2,  8,   1),
+    #(32,  1024, 3072, 72,  3072//96, 51200, 2,  8,   1),
+    #(64,  1024, 3072, 72,  3072//96, 51200, 2,  8,   1),
+]
+
 
 def benchmark_all(args):
     num_gpus = args.nproc_per_node * args.nnodes
 
-    if num_gpus == 1:
-        benchmark_suite = benchmark_suite_1_gpu
-    elif num_gpus == 4:
-        benchmark_suite = benchmark_suite_4_gpu
-    elif num_gpus == 8:
-        benchmark_suite = benchmark_suite_8_gpu
+    benchmark_suites = {
+        1 : benchmark_suite_1_gpu,
+        4 : benchmark_suite_4_gpu,
+        8 : benchmark_suite_8_gpu,
+        16 : benchmark_suite_16_gpu,
+    }
 
-    for case in benchmark_suite:
+    for case in benchmark_suites[num_gpus]:
         case_str = str((args.model,) + case)
 
         if args.master_addr is None:
@@ -61,8 +61,7 @@ def benchmark_all(args):
                          f'"{case_str}"')
         else:
             # Multiple nodes
-            ret = run_cmd('CUDA_VISIBLE_DEVICES=0,1,2,3 '
-                         'python3 -m torch.distributed.launch '
+            ret = run_cmd('python3 -m torch.distributed.launch '
                          f'--nproc_per_node {args.nproc_per_node} '
                          f'--nnodes {args.nnodes} '
                          f'--node_rank {args.node_rank} '

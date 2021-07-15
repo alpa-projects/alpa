@@ -13,7 +13,7 @@ from flax import optim, linen as nn
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
 from parax.model.bert_model import (BertConfig, FlaxBertAttention, FlaxBertLayerCollection,
-                                    FlaxBertForMaskedLMModule, onehot)
+                                    FlaxBertForMaskedLMModule)
 from test_auto_sharding_mlp import (assert_close, assert_all_replicated,
                                     assert_column_partitioned,
                                     assert_only_has_allreduce,
@@ -142,7 +142,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                                      batch["position_ids"],
                                      rngs=rngs)[0]
                 label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
-                labels = onehot(batch["labels"], logits.shape[-1])
+                labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
                 loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
                 return (label_mask * loss).sum() / label_mask.sum() * 0.1234
 
@@ -377,8 +377,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         mesh_shape = [2, 2]
 
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
-        logical_mesh  = physical_mesh.get_logical_mesh(mesh_shape, [1, 1], [1, 1])
+        logical_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
         set_parallelize_options(devices=logical_mesh)
 
         # Model and training step definition

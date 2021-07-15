@@ -26,7 +26,7 @@ This repo depends on our private fork of jax and tensorflow.
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install numpy scipy flax
+    pip3 install numpy scipy flax ray
     ```
   - ILP Solver:
     ```bash

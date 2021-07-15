@@ -4,6 +4,13 @@ Parax automatically parallelizes your python numerical computing code and neural
 with a simple decorator.
 
 
+Requirements
+============
+
+```
+CUDA >= 11.1
+```
+
 Install
 =======
 This repo depends on our private fork of jax and tensorflow.
@@ -19,8 +26,7 @@ This repo depends on our private fork of jax and tensorflow.
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install numpy scipy flax
-    pip3 install transformers==4.4.0
+    pip3 install numpy scipy flax ray
     ```
   - ILP Solver:
     ```bash
@@ -37,7 +43,7 @@ This repo depends on our private fork of jax and tensorflow.
   pip3 install -e .
   ```
 
-- Step 4. Install Jax
+- Step 4. Install jax
   ```bash
   cd jax-parax
   pip3 install -e .

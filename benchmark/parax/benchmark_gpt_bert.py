@@ -12,7 +12,9 @@ import ray
 
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh)
-from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
+from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
+from parax.model.gpt_model import FlaxGPTForLMModule
+
 from parax.testing import assert_only_has_allreduce
 from parax.util import run_cmd, write_tsv
 
@@ -48,8 +50,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp(None)
 
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
-        benchmark_case
+    model_type = args.model
+    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
+        dp_size, tensor_mp_size = benchmark_case
 
     # Mesh configs
     device_cluster = DeviceCluster()
@@ -75,12 +78,20 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp("Setup device mesh")
 
     @parallelize
-    def train_step(optimizer, batch, apply_fn):
+    def train_step(optimizer, batch, apply_func):
         def loss_func(params):
             rngs = {"dropout": batch["rng"]}
-            out = apply_fn(params, batch["hidden_states"], batch["attention_mask"],
-                           deterministic=False, rngs=rngs)[0]
-            return jnp.mean((out - batch["label"]) ** 2)
+            logits = apply_func(params,
+                                batch["input_ids"],
+                                batch["attention_mask"],
+                                batch["token_type_ids"],
+                                batch["position_ids"],
+                                rngs=rngs)[0]
+            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+            loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+            loss = (label_mask * loss).sum() / label_mask.sum()
+            return loss
 
         grad = jax.grad(loss_func)(optimizer.target)
         new_optimizer = optimizer.apply_gradient(grad)
@@ -88,21 +99,40 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Prepare model and input
     batch = {
-        "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=np.int32),
-        "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
+        "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "rng": jax.random.PRNGKey(0),
     }
     log_time_stamp("Prepare input")
 
     # Init model and optimizer
-    model = FlaxBertLayerCollection(BertConfig(
-        num_hidden_layers=num_layers,
-        hidden_size=hidden_size,
-        intermediate_size=hidden_size * 4,
-        num_attention_heads=num_heads))
+    if model_type == "gpt":
+        model = FlaxGPTForLMModule(BertConfig(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_attention_heads=num_heads,
+            intermediate_size=hidden_size * 4,
+            num_hidden_layers=num_layers,
+            type_vocab_size=0,
+        ))
+    elif model_type == "bert":
+        model = FlaxBertForMaskedLMModule(BertConfig(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_attention_heads=num_heads,
+            intermediate_size=hidden_size * 4,
+            num_hidden_layers=num_layers,
+            type_vocab_size=0,
+        ))
+    else:
+        raise ValueError(f"Invalid model {model_type}")
+
     rngkey = jax.random.PRNGKey(0)
-    params = model.init_dummy(rngkey, batch["hidden_states"], batch["attention_mask"])
+    params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
+                              batch["token_type_ids"], batch["position_ids"])
     optimizer = optim.Adam(1e-2).create(params)
     params = rngkey = None
     log_time_stamp("Init model and optimizer")
@@ -147,52 +177,54 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Log benchmark results
     heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
-    values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
+    values = [model_type, str(benchmark_case[:-2]), str(benchmark_case[-2:]),
              f"{real_mem/GB:.3f}", f"{objective:.2f}",
              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
-    write_tsv(heads, values, "result_trans.tsv")
+    write_tsv(heads, values, f"result_{model_type}.tsv")
 
     physical_mesh.shutdown()
 
 
-benchmark_suite_4_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
-    (32,          1024,    1536,        3,          1536//96,  4,         1),
-    (32,          1024,    1536,        3,          1536//96,  2,         2),
+# B = Batch size, S = seq_len, H = hidden size, L = num_layers,
+# #head = num_heads, DP = dp_size, TMP = tensor_mp_size
 
-    (32,          128,     5120,        2,          5120//128, 4,         1),
-    (32,          128,     5120,        2,          5120//128, 2,         2),
+benchmark_suite_4_gpu = [
+    # B, S,    H,    L, #head,    V,     DP, TMP
+    #(16, 1024, 1536, 6, 1536//96, 51200, 4,  1,),
+    #(16, 1024, 1536, 6, 1536//96, 51200, 2,  2,),
+
+    (4,  1024, 3072, 8,  3072//96, 51200, 4,  1),
+    (4,  1024, 3072, 8,  3072//96, 51200, 2,  2),
 ]
 
 benchmark_suite_8_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
-    (32,          1024,    1536,        4,          1536//96,  8,        1),
-    (32,          1024,    1536,        4,          1536//96,  4,        2),
-    (32,          1024,    1536,        4,          1536//96,  2,        4),
-
-    (32,          128,     5120,        3,          5120//128, 8,        1),
-    (32,          128,     5120,        3,          5120//128, 4,        2),
-    (32,          128,     5120,        3,          5120//128, 2,        4),
+    # B, S,    H,    L,  #head,    V,     DP, TMP
+    #(32, 512,  1024, 22, 1024//64, 51200, 8,  1),
+    (8,  1024, 3072, 8,  3072//96, 51200, 1,  8),
 ]
 
+benchmark_suite_16_gpu = [
+    # B, S,    H,    L,  #head,    V,     DP, TMP
+    #(64, 512,  1024, 22, 1024//64, 51200, 16, 1),
+
+    (16, 1024, 3072, 8,  3072//96, 51200, 2,  8),
+]
 
 def benchmark_all(use_profiling):
     num_gpus = ray.cluster_resources()["GPU"]
+    benchmark_suites = {
+        8 : benchmark_suite_8_gpu,
+        16 : benchmark_suite_16_gpu,
+    }
 
-    if num_gpus == 4:
-        benchmark_suite = benchmark_suite_4_gpu
-    elif num_gpus == 8:
-        benchmark_suite = benchmark_suite_8_gpu
-    else:
-        raise ValueError(f"No benchmark suite for gpu number: {num_gpus}")
-
-    for case in benchmark_suite:
+    for case in benchmark_suites[int(num_gpus)]:
         benchmark_transformer_one_case(case, use_profiling)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
+    parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--number", type=int, default=5)
     args = parser.parse_args()
 

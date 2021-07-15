@@ -109,6 +109,8 @@ def parallelize(fun=None,
 
         @wraps(fun)
         def preshard_dynamic_args(*args, **kwargs):
+            """Prepare sharded arguments for benchmark purposes,
+            so we can exclude the time for sharding arguments."""
             kwargs['__shard_args_only_mode'] = True
             return ret_func(*args, **kwargs)
 

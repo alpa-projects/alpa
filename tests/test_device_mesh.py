@@ -41,7 +41,7 @@ class DeviceMeshTest(unittest.TestCase):
             return x
 
         # Run computation
-        a = jnp.ones((1000, 1000))
+        a = jnp.ones((512, 512))
         out = add_one(a)
         out = multiply_two(out)
 

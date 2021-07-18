@@ -69,6 +69,8 @@ def auto_donate_argnums(args):
 
 def to_int_tuple(array):
     """Convert a numpy array to int tuple."""
+    if array is None:
+        return tuple()
     return tuple(int(x) for x in array)
 
 
@@ -233,6 +235,8 @@ def list_gpu_info():
 
 def write_tsv(heads, values, filename, print_line=True):
     """Write tsv data to a file."""
+    assert len(heads) == len(values)
+
     with open(filename, "a") as fout:
         fout.write("\t".join(values) + "\n")
 

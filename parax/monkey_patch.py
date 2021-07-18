@@ -25,8 +25,9 @@ jax.random.fold_in = remove_fold_in
 # Monkey patch the nn.Embed in flax to use onehot + matmul instead of gather/scatter.
 # Because we currently do not support 2d partition of gather/scatter.
 def embed_call_one_hot(self, inputs):
-    expanded = jax.nn.one_hot(inputs, self.num_embeddings)
-    return expanded @ self.embedding
+    expanded = jax.nn.one_hot(inputs, self.num_embeddings, dtype=self.embedding.dtype)
+    ret = expanded @ self.embedding
+    return ret
 
 
 setattr(flax.linen.Embed, "__call__", embed_call_one_hot)

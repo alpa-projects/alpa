@@ -228,7 +228,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
         values = [model_type, str(benchmark_case[1:-4]),
                   str((dp_size, tensor_mp_size)),
                   "local" if ddp_impl else "torch",
-                  str(bool(checkpoint_activations)),
+                  str(checkpoint_activations),
                   f"{parameter_count/1e9:5.3f}", f"{peak_mem/GB:5.3f}",
                   f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
                   f"{tflops:.2f}"]

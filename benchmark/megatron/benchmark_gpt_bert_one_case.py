@@ -12,8 +12,7 @@ from megatron import mpu, initialize_megatron, get_args
 from megatron.training import train_step, setup_model_and_optimizer
 import torch
 
-from timeit_v2 import py_benchmark
-from benchmark_mlp_one_case import write_tsv
+from util import write_tsv, benchmark_func
 
 GB = 1024 ** 3
 
@@ -202,27 +201,23 @@ def benchmark_gpt_bert_one_case(benchmark_case):
         print(model[0])
         print(f"Parameter count {parameter_count/1e9:.2f} B")
 
-    def one_batch_func():
+    # Benchmark step time
+    def run_func():
         train_step(forward_step, None, model, optimizer, lr_scheduler)
-        torch.distributed.barrier()
 
-    # Record peak memory
-    one_batch_func()
-    peak_mem = torch.cuda.max_memory_allocated(0)
+    def sync_func():
+        torch.cuda.synchronize()
 
-    # Benchmark time cost
-    stmt = "one_batch_func()"
-    repeat = 3
-    number = 3
-    costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
-        repeat=repeat, number=number)) / number
-    tflops = compute_tflops(batch_size, seq_len, num_layers,
-                            hidden_size, vocab_size,
-                            torch.distributed.get_world_size(),
-                            np.mean(costs))
+    costs = benchmark_func(run_func, sync_func,
+                           warmup=1, repeat=2, number=5)
 
     # Print results
     if rank == 0:
+        peak_mem = torch.cuda.max_memory_allocated(0)
+        tflops = compute_tflops(batch_size, seq_len, num_layers,
+                                hidden_size, vocab_size,
+                                torch.distributed.get_world_size(),
+                                np.mean(costs))
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Checkpointing",
                  "Parameter Count", "Peak Mem", "Mean Time", "Std Time", "TFLOPS"]
         values = [model_type, str(benchmark_case[1:-4]),

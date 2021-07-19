@@ -3,7 +3,6 @@ import os
 import sys
 import timeit
 
-
 import numpy as np
 from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
@@ -12,9 +11,7 @@ from megatron import mpu, initialize_megatron, get_args
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
-
-from timeit_v2 import py_benchmark
-from benchmark_mlp_one_case import write_tsv
+from util import write_tsv, benchmark_func
 
 GB = 1024 ** 3
 
@@ -33,8 +30,8 @@ def get_memory_usage(print_info=False):
 
 def benchmark_transformer_layer_one_case(benchmark_case):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size,\
-        ddp_impl = benchmark_case
+    batch_size, seq_len, hidden_size, num_layers, num_heads, \
+        dp_size, tensor_mp_size, ddp_impl = benchmark_case
 
     # Parallel configs
     micro_batch_size = batch_size // dp_size
@@ -79,14 +76,13 @@ def benchmark_transformer_layer_one_case(benchmark_case):
 
     x = torch.randn(seq_len, micro_batch_size, hidden_size).cuda(i)
     y = torch.randn(seq_len, micro_batch_size, hidden_size).cuda(i)
-    attention_mask = torch.ones(micro_batch_size, 1, 1, seq_len).\
+    attention_mask = torch.ones(micro_batch_size, 1, seq_len, seq_len).\
         to(torch.bool).cuda(i)
 
-    input_mem = get_memory_usage() - weight_mem
-    act_mem = [None]
     optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
 
-    def func(record_act_mem=False):
+    # Benchmark step time
+    def run_func():
         if isinstance(model, LocalDDP):
             model.zero_grad_buffer()
         else:
@@ -97,12 +93,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
         loss = ((output - y) ** 2)
         loss = loss.mean()
 
-        if record_act_mem:
-            before_backward_mem = get_memory_usage()
-            loss.backward()
-            act_mem[0] = before_backward_mem - get_memory_usage()
-        else:
-            loss.backward()
+        loss.backward()
 
         if isinstance(model, LocalDDP):
             model.allreduce_gradients()
@@ -112,22 +103,15 @@ def benchmark_transformer_layer_one_case(benchmark_case):
 
         optimizer.step()
 
-        torch.distributed.barrier()
+    def sync_func():
+        torch.cuda.synchronize()
 
-    # Record peak memory
-    func(True)
-    func(True)
-    peak_mem = torch.cuda.max_memory_allocated(0)
-
-    # Benchmark time cost
-    stmt = "func()"
-    repeat = 3
-    number = 4
-    costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
-        repeat=repeat, number=number)) / number
+    costs = benchmark_func(run_func, sync_func,
+                           warmup=1, repeat=2, number=5)
 
     # Print results
     if rank == 0:
+        peak_mem = torch.cuda.max_memory_allocated(0)
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
                  "Peak Mem", "Mean Time", "Std Time"]
         values = ["transformer-layer", str(benchmark_case[:-3]),
@@ -135,7 +119,6 @@ def benchmark_transformer_layer_one_case(benchmark_case):
                   f"{weight_mem/GB:5.3f}", f"{peak_mem/GB:5.3f}",
                   f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
         write_tsv(heads, values, "result_trans.tsv")
-
 
 
 if __name__ == "__main__":

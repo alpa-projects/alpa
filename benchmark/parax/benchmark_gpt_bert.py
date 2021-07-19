@@ -215,7 +215,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     physical_mesh.shutdown()
 
 
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
 
 benchmark_suite_1_gpu = [

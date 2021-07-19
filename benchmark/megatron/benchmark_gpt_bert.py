@@ -1,13 +1,8 @@
 import argparse
-import os
 
+from util import run_cmd
 
-def run_cmd(cmd):
-    print(cmd)
-    return os.system(cmd)
-
-
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size,
 # #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DPI = ddp_implementation,
 # CK = checkpoint_activations
 

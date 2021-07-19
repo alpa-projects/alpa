@@ -1,23 +1,25 @@
-import os
+import argparse
 
-def run_cmd(cmd):
-    print(cmd)
-    return os.system(cmd)
+from util import run_cmd
 
-benchmark_suite = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (32,          1024,    2304,        4,          2304//96,  4,       1),
-    (32,          1024,    2304,        4,          2304//96,  2,       2),
-    (32,          1024,    2304,        4,          2304//96,  1,       4),
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DPI = ddp_implementation,
 
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           256,     5760,        4,          5760//96,  4,       1),
-    (8,           256,     5760,        4,          5760//96,  2,       2),
-    (8,           256,     5760,        4,          5760//96,  1,       4),
+benchmark_suite_4_gpu = [
+    # B,  S,    H,    L,  #head,     DP, TMP, DPI
+    (32,  1024, 2304, 4,  2304//96,  4,  1,   1),
+    (32,  1024, 2304, 4,  2304//96,  2,  2,   1),
+    (32,  1024, 2304, 4,  2304//96,  1,  4,   1),
+
+    # B,  S,    H,    L,  #head,     DP, TMP, DPI
+    (8,   256,  5760, 4,  5760//96,  4,  1,   1),
+    (8,   256,  5760, 4,  5760//96,  2,  2,   1),
+    (8,   256,  5760, 4,  5760//96,  1,  4,   1),
 ]
 
+
 def benchmark_all():
-    for case in benchmark_suite:
+    for case in benchmark_suite_4_gpu:
         nproc_per_node = 4
         case_str = str(case)
         ret = run_cmd('python3 -m torch.distributed.launch '

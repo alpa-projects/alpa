@@ -1,56 +1,44 @@
 import argparse
-import os
 
+from util import run_cmd
 
-def run_cmd(cmd):
-    print(cmd)
-    return os.system(cmd)
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DPI = ddp_implementation,
 
+benchmark_suite_4_gpu = [
+    # B,  S,    H,    L,  #head,     DP, TMP, DPI
+    (32,  1024, 1536, 3,  1536//96,  4,  1,   1,),
+    (32,  1024, 1536, 3,  1536//96,  2,  2,   1,),
+    (32,  1024, 1536, 3,  1536//96,  1,  4,   1,),
 
-benchmark_suite_single_node = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size, ddp_impl
-    (32,          1024,    1536,        3,          1536//96,  4,       1,              0,),
-    (32,          1024,    1536,        3,          1536//96,  2,       2,              0,),
-    (32,          1024,    1536,        3,          1536//96,  1,       4,              0,),
-
-    (32,          128,     5120,        2,          5120//128, 4,       1,              0,),
-    (32,          128,     5120,        2,          5120//128, 2,       2,              0,),
-    (32,          128,     5120,        2,          5120//128, 1,       4,              0,),
+    (32,  128,  5120, 2,  5120//128, 4,  1,   1,),
+    (32,  128,  5120, 2,  5120//128, 2,  2,   1,),
+    (32,  128,  5120, 2,  5120//128, 1,  4,   1,),
 ]
 
-benchmark_suite_multi_node = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size, ddp_impl
-    (32,          128,     1536,        1,          1536//96,  8,       1,              0,),
+benchmark_suite_8_gpu = [
+    # B,  S,    H,    L,  #head,     DP, TMP, DPI
+    #(32,  1024, 1536, 4,  1536//96,  8,  1,   1,),
+    #(32,  1024, 1536, 4,  1536//96,  4,  2,   1,),
+    #(32,  1024, 1536, 4,  1536//96,  2,  4,   1,),
+    #(32,  1024, 1536, 4,  1536//96,  1,  8,   1,),
 
-    (32,          1024,    1536,        4,          1536//96,  8,       1,              0,),
-    (32,          1024,    1536,        4,          1536//96,  4,       2,              0,),
-    (32,          1024,    1536,        4,          1536//96,  2,       4,              0,),
-    (32,          1024,    1536,        4,          1536//96,  1,       8,              0,),
-
-    (32,          128,     5120,        3,          5120//128, 8,       1,              0,),
-    (32,          128,     5120,        3,          5120//128, 4,       2,              0,),
-    (32,          128,     5120,        3,          5120//128, 2,       4,              0,),
-    (32,          128,     5120,        3,          5120//128, 1,       8,              0,),
-
-    (32,          1024,    1536,        4,          1536//96,  8,       1,              1,),
-    (32,          1024,    1536,        4,          1536//96,  4,       2,              1,),
-    (32,          1024,    1536,        4,          1536//96,  2,       4,              1,),
-    (32,          1024,    1536,        4,          1536//96,  1,       8,              1,),
-
-    (32,          128,     5120,        3,          5120//128, 8,       1,              1,),
-    (32,          128,     5120,        3,          5120//128, 4,       2,              1,),
-    (32,          128,     5120,        3,          5120//128, 2,       4,              1,),
-    (32,          128,     5120,        3,          5120//128, 1,       8,              1,),
+    #(32,  128,  5120, 3,  5120//128, 8,  1,   1,),
+    #(32,  128,  5120, 3,  5120//128, 4,  2,   1,),
+    #(32,  128,  5120, 3,  5120//128, 2,  4,   1,),
+    (32,  128,  5120, 3,  5120//128, 1,  8,   1,),
 ]
 
 
 def benchmark_all(args):
-    if args.master_addr is None:
-        benchmark_suite = benchmark_suite_single_node
-    else:
-        benchmark_suite = benchmark_suite_multi_node
+    num_gpus = args.nproc_per_node * args.nnodes
 
-    for case in benchmark_suite:
+    benchmark_suites = {
+        4 : benchmark_suite_4_gpu,
+        8 : benchmark_suite_8_gpu,
+    }
+
+    for case in benchmark_suites[num_gpus]:
         case_str = str(case)
 
         if args.master_addr is None:
@@ -77,11 +65,10 @@ def benchmark_all(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--nproc_per_node", type=int, required=True)
-    parser.add_argument("--nnodes", type=str)
-    parser.add_argument("--node_rank", type=str)
+    parser.add_argument("--nnodes", type=int, default=1)
+    parser.add_argument("--node_rank", type=int)
     parser.add_argument("--master_addr", type=str)
     parser.add_argument("--master_port", type=str)
     args = parser.parse_args()
 
     benchmark_all(args)
-

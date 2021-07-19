@@ -70,7 +70,7 @@ class FlaxBertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.word_embeddings = nn.Embed(
@@ -93,8 +93,8 @@ class FlaxBertEmbeddings(nn.Module):
                 embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
                 dtype=self.dtype,
             )
-        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
         self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
+        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
 
     def __call__(self, input_ids, token_type_ids, position_ids, attention_mask, deterministic: bool = True):
         # Embed
@@ -108,16 +108,14 @@ class FlaxBertEmbeddings(nn.Module):
 
         # Sum all embeddings
         hidden_states = inputs_embeds + token_type_embeddings + position_embeds
-
-        # Layer Norm
-        hidden_states = self.LayerNorm(hidden_states)
         hidden_states = self.dropout(hidden_states, deterministic=deterministic)
+        hidden_states = self.LayerNorm(hidden_states)
         return hidden_states
 
 
 class FlaxBertSelfAttention(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         if self.config.hidden_size % self.config.num_attention_heads != 0:
@@ -186,7 +184,7 @@ class FlaxBertSelfAttention(nn.Module):
 
 class FlaxBertSelfOutput(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.dense = nn.Dense(
@@ -194,8 +192,8 @@ class FlaxBertSelfOutput(nn.Module):
             kernel_init=jax.nn.initializers.normal(self.config.initializer_range),
             dtype=self.dtype,
         )
-        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
         self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
+        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
 
     def __call__(self, hidden_states, input_tensor, deterministic: bool = True):
         hidden_states = self.dense(hidden_states)
@@ -206,7 +204,7 @@ class FlaxBertSelfOutput(nn.Module):
 
 class FlaxBertAttention(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.self = FlaxBertSelfAttention(self.config, dtype=self.dtype)
@@ -232,7 +230,7 @@ class FlaxBertAttention(nn.Module):
 
 class FlaxBertIntermediate(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.dense = nn.Dense(
@@ -250,7 +248,7 @@ class FlaxBertIntermediate(nn.Module):
 
 class FlaxBertOutput(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.dense = nn.Dense(
@@ -270,7 +268,7 @@ class FlaxBertOutput(nn.Module):
 
 class FlaxBertLayer(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.attention = FlaxBertAttention(self.config, dtype=self.dtype)
@@ -295,7 +293,7 @@ class FlaxBertLayer(nn.Module):
 
 class FlaxBertLayerCollection(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.layers = [
@@ -342,7 +340,7 @@ class FlaxBertLayerCollection(nn.Module):
 
 class FlaxBertEncoder(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.layer = FlaxBertLayerCollection(self.config, dtype=self.dtype)
@@ -368,7 +366,7 @@ class FlaxBertEncoder(nn.Module):
 
 class FlaxBertPooler(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.dense = nn.Dense(
@@ -385,7 +383,7 @@ class FlaxBertPooler(nn.Module):
 
 class FlaxBertPredictionHeadTransform(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.dense = nn.Dense(self.config.hidden_size, dtype=self.dtype)
@@ -400,7 +398,7 @@ class FlaxBertPredictionHeadTransform(nn.Module):
 
 class FlaxBertLMPredictionHead(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
     bias_init: Callable[..., np.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
@@ -427,7 +425,7 @@ class FlaxBertLMPredictionHead(nn.Module):
 
 class FlaxBertOnlyMLMHead(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.predictions = FlaxBertLMPredictionHead(self.config, dtype=self.dtype)
@@ -438,7 +436,7 @@ class FlaxBertOnlyMLMHead(nn.Module):
 
 
 class FlaxBertOnlyNSPHead(nn.Module):
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.seq_relationship = nn.Dense(2, dtype=self.dtype)
@@ -449,7 +447,7 @@ class FlaxBertOnlyNSPHead(nn.Module):
 
 class FlaxBertPreTrainingHeads(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.predictions = FlaxBertLMPredictionHead(self.config, dtype=self.dtype)
@@ -463,7 +461,7 @@ class FlaxBertPreTrainingHeads(nn.Module):
 
 class FlaxBertModule(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
     add_pooling_layer: bool = True
 
     def setup(self):
@@ -512,7 +510,7 @@ class FlaxBertModule(nn.Module):
 
 class FlaxBertForPreTrainingModule(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.bert = FlaxBertModule(config=self.config, dtype=self.dtype)
@@ -567,7 +565,7 @@ class FlaxBertForPreTrainingModule(nn.Module):
 
 class FlaxBertForMaskedLMModule(nn.Module):
     config: BertConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.bert = FlaxBertModule(config=self.config, add_pooling_layer=False, dtype=self.dtype)
@@ -620,9 +618,9 @@ def test_bert_layer():
     seq_len = 64
     hidden_size = 768
 
-    hidden_states = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float16)
+    hidden_states = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
     attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-    label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float16)
+    label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
 
     # Init model and optimizer
     model = FlaxBertLayer(BertConfig(

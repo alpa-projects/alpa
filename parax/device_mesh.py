@@ -9,7 +9,7 @@ from typing import Union, List
 from operator import attrgetter
 import numpy as np
 import ray
-from jax import core, xla
+from jax import core, xla, eval_shape
 from jax._src.util import (partial, unzip3)
 from jax.abstract_arrays import array_types
 from jax.interpreters import pxla
@@ -1014,10 +1014,16 @@ def _shard_array(x, device_mesh, indices):
 
 def _shard_device_array(array, device_mesh, indices):
     # Create shards according to indices for a DeviceArray
-    # TODO(lmzheng): optimize this funcion for the case when use_dummy_value_for_benchmarking == True
-    start_indices, limit_indices, removed_dims = map(tuple, unzip3(
-        _as_slice_indices(array, idx) for idx in indices))
-    shards = array._multi_slice(start_indices, limit_indices, removed_dims)
+    if global_config.use_dummy_value_for_benchmarking:
+        start_indices, limit_indices, removed_dims = map(tuple, unzip3(
+            _as_slice_indices(array, idx) for idx in indices))
+        def slice_func():
+            return array._multi_slice(start_indices, limit_indices, removed_dims)
+        shards = eval_shape(slice_func)
+    else:
+        start_indices, limit_indices, removed_dims = map(tuple, unzip3(
+            _as_slice_indices(array, idx) for idx in indices))
+        shards = array._multi_slice(start_indices, limit_indices, removed_dims)
 
     return _device_mesh_put(device_mesh, shards)
 

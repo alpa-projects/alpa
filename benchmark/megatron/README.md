@@ -2,12 +2,23 @@
 
 ## Requirements
 ```
+torch==1.8.0
+```
+
+```
 pip3 install ninja
 
+# Install Megatron
 git clone https://github.com/NVIDIA/Megatron-LM.git
 cd Megatron-LM
 pip3 install -e .
 echo 'export PYTHONPATH=$PYTHONPATH:~/Megatron-LM' >> ~/.bashrc   # use your own path
+
+# Install Apex
+git clone https://github.com/NVIDIA/apex
+cd apex
+# Comment out the raised RuntimeError in setup.py if you get errors running the following command.
+pip3 install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 ```
 
 ## Instructions

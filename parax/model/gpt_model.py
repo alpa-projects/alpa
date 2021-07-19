@@ -62,7 +62,7 @@ class FlaxGPTForLMModule(nn.Module):
             assert self.decoder is not None
             logits = self.decoder(hidden_states)
 
-        logits += self.decoder_bias
+        logits += jnp.asarray(self.decoder_bias, self.dtype)
 
         # Compute the prediction scores
         if not return_dict:

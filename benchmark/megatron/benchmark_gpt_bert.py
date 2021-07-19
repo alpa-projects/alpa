@@ -1,42 +1,31 @@
 import argparse
-import os
 
+from util import run_cmd
 
-def run_cmd(cmd):
-    print(cmd)
-    return os.system(cmd)
-
-
-# B = Batch size, S = seq_len, H = hidden size, L = num_layers,
-# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DP_IMP = ddp_implementation
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size,
+# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DPI = ddp_implementation,
+# CK = checkpoint_activations
 
 benchmark_suite_1_gpu = [
-    # B, S,   H,    L,  #head,    V,     DP, TMP, DP_IMP
-    (32, 512,  1024, 24, 1024//64, 51200, 1,  1,   1),  # bert-large
-
-    #(8, 1024, 1536, 40, 1536//96, 51200, 1,  1,   1),  # megatron 1.2B
+    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
+    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,   1,   0),
+    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,   1,   0),
 ]
 
 benchmark_suite_4_gpu = [
-    # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
+    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
 ]
 
 benchmark_suite_8_gpu = [
-    # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
-    (256, 512,  1024, 24, 1024//64, 51200, 8,  1,   1),
-
-    #(8,  1024, 3072, 72,  3072//96, 51200, 1,  8,   1),
+    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
+    (128, 512,  1024, 10, 1024//64,  25600, 8,  1,   1,   0),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,   1,   0),
 ]
 
 benchmark_suite_16_gpu = [
-    # B, S,    H,    L,  #head,    V,     DP, TMP, DP_IMP
-    #(512, 512,  1024, 24, 1024//64, 51200, 16,  1,   1),
-
-    (16,  1024, 3072, 8,  3072//96, 51200, 2,  8,   1),
-
-    #(16,  1024, 3072, 72,  3072//96, 51200, 2,  8,   1),
-    #(32,  1024, 3072, 72,  3072//96, 51200, 2,  8,   1),
-    #(64,  1024, 3072, 72,  3072//96, 51200, 2,  8,   1),
+    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
+    (256, 512,  1024, 10, 1024//64,  25600, 16, 1,   1,   0),
+    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,   1,   0),
 ]
 
 

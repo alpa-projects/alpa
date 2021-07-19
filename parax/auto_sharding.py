@@ -60,7 +60,6 @@ def auto_sharding_callable(
       strategy_config (Optional[StrategyConfig]): If is not None, do compilation
         according to this configuration.
     """
-
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 

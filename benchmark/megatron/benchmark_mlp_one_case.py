@@ -1,8 +1,6 @@
 import argparse
 import os
 import sys
-import timeit
-
 
 import numpy as np
 from megatron.model.transformer import ParallelTransformerLayer, ParallelMLP
@@ -12,10 +10,8 @@ from megatron import mpu, initialize_megatron, get_args
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
+from util import write_tsv, benchmark_func
 
-from timeit_v2 import py_benchmark
-
-MB = 1024 ** 2
 GB = 1024 ** 3
 
 
@@ -29,18 +25,6 @@ def get_memory_usage(print_info=False):
         print("allocated: %.2f MB" % (allocated / 1024 / 1024), flush=True)
         print("reserved:  %.2f MB" % (reserved / 1024 / 1024), flush=True)
     return allocated
-
-
-def write_tsv(heads, values, filename, print_line=True):
-    """Write tsv data to a file."""
-    with open(filename, "a") as fout:
-        fout.write("\t".join(values) + "\n")
-
-    if print_line:
-        line = ""
-        for i in range(len(heads)):
-            line += heads[i] + ": " + values[i] + "  "
-        print(line)
 
 
 class MultiLayerMLP(torch.nn.Module):
@@ -65,8 +49,8 @@ class MultiLayerMLP(torch.nn.Module):
 
 def benchmark_mlp_one_case(benchmark_case):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
-        benchmark_case
+    batch_size, seq_len, hidden_size, num_layers, num_heads, \
+        dp_size, tensor_mp_size, ddp_impl = benchmark_case
 
     # Parallel configs
     micro_batch_size = batch_size // dp_size
@@ -92,9 +76,11 @@ def benchmark_mlp_one_case(benchmark_case):
     model.cuda(torch.cuda.current_device())
 
     i = torch.cuda.current_device()
-    model = torchDDP(model, device_ids=[i], output_device=i,
-                     process_group=mpu.get_data_parallel_group())
-    #model = LocalDDP(model, False, True)
+    if ddp_impl == 0:
+        model = torchDDP(model, device_ids=[i], output_device=i,
+                         process_group=mpu.get_data_parallel_group())
+    else:
+        model = LocalDDP(model, False, True)
 
     if rank == 0:
         print(model)
@@ -108,7 +94,8 @@ def benchmark_mlp_one_case(benchmark_case):
     before_backward_mem = [None]
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 
-    def func(record_peak=False):
+    # Benchmark step time
+    def run_func():
         if isinstance(model, LocalDDP):
             model.zero_grad_buffer()
         else:
@@ -117,8 +104,6 @@ def benchmark_mlp_one_case(benchmark_case):
         output = model(x)
         loss = ((output - y) ** 2)
         loss = loss.mean()
-        if record_peak:
-            before_backward_mem[0] = get_memory_usage()
         loss.backward()
 
         if isinstance(model, LocalDDP):
@@ -131,17 +116,11 @@ def benchmark_mlp_one_case(benchmark_case):
 
         torch.distributed.barrier()
 
-    # Record peak memory
-    func(True)
-    func(True)
-    before_backward_mem = before_backward_mem[0]
+    def sync_func():
+        torch.cuda.synchronize()
 
-    # Benchmark time cost
-    stmt = "func()"
-    repeat = 2
-    number = 10
-    costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
-        repeat=repeat, number=number)) / number
+    costs = benchmark_func(run_func, sync_func,
+                           warmup=1, repeat=2, number=5)
 
     # Print results
     if rank == 0:

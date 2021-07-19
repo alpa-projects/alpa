@@ -69,6 +69,8 @@ def auto_donate_argnums(args):
 
 def to_int_tuple(array):
     """Convert a numpy array to int tuple."""
+    if array is None:
+        return tuple()
     return tuple(int(x) for x in array)
 
 
@@ -202,6 +204,42 @@ def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
 
 
 ########################################
+##### OS / IO Utilities
+########################################
+
+def run_cmd(cmd):
+    """Run a bash commond."""
+    print(cmd)
+    os.system(cmd)
+
+
+def list_gpu_info():
+    """List all gpu information by calling nvidia-sim."""
+    ret = subprocess.getoutput("nvidia-smi -L")
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    if visible_devices:
+        ids = [int(x) for x in visible_devices.split(",")]
+        lines = ret.split("\n")
+        lines = [lines[i] for i in ids]
+        ret = "\n".join(lines)
+    return ret
+
+
+def write_tsv(heads, values, filename, print_line=True):
+    """Write tsv data to a file."""
+    assert len(heads) == len(values)
+
+    with open(filename, "a") as fout:
+        fout.write("\t".join(values) + "\n")
+
+    if print_line:
+        line = ""
+        for i in range(len(heads)):
+            line += heads[i] + ": " + values[i] + "  "
+        print(line)
+
+
+########################################
 ##### Other Utilities
 ########################################
 
@@ -209,10 +247,9 @@ GB = 1 << 30  # Gigabyte
 MB = 1 << 20  # Megabyte
 
 
-def run_cmd(cmd):
-    """Run a bash commond."""
-    print(cmd)
-    os.system(cmd)
+def map_to_shape(array_pytree):
+    """Map a PyTree of jax arrays to their shapes."""
+    return tree_map(lambda x: x.shape, array_pytree)
 
 
 def compute_bytes(pytree):
@@ -224,20 +261,21 @@ def compute_bytes(pytree):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
 
+def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5):
+    """Benchmark the execution time of a function."""
+    costs = []
 
-def list_gpu_info():
-    """List all gpu information by calling nvidia-sim."""
-    ret = subprocess.getoutput("nvidia-smi -L")
-    return ret
+    # Warmup
+    for i in range(warmup):
+        run_func()
+    sync_func()
 
+    # Benchmark
+    for i in range(repeat):
+        tic = time.time()
+        for j in range(number):
+            run_func()
+        sync_func()
+        costs.append(time.time() - tic)
 
-def write_tsv(heads, values, filename, print_line=True):
-    """Write tsv data to a file."""
-    with open(filename, "a") as fout:
-        fout.write("\t".join(values) + "\n")
-
-    if print_line:
-        line = ""
-        for i in range(len(heads)):
-            line += heads[i] + ": " + values[i] + "  "
-        print(line)
+    return np.array(costs) / number

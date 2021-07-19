@@ -16,7 +16,7 @@ from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 
 from parax.testing import assert_only_has_allreduce
-from parax.util import run_cmd, write_tsv
+from parax.util import run_cmd, write_tsv, map_to_shape, list_gpu_info
 
 import timeit
 
@@ -82,8 +82,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         num_layers, hidden_size, vocab_size)
 
     # Mesh configs
-    device_cluster = DeviceCluster()
-    physical_mesh = device_cluster.get_physical_mesh()
+    if args.local:
+        physical_mesh = PhysicalDeviceMesh(jax.devices())
+    else:
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim1, mesh_dim2],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
@@ -113,6 +116,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                                 batch["attention_mask"],
                                 batch["token_type_ids"],
                                 batch["position_ids"],
+                                deterministic=True,
                                 rngs=rngs)[0]
             label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
             labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
@@ -121,7 +125,8 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             # TODO(lmzheng): add dynamic scale for mixed-precision training
             return loss
 
-        grad = jax.grad(loss_func)(optimizer.target)
+        params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), optimizer.target)
+        grad = jax.grad(loss_func)(params)
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
 
@@ -232,7 +237,7 @@ benchmark_suite_4_gpu = [
 
 benchmark_suite_8_gpu = [
     # B,  S,    H,    L,  #head,     V,     D1, D2
-    (128, 512,  1024, 10, 1024//64,  25600, 8,  1),
+    (128, 512,  1024, 10 , 1024//64, 25600, 8,  1),
     (8,   1024, 4096, 10, 4096//128, 25600, 8,  1),
 ]
 
@@ -240,7 +245,11 @@ benchmark_suite_16_gpu = [
 ]
 
 def benchmark_all(use_profiling):
-    num_gpus = ray.cluster_resources()["GPU"]
+    if args.local:
+        num_gpus = list_gpu_info().count("UUID")
+    else:
+        num_gpus = ray.cluster_resources()["GPU"]
+
     benchmark_suites = {
         1: benchmark_suite_1_gpu,
         4: benchmark_suite_4_gpu,
@@ -257,10 +266,14 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--number", type=int, default=5)
+    parser.add_argument("--local", action="store_true",
+        help="Run on local GPUs. Do not use ray actors.")
     args = parser.parse_args()
 
-    ray.init(address="auto")
-    jax.config.update('jax_platform_name', 'cpu')
+    if not args.local:
+        ray.init(address="auto")
+        jax.config.update('jax_platform_name', 'cpu')
+
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all(args.use_profiling)

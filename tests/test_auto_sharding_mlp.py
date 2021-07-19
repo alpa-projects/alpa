@@ -22,10 +22,6 @@ def all_reduce_cost(num_devices, num_bytes):
     return 2.0 * (num_devices - 1) / num_devices * num_bytes
 
 
-def map_to_shape(array_pytree):
-    return jax.tree_util.tree_map(lambda x: x.shape, array_pytree)
-
-
 def assert_column_partitioned(x, num_chunks, mesh_dim):
     assert x.sharding_spec.sharding == (NoSharding(), Chunked([num_chunks]))
     assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)

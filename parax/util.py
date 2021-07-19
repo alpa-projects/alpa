@@ -204,12 +204,8 @@ def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
 
 
 ########################################
-##### Other Utilities
+##### OS / IO Utilities
 ########################################
-
-GB = 1 << 30  # Gigabyte
-MB = 1 << 20  # Megabyte
-
 
 def run_cmd(cmd):
     """Run a bash commond."""
@@ -217,19 +213,15 @@ def run_cmd(cmd):
     os.system(cmd)
 
 
-def compute_bytes(pytree):
-    """Compute the total bytes of arrays in a pytree."""
-    flatten_args, _ = tree_flatten(pytree)
-    ret = 0
-    for x in flatten_args:
-        if hasattr(x, "shape"):
-            ret += np.prod(x.shape) * x.dtype.itemsize
-    return ret
-
-
 def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    if visible_devices:
+        ids = [int(x) for x in visible_devices.split(",")]
+        lines = ret.split("\n")
+        lines = [lines[i] for i in ids]
+        ret = "\n".join(lines)
     return ret
 
 
@@ -245,3 +237,27 @@ def write_tsv(heads, values, filename, print_line=True):
         for i in range(len(heads)):
             line += heads[i] + ": " + values[i] + "  "
         print(line)
+
+
+########################################
+##### Other Utilities
+########################################
+
+GB = 1 << 30  # Gigabyte
+MB = 1 << 20  # Megabyte
+
+
+def map_to_shape(array_pytree):
+    """Map a PyTree of jax arrays to their shapes."""
+    return tree_map(lambda x: x.shape, array_pytree)
+
+
+def compute_bytes(pytree):
+    """Compute the total bytes of arrays in a pytree."""
+    flatten_args, _ = tree_flatten(pytree)
+    ret = 0
+    for x in flatten_args:
+        if hasattr(x, "shape"):
+            ret += np.prod(x.shape) * x.dtype.itemsize
+    return ret
+

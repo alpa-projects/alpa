@@ -22,11 +22,6 @@ from test_auto_sharding_mlp import (assert_close, assert_all_replicated,
                                     assert_row_partitioned)
 
 
-def inspect_params(optimizer):
-    """For debug usage."""
-    print(jax.tree_util.tree_map(lambda x: x.shape, optimizer.target))
-
-
 class AutoShardingAttentionTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4

@@ -16,7 +16,7 @@ from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 
 from parax.testing import assert_only_has_allreduce
-from parax.util import run_cmd, write_tsv, map_to_shape, list_gpu_info
+from parax.util import run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func
 
 import timeit
 
@@ -130,7 +130,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
 
-    # Prepare model and input
+    # Prepare input batch
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
@@ -175,27 +175,16 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     gc.collect()
     log_time_stamp("Compile and shard arguments")
 
-    # Define benchmark function
-    closure = [optimizer]
-    def func():
-        optimizer = closure[0]
-
+    # Benchmark step time
+    def run_func():
+        nonlocal optimizer
         optimizer = train_step(optimizer, batch, model.apply)
+
+    def sync_func():
         physical_mesh.sync_workers()
 
-        closure[0] = optimizer
-
-    # Benchmark time cost
-    func()
-    stmt = "func()"
-    repeat = 2
-    number = args.number
-    costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
-        repeat=repeat, number=number)) / number
-    tflops = compute_tflops(batch_size, seq_len, num_layers,
-                            hidden_size, vocab_size,
-                            physical_mesh.total_devices,
-                            np.mean(costs))
+    costs = benchmark_func(run_func, sync_func,
+                           warmup=1, repeat=2, number=args.number)
     real_mem = testing.last_compiled_executable.total_allocation_size()
     objective = testing.last_compiled_auto_sharding_objective or 0.0
 
@@ -209,10 +198,13 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
-    #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     # Log benchmark results
+    tflops = compute_tflops(batch_size, seq_len, num_layers,
+                            hidden_size, vocab_size,
+                            physical_mesh.total_devices,
+                            np.mean(costs))
     heads = ["Type", "Case", "Mesh Shape", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-2]), str(benchmark_case[-2:]),
@@ -223,8 +215,8 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     physical_mesh.shutdown()
 
 
-# B = Batch size, S = seq_len, H = hidden size, L = num_layers,
-# #head = num_heads, D1 = mesh dimension 1, D2 = mesh dimension 2
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
 
 benchmark_suite_1_gpu = [
     # B,  S,    H,    L,  #head,     V,     D1, D2
@@ -237,7 +229,7 @@ benchmark_suite_4_gpu = [
 
 benchmark_suite_8_gpu = [
     # B,  S,    H,    L,  #head,     V,     D1, D2
-    (128, 512,  1024, 10 , 1024//64, 25600, 8,  1),
+    (128, 512,  1024, 10, 1024//64,  25600, 8,  1),
     (8,   1024, 4096, 10, 4096//128, 25600, 8,  1),
 ]
 

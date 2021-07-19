@@ -14,7 +14,7 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from parax.testing import assert_only_has_allreduce
-from parax.util import run_cmd, write_tsv
+from parax.util import run_cmd, write_tsv, benchmark_func, list_gpu_info
 
 import timeit
 
@@ -52,8 +52,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         benchmark_case
 
     # Mesh configs
-    device_cluster = DeviceCluster()
-    physical_mesh = device_cluster.get_physical_mesh()
+    if args.local:
+        physical_mesh = PhysicalDeviceMesh(jax.devices())
+    else:
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
@@ -86,7 +89,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
 
-    # Prepare model and input
+    # Prepare input batch
     batch = {
         "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=np.int32),
@@ -112,25 +115,18 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     gc.collect()
     log_time_stamp("Compile and shard arguments")
 
-    # Define benchmark function
-    closure = [optimizer]
-    def func():
-        optimizer = closure[0]
-
+    # Benchmark step time
+    def run_func():
+        nonlocal optimizer
         optimizer = train_step(optimizer, batch, model.apply)
+
+    def sync_func():
         physical_mesh.sync_workers()
 
-        closure[0] = optimizer
-
-    # Benchmark time cost
-    func()
-    stmt = "func()"
-    repeat = 2
-    number = args.number
-    costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
-        repeat=repeat, number=number)) / number
+    costs = benchmark_func(run_func, sync_func,
+                           warmup=1, repeat=2, number=args.number)
     real_mem = testing.last_compiled_executable.total_allocation_size()
-    objective = testing.last_compiled_auto_sharding_objective
+    objective = testing.last_compiled_auto_sharding_objective or 0.0
 
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
@@ -138,7 +134,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     print(f"#comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
     #print(hlo_ir)
-
     #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
@@ -154,39 +149,41 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     physical_mesh.shutdown()
 
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
 
 benchmark_suite_4_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
-    (32,          1024,    1536,        3,          1536//96,  4,         1),
-    (32,          1024,    1536,        3,          1536//96,  2,         2),
+    # B,  S,    H,    L,  #head,     D1, D2
+    (32,  1024, 1536, 3,  1536//96,  4,  1),
+    (32,  1024, 1536, 3,  1536//96,  2,  2),
 
-    (32,          128,     5120,        2,          5120//128, 4,         1),
-    (32,          128,     5120,        2,          5120//128, 2,         2),
+    (32,  128,  5120, 2,  5120//128, 4,  1),
+    (32,  128,  5120, 2,  5120//128, 2,  2),
 ]
 
 benchmark_suite_8_gpu = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, mesh_dim0, mesh_dim1
-    (32,          1024,    1536,        4,          1536//96,  8,        1),
-    (32,          1024,    1536,        4,          1536//96,  4,        2),
-    (32,          1024,    1536,        4,          1536//96,  2,        4),
+    # B,  S,    H,    L,  #head,     D1, D2
+    (32,  1024, 1536, 4,  1536//96,  8,  1),
+    (32,  1024, 1536, 4,  1536//96,  4,  2),
+    (32,  1024, 1536, 4,  1536//96,  2,  4),
 
-    (32,          128,     5120,        3,          5120//128, 8,        1),
-    (32,          128,     5120,        3,          5120//128, 4,        2),
-    (32,          128,     5120,        3,          5120//128, 2,        4),
+    (32,  128,  5120, 3,  5120//128, 8,  1),
+    (32,  128,  5120, 3,  5120//128, 4,  2),
+    (32,  128,  5120, 3,  5120//128, 2,  4),
 ]
 
-
 def benchmark_all(use_profiling):
-    num_gpus = ray.cluster_resources()["GPU"]
-
-    if num_gpus == 4:
-        benchmark_suite = benchmark_suite_4_gpu
-    elif num_gpus == 8:
-        benchmark_suite = benchmark_suite_8_gpu
+    if args.local:
+        num_gpus = list_gpu_info().count("UUID")
     else:
-        raise ValueError(f"No benchmark suite for gpu number: {num_gpus}")
+        num_gpus = int(ray.cluster_resources()["GPU"])
 
-    for case in benchmark_suite:
+    benchmark_suites = {
+        4: benchmark_suite_4_gpu,
+        8: benchmark_suite_8_gpu,
+    }
+
+    for case in benchmark_suites[num_gpus]:
         benchmark_transformer_one_case(case, use_profiling)
 
 
@@ -194,10 +191,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--number", type=int, default=5)
+    parser.add_argument("--local", action="store_true",
+        help="Run on local GPUs. Do not use ray actors.")
     args = parser.parse_args()
 
-    ray.init(address="auto")
-    jax.config.update('jax_platform_name', 'cpu')
+    if not args.local:
+        ray.init(address="auto")
+        jax.config.update('jax_platform_name', 'cpu')
+
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all(args.use_profiling)

@@ -261,3 +261,21 @@ def compute_bytes(pytree):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
 
+def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5):
+    """Benchmark the execution time of a function."""
+    costs = []
+
+    # Warmup
+    for i in range(warmup):
+        run_func()
+    sync_func()
+
+    # Benchmark
+    for i in range(repeat):
+        tic = time.time()
+        for j in range(number):
+            run_func()
+        sync_func()
+        costs.append(time.time() - tic)
+
+    return np.array(costs) / number

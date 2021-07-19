@@ -692,6 +692,9 @@ class PhysicalDeviceMesh:
         if not self.is_distributed:
             output_bufs = executable.execute_sharded_on_local_devices(input_bufs)
         else:
+            # TODO(lmzheng): reduce the overhead of meta information maintainance
+            # by overlapping GPU computation and python code.
+
             # Donate input buffers
             for bufs, is_donated in zip(input_bufs, donated_invars):
                 if is_donated:
@@ -702,6 +705,7 @@ class PhysicalDeviceMesh:
             input_bufs = np.array(input_bufs) \
                 .reshape(len(args), self.num_hosts, self.num_devices_per_host) \
                 .transpose([1, 0, 2])
+
             # Allocate output buffer references
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_bufs = np.empty(
@@ -710,11 +714,13 @@ class PhysicalDeviceMesh:
                 for j in range(num_outs):
                     for k in range(self.num_devices_per_host):
                         output_bufs[i][j][k] = RemoteBufferRef(self, i, k)
+
             # Execute SPMD binary
             for i in range(self.num_hosts):
                 host_inputs = get_uuid_np_array(input_bufs[i])
                 host_outputs = get_uuid_np_array(output_bufs[i])
                 self.workers[i].execute.remote(executable.uuid, host_inputs, host_outputs)
+
             # Gather outputs
             # Shape: (num_outs, total_devices)
             output_bufs = output_bufs.transpose([1, 0, 2]).reshape((num_outs, self.total_devices))

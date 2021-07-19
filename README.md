@@ -58,13 +58,7 @@ This repo depends on our private fork of jax and tensorflow.
 - Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_custom_call/README.md))
   ```bash
   cd parax/pipeline_custom_call
-  # Follow the steps in parax/pipeline_custom_call/README.md
-  mkdir build
-  cd build
-  cmake .. -Dpybind11_ROOT=$(pybind11-config --cmakedir)
-  export PATH=/usr/local/cuda/bin:$PATH
-  export CPATH=/usr/local/cuda/targets/x86_64-linux/include/:$CPATH
-  make
+  bash build.sh
   ```
 
 Note:

@@ -455,7 +455,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert_close(objective, expected)
             # Check communication cost.
             # Conceptually, all communiation primitives are all-reduce.
-            # However, in some cases, the SPMD partitioner will prefer all-gather.
+            # However, in some cases, the SPMD partitioner generates all-gather due to
+            # its own optimizations.
             assert hlo_ir.count("channel_id") <= hlo_ir.count("all-reduce(") + 2
 
             # Check sharding specification
@@ -538,7 +539,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # Check communication cost.
         # Conceptually, all communiation primitives are all-reduce.
-        # However, in some cases, the SPMD partitioner will prefer all-gather.
+        # However, in some cases, the SPMD partitioner generates all-gather due to
+        # its own optimizations.
         assert hlo_ir.count("channel_id") <= hlo_ir.count("all-reduce(") + 2
 
         # Check sharding specification

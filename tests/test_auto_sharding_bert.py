@@ -435,7 +435,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 16
         num_heads = 4
         num_layers = 2
-        vocab_size = 64
+        vocab_size = 128
         deterministic = False
 
         # Test on different logical mesh shapes

@@ -160,6 +160,7 @@ class ReshardingTask:
 
     def do(self):
         # according to task_spec, launch send/recv operations
+        # Hao: some sanity tests
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(self.task_spec.dst_tile_to_src_tiles_map):
@@ -176,14 +177,14 @@ class ReshardingTask:
 
 
         # assemble the buffer based on the order present in indices
-        for i, device_str in enumerate(self.task_spec.dst.device_strs):
+        for i, device_str in enumerate(self.task_spec.dst.device_mesh.device_strs):
             # for each replica
             bufs[self.task_spec.dst.device_str_to_flat_index[device_str]] = device_str_to_buf_map[device_str]
 
         # Now construct the distributed array
         dst_array = DistributedArray(self.dst_mesh,
                                      self.src_array.aval,
-                                     self.task_sepc.dst_sharding_spec,
+                                     self.task_spec.dst_sharding_spec,
                                      bufs,
                                      self.task_spec.dst_indices)
         return dst_array
@@ -213,17 +214,17 @@ class ReshardingTask:
             # launch NCCL send/recv
             tile = src_tiles[i]
             indices_in_dst_tile = indices_in_dst_tiles[i]
-            send_done_ref = sender_worker.send_tile.remote(sender_buf.uuid,
-                                                           tile.offset,
-                                                           receiver_rank,
-                                                           receiver_gpu_idx,
-                                                           self.collective_group.group_name)
-            recv_done_ref = receiver_worker.recv_tile.remote(result_buf.uuid,
-                                                             result_buf.device_id,
-                                                             indices_in_dst_tile,
-                                                             sender_rank,
-                                                             sender_gpu_idx,
-                                                             self.collective_group.group_name)
+            send_done_ref = sender_worker.send_tile_v2.remote(sender_buf.uuid,
+                                                              tile.offset,
+                                                              receiver_rank,
+                                                              receiver_gpu_idx,
+                                                              self.collective_group.group_name)
+            recv_done_ref = receiver_worker.recv_tile_v2.remote(result_buf.uuid,
+                                                                result_buf.device_id,
+                                                                indices_in_dst_tile,
+                                                                sender_rank,
+                                                                sender_gpu_idx,
+                                                                self.collective_group.group_name)
             ray.get([send_done_ref, recv_done_ref])
         return result_buf
 
@@ -340,6 +341,7 @@ class CollectiveGroup:
         # TODO(Hao): incorrect assertion
         assert set(self.device_strs) == set(all_device_strs)
 
+
 class ReshardingTaskSpec:
     def __init__(self, src_array, dst_array):
         self.src = src_array
@@ -353,7 +355,7 @@ class ReshardingTaskSpec:
 
     @property
     def dst_sharding_spec(self):
-        return self.dst_sharding_spec
+        return self.dst.sharding_spec
 
     @property
     def aval(self):

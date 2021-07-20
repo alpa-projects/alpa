@@ -1,31 +1,32 @@
 """Cluster related configurations (e.g., topology)."""
-import time
 import logging
+import time
 from collections.abc import Iterable
 from typing import Union, List, Tuple
 
-import jax.numpy
-import ray.util.collective as col
 import cupy as cp
-
-from operator import attrgetter
+import jax.numpy
 import numpy as np
 import ray
+import ray.util.collective as col
 from jax import core, xla
+from jax._src.dlpack import from_dlpack
 from jax._src.util import (partial, unzip3)
 from jax.abstract_arrays import array_types
+from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated,
                                    ShardedAxis, _as_slice_indices, _hashable_index, ShardedDeviceArray)
+from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_client, xla_bridge
+from operator import attrgetter
 
 from parax.global_env import global_config
 from parax.util import get_dim_last_value, to_int_tuple
 from parax.xla_pass_context import XlaPassContext
 
-
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -37,6 +38,26 @@ def device_str_to_id(device_str):
     """Parse device string to get its device id."""
     return int(device_str.split(":")[-1])
 
+
+# Note: in this device mesh code, we will use 3 types of tensors:
+# (1) JAX high-level _DeviceArray, which is indexable, has __cuda_array__ interface
+# (2) XLA low-level PyLocalBuffer, which is not indexable
+# (3) cupy array, which is an intermediate format for ray collective
+
+def xla_buffer_to_jax_buffer(xla_buf):
+    aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
+    return _DeviceArray(aval, xla_buf.device(), xla_buf)
+
+
+def jax_buffer_to_xla_buffer(jax_buf):
+    return jax_buf.device_buffer
+
+
+def xla_buffer_set(xla_buf, target_buf, indices):
+    xla_buf = xla_buf.at[tuple(indices)].set(target_buf)
+    return xla_buf
+
+# xla_buffer_set = jax.jit(xla_buffer_set, donate_argnums=(0))
 
 class LogicalDeviceMesh:
     """
@@ -259,6 +280,19 @@ class MeshHostWorker:
         self.local_buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> Executable]
 
+        # register backend
+        import jax.lib.xla_bridge as xb
+        from jax._src.config import config
+        config.update("jax_xla_backend", "parax")
+
+        def _get_parax_backend(platform="gpu"):
+            if not self.backend:
+                raise RuntimeError("No PJRT backend found.")
+            backend = self.backend
+            return backend
+
+        xb.register_backend("parax", _get_parax_backend)
+
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
@@ -267,6 +301,14 @@ class MeshHostWorker:
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(np.ones(shape, dtype),
                                            self.local_devices[device_id])
+
+    def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype=np.float32):
+        if uuid in self.local_buffers:
+            raise RuntimeError()
+        self.local_buffers[uuid] = \
+            self.backend.buffer_from_pyval(np.empty(shape, dtype),
+                                           self.local_devices[device_id])
+        return True
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
@@ -367,51 +409,50 @@ class MeshHostWorker:
         del self.executables
         self.distributed_client.shutdown()
 
-    def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
-        assert uuid in self.local_buffers
-        src_array = self.local_buffers[uuid]
-        print(type(src_array))
-        print(src_array.shape)
-        print(offset)
-        print(src_array[tuple(offset)])
-        print("reach here 22....")
-        to_send = to_cupy(src_array[tuple(offset)])
-        print(to_send)
+    def send_tile_v2(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
+        # For indexing
+        src_buffer = xla_buffer_to_jax_buffer(self.local_buffers[uuid])
+        to_send = to_cupy(src_buffer[tuple(offset)])
+        logger.debug("Send to: rank {}, gpu_idx {}, group_name {}".format(dst_rank, dst_gpu_idx, group_name))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
-    def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank, src_gpu_idx, group_name):
+    def recv_tile_v2(self, uuid, device_id, indices_in_dst_tile, src_rank, src_gpu_idx, group_name):
         if uuid not in self.local_buffers:
             raise RuntimeError()
         tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
-        tmp_buffer = self.backend.buffer_from_pyval(
-            np.ones(tileslice_shape, dtype=self.local_buffers[uuid].dtype),
-            self.local_devices[device_id])
-        to_recv = to_cupy(tmp_buffer)
+        tmp_buffer = jax.device_put(jax.numpy.zeros(tileslice_shape, dtype=self.local_buffers[uuid].dtype),
+                                    self.local_devices[device_id])
+        to_recv = to_cupy(tmp_buffer) # zero copy
+        logger.debug("Recv from: rank {}, gpu_idx {}, group_name {}".format(src_rank, src_gpu_idx, group_name))
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-
-        # do assignment
-        self.local_buffers[uuid][tuple(indices_in_dst_tile)] = to_recv
-        return True
-
-    def put_empty_buffer(self, uuid, device_id, shape, dtype=np.float):
-        if uuid in self.local_buffers:
-            raise RuntimeError()
-        self.local_buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.ones(shape, dtype),
-                                           self.local_devices[device_id])
+        recv_tensor = to_jax_tensor(to_recv)  # zero copy
+        # FIXME(Hao): one copy. JIT does not work
+        new_buffer  = xla_buffer_to_jax_buffer(self.local_buffers[uuid]).\
+            at[tuple(indices_in_dst_tile)].\
+            set(recv_tensor)
+        self.local_buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
+        # print(self.local_buffers[uuid].__cuda_array_interface__)
         return True
 
 
 def to_cupy(tensors):
     """Convert a Jax DeviceArray to cupy tensor."""
-    print("reach here...1")
     if isinstance(tensors, list):
         return list(map(to_cupy, tensors))
-    print("reach here...2")
+    # ctensor = cp.fromDlpack(jax.dlpack.to_dlpack(tensors))
+    # buf = xla._force(x).device_buffer
+    # return xla_client._xla.BufferToDLPackManagedTensor(buf)
     ctensor = cp.fromDlpack(get_jax_dlpack(tensors))
-    print("reach here...3")
     return ctensor
+
+
+def to_jax_tensor(tensor):
+    """Convert cupy tensors to JAX tensors."""
+    if isinstance(tensor, list):
+        return list(map(to_jax_tensor, tensor))
+    return from_dlpack(tensor.toDlpack())
+
 
 def get_jax_dlpack(tensor):
     return xla_client._xla.buffer_to_dlpack_managed_tensor(
@@ -478,7 +519,10 @@ class PhysicalDeviceMesh:
             # Set XLA environment variables
             env_vars = {
                 "XLA_FLAGS": "--xla_gpu_autotune_level=0",
-                # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
+                "NCCL_USE_MULTISTREAM": "False",
+                # "NCCL_SHM_DISABLE": "1",
+                # "NCCL_DEBUG": "INFO"
             }
 
             # Launch a ray actor

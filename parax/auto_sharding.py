@@ -157,7 +157,7 @@ def compile_with_search(backend,
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
-    by_pass_device_assignment_check = physical_mesh.is_distributed
+    bypass_device_assignment_check = physical_mesh.is_distributed
 
     build_random_seed = 42
     compile_options = get_compile_options(
@@ -190,7 +190,7 @@ def compile_with_search(backend,
                 getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # Distributed compilation
-            "build_option::bypass_device_assignment": by_pass_device_assignment_check,
+            "build_option::bypass_device_assignment": bypass_device_assignment_check,
 
             # Debug options
             "auto_sharding::simplify_graph": True,

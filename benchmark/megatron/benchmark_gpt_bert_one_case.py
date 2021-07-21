@@ -203,13 +203,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
 
     # Benchmark step time
     def run_func():
-        torch.cuda.synchronize()
-        tic = time.time()
         train_step(forward_step, None, model, optimizer, lr_scheduler)
-        torch.cuda.synchronize()
-        if rank == 0:
-            print(f"{time.time() - tic:.3f}")
-
 
     def sync_func():
         torch.cuda.synchronize()

@@ -569,10 +569,12 @@ class CrossMeshCommunicator:
             # (2) in_sharding_spec in the destination stage.
             vars, out_var_indices, in_var_indices = \
                 self._args_between(src_stage, dst_stage)
-            out_sharding_specs = src_stage.output_sharding_specs_on_mesh(
-                src_mesh.get_default_logical_mesh())
-            in_sharding_specs = dst_stage.input_sharding_specs_on_mesh(
-                dst_mesh.get_default_logical_mesh())
+            # out_sharding_specs = src_stage.output_sharding_specs_on_mesh(
+            #     src_mesh.get_default_logical_mesh())
+            # in_sharding_specs = dst_stage.input_sharding_specs_on_mesh(
+            #     dst_mesh.get_default_logical_mesh())
+            out_sharding_specs = src_stage.output_sharding_specs
+            in_sharding_specs = dst_stage.input_sharding_specs
 
             # Make a ReshardSpec for each VDA
             for var, out_var_index, in_var_index in zip(vars, out_var_indices, in_var_indices):

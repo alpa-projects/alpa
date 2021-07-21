@@ -347,49 +347,11 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                                    for _ in range(self.num_mesh)]
         self._prepare()
 
-    def _prepare(self):
-        # TODO (Hao): delay the creation of physical meshes.
-        # TODO(Hao): up to change, incorporate HLO merging logic
-        # # For each stage, compile it and get its sharding strategy
-        # for stage_idx, raw_stage in enumerate(self.stages):
-        #     meshes = [self.sliced_meshes[mesh_idx]
-        #               for mesh_idx in self.schedule.stage_placement(stage_idx)]
-        #     assert len(meshes) == 1
-        #     mesh = meshes[0]
-        #     sharded_stage = XlaShardedPipelineStage.from_jax_pipeline_stage(
-        #         jax_pipeline_stage=raw_stage,
-        #         mesh=mesh,
-        #         **self._sharding_compilation_kwargs)
-        #     self._sharded_stages.append(sharded_stage)
-        #
-        # # start physical mesh (launch xla runtime)
-        # # Ray cluster resources are allocated from this point.
-        # for i, mesh in enumerate(self.sliced_meshes):
-        #     logger.debug("Launch the {}th mesh...".format(i))
-        #     self._physical_meshes.append(mesh.get_physical_mesh())
-        #
-        # # Based on dependency and sharding specs, infer communication spec (cross-mesh).
-        # self._communicator = CrossMeshCommunicator(
-        #     self._sharded_stages, self.schedule)
-        #
-        # # Now we establish NCCL collective groups and communicators
-        # # because we need physical meshes we have to do this out of the CrossMeshCommunicator class.
-        # self._establish_nccl_groups()
-        #
-        # # cgs = self._communicator.get_device_str_groups()
-        # # collective_groups = [[None for _ in range(self.num_mesh)]
-        # #                      for _ in range(self.num_mesh)]
-        # # for i in range(num_mesh):
-        # #     for j in range(num_mesh):
-        # #         if not cgs[i][j]:
-        # #             continue
-        # #         assert (i <= j)
-        # #         cg =  CollectiveGroup(cgs[i][j], self._physical_meshes[i], self._physical_meshes[j])
-        # #         cg.instantiate()
-        # #         collective_groups[i][j] = cg
-        # #         collective_groups[j][i] = cg
-        # # self.collective_groups = collective_groups
+    @property
+    def num_mesh(self):
+        return len(self.physical_meshes)
 
+    def _prepare(self):
         # Let each physical mesh to re-compile the sharded stage
         self._runnables = []
         for stage_idx, stage in enumerate(self.stages):
@@ -397,6 +359,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             assert len(mesh_indices) == 1
             mesh_idx = mesh_indices[0]
             self._runnables.append(stage.get_runnable(self.physical_meshes[mesh_idx]))
+
+        # Based on dependency and sharding specs, infer communication spec (cross-mesh).
+        self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
+
+        # Now we establish NCCL collective groups and communicators
+        # because we need physical meshes we have to do this out of the CrossMeshCommunicator class.
+        self._establish_nccl_groups()
 
         # prepare inputs/outputs buffers and communication between stages.
         self._stage_outputs = self._init_stage_outputs()
@@ -432,8 +401,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     assert not device_str_groups[i][j]
                     continue
                 cg =  CollectiveGroup(device_str_groups[i][j],
-                                      self._physical_meshes[i],
-                                      self._physical_meshes[j])
+                                      self.physical_meshes[i],
+                                      self.physical_meshes[j])
                 cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg

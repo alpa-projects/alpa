@@ -295,7 +295,7 @@ class MeshHostWorker:
             backend = self.backend
             return backend
 
-        xb.register_backend("parax", _get_parax_backend)
+        xb.register_backend_factory("parax", _get_parax_backend, priority=500)
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -570,7 +570,6 @@ class PhysicalDeviceMesh:
                 ip = self.host_info[i]["NodeManagerAddress"]
                 self.device_strs.extend([device_id_to_str(ip, i)
                                          for i in range(self.num_devices_per_host)])
-
             self._launch_xla_servers()
 
     @property
@@ -630,7 +629,7 @@ class PhysicalDeviceMesh:
     @property
     def device_ids(self):
         """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.devices_strs]
+        return [device_str_to_id(device_str) for device_str in self.device_strs]
 
     @property
     def is_distributed(self):
@@ -939,7 +938,10 @@ class PhysicalDeviceMesh:
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.
 class VirtualMesh:
-    """A virtual mesh used to instantiate a Physical Mesh in the future."""
+    """A virtual mesh used to instantiate a Physical Mesh in the future.
+
+    To be deprecated.
+    """
 
     def __init__(self,
                  *,

@@ -8,8 +8,7 @@ from flax import optim
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 
-from parax import mark_pipeline
-from parax import parallelize, DeviceCluster
+from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster
 
 MB = 1024 ** 2
 num_gpus = 2
@@ -100,8 +99,11 @@ optimizer = optim.GradientDescent(1e-2).create(params)
 
 gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
 strategy = "3d_parallel"
-
 assert_allclose(x, y)
-pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
+
+
+set_parallelize_options(devices=mesh, strategy=strategy)
+# pipelined_train_step = parallelize(donate_argnums=(), devices=mesh, strategy=strategy)(train_step)
+pipelined_train_step = parallelize(donate_argnums=())(train_step)
 gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
 assert_allclose(gradients, gradients_with_pipeline)

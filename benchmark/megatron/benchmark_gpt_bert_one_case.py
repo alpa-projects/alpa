@@ -3,7 +3,7 @@ import gc
 from functools import partial
 import os
 import sys
-import timeit
+import time
 
 import numpy as np
 from megatron.utils import average_losses_across_data_parallel_group
@@ -203,13 +203,19 @@ def benchmark_gpt_bert_one_case(benchmark_case):
 
     # Benchmark step time
     def run_func():
+        torch.cuda.synchronize()
+        tic = time.time()
         train_step(forward_step, None, model, optimizer, lr_scheduler)
+        torch.cuda.synchronize()
+        if rank == 0:
+            print(f"{time.time() - tic:.3f}")
+
 
     def sync_func():
         torch.cuda.synchronize()
 
     costs = benchmark_func(run_func, sync_func,
-                           warmup=1, repeat=2, number=5)
+                           warmup=1, repeat=3, number=3)
 
     # Print results
     if rank == 0:

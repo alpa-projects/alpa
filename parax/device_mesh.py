@@ -297,7 +297,7 @@ class MeshHostWorker:
                            uuid: int,
                            hlo_proto: bytes,
                            strategy_config: StrategyConfig,
-                           hlo_proto_is_sharded: bool):
+                           hlo_proto_status: "HloProtoStatus"):
         # pylint: disable=import-outside-toplevel
         from parax.auto_sharding import compile_with_given_strategy
 
@@ -307,7 +307,7 @@ class MeshHostWorker:
 
         compiled = compile_with_given_strategy(
             self.backend, xla_computation, strategy_config, num_devices,
-            False, xla_computation_is_sharded=hlo_proto_is_sharded)
+            False, hlo_proto_status)
         self.executables[uuid] = compiled
 
     def execute(self,
@@ -423,7 +423,7 @@ class MeshHostWorker:
 
     def profile_executable(self, executable_uuid: int):
         return profile_xla_executable(self.executables[executable_uuid], self.backend,
-                                      self.local_devices, self.sync)
+                                      self.local_devices)
 
     ##### Other Functions #####
     def sync(self):
@@ -644,7 +644,7 @@ class PhysicalDeviceMesh:
     def compile_remote_executable(self,
                                   hlo_proto: bytes,
                                   strategy_config: StrategyConfig,
-                                  hlo_proto_is_sharded: bool):
+                                  hlo_proto_status: "HloProtoStatus"):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
@@ -652,7 +652,7 @@ class PhysicalDeviceMesh:
                 executable.uuid,
                 hlo_proto,
                 strategy_config,
-                hlo_proto_is_sharded)
+                hlo_proto_status)
         return executable
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
@@ -787,21 +787,18 @@ class PhysicalDeviceMesh:
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
-    def profile_executable(self, compiled, unoptimized_hlo_proto, strategy_config):
+    def profile_executable(self, compiled):
         """Profile the time cost of an xla executable."""
-        if self.is_distributed:
-            # Send the code and strategy to remote workers
-            compiled = self.compile_remote_executable(
-                unoptimized_hlo_proto, strategy_config, hlo_proto_is_sharded=False)
+        from parax.auto_sharding import HloProtoStatus
 
-            # Run profiling
+        if self.is_distributed:
             tasks = []
             for worker in self.workers:
                 tasks.append(worker.profile_executable.remote(compiled.uuid))
             costs = ray.get(tasks)[0]
         else:
             costs = profile_xla_executable(compiled, xla_bridge.get_backend("gpu"),
-                                           self.devices, self.sync_workers)
+                                           self.devices)
 
         return costs
 

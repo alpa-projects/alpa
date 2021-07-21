@@ -170,31 +170,38 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     params = rngkey = None
     log_time_stamp("Init model and optimizer")
 
-    # Shard inputs and weights
-    optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
-    gc.collect()
-    log_time_stamp("Compile and shard arguments")
-
     # Benchmark step time
-    def run_func():
-        nonlocal optimizer
-        optimizer = train_step(optimizer, batch, model.apply)
-
-    def sync_func():
+    if args.include_all_overhead:
+        optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
         physical_mesh.sync_workers()
+        log_time_stamp("Compile and shard arguments (driver node)")
 
-    costs = benchmark_func(run_func, sync_func,
-                           warmup=1, repeat=2, number=args.number)
-    real_mem = testing.last_compiled_executable.total_allocation_size()
-    objective = testing.last_compiled_auto_sharding_objective or 0.0
+        def run_func():
+            nonlocal optimizer
+            optimizer = train_step(optimizer, batch, model.apply)
+
+        def sync_func():
+            physical_mesh.sync_workers()
+
+        costs = benchmark_func(run_func, sync_func,
+                               warmup=1, repeat=2, number=args.number)
+        log_time_stamp("Benchmark")
+    else:
+        executable = train_step.get_executable(optimizer, batch, model.apply)
+        log_time_stamp("Compile (driver node)")
+
+        costs = physical_mesh.profile_executable(executable)
+        log_time_stamp("Compile and benchmark (worker nodes)")
 
     # Check sharding strategy
+    real_mem = testing.last_compiled_executable.total_allocation_size()
+    objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
     print(f"#comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
-    #print(hlo_ir)
 
+    #print(hlo_ir)
     #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
@@ -230,10 +237,13 @@ benchmark_suite_4_gpu = [
 benchmark_suite_8_gpu = [
     # B,  S,    H,    L,  #head,     V,     D1, D2
     (128, 512,  1024, 10, 1024//64,  25600, 8,  1),
-    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1),
+    #(8,   1024, 4096, 10, 4096//128, 25600, 1,  8),
 ]
 
 benchmark_suite_16_gpu = [
+    # B,  S,    H,    L,  #head,     V,     D1, D2
+    #(256, 512,  1024, 10, 1024//64,  25600, 16, 1),
+    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8),
 ]
 
 def benchmark_all(use_profiling):
@@ -260,6 +270,7 @@ if __name__ == "__main__":
     parser.add_argument("--number", type=int, default=5)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
+    parser.add_argument("--include-all-overhead", action="store_true")
     args = parser.parse_args()
 
     if not args.local:
@@ -267,6 +278,7 @@ if __name__ == "__main__":
         jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True
+    global_config.print_xla_compilation_time = True
 
     benchmark_all(args.use_profiling)
 

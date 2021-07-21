@@ -19,7 +19,7 @@ class DistributedArrayTest(unittest.TestCase):
         physical_mesh = device_cluster.get_physical_mesh()
         logical_mesh = physical_mesh.get_default_logical_mesh()
 
-        array = jnp.ones((12, 12))
+        array = jnp.ones((16, 16))
         sharding_spec = logical_mesh.make_tile_spec(array, [0, 1], [0, 1])
         indices = sharding_spec.indices(array.shape).flatten()
         remote_a = physical_mesh._shard_args([indices], (False,), (array,))
@@ -29,12 +29,12 @@ class DistributedArrayTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DistributedArrayTest('test_distributed_array'))
+    suite.addTest(DistributedArrayTest("test_distributed_array"))
 
     return suite
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
 

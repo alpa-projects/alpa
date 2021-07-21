@@ -1,3 +1,7 @@
+"""Benchmark MLP."""
+import argparse
+import os
+import pickle
 import timeit
 
 import jax
@@ -5,48 +9,72 @@ import jax.numpy as jnp
 import numpy as np
 from flax import linen as nn
 from flax import optim
+import ray
 
-from parax import parallelize, testing, PhysicalDeviceMesh
+from parax import (parallelize, set_parallelize_options, testing, global_config, DeviceCluster,
+                   PhysicalDeviceMesh)
+from parax.testing import assert_only_has_allreduce
+from parax.util import write_tsv, list_gpu_info, benchmark_func
 
-MB = 1024 ** 2
-
-
-def block_until_ready(x):
-    for leaf in jax.tree_util.tree_leaves(x):
-        leaf.block_until_ready()
-
-
-def compute_bytes(param_tree):
-    n_bytes = 4
-    param_tree = jax.tree_util.tree_map(lambda arr: np.prod(arr.shape) * n_bytes,
-                                        param_tree)
-    total = np.sum(jax.tree_util.tree_flatten(param_tree)[0])
-    return total
+GB = 1024 ** 3
 
 
-def benchmark_mlp_one_case(benchmark_case):
+def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
+    """For debugging usage."""
+    cost = 0
+    for size in [9216, 2304] * 4 + [2304 * 9216] * 8:
+        cost += physical_mesh.prof_result.estimate_all_reduce(
+            ((0,1,2,3),), size, "float32")
+    print("Data-parallel", cost)
+
+    cost = 0
+    for size in [8192*2304] * 7 + [4608, 2304] * 4 + \
+            [2304*4608] * 8:
+        cost += physical_mesh.prof_result.estimate_all_reduce(
+            ((0,1),(2,3),), size, "float32")
+    print("Hybrid-parallel", cost)
+    exit(0)
+
+
+def benchmark_mlp_one_case(benchmark_case, use_profiling):
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
+    batch_size, seq_len, hidden_size, num_layers, dp_size, tensor_mp_size =\
         benchmark_case
 
     class Model(nn.Module):
-        hidden_size: int
-        num_layers: int
-
         @nn.compact
         def __call__(self, x):
-            for i in range(self.num_layers):
-                x = nn.Dense(features=self.hidden_size * 4)(x)
-                x = nn.gelu(x)
-                x = nn.Dense(features=self.hidden_size)(x)
+            for i in range(num_layers):
+                x = nn.Dense(features=hidden_size * 4)(x)
+                x = nn.relu(x)
+                x = nn.Dense(features=hidden_size)(x)
             return x
 
     # Mesh configs
-    num_devices = dp_size * tensor_mp_size
-    device_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices])
-    logical_mesh = device_mesh.get_logical_mesh([dp_size, tensor_mp_size])
+    if args.local:
+        physical_mesh = PhysicalDeviceMesh(jax.devices())
+    else:
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
+    assert physical_mesh.total_devices == dp_size * tensor_mp_size
+    logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size])
+    set_parallelize_options(devices=logical_mesh)
+                            #search_logical_mesh_shape=True,
+                            #mesh_shape_search_mode="measurement")
 
-    @parallelize(devices=logical_mesh)
+    # Load profiling results
+    if use_profiling:
+        filename = physical_mesh.get_signature() + ".prof.pkl"
+        if os.path.exists(filename):
+            print(f"Load saved profiling results from {filename}")
+            physical_mesh.load_profiling_result(filename)
+            physical_mesh.prof_result.multiply_scale(1e7)
+        else:
+            physical_mesh.profile_collective("all-reduce")
+            print(f"Save profiling results to {filename}")
+            physical_mesh.save_profiling_result(filename)
+
+    @parallelize
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch['x'])
@@ -56,76 +84,92 @@ def benchmark_mlp_one_case(benchmark_case):
         new_optimizer = optimizer.apply_gradient(grad)
         return new_optimizer
 
-    # Prepare model and input
+    # Init model and optimizer
     batch = {
         "x": jnp.ones((batch_size, seq_len, hidden_size)),
         "y": jnp.ones((batch_size, seq_len, hidden_size)),
     }
-    model = Model(hidden_size=hidden_size, num_layers=num_layers)
+    model = Model()
     rngkey = jax.random.PRNGKey(0)
     params = model.init(rngkey, batch["x"])
     optimizer = optim.GradientDescent(1e-2).create(params)
+
+    # Shard inputs and weights
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
 
-    # Define benchmark function
-    closure = [optimizer]
-    def func():
-        optimizer = closure[0]
-
+    # Benchmark step time
+    def run_func():
+        nonlocal optimizer
         optimizer = train_step(optimizer, batch, model.apply)
-        block_until_ready(optimizer)
 
-        closure[0] = optimizer
+    def sync_func():
+        physical_mesh.sync_workers()
 
-    # Benchmark time cost
-    func()
-    func()
-    stmt = "func()"
-    repeat = 2
-    number = 10
-    costs = np.array(timeit.repeat(stmt, globals={**globals(), **locals()},
-        repeat=repeat, number=number)) / number
+    costs = benchmark_func(run_func, sync_func,
+                           warmup=1, repeat=2, number=args.number)
+
     real_mem = testing.last_compiled_executable.total_allocation_size()
+    objective = testing.last_compiled_auto_sharding_objective
 
     # Check sharding strategy
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    objective = testing.last_compiled_auto_sharding_objective
-    print("===== HLO =====")
-    print(hlo_ir)
-
+    assert_only_has_allreduce(hlo_ir)
+    #print("===== HLO =====")
+    #print(hlo_ir)
     #optimizer = closure[0]
     #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
-    line = f"Case: {benchmark_case}\t"\
-           f"PeakMem: {real_mem/MB:.2f}\t"\
-           f"Mean Time: {np.mean(costs):.2f}\t"\
-           f"Std Time: {np.std(costs):.2f}\t"\
-           f"Objective: {objective:.2f}\t"
+    # Log benchmark results
+    heads = ["Type", "Case", "PeakMem", "Objective", "Mean Time", "Std Time"]
+    values = ["mlp", str(benchmark_case), f"{real_mem/GB:.2f}", f"{objective:.2f}",
+             f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+    write_tsv(heads, values, "result_mlp.tsv")
 
-    print(line)
-    with open("results.tsv", "a") as fout:
-        fout.write(line + "\n")
+    physical_mesh.shutdown()
 
 
-benchmark_suite = [
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (16,          1024,    2304,        4,          2304//96,  4,       1),
-    (16,          1024,    2304,        4,          2304//96,  2,       2),
-    (16,          1024,    2304,        4,          2304//96,  1,       4),
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
+# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
 
-    # Batch size, seq_len, hidden size, num_layers, num_heads, dp_size, tensor_mp_size,
-    (8,           256,     2304,        4,          2304//96,  4,       1),
-    (8,           256,     2304,        4,          2304//96,  2,       2),
-    (8,           256,     2304,        4,          2304//96,  1,       4),
+benchmark_suite_4_gpu = [
+    # B, S,    H,    L, D1, D2
+    (32, 1024, 2304, 4, 4,  1),
+    (32, 1024, 2304, 4, 2,  2),
+
+    # B, S,    H,    L, D1, D2
+    (8,  256,  5760, 4, 4,  1),
+    (8,  256,  5760, 4, 2,  2),
 ]
 
 
-def benchmark_all():
-    for case in benchmark_suite:
-        benchmark_mlp_one_case(case)
+def benchmark_all(use_profiling):
+    if args.local:
+        num_gpus = list_gpu_info().count("UUID")
+    else:
+        num_gpus = int(ray.cluster_resources()["GPU"])
+
+    benchmark_suites = {
+        4: benchmark_suite_4_gpu,
+    }
+
+    for case in benchmark_suites[num_gpus]:
+        benchmark_mlp_one_case(case, use_profiling)
 
 
 if __name__ == "__main__":
-    benchmark_all()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--use-profiling", action="store_true")
+    parser.add_argument("--number", type=int, default=5)
+    parser.add_argument("--local", action="store_true",
+        help="Run on local GPUs. Do not use ray actors.")
+    args = parser.parse_args()
+
+    if not args.local:
+        ray.init(address="auto")
+        jax.config.update('jax_platform_name', 'cpu')
+
+    global_config.use_dummy_value_for_benchmarking = True
+
+    benchmark_all(args.use_profiling)
 

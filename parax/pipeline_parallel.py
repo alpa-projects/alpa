@@ -1,94 +1,18 @@
 """pipeline parallel on a single device."""
-from typing import Sequence, Set
+from typing import Sequence, Set, Mapping, Any
 
 import jax
 from jax import linear_util as lu
 from jax._src.util import safe_map
-from jax.core import Var, DropVar, ClosedJaxpr, Literal
+from jax.core import Var, DropVar, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_primitive_def import pipeline_p
-from parax.pipeline_stage import PipelineStage, JaxPipelineStage, XlaPipelineStage
+from parax.pipeline_stage import PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_pipeline_marks
 from parax.pipe import JaxPipeline
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
-
-
-def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]: # noqa MC0001
-    """Slice a Jaxpr into multiple pipeline stages.
-
-    We assume the closed_jaxpr includes pipeline start and end markers. Also,
-    the variables in the markers represents the variables being sent
-    through the network. While other input variables must be directly from
-    the invars.
-
-    Args:
-        closed_jaxpr (ClosedJaxpr): the input Jaxpr.
-
-    Returns:
-        Sequence[JaxPipelineStage]: A list of sliced pipeline stages.
-    """
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_outvars = set(var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    var2stage = {}
-    result_stages = []
-
-    current_stage = None
-
-    for eqn in closed_jaxpr.jaxpr.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
-            assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage = JaxPipelineStage(name=eqn.params['name'])
-            for var in eqn.invars:
-                if not isinstance(var, Literal):
-                    current_stage.pipeline_invars.add(var)
-        assert current_stage is not None
-
-        for var in eqn.invars:
-            if isinstance(var, Literal) or (var in current_stage.pipeline_invars) or (
-                    var in current_stage.intermediate_vars):
-                continue
-            if var in global_consts_dir:
-                if var not in current_stage.consts_dir:
-                    current_stage.consts_dir[var] = global_consts_dir[var]
-            elif var in global_invars:
-                if var not in current_stage.global_invars:
-                    current_stage.global_invars.add(var)
-            else:
-                if var not in var2stage:
-                    raise ValueError("Unknown variable {}".format(var))
-                original_stage = var2stage[var]
-                if original_stage.name == current_stage.name:
-                    if var not in original_stage.local_outvars:
-                        original_stage.local_outvars.add(var)
-                    if var not in current_stage.local_invars:
-                        current_stage.local_invars.add(var)
-                else:
-                    raise ValueError("Variable {} should be indicated as a pipeline stage input.".format(var))
-
-        for var in eqn.outvars:
-            if not isinstance(var, DropVar):
-                current_stage.intermediate_vars.add(var)
-                var2stage[var] = current_stage
-                if var in global_outvars:
-                    current_stage.global_outvars.add(var)
-
-        current_stage.eqns.append(eqn)
-
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            assert current_stage is not None, "Ending a pipeline stage before its start."
-            assert current_stage.name == eqn.params['name'], "Ending a pipeline stage different from its start."
-            current_stage.pipeline_outvars = set(var for var in eqn.outvars if not isinstance(var, DropVar))
-            result_stages.append(current_stage)
-            current_stage = None
-
-    for stage in result_stages:
-        stage.invars = list(stage.pipeline_invars | stage.global_invars | stage.local_invars)
-        stage.outvars = list(stage.pipeline_outvars | stage.global_outvars | stage.local_outvars)
-
-    return result_stages
 
 
 class LocalPipelineRunner:
@@ -184,6 +108,7 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage], global_inva
 @lu.cache
 def pipeline_parallel_callable(
         fun: lu.WrappedFun,
+        devices: Mapping[str, Any],
         *avals
 ):
     """Pipeline parallel callable."""

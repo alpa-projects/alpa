@@ -36,10 +36,18 @@ pylint:
     - not-context-manager
     - no-else-return
     - protected-access
+    - too-many-arguments
+    - too-many-locals
+    - too-many-branches
+    - too-many-statements
+    - too-many-lines
+    - too-many-instance-attributes
+    - too-many-function-args
   options:
     max-line-length: 120
     ignored-argument-names: arg|args|kwargs
     max-attributes: 10
+    max-nested-blocks: 6
     docstring-min-length: 5
 
 dodgy:
@@ -60,6 +68,8 @@ pep257:
 
 mccabe:
   run: true
+  disable:
+    - MC0001 # A function is too complicated
 
 mypy:
   run: false

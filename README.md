@@ -4,6 +4,13 @@ Parax automatically parallelizes your python numerical computing code and neural
 with a simple decorator.
 
 
+Requirements
+============
+
+```
+CUDA >= 11.1
+```
+
 Install
 =======
 This repo depends on our private fork of jax and tensorflow.
@@ -15,19 +22,18 @@ This repo depends on our private fork of jax and tensorflow.
   git clone git@github.com:parax-project/tensorflow-parax.git
   ```
 
-- Step 2. Install dependencies  
+- Step 2. Install dependencies
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install numpy scipy flax
-    pip3 install transformers==4.4.0
+    pip3 install numpy scipy flax ray
     ```
   - ILP Solver:
     ```bash
     sudo apt install coinor-cbc glpk-utils
     pip3 install pulp
     ```
-      
+
 - Step 3. Build and install jaxlib
   ```bash
   cd jax-parax
@@ -37,7 +43,7 @@ This repo depends on our private fork of jax and tensorflow.
   pip3 install -e .
   ```
 
-- Step 4. Install Jax
+- Step 4. Install jax
   ```bash
   cd jax-parax
   pip3 install -e .
@@ -47,6 +53,12 @@ This repo depends on our private fork of jax and tensorflow.
   ```bash
   cd parax
   pip3 install -e .
+  ```
+
+- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_custom_call/README.md))
+  ```bash
+  cd parax/pipeline_custom_call
+  bash build.sh
   ```
 
 Note:

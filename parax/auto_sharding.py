@@ -159,7 +159,7 @@ def compile_with_search(backend,
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
     bypass_device_assignment_check = physical_mesh.is_distributed
-    skip_backend_codegen = physical_mesh.is_distributed
+    skip_backend_codegen = physical_mesh.is_distributed or multiple_stages
 
     build_random_seed = 42
     compile_options = get_compile_options(

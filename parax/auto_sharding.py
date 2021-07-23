@@ -1,4 +1,5 @@
 """Use the auto sharding pass in XLA."""
+import enum
 import logging
 import multiprocessing
 import time
@@ -60,6 +61,7 @@ def auto_sharding_callable(
       strategy_config (Optional[StrategyConfig]): If is not None, do compilation
         according to this configuration.
     """
+    tic = time.time()
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -98,17 +100,18 @@ def auto_sharding_callable(
     else:
         compiled = compile_with_given_strategy(
             backend, built, strategy_config, physical_mesh.total_devices,
-            physical_mesh.is_distributed, xla_computation_is_sharded=False
-        )
+            physical_mesh.is_distributed, HloProtoStatus.UNOPTIMIZED)
     hlo_module = compiled.hlo_modules()[0]
     logical_mesh_shape = strategy_config.logical_mesh_shape
 
-    # Send code and strategy to remote workers
+    if global_config.print_xla_compilation_time:
+        print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
+
+    # Send the code and strategy to remote workers
     if physical_mesh.is_distributed:
-        unoptimized_hlo_proto = built.as_serialized_hlo_module_proto()
-        # TODO(lmzheng): Try to pass the optimized hlo_proto.
         compiled = physical_mesh.compile_remote_executable(
-            unoptimized_hlo_proto, strategy_config, hlo_proto_is_sharded=False)
+            hlo_module.as_serialized_hlo_module_proto(),
+            strategy_config, HloProtoStatus.FULLY_OPTIMIZED)
 
     # Read HloSharding from HloModule and convert them to ShardingSpec
     # Return the final callable
@@ -152,12 +155,11 @@ def compile_with_search(backend,
         according to this configuration.
       multiple_stages (bool): Whether to return multiple stages sliced by xla_pipeline_maker.
     """
-    unoptimized_hlo_proto = xla_computation.as_serialized_hlo_module_proto()
-
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
     bypass_device_assignment_check = physical_mesh.is_distributed
+    skip_backend_codegen = physical_mesh.is_distributed or multiple_stages
 
     build_random_seed = 42
     compile_options = get_compile_options(
@@ -174,7 +176,11 @@ def compile_with_search(backend,
         global last_objective
 
         with XlaPassContext({
-            # Solver options
+            # Build options
+            "build_option::bypass_device_assignment": bypass_device_assignment_check,
+            "build_option::skip_backend_codegen": skip_backend_codegen,
+
+            # Auto-sharding solver options
             "auto_sharding::enable": True,
             "auto_sharding::memory_budget_per_device": memory_budget_per_device,
             "auto_sharding::force_all_gather_cost": not global_config.allow_all_gather,
@@ -189,8 +195,9 @@ def compile_with_search(backend,
             "auto_sharding::device_mesh_prof_result":
                 getattr(logical_mesh.physical_mesh, "prof_result", None),
 
-            # Distributed compilation
-            "build_option::bypass_device_assignment": bypass_device_assignment_check,
+            # All-reduce options
+            "combiner::all_reduce_threshold": 1 << 30,
+            "combiner::use_continuous_buffer": True,
 
             # Debug options
             "auto_sharding::simplify_graph": True,
@@ -220,11 +227,17 @@ def compile_with_search(backend,
             )
 
             if logical_mesh_search_mode == "measurement":
-                time_costs = physical_mesh.profile_executable(
-                    compiled, unoptimized_hlo_proto, strategy_config)
+                # Send the code and strategy to remote workers
+                if physical_mesh.is_distributed:
+                    executable = physical_mesh.compile_remote_executable(
+                        compiled.hlo_modules()[0].as_serialized_hlo_module_proto(),
+                        strategy_config, HloProtoStatus.FULLY_OPTIMIZED)
+                else:
+                    executable = compiled
+                time_costs = tuple(physical_mesh.profile_executable(executable))
             else:
                 assert logical_mesh_search_mode == "cost_model"
-                time_costs = objective
+                time_costs = (objective,)
 
             if np.mean(time_costs) < best_time_cost:
                 best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
@@ -256,12 +269,19 @@ def compile_with_search(backend,
     return compiled, strategy_config
 
 
+class HloProtoStatus(enum.IntEnum):
+    UNOPTIMIZED = 0         # An unoptimized HLO got from tracing the jaxpr.
+    SHARDING_ANNOTATED = 1  # A HLO with sharding annotation attached.
+    FULLY_OPTIMIZED = 2     # A fully optimized HLO which is already partitioned by
+                            # the SPMD partitioner.
+
+
 def compile_with_given_strategy(backend,
                                 xla_computation,
                                 strategy_config,
                                 num_devices,
                                 bypass_device_assignment_check,
-                                xla_computation_is_sharded):
+                                hlo_proto_status):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
@@ -272,9 +292,11 @@ def compile_with_given_strategy(backend,
       num_devices (int): The total number of devices.
       bypass_device_assignment_check (bool): Set this to true if this compilation is invoked
         on the driver node.
-      xla_computation_is_sharded (bool): Whether the argument xla_computation has already been
-        annotated with sharding specifications.
+      hlo_proto_status (HloProtoStatus): The optimization status of the
+        input xla computation. see docs in the definition of `HloProtoStatus`.
     """
+    tic = time.time()
+
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -283,11 +305,30 @@ def compile_with_given_strategy(backend,
         parameter_is_tupled_arguments=False,
         build_random_seed=strategy_config.build_random_seed
     )
-    solution_vector = strategy_config.auto_sharding_solution_vector
     logical_mesh_shape = strategy_config.logical_mesh_shape
+
+    if hlo_proto_status == HloProtoStatus.UNOPTIMIZED:
+        run_auto_sharding = True
+        skip_hlo_passes = False
+        solution_vector = strategy_config.auto_sharding_solution_vector
+    elif hlo_proto_status == HloProtoStatus.SHARDING_ANNOTATED:
+        run_auto_sharding = False
+        skip_hlo_passes = False
+        solution_vector = []
+    elif hlo_proto_status == HloProtoStatus.FULLY_OPTIMIZED:
+        run_auto_sharding = False
+        skip_hlo_passes = True
+        solution_vector = []
+    else:
+        raise ValueError(f"Invalid status: {hlo_proto_status}")
+
     with XlaPassContext({
-        # Solver options
-        "auto_sharding::enable": not xla_computation_is_sharded,
+        # Build options
+        "build_option::bypass_device_assignment": bypass_device_assignment_check,
+        "build_option::skip_hlo_passes": skip_hlo_passes,
+
+        # Auto-sharding solver options
+        "auto_sharding::enable": run_auto_sharding,
         "auto_sharding::load_strategy": True,
         "auto_sharding::solution_vector": to_int_tuple(solution_vector),
 
@@ -295,8 +336,9 @@ def compile_with_given_strategy(backend,
         "auto_sharding::device_mesh_ids": tuple(range(num_devices)),
         "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
-        # Distributed compilation
-        "build_option::bypass_device_assignment": bypass_device_assignment_check,
+        # All-reduce options
+        "combiner::all_reduce_threshold": 1 << 30,
+        "combiner::use_continuous_buffer": True,
 
         # Other useless but required arguments
         "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),
@@ -304,6 +346,7 @@ def compile_with_given_strategy(backend,
         "auto_sharding::device_mesh_prof_result": None,
     }):
         compiled = backend.compile(xla_computation, compile_options)
+
     return compiled
 
 
@@ -511,6 +554,7 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np, 
     e = []
 
     num_nodes = 0
+    reverse_follow_backpatch = []
     for i in range(N):
         if s_follow[i] < 0:
             if s_len[i] == 1:
@@ -520,7 +564,14 @@ def _call_solver_serialized_args(N, M, s_len_np, s_follow_np, E_np, A_np, L_np, 
                 s.append(LpVariable.matrix(f"s[{i}]",
                                            (range(s_len[i]),), cat="Binary"))
         else:
-            s.append(s[s_follow[i]])
+            if s_follow[i] < len(s):
+                s.append(s[s_follow[i]])
+            else:
+                s.append(None)
+                reverse_follow_backpatch.append(i)
+
+    for i in reverse_follow_backpatch:
+        s[i] = s[s_follow[i]]
 
     num_edges = 0
     for (idx, (i, j)) in enumerate(E):

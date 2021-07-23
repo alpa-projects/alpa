@@ -329,6 +329,72 @@ def test_reshard():
     print(compiled_computation.hlo_modules()[0].to_string())
 
 
+def test_skip_hlo_passes():
+    from parax import XlaPassContext
+
+    c = xla_client.XlaBuilder("shard")
+
+    # Set input sharding
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.OTHER
+    sharding.tile_assignment_dimensions.extend([2, 1])
+    sharding.tile_assignment_devices.extend([0, 1])
+    c.set_sharding(sharding)
+    x = parameter(c, 0, (2, 2), np.float32)
+    c.clear_sharding()
+
+    # Build computational graph
+    y = ops.Constant(c, np.float32(1))
+    z = ops.Broadcast(y, (2, 2))
+    z = ops.Add(x, z)
+
+    # Set output sharding
+    sharding2 = xla_client.OpSharding()
+    sharding2.type = sharding.type.TUPLE
+    sharding2.tuple_shardings = [sharding]
+    c.set_sharding(sharding2)
+    out = ops.Tuple(c, [z])
+    c.clear_sharding()
+
+    # Build HLO
+    c = c.build(out)
+    print(c.as_hlo_text())
+    print("=" * 20)
+
+    # Compile
+    num_replicas = 1
+    num_partitions = 2
+    use_spmd_partitioning = False
+    device_assignment = xla_client.DeviceAssignment.create([[0, 1]])
+    compile_options = xla_client.CompileOptions()
+    build_options = compile_options.executable_build_options
+    build_options.num_replicas = num_replicas
+    build_options.num_partitions = num_partitions
+    build_options.use_spmd_partitioning = True
+    build_options.device_assignment = device_assignment
+
+    backend = xla_client.get_local_backend("gpu")
+    with XlaPassContext({"build_option::skip_backend_codegen": True}):
+        compiled_computation = backend.compile(c, compile_options)
+
+    # Print spmd partitioned HLO
+    hlo_module = compiled_computation.hlo_modules()[0]
+    c = xla_client.XlaComputation(hlo_module.as_serialized_hlo_module_proto())
+
+    with XlaPassContext({"build_option::skip_hlo_passes": True}):
+        compiled_computation = backend.compile(c, compile_options)
+
+    # Run
+    host_input = np.ones((2, 2), dtype=np.float32)
+    device_inputs = [[
+        backend.buffer_from_pyval(host_input[[i],:], backend.devices()[i])
+        for i in range(2)
+    ]]
+    device_outs = compiled_computation.execute_sharded_on_local_devices(device_inputs)
+    print(device_outs)
+
+
+
 if __name__ == "__main__":
     #test_sin_cos()
     #test_alias()
@@ -338,5 +404,7 @@ if __name__ == "__main__":
     #test_manual_construct_spmd_shard()
     #test_manual_construct_spmd_one_device()
 
-    test_reshard()
+    #test_reshard()
+
+    test_skip_hlo_passes()
 

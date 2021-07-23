@@ -8,7 +8,14 @@ ray start --head
 ```
 
 2. Run benchmark
-```
-python3 benchmark_transformer_layer.py
-```
+- Run benchmark with Ray
+  ```
+  python3 benchmark_transformer_layer.py
+  python3 benchmark_gpt_bert.py
+  ```
 
+- Run benchmark without Ray
+  ```
+  python3 benchmark_transformer_layer.py --local
+  python3 benchmark_gpt_bert.py --local
+  ```

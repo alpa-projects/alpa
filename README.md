@@ -8,6 +8,7 @@ Requirements
 ============
 
 ```
+CuDNN >= 8.1
 CUDA >= 11.1
 ```
 

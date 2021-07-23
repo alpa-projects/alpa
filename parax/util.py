@@ -146,9 +146,11 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, backend_name='gpu'):
 ##### Profiling Utilities
 ########################################
 
-def profile_xla_executable(compiled, backend, local_devices, sync_func):
+def profile_xla_executable(compiled, backend, local_devices):
     """Measure the time costs of a xla executable."""
     hlo_module = compiled.hlo_modules()[0]
+
+    # Allocate dummy buffers
     input_shapes = hlo_module.parameter_shapes()
     device_inputs = []
     for shape in input_shapes:
@@ -158,49 +160,58 @@ def profile_xla_executable(compiled, backend, local_devices, sync_func):
              for i in range(len(local_devices))]
         )
 
-    def run_once():
+    # Run benchmark
+    def run_func():
         device_outputs = compiled.execute_sharded_on_local_devices(device_inputs)
 
         # Reset the value for donate buffers
         for j in range(len(device_inputs)):
             if device_inputs[j][0].is_deleted():
                 device_inputs[j] = device_outputs[j]
-        sync_func()
 
-    costs = measure_func(run_once, repeat=1, min_repeat_second=0.5)
+    def sync_func():
+        local_devices[0].synchronize_all_activity()
+
+    costs = benchmark_func(run_func, sync_func, repeat=3, number=3)
     return costs
 
 
-def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
-    """
-    Measure the execution time of a function.
+def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5, min_repeat_second=None):
+    """Benchmark the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
-    The return value is a array of `repeat` elements and each elements is 
+    The return value is a list of `repeat` elements and each elements is 
     the avarage execution time of `number` executions.
 
     If `min_repeat_second` is set, the function automatically picks a `number`
     so that one `repeat` lasts for at least `min_repeat_second` seconds.
     """
-    for _ in range(warmup):
-        func()
+    costs = []
 
+    # Warmup
+    for i in range(warmup):
+        run_func()
+
+    # Choose a "number" according to "min_repeat_second"
     if min_repeat_second:
+        sync_func()
         tic = time.time()
-        func()
+        run_func()
+        sync_func()
         toc = time.time()
         cost = toc - tic
         number = max(int(min_repeat_second / cost), 1)
 
-    costs = []
-    for _ in range(repeat):
+    # Benchmark
+    for i in range(repeat):
+        sync_func()
         tic = time.time()
-        for __ in range(number):
-            func()
-        toc = time.time()
-        costs.append((toc - tic) / number)
+        for j in range(number):
+            run_func()
+        sync_func()
+        costs.append(time.time() - tic)
 
-    return costs
+    return np.array(costs) / number
 
 
 ########################################
@@ -260,22 +271,3 @@ def compute_bytes(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
-
-def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5):
-    """Benchmark the execution time of a function."""
-    costs = []
-
-    # Warmup
-    for i in range(warmup):
-        run_func()
-    sync_func()
-
-    # Benchmark
-    for i in range(repeat):
-        tic = time.time()
-        for j in range(number):
-            run_func()
-        sync_func()
-        costs.append(time.time() - tic)
-
-    return np.array(costs) / number

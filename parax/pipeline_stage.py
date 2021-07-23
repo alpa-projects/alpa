@@ -199,6 +199,8 @@ class XlaShardedPipelineStage(PipelineStage):
 
     def get_runnable(self, mesh):
         """Return a callable of the pipeline stage."""
+        from parax.auto_sharding import HloProtoStatus
+
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError("Require a pre-allocated physical mesh to compile the runnable.")
 
@@ -211,11 +213,12 @@ class XlaShardedPipelineStage(PipelineStage):
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         compiled = compile_with_given_strategy(
                 backend, xla_computation, self.strategy_config,
-                num_devices, mesh.is_distributed, xla_computation_is_sharded=True)
+                num_devices, mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED)
         hlo_module = compiled.hlo_modules()[0]
         if mesh.is_distributed:
             compiled = mesh.compile_remote_executable(
-                self.hlo_proto, self.strategy_config, hlo_proto_is_sharded=True)
+                hlo_module.as_serialized_hlo_module_proto(),
+                self.strategy_config, HloProtoStatus.FULLY_OPTIMIZED)
 
         # Return the final callable
         avals = [var.aval for var in self.invars]

@@ -45,7 +45,7 @@ def parallelize(fun=None,
     def decorate_fun(fun):
         @wraps(fun)
         def ret_func(*args, **kwargs):
-            shard_args_only_mode = kwargs.pop("__shard_args_only_mode", False)
+            return_value_mode = kwargs.pop("__return_value_mode", "normal")
             assert not kwargs, "kwargs is not supported"
 
             f = lu.wrap_init(fun)
@@ -96,25 +96,37 @@ def parallelize(fun=None,
                 global_config.memory_budget_per_device, *abstract_args
             )
 
-            if shard_args_only_mode:
+            if return_value_mode == "normal":
+                # Execute the compiled func and return results
+                out = compiled_func(*args_flat)
+                return tree_unflatten(out_tree(), out)
+            elif return_value_mode == "preshard_dynamic_args":
                 # In this mode, this function returns sharded arguments without executing
                 # the computation. This is used to prepare sharded arguments
                 # for benchmark purposes, so we can exclude the time for sharding arguments.
                 sharded_args = compiled_func.shard_args_only(*args_flat)
                 return tree_unflatten(in_tree, sharded_args)
+            elif return_value_mode == "get_executable":
+                # Return the compiled executable
+                return compiled_func.args[0]
             else:
-                # Execute the compiled func and return results
-                out = compiled_func(*args_flat)
-                return tree_unflatten(out_tree(), out)
+                raise ValueError(f"Invalid return_value_mode: {return_value_mode}")
 
         @wraps(fun)
         def preshard_dynamic_args(*args, **kwargs):
             """Prepare sharded arguments for benchmark purposes,
             so we can exclude the time for sharding arguments."""
-            kwargs['__shard_args_only_mode'] = True
+            kwargs['__return_value_mode'] = "preshard_dynamic_args"
+            return ret_func(*args, **kwargs)
+
+        @wraps(fun)
+        def get_executable(*args, **kwargs):
+            """Return the compiled executable."""
+            kwargs['__return_value_mode'] = "get_executable"
             return ret_func(*args, **kwargs)
 
         ret_func.preshard_dynamic_args = preshard_dynamic_args
+        ret_func.get_executable = get_executable
         return ret_func
 
     if fun is None:

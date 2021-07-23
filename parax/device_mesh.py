@@ -264,7 +264,7 @@ class MeshHostWorker:
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
-    def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
+    def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
@@ -297,7 +297,7 @@ class MeshHostWorker:
                            uuid: int,
                            hlo_proto: bytes,
                            strategy_config: StrategyConfig,
-                           hlo_proto_is_sharded: bool):
+                           hlo_proto_status: "HloProtoStatus"):
         # pylint: disable=import-outside-toplevel
         from parax.auto_sharding import compile_with_given_strategy
 
@@ -307,7 +307,7 @@ class MeshHostWorker:
 
         compiled = compile_with_given_strategy(
             self.backend, xla_computation, strategy_config, num_devices,
-            False, xla_computation_is_sharded=hlo_proto_is_sharded)
+            False, hlo_proto_status)
         self.executables[uuid] = compiled
 
     def execute(self,
@@ -335,6 +335,10 @@ class MeshHostWorker:
             for j in range(input_uuids.shape[1]):
                 if device_inputs[i][j].is_deleted():
                     del self.local_buffers[input_uuids[i][j]]
+
+    def get_total_allocation_size(self, uuid):
+        """Get the total allocation size in bytes to run this executable."""
+        return self.executables[uuid].total_allocation_size()
 
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups, number, verbose):
@@ -423,7 +427,7 @@ class MeshHostWorker:
 
     def profile_executable(self, executable_uuid: int):
         return profile_xla_executable(self.executables[executable_uuid], self.backend,
-                                      self.local_devices, self.sync)
+                                      self.local_devices)
 
     ##### Other Functions #####
     def sync(self):
@@ -644,7 +648,7 @@ class PhysicalDeviceMesh:
     def compile_remote_executable(self,
                                   hlo_proto: bytes,
                                   strategy_config: StrategyConfig,
-                                  hlo_proto_is_sharded: bool):
+                                  hlo_proto_status: "HloProtoStatus"):
         """Compile the remote executable."""
         executable = RemoteExecutableRef(self)
         for w in self.workers:
@@ -652,7 +656,7 @@ class PhysicalDeviceMesh:
                 executable.uuid,
                 hlo_proto,
                 strategy_config,
-                hlo_proto_is_sharded)
+                hlo_proto_status)
         return executable
 
     def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
@@ -771,6 +775,13 @@ class PhysicalDeviceMesh:
 
         return ret
 
+    def get_total_allocation_size(self, executable):
+        """Get the total allocation size in bytes to run this executable."""
+        if self.is_distributed:
+            return ray.get(self.workers[0].get_total_allocation_size.remote(executable.uuid))
+        else:
+            return executable.total_allocation_size()
+
     ##### Profling related Functions #####
     def profile_collective(self, primitive_name, size_range=None, replica_groups=None,
                            number="auto", verbose=1):
@@ -787,21 +798,18 @@ class PhysicalDeviceMesh:
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
-    def profile_executable(self, compiled, unoptimized_hlo_proto, strategy_config):
+    def profile_executable(self, compiled):
         """Profile the time cost of an xla executable."""
-        if self.is_distributed:
-            # Send the code and strategy to remote workers
-            compiled = self.compile_remote_executable(
-                unoptimized_hlo_proto, strategy_config, hlo_proto_is_sharded=False)
+        from parax.auto_sharding import HloProtoStatus
 
-            # Run profiling
+        if self.is_distributed:
             tasks = []
             for worker in self.workers:
                 tasks.append(worker.profile_executable.remote(compiled.uuid))
             costs = ray.get(tasks)[0]
         else:
             costs = profile_xla_executable(compiled, xla_bridge.get_backend("gpu"),
-                                           self.devices, self.sync_workers)
+                                           self.devices)
 
         return costs
 
@@ -1003,7 +1011,7 @@ def _device_mesh_put(device_mesh, shards):
         for device_id in range(device_mesh.num_devices_per_host):
             buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
             if global_config.use_dummy_value_for_benchmarking:
-                device_mesh.workers[host_id].put_dummy_buffer.remote(
+                device_mesh.workers[host_id].put_empty_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
             else:
                 device_mesh.workers[host_id].put_buffer.remote(

@@ -174,7 +174,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     sys.argv += ["--train-iters", "100"]
     sys.argv += ["--lr", "0.00015"]
     sys.argv += ["--bert-no-binary-head"]
-    sys.argv += ["--DDP-impl", "torch" if ddp_impl == 0 else "local"]
+    sys.argv += ["--DDP-impl", "local" if ddp_impl else "torch"]
     sys.argv += ["--fp16"]
     if checkpoint_activations:
         sys.argv += ["--checkpoint-activations"]

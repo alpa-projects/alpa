@@ -172,7 +172,7 @@ def profile_xla_executable(compiled, backend, local_devices):
     def sync_func():
         local_devices[0].synchronize_all_activity()
 
-    costs = benchmark_func(run_func, sync_func, repeat=3, min_repeat_second=1)
+    costs = benchmark_func(run_func, sync_func, repeat=3, number=3)
     return costs
 
 

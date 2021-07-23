@@ -141,7 +141,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     hlo_ir = hlo_module.to_string()
     print(f" - #comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
-    #print(hlo_ir)
+
+    with open("last.hlo", "w") as fout:
+        fout.write(hlo_ir)
     #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
@@ -171,7 +173,7 @@ benchmark_suite_4_gpu = [
 
 benchmark_suite_8_gpu = [
     # B,  S,    H,    L,  #head,     D1, D2
-    (32,  1024, 1536, 2,  1536//96,  8,  1),
+    (32,  1024, 1536, 4,  1536//96,  8,  1),
     (32,  1024, 1536, 4,  1536//96,  4,  2),
     (32,  1024, 1536, 4,  1536//96,  2,  4),
 

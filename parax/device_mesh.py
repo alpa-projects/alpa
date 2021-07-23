@@ -337,6 +337,7 @@ class MeshHostWorker:
                     del self.local_buffers[input_uuids[i][j]]
 
     def get_total_allocation_size(self, uuid):
+        """Get the total allocation size in bytes to run this executable."""
         return self.executables[uuid].total_allocation_size()
 
     ##### Profiling Related Functions #####
@@ -775,6 +776,7 @@ class PhysicalDeviceMesh:
         return ret
 
     def get_total_allocation_size(self, executable):
+        """Get the total allocation size in bytes to run this executable."""
         if self.is_distributed:
             return ray.get(self.workers[0].get_total_allocation_size.remote(executable.uuid))
         else:

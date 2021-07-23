@@ -170,6 +170,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     del (params, rngkey)
     log_time_stamp("Init model and optimizer")
 
+    # Compile executable
     executable = train_step.get_executable(optimizer, batch, model.apply)
     log_time_stamp("Compile (driver)")
 
@@ -205,7 +206,8 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     print(f" - #comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
 
-    #print(hlo_ir)
+    with open("last.hlo", "w") as fout:
+        fout.write(hlo_ir)
     #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)
@@ -274,7 +276,9 @@ if __name__ == "__main__":
     parser.add_argument("--number", type=int, default=5)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--include-all-overhead", action="store_true")
+    parser.add_argument("--include-all-overhead", action="store_true",
+        help="If true, run the benchmark with all python overhead included (ray, parax)."
+             "If false, only run the xla executable without any python overhead.")
     args = parser.parse_args()
 
     if not args.local:

@@ -167,17 +167,20 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
     optimizer = optim.Adam(1e-2).create(params)
-    params = rngkey = None
+    del (params, rngkey)
     log_time_stamp("Init model and optimizer")
 
     executable = train_step.get_executable(optimizer, batch, model.apply)
-    log_time_stamp("Compile (driver node)")
+    log_time_stamp("Compile (driver)")
+
+    physical_mesh.sync_workers()
+    log_time_stamp("Compile (workers)")
 
     # Benchmark step time
     if args.include_all_overhead:
         optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
         physical_mesh.sync_workers()
-        log_time_stamp("Compile and shard arguments (driver node)")
+        log_time_stamp("Shard arguments")
 
         def run_func():
             nonlocal optimizer
@@ -190,11 +193,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                                warmup=1, repeat=2, number=args.number)
         log_time_stamp("Benchmark")
     else:
-        del optimizer
-        del batch
-
+        del (optimizer, batch)
         costs = physical_mesh.profile_executable(executable)
-        log_time_stamp("Compile and benchmark (worker nodes)")
+        log_time_stamp("Benchmark")
 
     # Check sharding strategy
     real_mem = physical_mesh.get_total_allocation_size(executable)
@@ -281,7 +282,7 @@ if __name__ == "__main__":
         jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True
-    global_config.print_xla_compilation_time = True
+    global_config.print_xla_compilation_time = False
 
     benchmark_all(args.use_profiling)
 

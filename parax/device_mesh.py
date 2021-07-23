@@ -264,7 +264,7 @@ class MeshHostWorker:
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
-    def put_dummy_buffer(self, uuid: int, device_id: int, shape, dtype):
+    def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype):
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
@@ -1009,7 +1009,7 @@ def _device_mesh_put(device_mesh, shards):
         for device_id in range(device_mesh.num_devices_per_host):
             buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
             if global_config.use_dummy_value_for_benchmarking:
-                device_mesh.workers[host_id].put_dummy_buffer.remote(
+                device_mesh.workers[host_id].put_empty_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
             else:
                 device_mesh.workers[host_id].put_buffer.remote(

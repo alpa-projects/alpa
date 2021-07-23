@@ -176,7 +176,11 @@ def compile_with_search(backend,
         global last_objective
 
         with XlaPassContext({
-            # Solver options
+            # Build options
+            "build_option::bypass_device_assignment": bypass_device_assignment_check,
+            "build_option::skip_backend_codegen": skip_backend_codegen,
+
+            # Auto-sharding solver options
             "auto_sharding::enable": True,
             "auto_sharding::memory_budget_per_device": memory_budget_per_device,
             "auto_sharding::force_all_gather_cost": not global_config.allow_all_gather,
@@ -191,9 +195,9 @@ def compile_with_search(backend,
             "auto_sharding::device_mesh_prof_result":
                 getattr(logical_mesh.physical_mesh, "prof_result", None),
 
-            # Build options
-            "build_option::bypass_device_assignment": bypass_device_assignment_check,
-            "build_option::skip_backend_codegen": skip_backend_codegen,
+            # All-reduce options
+            "combiner::all_reduce_threshold": 1 << 30,
+            "combiner::use_continuous_buffer": True,
 
             # Debug options
             "auto_sharding::simplify_graph": True,
@@ -323,7 +327,7 @@ def compile_with_given_strategy(backend,
         "build_option::bypass_device_assignment": bypass_device_assignment_check,
         "build_option::skip_hlo_passes": skip_hlo_passes,
 
-        # Solver options
+        # Auto-sharding solver options
         "auto_sharding::enable": run_auto_sharding,
         "auto_sharding::load_strategy": True,
         "auto_sharding::solution_vector": to_int_tuple(solution_vector),
@@ -331,6 +335,10 @@ def compile_with_given_strategy(backend,
         # Device mesh
         "auto_sharding::device_mesh_ids": tuple(range(num_devices)),
         "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
+
+        # All-reduce options
+        "combiner::all_reduce_threshold": 1 << 30,
+        "combiner::use_continuous_buffer": True,
 
         # Other useless but required arguments
         "auto_sharding::device_mesh_alpha": (1.0,) * len(logical_mesh_shape),

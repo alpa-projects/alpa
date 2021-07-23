@@ -105,7 +105,7 @@ def auto_sharding_callable(
     logical_mesh_shape = strategy_config.logical_mesh_shape
 
     if global_config.print_xla_compilation_time:
-        print(f"XLA Compilation time: {time.time() - tic:.2f} s")
+        print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
     # Send the code and strategy to remote workers
     if physical_mesh.is_distributed:

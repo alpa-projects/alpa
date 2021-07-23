@@ -28,7 +28,7 @@ tic = time.time()
 def log_time_stamp(message):
     global tic
     if message:
-        print(f"{message}: {time.time() - tic:.2f} s")
+        print(f" - {message}: {time.time() - tic:.2f} s")
     tic = time.time()
 
 
@@ -170,6 +170,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     params = rngkey = None
     log_time_stamp("Init model and optimizer")
 
+    executable = train_step.get_executable(optimizer, batch, model.apply)
+    log_time_stamp("Compile (driver node)")
+
     # Benchmark step time
     if args.include_all_overhead:
         optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
@@ -187,18 +190,18 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                                warmup=1, repeat=2, number=args.number)
         log_time_stamp("Benchmark")
     else:
-        executable = train_step.get_executable(optimizer, batch, model.apply)
-        log_time_stamp("Compile (driver node)")
+        del optimizer
+        del batch
 
         costs = physical_mesh.profile_executable(executable)
         log_time_stamp("Compile and benchmark (worker nodes)")
 
     # Check sharding strategy
-    real_mem = testing.last_compiled_executable.total_allocation_size()
+    real_mem = physical_mesh.get_total_allocation_size(executable)
     objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print(f"#comm {hlo_ir.count('channel_id')}, " +
+    print(f" - #comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
 
     #print(hlo_ir)

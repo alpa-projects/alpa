@@ -336,6 +336,9 @@ class MeshHostWorker:
                 if device_inputs[i][j].is_deleted():
                     del self.local_buffers[input_uuids[i][j]]
 
+    def get_total_allocation_size(self, uuid):
+        return self.executables[uuid].total_allocation_size()
+
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups, number, verbose):
         """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
@@ -770,6 +773,12 @@ class PhysicalDeviceMesh:
             ret.append(dis_array)
 
         return ret
+
+    def get_total_allocation_size(self, executable):
+        if self.is_distributed:
+            return ray.get(self.workers[0].get_total_allocation_size.remote(executable.uuid))
+        else:
+            return executable.total_allocation_size()
 
     ##### Profling related Functions #####
     def profile_collective(self, primitive_name, size_range=None, replica_groups=None,

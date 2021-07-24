@@ -4,6 +4,28 @@ import flax
 import jax
 from jax import core, lax, numpy as jnp
 
+from jax.lib.xla_bridge import get_backend as default_get_backend
+
+
+########################################
+##### Monkey patch the backend
+########################################
+
+global override_backend
+override_backend = None
+
+def override_get_backend(*args, **kwargs):
+    if override_backend is not None:
+        return override_backend
+    return default_get_backend(*args, **kwargs)
+
+setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
+
+def set_override_backend(backend):
+    global override_backend
+    override_backend = backend
+
+
 ########################################
 ##### Monkey patch Jax
 ########################################

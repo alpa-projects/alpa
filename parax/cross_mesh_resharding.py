@@ -214,17 +214,17 @@ class ReshardingTask:
             # launch NCCL send/recv
             tile = src_tiles[i]
             indices_in_dst_tile = indices_in_dst_tiles[i]
-            send_done_ref = sender_worker.send_tile_v2.remote(sender_buf.uuid,
-                                                              tile.offset,
-                                                              receiver_rank,
-                                                              receiver_gpu_idx,
-                                                              self.collective_group.group_name)
-            recv_done_ref = receiver_worker.recv_tile_v2.remote(result_buf.uuid,
-                                                                result_buf.device_id,
-                                                                indices_in_dst_tile,
-                                                                sender_rank,
-                                                                sender_gpu_idx,
-                                                                self.collective_group.group_name)
+            send_done_ref = sender_worker.send_tile.remote(sender_buf.uuid,
+                                                           tile.offset,
+                                                           receiver_rank,
+                                                           receiver_gpu_idx,
+                                                           self.collective_group.group_name)
+            recv_done_ref = receiver_worker.recv_tile.remote(result_buf.uuid,
+                                                             result_buf.device_id,
+                                                             indices_in_dst_tile,
+                                                             sender_rank,
+                                                             sender_gpu_idx,
+                                                             self.collective_group.group_name)
             ray.get([send_done_ref, recv_done_ref])
         return result_buf
 
@@ -412,7 +412,7 @@ class ReshardingTaskSpec:
 
         # For each dim, for the first and end tile, we make a tuple recording the slicing offset:
         # - start_shard_offset: [start_shard_offset: ] on that dim is activated.
-        # - end_shard_offset: [:end_sharding_offset] ont that dim is activated.
+        # - end_shard_offset: [:end_sharding_offset] on that dim is activated.
         related_tile_offset = [tuple()] * self.src.tensor_rank
 
         for i, dim in enumerate(self.src.tensor_shape):
@@ -420,8 +420,12 @@ class ReshardingTaskSpec:
             assert not ragged
             start_tile, start_tile_offset = divmod(tile.indices[i].start, tile_length)
             end_tile, end_tile_offset = divmod(tile.indices[i].stop, tile_length)
+            # if falling on the middle a src tile, increase the index of the final tile by 1.
             if end_tile_offset:
                 end_tile = end_tile + 1
+            # if falling on the end of a src tile, the offset should be [0: tile_length]
+            if end_tile_offset == 0:
+                end_tile_offset = tile_length
             related_tile_start_end[i] = (start_tile, end_tile)
             related_tile_offset[i] = (start_tile_offset, end_tile_offset)
 
@@ -453,7 +457,7 @@ class ReshardingTaskSpec:
                     # meaning it is the last involved tile
                     offset = related_tile_offset[i][1]
                     offsets.append(slice(0, offset))
-                    indices.append(slice(tile_length_on_this_dim - offset, None))
+                    indices.append(slice(tile.tile_shape[i] - offset, tile.tile_shape[i]))
                 else:
                     # meaning it is a fully involved tile
                     offset = related_tile_offset[i][0]
@@ -463,7 +467,7 @@ class ReshardingTaskSpec:
                     right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
-            this_tileslice = TileSlice(self.src.tiles[tuple(tile_index_absolute)],  offset=offsets)
+            this_tileslice = TileSlice(self.src.tiles[tuple(tile_index_absolute)], offset=offsets)
             src_tileslices.append(this_tileslice)
             indices_in_dst_tile.append(indices)
         return src_tileslices, indices_in_dst_tile

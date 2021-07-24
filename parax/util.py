@@ -7,17 +7,24 @@ import time
 
 import flax
 import numpy as np
+import jax
+from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_map, tree_flatten
+from jax.interpreters.xla import _DeviceArray
+from jax.core import ShapedArray
+import cupy as cp
 
 
 ########################################
 ##### API Utilities
 ########################################
+from jaxlib import xla_client
+
 
 def freeze_dict(pytree):
     """Convert a pytree to a FrozenDict."""
@@ -202,6 +209,50 @@ def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
 
     return costs
 
+
+########################################
+##### Array conversion
+########################################
+
+def xla_buffer_to_jax_buffer(xla_buf):
+    """Convert an xla buffer to a JAX DeviceArray.
+
+    So we can index over the data buffer.
+    """
+    aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
+    return _DeviceArray(aval, xla_buf.device(), xla_buf)
+
+
+def jax_buffer_to_xla_buffer(jax_buf):
+    """Convert a JAX Device array back to XLA buffer."""
+    return jax_buf.device_buffer
+
+
+def jax_buffer_set(src_buf, update, indices):
+    """In-place write on a JAX device array."""
+    src_buf = src_buf.at[tuple(indices)].set(update)
+    return src_buf
+xla_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0))
+
+
+def to_cupy(tensors):
+    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
+    if isinstance(tensors, list):
+        return list(map(to_cupy, tensors))
+    ctensor = cp.fromDlpack(get_jax_dlpack(tensors))
+    return ctensor
+
+
+def to_jax_tensor(tensor):
+    """Convert cupy tensors to JAX tensors."""
+    if isinstance(tensor, list):
+        return list(map(to_jax_tensor, tensor))
+    return from_dlpack(tensor.toDlpack())
+
+
+def get_jax_dlpack(tensor):
+    return xc._xla.buffer_to_dlpack_managed_tensor(
+        tensor.device_buffer, take_ownership=False)
 
 ########################################
 ##### OS / IO Utilities

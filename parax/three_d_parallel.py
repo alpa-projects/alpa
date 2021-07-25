@@ -13,7 +13,7 @@ from parax.pipeline_stage import (PipelineStage, JaxPipelineStage, XlaPipelineSt
                                   slice_closed_jaxpr_by_pipeline_marks)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 @lu.cache
 def three_d_parallel_callable(

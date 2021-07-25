@@ -25,7 +25,7 @@ from parax.global_env import global_config
 from parax.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.util import (get_dim_last_value, list_gpu_info, profile_xla_executable, GB, to_cupy, to_jax_tensor)
 from parax.monkey_patch import set_override_backend
-from parax.util import jax_buffer_set, xla_buffer_to_jax_buffer
+from parax.util import jax_buffer_set, xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer
 
 
 logger = logging.getLogger(__name__)
@@ -473,13 +473,10 @@ class MeshHostWorker:
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
         recv_tensor = to_jax_tensor(to_recv)  # zero copy
 
-        # # 1-copy version
-        # new_buffer  = xla_buffer_to_jax_buffer(self.local_buffers[uuid]).\
-        #     at[tuple(indices_in_dst_tile)].\
-        #     set(recv_tensor)
-        self.local_buffers[uuid] = jax_buffer_set(xla_buffer_to_jax_buffer(self.local_buffers[uuid]),
-                                                  recv_tensor,
-                                                  indices_in_dst_tile)
+        # 1-copy version
+        new_buffer = jax_buffer_set(xla_buffer_to_jax_buffer(self.local_buffers[uuid]),
+                                    recv_tensor, indices_in_dst_tile)
+        self.local_buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
         return True
 
 

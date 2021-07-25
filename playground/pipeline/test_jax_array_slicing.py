@@ -9,21 +9,13 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated
 import numpy as np
 from jax.lib import xla_client, xla_bridge
 import jax.numpy as jnp
+from parax.util import jax_buffer_set
 
 
-backend = xla_client.get_local_backend()
-
-# A  = backend.buffer_from_pyval(np.ones([5, 4], dtype=numpy.float32), backend.local_devices()[0]) # do not work
-# A  = backend.buffer_from_pyval(np.ones([5, 4]), backend.local_devices()[0]) # do not work
-# A = jnp.arange(20).reshape(5, 4) # work
-offset = [slice(0, 2), slice(2, 3)]
-# B = A[tuple(offset)]
-# print(B)
-# # C = A[tuple(offset)]
-# print(A)
-# print(C)
-device = jax.devices()[0]
-A = jax.device_put(jnp.ones([5, 4]), device)
-print(A)
-B = A[tuple(offset)]
-print(B)
+offset = [slice(0, 2), slice(4, 6)]
+m = jnp.ones([10, 10], dtype=np.float32)
+print(m.__cuda_array_interface__)
+n = jnp.ones([2, 2], dtype=np.float32)
+print(n.__cuda_array_interface__)
+k = jax_buffer_set_v2(m, n, offset)
+print(k.__cuda_array_interface__)

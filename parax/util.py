@@ -1,29 +1,28 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
-import itertools as it
 import os
+import itertools as it
 import subprocess
 import time
 
+import cupy as cp
 import flax
 import numpy as np
-import jax
+
 from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
+from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
+from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_map, tree_flatten
-from jax.interpreters.xla import _DeviceArray
-from jax.core import ShapedArray
-import cupy as cp
 
 
 ########################################
 ##### API Utilities
 ########################################
-from jaxlib import xla_client
 
 
 def freeze_dict(pytree):
@@ -215,7 +214,8 @@ def measure_func(func, warmup=1, number=10, repeat=3, min_repeat_second=0):
 ########################################
 
 def xla_buffer_to_jax_buffer(xla_buf):
-    """Convert an xla buffer to a JAX DeviceArray.
+    """
+    Convert an xla buffer to a JAX DeviceArray.
 
     So we can index over the data buffer.
     """
@@ -232,7 +232,8 @@ def jax_buffer_set(src_buf, update, indices):
     """In-place write on a JAX device array."""
     src_buf = src_buf.at[tuple(indices)].set(update)
     return src_buf
-xla_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0))
+
+# jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0))
 
 
 def to_cupy(tensors):
@@ -313,19 +314,20 @@ def compute_bytes(pytree):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
 
+
 def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5):
     """Benchmark the execution time of a function."""
     costs = []
 
     # Warmup
-    for i in range(warmup):
+    for _ in range(warmup):
         run_func()
     sync_func()
 
     # Benchmark
-    for i in range(repeat):
+    for _ in range(repeat):
         tic = time.time()
-        for j in range(number):
+        for _ in range(number):
             run_func()
         sync_func()
         costs.append(time.time() - tic)

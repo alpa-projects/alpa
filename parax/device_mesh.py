@@ -29,7 +29,7 @@ from parax.util import jax_buffer_set, xla_buffer_to_jax_buffer
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):

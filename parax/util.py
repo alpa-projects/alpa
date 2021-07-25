@@ -254,6 +254,7 @@ def get_jax_dlpack(tensor):
     return xc._xla.buffer_to_dlpack_managed_tensor(
         tensor.device_buffer, take_ownership=False)
 
+
 ########################################
 ##### OS / IO Utilities
 ########################################

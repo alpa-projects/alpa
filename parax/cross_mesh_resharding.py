@@ -124,7 +124,6 @@ class VirtualDistributedArray:
                     tile_size, ragged = divmod(dim, self.tile_shape[i])
                     assert not ragged
                     indices[i] = slice(tile_size * tile_index[i], tile_size * (tile_index[i] + 1))
-                # TODO(Hao): check here.
                 device_strs = [self.device_mesh.device_strs[d] for d in device_ids]
                 dst_tile = Tile(index=tile_index,
                                 index_flat=tile_index_flat,
@@ -573,10 +572,6 @@ class CrossMeshCommunicator:
             # (2) in_sharding_spec in the destination stage.
             vars, out_var_indices, in_var_indices = \
                 self._args_between(src_stage, dst_stage)
-            # out_sharding_specs = src_stage.output_sharding_specs_on_mesh(
-            #     src_mesh.get_default_logical_mesh())
-            # in_sharding_specs = dst_stage.input_sharding_specs_on_mesh(
-            #     dst_mesh.get_default_logical_mesh())
             out_sharding_specs = src_stage.output_sharding_specs
             in_sharding_specs = dst_stage.input_sharding_specs
 

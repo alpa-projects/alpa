@@ -16,7 +16,7 @@ num_gpus = 2
 # so the driver program and actor program can share GPUs...
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
 os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-jax.config.update('jax_platform_name', 'cpu')
+# jax.config.update('jax_platform_name', 'cpu')
 # assert len(jax.local_devices()) >= num_gpus
 # devices = tuple(jax.local_devices()[:num_gpus])
 

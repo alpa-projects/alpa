@@ -646,27 +646,3 @@ class CrossMeshCommunicator:
 
     def pprint_spec(self):
         return NotImplementedError
-
-    # def get_device_str_groups(self):
-    #     """Get device groups based on specs.
-    #
-    #     We establish one collective group between two physical meshes, covering all the devices in
-    #     these two meshes that require NCCL communication.
-    #
-    #     Returns:
-    #         device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
-    #             device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
-    #             (spec[i][j], spec[j][i]) will share collective groups.
-    #     """
-    #     device_str_groups = [[set() for _ in range(self.num_mesh)]
-    #                          for _ in range(self.num_mesh)]
-    #     # Merge (i, j) and (j, i)
-    #     for i, j, var_spec_map in self.task_spec_iter():
-    #         participants = set()
-    #         for _, spec in var_spec_map.items(): # for each var
-    #             participants = participants | spec.get_participant_device_strs()
-    #         if i <= j:
-    #             device_str_groups[i][j] = device_str_groups[i][j] | participants
-    #         else:
-    #             device_str_groups[j][i] = device_str_groups[j][i] | participants
-    #     return device_str_groups

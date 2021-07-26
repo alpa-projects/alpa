@@ -8,7 +8,7 @@ import time
 import cupy as cp
 import flax
 import numpy as np
-
+import jax
 from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
@@ -228,12 +228,24 @@ def jax_buffer_to_xla_buffer(jax_buf):
     return jax_buf.device_buffer
 
 
-def jax_buffer_set(src_buf, update, indices):
-    """In-place write on a JAX device array."""
-    src_buf = src_buf.at[tuple(indices)].set(update)
+# Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
+def jax_buffer_set(src_buf, update, start_indices):
+    """
+    In-place write on a JAX buffer.
+
+    Args:
+        src_buf: JAX device array.
+        update: JAX device array.
+        start_indices (tuple[int]): tuple of integers indicating the starting indices.
+    """
+    # src_buf = src_buf.at[indices].set(update)
+    src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
     return src_buf
 
-# jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0))
+
+jax_buffer_set = jax.jit(jax_buffer_set,
+                         donate_argnums=(0),
+                         static_argnums=(2))
 
 
 def to_cupy(tensors):
@@ -252,6 +264,7 @@ def to_jax_tensor(tensor):
 
 
 def get_jax_dlpack(tensor):
+    """Helper function for calling dlpack in JAX."""
     return xc._xla.buffer_to_dlpack_managed_tensor(
         tensor.device_buffer, take_ownership=False)
 

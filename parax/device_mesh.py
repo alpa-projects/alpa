@@ -275,6 +275,7 @@ class MeshHostWorker:
                                            self.local_devices[device_id])
 
     def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype=np.float32):
+        """Put an all-zero buffer on the worker indexed by UUID."""
         if uuid in self.local_buffers:
             raise RuntimeError()
         self.local_buffers[uuid] = \
@@ -387,7 +388,7 @@ class MeshHostWorker:
                     for size, dtype in size_configs:
                         all_keys.add((replica_group, size, dtype))
         else:
-           for replica_group in replica_groups:
+            for replica_group in replica_groups:
                 for size, dtype in size_configs:
                     all_keys.add((replica_group, size, dtype))
         all_keys = list(all_keys)
@@ -454,6 +455,7 @@ class MeshHostWorker:
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
     def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
+        """Send a slice of a source buffer to a target GPU."""
         src_buffer = xla_buffer_to_jax_buffer(self.local_buffers[uuid])
         to_send = to_cupy(src_buffer[tuple(offset)])
         logger.debug("Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}."
@@ -462,20 +464,22 @@ class MeshHostWorker:
         return True
 
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank, src_gpu_idx, group_name):
+        """Recv a slice from a source GPU and in-place write it on the target buffer."""
         if uuid not in self.local_buffers:
             raise RuntimeError()
         tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
         tmp_buffer = jax.device_put(jax.numpy.zeros(tileslice_shape, dtype=self.local_buffers[uuid].dtype),
                                     self.local_devices[device_id])
-        to_recv = to_cupy(tmp_buffer) # zero copy
+        to_recv = to_cupy(tmp_buffer)
         logger.debug("Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}."
                      .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype))
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-        recv_tensor = to_jax_tensor(to_recv)  # zero copy
+        recv_tensor = to_jax_tensor(to_recv)
 
-        # 1-copy version
+        # 0-copy version
+        start_indices = tuple([ind_in_dst.start for ind_in_dst in indices_in_dst_tile])
         new_buffer = jax_buffer_set(xla_buffer_to_jax_buffer(self.local_buffers[uuid]),
-                                    recv_tensor, indices_in_dst_tile)
+                                    recv_tensor, start_indices)
         self.local_buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
         return True
 
@@ -522,6 +526,7 @@ class PhysicalDeviceMesh:
 
     @property
     def host_ips(self):
+        """Return the a list containing all host IPs."""
         ips = [self.host_info[i]["NodeManagerAddress"] for i, _ in enumerate(self.host_ids)]
         return ips
 
@@ -544,7 +549,7 @@ class PhysicalDeviceMesh:
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 "NCCL_USE_MULTISTREAM": "False",
                 # "NCCL_SHM_DISABLE": "1",
-                "TF_CUDA_REMAP_DEVICE_ID" : "False"
+                # "TF_CUDA_REMAP_DEVICE_ID": "False"
                 # "NCCL_DEBUG": "INFO"
             }
 
@@ -887,7 +892,8 @@ class PhysicalDeviceMesh:
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.
 class VirtualMesh:
-    """A virtual mesh used to instantiate a Physical Mesh in the future.
+    """
+    A virtual mesh used to instantiate a Physical Mesh in the future.
 
     To be deprecated.
     """
@@ -1078,8 +1084,10 @@ def _shard_device_array(array, device_mesh, indices):
     if global_config.use_dummy_value_for_benchmarking:
         start_indices, limit_indices, removed_dims = map(tuple, unzip3(
             _as_slice_indices(array, idx) for idx in indices))
+
         def slice_func():
             return array._multi_slice(start_indices, limit_indices, removed_dims)
+
         shards = eval_shape(slice_func)
     else:
         start_indices, limit_indices, removed_dims = map(tuple, unzip3(

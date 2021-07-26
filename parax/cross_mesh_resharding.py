@@ -1,28 +1,31 @@
-from dataclasses import dataclass, field
-from typing import Union, List, Tuple
+"""Cross mesh resharding for pipeline parallelism."""
+from dataclasses import dataclass
+from typing import List
 
 import numpy as np
 import ray
-from jax.interpreters import pxla
-from jax.interpreters.pxla import _hashable_index, Replicated
 import ray.util.collective as col
+from jax.interpreters import pxla
+from jax.interpreters.pxla import Replicated
 
-from parax.pipeline_stage import XlaShardedPipelineStage
 from parax.device_mesh import DistributedArray, RemoteBufferRef
+from parax.pipeline_stage import XlaShardedPipelineStage
 
 
 class VirtualDistributedArray:
-    """Distributed Array without allocating remote buffers.
+    """
+    Distributed Array without allocating remote buffers.
 
     VDA wrapper differs from DistributedArray (DA) in that:
-    (1) it does not allocate a remote buffer at construction
-    (2) its device_mesh attribute is a virtual mesh (not physical)
+    (1) it does not allocate a remote buffer at construction;
+    (2) its device_mesh attribute is a virtual mesh (not physical).
 
     Args:
         device_mesh (VirtualMesh): the virtual mesh this VDA locates on.
         aval (aval): shape information about the array.
         sharding_spec (ShardingSpec): sharding spec of this array.
     """
+
     def __init__(self, *, device_mesh, aval, sharding_spec):
         self.device_mesh = device_mesh
         self.aval = aval
@@ -33,25 +36,28 @@ class VirtualDistributedArray:
         self._tile_assignments = None
         self._tiles = None
 
-        self._sharding_spec_proto =self.sharding_spec.sharding_proto()
+        self._sharding_spec_proto = self.sharding_spec.sharding_proto()
 
     @property
     def tensor_shape(self):
+        """Return the shape of the original tensor."""
         return self.aval.shape
 
     @property
     def tensor_rank(self):
+        """Return the rank of the original tensor."""
         return len(self.tensor_shape)
 
     @property
     def indices(self):
+        """Return the indices of the sharded tensor."""
         if not self._indices:
             self._indices = pxla.spec_to_indices(self.tensor_shape, self.sharding_spec)
         return self._indices
 
     @property
     def tile_assignments(self):
-        """Returns a np.array representing sharding along multiple dimensions."""
+        """Return the device assignment of each tile."""
         if self._tile_assignments is None:
             if self.replicated:
                 mesh_flat = np.arange(self.device_mesh.total_devices)
@@ -67,6 +73,7 @@ class VirtualDistributedArray:
 
     @property
     def replicated_maxes(self):
+        """Return the list of mesh axes for replication."""
         replicated_maxes = []
         for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
             if isinstance(assignment, Replicated):
@@ -75,18 +82,21 @@ class VirtualDistributedArray:
 
     @property
     def tiled(self):
+        """Whether this distributed array is fully tiled."""
         if not self.replicated_maxes:
             return True
         return False
 
     @property
     def replicated(self):
+        """Whether this distributed array is fully replicated."""
         if len(self.replicated_maxes) == len(self.sharding_spec.mesh_mapping):
             return True
         return False
 
     @property
     def partial_tiled(self):
+        """Whether this distributed array is mixed sharded and replicated."""
         if self.replicated_maxes and len(self.replicated_maxes) \
                 < len(self.sharding_spec.mesh_mapping):
             return True
@@ -94,7 +104,11 @@ class VirtualDistributedArray:
 
     @property
     def tile_shape(self):
-        """TODO(Hao): add some comments"""
+        """
+        Return the shape of the tiles.
+
+        Each dim of the tile_shape is an integer representing how many tiles are along this dim.
+        """
         if self.tiled:
             return self.tile_assignments.shape
         elif self.partial_tiled:
@@ -106,10 +120,12 @@ class VirtualDistributedArray:
 
     @property
     def num_tiles(self):
+        """Return the number of tiles of the VDA."""
         return np.prod(self.tile_shape)
 
     @property
     def tiles(self):
+        """Return all the shards of the VDA following their orders."""
         if self._tiles is None:
             # Below are for tiled or partial_tiled.
             num_tiles = np.prod(self.tile_shape)
@@ -146,6 +162,15 @@ VDA = VirtualDistributedArray
 
 
 class ReshardingTask:
+    """
+    A helper class that launch the NCCL communication based on a resharding task spec.
+
+    Args:
+        task_spec (ReshardingTaskSpec): the task spec of this task.
+        collective_group (CollectiveGroup): the collective group information.
+        src_array (DistributedArray): the source (materialized) distributed array.
+    """
+
     def __init__(self, task_spec, collective_group, src_array):
         self.task_spec = task_spec
         self.collective_group = collective_group
@@ -158,8 +183,7 @@ class ReshardingTask:
             self.dst_mesh = collective_group.src_mesh
 
     def do(self):
-        # according to task_spec, launch send/recv operations
-        # Hao: some sanity tests
+        """According to the task_spec, launch send/recv operations."""
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(self.task_spec.dst_tile_to_src_tiles_map):
@@ -172,10 +196,7 @@ class ReshardingTask:
                            for src_tile_index, src_tile in enumerate(src_tiles)]
                 device_str_to_buf_map[receiver] = self.same_destination_group_send_recv(
                     senders, src_tiles, dst_tile, indices_in_dst_tiles, receiver)
-            # for each tile, assemble the results and generate a RemoteBufRef
-
-
-        # assemble the buffer based on the order present in indices
+        # Assemble the buffer based on the order present in indices
         for i, device_str in enumerate(self.task_spec.dst.device_mesh.device_strs):
             # for each replica
             bufs[self.task_spec.dst.device_str_to_flat_index[device_str]] = device_str_to_buf_map[device_str]
@@ -194,6 +215,7 @@ class ReshardingTask:
                                          dst_tile,
                                          indices_in_dst_tiles,
                                          receiver):
+        """P2P Communication accounting for multiple senders and one receiver (a destination tile)."""
         # construct a remote buf for this tile
         receiver_host_id = self.collective_group.device_str_to_host_id_map[receiver]
         receiver_device_id = self.collective_group.device_str_to_device_id_map[receiver]
@@ -230,7 +252,8 @@ class ReshardingTask:
 
 @dataclass
 class Tile:
-    """Representing a full tile (shard) on the original distributed array.
+    """
+    Representing a full tile (shard) on the original distributed array.
 
     Args:
         index (List[int]): the index of this shard in the tile_assignments matrix of the VDA.
@@ -239,6 +262,7 @@ class Tile:
         replica_device_strs (List[str]): the device strs this shard is replicated on.
         indices (List[slice]): a list of slices that expresses its indices in the original array.
     """
+
     index: List[int]
     index_flat: int
     replica_device_ids: List[int]
@@ -247,6 +271,7 @@ class Tile:
 
     @property
     def tile_size(self):
+        """Return the size (number of elements) of the tile."""
         size = 1
         for s in self.indices:
             size = size * (s.stop - s.start)
@@ -254,18 +279,21 @@ class Tile:
 
     @property
     def tile_shape(self):
+        """Return the shape of the tile."""
         return [s.stop - s.start for s in self.indices]
 
 
 @dataclass
 class TileSlice(Tile):
-    """Representing a slice of a tile of the array using an offset.
+    """
+    Representing a slice of a tile of the array using an offset.
 
-    TileSlice \subset Tile \subset VDA.
+    TileSlice subsets Tile, and Tile subsets VDA.
 
     Args:
         offset (List[slice]): a list of slice objects to represent the offset made on the shard.
     """
+
     offset: List[slice]
 
     def __init__(self, tile, offset):
@@ -278,6 +306,7 @@ class TileSlice(Tile):
 
     @property
     def slice_size(self):
+        """Return the size (number of elements) of this tile slice."""
         size = 1
         for o in self.offset:
             size = size * (o.stop - o.start)
@@ -285,13 +314,15 @@ class TileSlice(Tile):
 
 
 class CollectiveGroup:
-    """A class for setting up real NCCL groups.
+    """
+    A class for setting up real NCCL groups.
 
     Args:
         device_strs (List[str]): list of device strs in this group.
         src_mesh (PhysicalDeviceMesh): the source physical mesh.
         dst_mesh (PhysicalDeviceMesh): the destination physical mesh.
     """
+
     def __init__(self, device_strs, src_mesh, dst_mesh):
         self.device_strs = list(device_strs)
         self.src_mesh = src_mesh
@@ -311,7 +342,7 @@ class CollectiveGroup:
         # arranged following the rank order
         num_host = len(self.src_mesh.host_ips) + len(self.dst_mesh.host_ips)
         self.mesh_workers = [None] * num_host
-        for i, host_ip in enumerate(src_mesh.host_ips):
+        for i, _ in enumerate(src_mesh.host_ips):
             self.mesh_workers[i] = self.src_mesh.workers[i]
             for j in range(src_mesh.num_devices_per_host):
                 device_str = self.src_mesh.device_strs[i * src_mesh.num_devices_per_host + j]
@@ -319,7 +350,7 @@ class CollectiveGroup:
                 self.device_str_to_mesh_worker_map[device_str] = self.src_mesh.workers[i]
                 self.device_str_to_host_id_map[device_str] = i
                 self.device_str_to_device_id_map[device_str] = j
-        for i, host_ip in enumerate(dst_mesh.host_ips):
+        for i, _ in enumerate(dst_mesh.host_ips):
             self.mesh_workers[i + len(self.src_mesh.host_ips)] = self.dst_mesh.workers[i]
             for j in range(dst_mesh.num_devices_per_host):
                 device_str = self.dst_mesh.device_strs[i * src_mesh.num_devices_per_host + j]
@@ -329,11 +360,16 @@ class CollectiveGroup:
                 self.device_str_to_device_id_map[device_str] = j
 
     def instantiate(self):
+        """Instantiate the collective group in Ray."""
         options = {"group_name": self.group_name,
                    "world_size": len(self.mesh_workers),
                    "ranks": [i for i, _ in enumerate(self.mesh_workers)],
                    "backend": "nccl"}
         col.create_collective_group(self.mesh_workers, **options)
+
+    def destroy(self):
+        """TODO(Hao): destory the gropu upon exit."""
+        raise NotImplementedError()
 
     def _debug_check(self):
         all_device_strs = self.src_mesh.device_strs + self.dst_mesh.device_strs
@@ -342,6 +378,14 @@ class CollectiveGroup:
 
 
 class ReshardingTaskSpec:
+    """
+    A helper class specifies how to perform cross-mesh resharding for two arrays.
+
+    Args:
+        src_array (VirtualDistributedArray): the source distributed array, in virtual.
+        dst_array (VirtualDistributedArray): the destination distributed array, in virtual.
+    """
+
     def __init__(self, src_array, dst_array):
         self.src = src_array
         self.dst = dst_array
@@ -350,29 +394,34 @@ class ReshardingTaskSpec:
 
     @property
     def src_sharding_spec(self):
+        """Return the sharding spec of the source array."""
         return self.src.sharding_spec
 
     @property
     def dst_sharding_spec(self):
+        """Return the sharding spec of the destination array."""
         return self.dst.sharding_spec
 
     @property
     def aval(self):
+        """Return the abstract value of the array."""
         assert self.src.aval == self.dst.aval
         return self.src.aval
 
     @property
     def src_indices(self):
+        """Return the sharding (flattened) indices of the source array."""
         return self.src.indices
 
     @property
     def dst_indices(self):
-        """This `indices` is the most original (flattened) one in distributed array."""
+        """Return the sharding (flattened) indices of the destination array."""
         return self.dst.indices
 
     @property
     def dst_tile_to_src_tiles_map(self):
-        """Map from dst_tile to all corresponding src TileSlices.
+        """
+        Map from dst_tile to all corresponding src TileSlices.
 
         It is a list of length len(dst.tiles), each element is a 3-element tuple
         (dst_tile, src_tile_slices, indices_in_dst_tile):
@@ -386,12 +435,14 @@ class ReshardingTaskSpec:
         return self._dst_tile_to_src_tiles_map
 
     def generate_src_dst_map(self):
-        """This function analyzes the src and dst array.
+        """
+        Analyzes the src and dst array and generate the dst_tile_to_src_tiles_map.
 
         It aims to tell the needed collective group and communication pattern.
 
         Returns:
-            strategy (): a
+            dst_tile_to_src_tiles_map (tuple[tile, tileslices, indices]):
+                see the docstring of `dst_tile_to_src_tiles_map`.
         """
         dst_tile_to_src_tiles_map = []
         for tile in self.dst.tiles.flatten():
@@ -401,15 +452,18 @@ class ReshardingTaskSpec:
         return dst_tile_to_src_tiles_map
 
     def _look_up_dst_tile_from_src(self, tile):
-        """See the docstring in dst_tile_to_src_tiles_map()."""
+        """
+        Look up all related tiles from the source array for a given destination tile.
 
-        # For each dim in tile, find all the related tiles, and ragged values on that dim in src_tiles.
-
-        # For each dim, we make a tuple recording the first and last index of tiles in src array that intersects
-        # with the dst tile. Shards between [start, end) are involved; Left included, right not included.
+        See the docstring in dst_tile_to_src_tiles_map() for more details.
+        """
+        # For each dim in the dst tile, find all the related tiles, and ragged values on that dim in src_tiles.
+        # To record that, for each dim, we make a tuple containing the first and last index of tiles in src array
+        # that intersects with the dst tile: Shards between [start, end) are involved; Left included, right not
+        # included.
         related_tile_start_end = [tuple()] * self.src.tensor_rank
 
-        # For each dim, for the first and end tile, we make a tuple recording the slicing offset:
+        # Meanwhile, for each dim, for the first and end tile, we make a tuple recording the slicing offset:
         # - start_shard_offset: [start_shard_offset: ] on that dim is activated.
         # - end_shard_offset: [:end_sharding_offset] on that dim is activated.
         related_tile_offset = [tuple()] * self.src.tensor_rank
@@ -462,7 +516,7 @@ class ReshardingTaskSpec:
                     offset = related_tile_offset[i][0]
                     offsets.append(slice(0, tile_length_on_this_dim))
                     left_in_dst_tile = tile_length_on_this_dim - offset + \
-                                       (tile_index_relative[i] - 1) * tile_length_on_this_dim
+                        (tile_index_relative[i] - 1) * tile_length_on_this_dim
                     right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
@@ -478,6 +532,7 @@ class ReshardingTaskSpec:
 
     @property
     def strategy(self):
+        """Return the communication strategy for this resharding task spec."""
         if not self._strategy:
             raise RuntimeError("Generate and set strategy first.")
         return self._strategy
@@ -497,14 +552,26 @@ def unflatten_tile_index(index, shape):
     unflattened_index = []
     reminder = index
     for i in range(len(shape) - 1):
-        cur_index =  int(reminder / np.prod(shape[i+1:]))
+        cur_index = int(reminder / np.prod(shape[i + 1:]))
         unflattened_index.append(cur_index)
-        reminder = reminder - cur_index * np.prod(shape[i+1:])
+        reminder = reminder - cur_index * np.prod(shape[i + 1:])
     unflattened_index.append(reminder)
     return unflattened_index
 
 
 class CrossMeshCommunicator:
+    """
+    Communicator for cross-mesh resharding.
+
+    Given the pipeline schedule and stages, the class analyzes them and generate:
+    - resharding specs (see docstring of `ReshardingTaskSpec`)
+    - resharding strategies (see docstring of `_generate_resharding_strategy_by_loads()`)
+
+    Args:
+        sharded_stages (List[XlaShardedPipelineStage]): list of stages to form the pipeline.
+        schedule (Any): the pipelining schedule for these stages.
+    """
+
     def __init__(self, sharded_stages, schedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
@@ -534,6 +601,7 @@ class CrossMeshCommunicator:
 
     @property
     def num_mesh(self):
+        """Number of meshes in the schedule."""
         return self._schedule.num_mesh
 
     def _create_resharding_specs(self):
@@ -542,8 +610,8 @@ class CrossMeshCommunicator:
         num_stage = len(self._sharded_stages)
         stage_placements = [list(self._schedule.stage_placement(i))[0] for i in range(num_stage)]
         deps = self._schedule.dependency
-        assert(deps.shape[0] == num_stage)
-        assert(deps.shape[1] == num_stage)
+        assert deps.shape[0] == num_stage
+        assert deps.shape[1] == num_stage
 
         # Note(Hao): resharding_specs is num_mesh x num_mesh matrix
         # Each element is a dict: the name of variables are keys, ReshardingSpec are values.
@@ -570,13 +638,14 @@ class CrossMeshCommunicator:
             # find out variables that need resharding, and get their
             # (1) out_sharding_spec in the src stage
             # (2) in_sharding_spec in the destination stage.
-            vars, out_var_indices, in_var_indices = \
+            resharding_vars, out_var_indices, in_var_indices = \
                 self._args_between(src_stage, dst_stage)
             out_sharding_specs = src_stage.output_sharding_specs
             in_sharding_specs = dst_stage.input_sharding_specs
 
             # Make a ReshardSpec for each VDA
-            for var, out_var_index, in_var_index in zip(vars, out_var_indices, in_var_indices):
+            for var, out_var_index, in_var_index in \
+                    zip(resharding_vars, out_var_indices, in_var_indices):
                 src_sharding_spec = out_sharding_specs[out_var_index]
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 src_array = VDA(device_mesh=src_mesh,
@@ -589,7 +658,8 @@ class CrossMeshCommunicator:
                 self.resharding_specs[src_mesh_index][dst_mesh_index][repr(var)] = task_spec
 
     def _generate_resharding_strategy(self):
-        """Generate a send/recv strategies for all resharding tasks by looking at their load.
+        """
+        Generate a send/recv strategies for all resharding tasks by looking at their load.
 
         For now I simply run a greedy algorithm from the 1st resharding spec to the last.
         """
@@ -607,9 +677,13 @@ class CrossMeshCommunicator:
                 yield i, j, self.resharding_specs[i][j]
 
     def _generate_resharding_strategy_by_loads(self, spec):
-        # Strategy is a list a np array, with length as len(spec.dst_tile_to_src_tiles_map)
-        # each array is with shape [len(dst_tile.devices), len(src_tiles)]; it specifies for each
-        # replica of a dst tile, how (src tile replicas) it should get the data from src_tiles.
+        """
+        Generate the resharding strategy for a resharding task spec.
+
+        Strategy is a list a np array, with length as len(spec.dst_tile_to_src_tiles_map)
+        each array is with shape [len(dst_tile.devices), len(src_tiles)]; it specifies for each
+        replica of a dst tile, how (src tile replicas) it should get the data from src_tiles.
+        """
         strategy = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array
@@ -629,15 +703,12 @@ class CrossMeshCommunicator:
     @staticmethod
     def _args_between(src_stage, dst_stage):
         """Find the variable exchanged between stages."""
-        vars = []
+        resharding_vars = []
         src_indices = []
         dst_indices = []
         for i, var in enumerate(src_stage.outvars):
             if var in dst_stage.invars:
-                vars.append(var)
+                resharding_vars.append(var)
                 src_indices.append(i)
                 dst_indices.append(dst_stage.invars.index(var))
-        return vars, src_indices, dst_indices
-
-    def pprint_spec(self):
-        return NotImplementedError
+        return resharding_vars, src_indices, dst_indices

@@ -400,7 +400,7 @@ def train_step(data_iterator, model, optimizer, lr_scheduler,
         else:
             skipped_iter = 1
     timers('optimizer').stop()
-    step_costs.append(time.time() - tic)
+    step_costs.append(time.time() - tic - timers('batch generator').elapsed(reset=False))
 
     return lm_loss_reduced, skipped_iter
 

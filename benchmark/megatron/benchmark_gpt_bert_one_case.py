@@ -8,48 +8,14 @@ import time
 import numpy as np
 from megatron.utils import average_losses_across_data_parallel_group
 from megatron.model import BertModel, GPTModel
-from megatron import mpu, initialize_megatron, get_args
+from megatron import mpu, initialize_megatron, get_args, get_timers
 from megatron.training import train_step, setup_model_and_optimizer
 import torch
 
-from util import write_tsv, benchmark_func
+from util import write_tsv, benchmark_func,\
+    compute_gpt_tflops, compute_gpt_parameter_count
 
 GB = 1024 ** 3
-
-
-def get_memory_usage(print_info=False):
-    """Get accurate gpu memory usage by querying torch runtime"""
-    rank = torch.distributed.get_rank()
-    device = rank % torch.cuda.device_count()
-    allocated = torch.cuda.memory_allocated(device)
-    reserved = torch.cuda.memory_reserved(device)
-    if print_info:
-        print("allocated: %.2f GB" % (allocated / GB), flush=True)
-        print("reserved:  %.2f GB" % (reserved / GB), flush=True)
-    return allocated
-
-
-def compute_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
-                   num_gpus, latency, checkpoint_activations=False):
-    factor = 96 if checkpoint_activations else 72
-    total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
-          (1 + seq_len / (6 * hidden_size)) \
-          + 6 * batch_size * seq_len * hidden_size * vocab_size
-    tflops = total_flop / latency / num_gpus / 1e12
-    return tflops
-
-
-def compute_parameter_count(num_layers, hidden_size, vocab_size):
-    return num_layers * (
-            # self-attention
-            hidden_size * (3 * hidden_size + 1) + 
-            hidden_size * (hidden_size + 1) + 
-            # mlp
-            hidden_size * (4 * hidden_size + 1) +
-            hidden_size * 4 * (hidden_size + 1) +
-            # layer norm
-            hidden_size * 4
-           ) + vocab_size * (hidden_size + 1)
 
 
 def get_gpt_functions():
@@ -168,8 +134,8 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     sys.argv += ["--num-layers", str(num_layers)]
     sys.argv += ["--hidden-size", str(hidden_size)]
     sys.argv += ["--num-attention-heads", str(num_heads)]
+    sys.argv += ["--seq-length", str(seq_len)]
     sys.argv += ["--max-position-embeddings", str(seq_len)]
-    sys.argv += ["--encoder-seq-length", str(seq_len)]
     sys.argv += ["--optimizer", "adam"]
     sys.argv += ["--train-iters", "100"]
     sys.argv += ["--lr", "0.00015"]
@@ -196,28 +162,36 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider)
 
     if rank == 0:
-        parameter_count = compute_parameter_count(
+        parameter_count = compute_gpt_parameter_count(
             num_layers, hidden_size, vocab_size)
-        print(model[0])
+        #print(model[0])
         print(f"Parameter count {parameter_count/1e9:.2f} B")
 
-    # Benchmark step time
     def run_func():
         train_step(forward_step, None, model, optimizer, lr_scheduler)
 
-    def sync_func():
-        torch.cuda.synchronize()
+    # Warmup and reset timers
+    run_func()
+    timers = get_timers()
+    names = ['forward-compute', 'backward-compute', 'backward-params-all-reduce',
+             'backward-embedding-all-reduce', 'optimizer']
+    for name in names:
+        timers(name).reset()
 
-    costs = benchmark_func(run_func, sync_func,
-                           warmup=1, repeat=3, number=3)
+    # Benchmark step time
+    repeat = 3
+    number = 3
+    costs = benchmark_func(run_func, sync_func=None,
+                           warmup=0, repeat=repeat, number=number)
+    timers.log(names, normalizer=repeat * number)
 
     # Print results
     if rank == 0:
         peak_mem = torch.cuda.max_memory_allocated(0)
-        tflops = compute_tflops(batch_size, seq_len, num_layers,
-                                hidden_size, vocab_size,
-                                torch.distributed.get_world_size(),
-                                np.mean(costs))
+        tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
+                                    hidden_size, vocab_size,
+                                    torch.distributed.get_world_size(),
+                                    np.mean(costs))
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Checkpointing",
                  "Parameter Count", "Peak Mem", "Mean Time", "Std Time", "TFLOPS"]
         values = [model_type, str(benchmark_case[1:-4]),

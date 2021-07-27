@@ -22,3 +22,5 @@ dist
 *.prof.pkl
 tests/*.json
 
+# Dataset
+benchmark/deepspeed/data

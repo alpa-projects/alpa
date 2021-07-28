@@ -1,14 +1,16 @@
 """Cluster related configurations (e.g., topology)."""
-import time
 import logging
+import time
 from collections.abc import Iterable
 from collections import defaultdict
 import pickle
 from typing import Union, List
-
 from operator import attrgetter
+
+import jax.numpy
 import numpy as np
 import ray
+import ray.util.collective as col
 from jax import core, xla, eval_shape
 from jax._src.util import (partial, unzip3)
 from jax.abstract_arrays import array_types
@@ -21,7 +23,9 @@ from jax.lib import xla_client, xla_bridge
 from parax.measure_record import StrategyConfig
 from parax.global_env import global_config
 from parax.profile_communication import profile_collective_one_config, ProfilingResult
-from parax.util import (get_dim_last_value, list_gpu_info, profile_xla_executable, GB)
+from parax.util import (get_dim_last_value, list_gpu_info, profile_xla_executable, GB, to_cupy, to_jax_tensor)
+from parax.monkey_patch import set_override_backend
+from parax.util import jax_buffer_set, xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer
 
 
 logger = logging.getLogger(__name__)
@@ -161,7 +165,7 @@ class RemoteBufferRef:
         self.is_donated = False
         RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
         logger.debug("RemoteBufferRef uuid: {} created on mesh with devices {}."
-                     .format(self.uuid, self.device_mesh.devices_str))
+                     .format(self.uuid, self.device_mesh.device_strs))
 
     def donate(self):
         """
@@ -254,10 +258,11 @@ class MeshHostWorker:
         self.distributed_client.connect()
         self.backend = xla_client.make_gpu_client(
             self.distributed_client, node_id=host_id)
-
+        # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
         self.local_buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> Executable]
+        set_override_backend(self.backend)
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -268,6 +273,15 @@ class MeshHostWorker:
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
+
+    def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype=np.float32):
+        """Put an all-zero buffer on the worker indexed by UUID."""
+        if uuid in self.local_buffers:
+            raise RuntimeError()
+        self.local_buffers[uuid] = \
+            self.backend.buffer_from_pyval(np.empty(shape, dtype),
+                                           self.local_devices[device_id])
+        return True
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
@@ -378,7 +392,7 @@ class MeshHostWorker:
                     for size, dtype in size_configs:
                         all_keys.add((replica_group, size, dtype))
         else:
-           for replica_group in replica_groups:
+            for replica_group in replica_groups:
                 for size, dtype in size_configs:
                     all_keys.add((replica_group, size, dtype))
         all_keys = list(all_keys)
@@ -440,6 +454,39 @@ class MeshHostWorker:
         del self.executables
         self.distributed_client.shutdown()
 
+    # Note: in this device mesh code, we will use 3 types of tensors:
+    # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
+    # (2) XLA low-level PyLocalBuffer, which is not index-able
+    # (3) cupy array, which is an intermediate format for ray collective
+    def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
+        """Send a slice of a source buffer to a target GPU."""
+        src_buffer = xla_buffer_to_jax_buffer(self.local_buffers[uuid])
+        to_send = to_cupy(src_buffer[tuple(offset)])
+        logger.debug("Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}."
+                     .format(uuid, dst_rank, dst_gpu_idx, to_send.shape, to_send.dtype))
+        col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
+        return True
+
+    def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank, src_gpu_idx, group_name):
+        """Recv a slice from a source GPU and in-place write it on the target buffer."""
+        if uuid not in self.local_buffers:
+            raise RuntimeError()
+        tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
+        tmp_buffer = jax.device_put(jax.numpy.zeros(tileslice_shape, dtype=self.local_buffers[uuid].dtype),
+                                    self.local_devices[device_id])
+        to_recv = to_cupy(tmp_buffer)
+        logger.debug("Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}."
+                     .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype))
+        col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+        recv_tensor = to_jax_tensor(to_recv)
+
+        # 0-copy version
+        start_indices = tuple([ind_in_dst.start for ind_in_dst in indices_in_dst_tile])
+        new_buffer = jax_buffer_set(xla_buffer_to_jax_buffer(self.local_buffers[uuid]),
+                                    recv_tensor, start_indices)
+        self.local_buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
+        return True
+
 
 class PhysicalDeviceMesh:
     """Class for either single-host or multi-host physical device mesh."""
@@ -470,17 +517,22 @@ class PhysicalDeviceMesh:
             self.host_ids = [0]
             self.host_info = None
             self.head_ip = "127.0.0.1"
-            self.devices_str = [device_id_to_str(self.head_ip, d.id) for d in devices]
+            self.device_strs = [device_id_to_str(self.head_ip, d.id) for d in devices]
             self.num_devices_per_host = len(self.devices)
 
         if use_ray:
-            self.devices_str = []
+            self.device_strs = []
             for i, _ in enumerate(self.host_ids):
                 ip = self.host_info[i]["NodeManagerAddress"]
-                self.devices_str.extend([device_id_to_str(ip, i)
+                self.device_strs.extend([device_id_to_str(ip, i)
                                          for i in range(self.num_devices_per_host)])
-
             self._launch_xla_servers()
+
+    @property
+    def host_ips(self):
+        """Return the a list containing all host IPs."""
+        ips = [self.host_info[i]["NodeManagerAddress"] for i, _ in enumerate(self.host_ids)]
+        return ips
 
     def _launch_xla_servers(self):
         # Launch distributed xla runtime
@@ -498,6 +550,11 @@ class PhysicalDeviceMesh:
             env_vars = {
                 #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
+                # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
+                "NCCL_USE_MULTISTREAM": "False",
+                # "NCCL_SHM_DISABLE": "1",
+                # "TF_CUDA_REMAP_DEVICE_ID": "False"
+                # "NCCL_DEBUG": "INFO"
             }
 
             # Launch a ray actor
@@ -530,7 +587,7 @@ class PhysicalDeviceMesh:
     @property
     def device_ids(self):
         """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.devices_str]
+        return [device_str_to_id(device_str) for device_str in self.device_strs]
 
     @property
     def is_distributed(self):
@@ -843,7 +900,11 @@ class PhysicalDeviceMesh:
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.
 class VirtualMesh:
-    """A virtual mesh used to instantiate a Physical Mesh in the future."""
+    """
+    A virtual mesh used to instantiate a Physical Mesh in the future.
+
+    To be deprecated.
+    """
 
     def __init__(self,
                  *,
@@ -856,10 +917,10 @@ class VirtualMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
 
-        self.devices_str = []
+        self.device_strs = []
         for i, _ in enumerate(self.host_ids):
             ip = self.host_info[i]["NodeManagerAddress"]
-            self.devices_str.extend([device_id_to_str(ip, i)
+            self.device_strs.extend([device_id_to_str(ip, i)
                                      for i in range(self.num_devices_per_host)])
 
     def slice(self, dim, indices):
@@ -897,7 +958,7 @@ class VirtualMesh:
     @property
     def device_ids(self):
         """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.devices_str]
+        return [device_str_to_id(device_str) for device_str in self.device_strs]
 
     @property
     def is_distributed(self):
@@ -1031,8 +1092,10 @@ def _shard_device_array(array, device_mesh, indices):
     if global_config.use_dummy_value_for_benchmarking:
         start_indices, limit_indices, removed_dims = map(tuple, unzip3(
             _as_slice_indices(array, idx) for idx in indices))
+
         def slice_func():
             return array._multi_slice(start_indices, limit_indices, removed_dims)
+
         shards = eval_shape(slice_func)
     else:
         start_indices, limit_indices, removed_dims = map(tuple, unzip3(
@@ -1054,4 +1117,3 @@ shard_arg_handlers[xla._DeviceArray] = _shard_device_array
 shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 shard_arg_handlers[DistributedArray] = _shard_distributed_array
 shard_arg_handlers[ShardedDeviceArray] = _shard_distributed_array
-

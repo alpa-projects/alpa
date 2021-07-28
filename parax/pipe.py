@@ -4,14 +4,14 @@ import math
 from collections import OrderedDict
 
 import functools
+import jax.numpy as jnp
 import numpy as np
 import ray
 from jax.core import Literal
-import jax.numpy as jnp
 
+from parax.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.device_mesh import DistributedArray
-from parax.pipeline_stage import StrVarPipelineStage, \
-    XlaShardedPipelineStage
+from parax.pipeline_stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -122,8 +122,9 @@ class RemoteRunner:
 
 class JaxPipeline:         # pylint: disable=too-many-instance-attributes
     """
-    (deprecated)
-    JAX distributed pipeline.
+    JAX distributed pipeline (To be deprecated).
+
+    This class implements pipeline parallelism based on Ray RPC communication.
 
     Args:
         pipeline_stages (List[PipelineStage]): list of pipleline stage programs.
@@ -152,7 +153,9 @@ class JaxPipeline:         # pylint: disable=too-many-instance-attributes
         # TODO(Hao): analyze stages/dependencies and generate placement and schedule.
         self.num_batch = num_batch
         self.dependency = dependency
+
         # the code below will be removed
+        # if deps[i][j] == 1, i will depend on j
         if not self.dependency:
             self.dependency = gen_linear_dependency(self.num_stage)
 
@@ -298,6 +301,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
     """
     A class to coordinate 3D parallelism.
 
+    This class implements pipeline parallelism and sharding.
+
     Args:
         pipeline_stages (List[PipelineStage]): list of pipeline stage programs.
         global_invars (List[Var]): input variables.
@@ -333,7 +338,16 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._stage_outputs = []
         self._microbatches = []
 
+        # for resharding
+        self._communicator = None
+        self._collective_groups = [[None for _ in range(self.num_mesh)]
+                                   for _ in range(self.num_mesh)]
         self._prepare()
+
+    @property
+    def num_mesh(self):
+        """Return the number of meshes in the pipeline job."""
+        return len(self.physical_meshes)
 
     def _prepare(self):
         # Let each physical mesh to re-compile the sharded stage
@@ -344,9 +358,53 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             mesh_idx = mesh_indices[0]
             self._runnables.append(stage.get_runnable(self.physical_meshes[mesh_idx]))
 
+        # Based on dependency and sharding specs, infer communication spec (cross-mesh).
+        self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
+
+        # Now we establish NCCL collective groups and communicators
+        # because we need physical meshes we have to do this out of the CrossMeshCommunicator class.
+        self._establish_nccl_groups()
+
         # prepare inputs/outputs buffers and communication between stages.
         self._stage_outputs = self._init_stage_outputs()
         self._microbatches = None
+
+    def _establish_nccl_groups(self):
+        """
+        Identify and create NCCL groups based on specs.
+
+        We establish one collective group between two physical meshes, covering all the devices in
+        these two meshes that require NCCL communication.
+
+        Returns:
+            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
+                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
+                (spec[i][j], spec[j][i]) will share collective groups.
+        """
+        device_str_groups = [[set() for _ in range(self.num_mesh)]
+                             for _ in range(self.num_mesh)]
+        # Merge (i, j) and (j, i)
+        for i, j, var_spec_map in self._communicator.task_spec_iter():
+            participants = set()
+            for _, spec in var_spec_map.items():  # for each var
+                participants = participants | spec.get_participant_device_strs()
+            if i <= j:
+                device_str_groups[i][j] = device_str_groups[i][j] | participants
+            else:
+                device_str_groups[j][i] = device_str_groups[j][i] | participants
+
+        # construct groups
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i >= j:
+                    assert not device_str_groups[i][j]
+                    continue
+                cg = CollectiveGroup(device_str_groups[i][j],
+                                     self.physical_meshes[i],
+                                     self.physical_meshes[j])
+                cg.instantiate()
+                self._collective_groups[i][j] = cg
+                self._collective_groups[j][i] = cg
 
     def run(self, *args, **kwargs):
         """Run the training with pipelining."""
@@ -472,10 +530,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 if val.device_mesh == self.physical_meshes[mesh_idx]:
                     inputs_list.append(val)
                 else:
-                    # TODO(Hao): change to NCCL here.
-                    # fetched_val = jnp.asarray(val._value)
-                    fetched_val = val._value
-                    inputs_list.append(fetched_val)
+                    # find the corresponded resharding task
+                    src_mesh_idx = self.physical_meshes.index(val.device_mesh)
+                    task_spec = self._communicator.resharding_specs[src_mesh_idx][mesh_idx][key]
+                    assert task_spec
+                    task = ReshardingTask(task_spec, self._collective_groups[src_mesh_idx][mesh_idx], val)
+                    resharded_val = task.do()
+                    inputs_list.append(resharded_val)
             else:
                 inputs_list.append(val)
         return inputs_list
@@ -546,6 +607,7 @@ class GpipeSchedule:
         self.num_pipeline_worker = self.num_stage // 2
         # TODO (zhuohan): Seperate device placement and runtime scheduling
         if not self.meshes:
+            # These are virtual meshes
             self.meshes = self.slice_mesh(self.original_mesh)
         if len(self.meshes) != self.num_pipeline_worker:
             raise RuntimeError("Gpipe schedule requires #meshes = #workers.")
@@ -655,6 +717,16 @@ class GpipeSchedule:
     def num_clock(self):
         """Return the number of clocks in the schedule."""
         return len(self._schedules)
+
+    @property
+    def num_worker(self):
+        """Return the number of workers (physical meshes)."""
+        return self.num_pipeline_worker
+
+    @property
+    def num_mesh(self):
+        """Return the number of meshes in the schedule."""
+        return self.num_pipeline_worker
 
     def slice_mesh(self, original_mesh):
         """

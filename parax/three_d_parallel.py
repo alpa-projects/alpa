@@ -1,4 +1,5 @@
 """3D parallel on a Ray cluster."""
+import logging
 
 import jax
 from jax import linear_util as lu
@@ -7,9 +8,11 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.pipe import Jax3DPipeline, GpipeSchedule, gen_linear_dependency
-from parax.pipeline_stage import (PipelineStage, JaxPipelineStage, XlaPipelineStage,
-                                  generate_sharded_xla_stages, mark_global_and_local_vars,
+from parax.pipeline_stage import (generate_sharded_xla_stages, mark_global_and_local_vars,
                                   slice_closed_jaxpr_by_pipeline_marks)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 @lu.cache
@@ -43,7 +46,9 @@ def three_d_parallel_callable(
     schedule = GpipeSchedule(dependency=dependency, mesh=virtual_mesh, num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
+    # TODO(Hao): delay the creation of physical mesh here
     for i, mesh in enumerate(schedule.meshes):
+        logger.debug("Launch the {}th mesh...".format(i))
         physical_meshes.append(mesh.get_physical_mesh())
 
     global_invars = closed_jaxpr.jaxpr.invars

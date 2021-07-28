@@ -1,16 +1,21 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
-import itertools as it
 import os
+import itertools as it
 import subprocess
 import time
 
+import cupy as cp
 import flax
 import numpy as np
+import jax
+from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
+from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
+from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.tree_util import tree_map, tree_flatten
 
@@ -18,6 +23,7 @@ from jax.tree_util import tree_map, tree_flatten
 ########################################
 ##### API Utilities
 ########################################
+
 
 def freeze_dict(pytree):
     """Convert a pytree to a FrozenDict."""
@@ -180,7 +186,7 @@ def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5, min_repeat
     """Benchmark the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
-    The return value is a list of `repeat` elements and each elements is 
+    The return value is a list of `repeat` elements and each elements is
     the avarage execution time of `number` executions.
 
     If `min_repeat_second` is set, the function automatically picks a `number`
@@ -212,6 +218,66 @@ def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5, min_repeat
         costs.append(time.time() - tic)
 
     return np.array(costs) / number
+
+
+########################################
+##### Array conversion
+########################################
+
+def xla_buffer_to_jax_buffer(xla_buf):
+    """
+    Convert an xla buffer to a JAX DeviceArray.
+
+    So we can index over the data buffer.
+    """
+    aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
+    return _DeviceArray(aval, xla_buf.device(), xla_buf)
+
+
+def jax_buffer_to_xla_buffer(jax_buf):
+    """Convert a JAX Device array back to XLA buffer."""
+    return jax_buf.device_buffer
+
+
+# Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
+def jax_buffer_set(src_buf, update, start_indices):
+    """
+    In-place write on a JAX buffer.
+
+    Args:
+        src_buf: JAX device array.
+        update: JAX device array.
+        start_indices (tuple[int]): tuple of integers indicating the starting indices.
+    """
+    # src_buf = src_buf.at[indices].set(update)
+    src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
+    return src_buf
+
+
+jax_buffer_set = jax.jit(jax_buffer_set,
+                         donate_argnums=(0),
+                         static_argnums=(2))
+
+
+def to_cupy(tensors):
+    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
+    if isinstance(tensors, list):
+        return list(map(to_cupy, tensors))
+    ctensor = cp.fromDlpack(get_jax_dlpack(tensors))
+    return ctensor
+
+
+def to_jax_tensor(tensor):
+    """Convert cupy tensors to JAX tensors."""
+    if isinstance(tensor, list):
+        return list(map(to_jax_tensor, tensor))
+    return from_dlpack(tensor.toDlpack())
+
+
+def get_jax_dlpack(tensor):
+    """Helper function for calling dlpack in JAX."""
+    return xc._xla.buffer_to_dlpack_managed_tensor(
+        tensor.device_buffer, take_ownership=False)
 
 
 ########################################

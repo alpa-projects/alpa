@@ -1,25 +1,24 @@
 """pipeline stage definitions."""
 import itertools as it
-from copy import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
-import numpy as np
-
 from abc import ABC, abstractmethod
+from copy import copy
+
+import numpy as np
 from jax import jit
-from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
+from jax._src.util import partial, safe_map
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun
-from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
+from jax.lib import xla_bridge as xb, xla_client as xc
 
 # pylint: disable=redefined-builtin
-from parax import testing
 from parax.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
+from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh
-from parax.util import get_compile_options, jaxpr_to_hlo_computation
 from parax.pipeline_primitive_def import pipeline_p
+from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -169,6 +168,8 @@ class XlaShardedPipelineStage(PipelineStage):
     hlo_proto: Any = None
     donated_invars: Any = None  # TODO(Hao): figure out donated_invars
     strategy_config: StrategyConfig = None
+    input_sharding_specs: Any = None
+    output_sharding_specs: Any = None
 
     @classmethod
     def from_auto_sharded_stage(cls,
@@ -196,8 +197,35 @@ class XlaShardedPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
+    # def input_sharding_specs_on_mesh(self, logical_mesh):
+    #     """Return the input sharding spec on a given logical mesh."""
+    #     if not isinstance(logical_mesh, LogicalDeviceMesh):
+    #         raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
+    #     avals = [var.aval for var in self.invars]
+    #     input_shardings = self.hlo_module.spmd_parameters_shardings()
+    #     input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
+    #                             for (proto_tuple, aval) in zip(input_shardings, avals)]
+    #     return input_sharding_specs
+    #
+    # def output_sharding_specs_on_mesh(self, logical_mesh):
+    #     """Return the output sharding spec on a given logical mesh."""
+    #     if not isinstance(logical_mesh, LogicalDeviceMesh):
+    #         raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
+    #     out_avals = [var.aval for var in self.outvars]
+    #     output_sharding = self.hlo_module.spmd_output_sharding()
+    #     output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
+    #     return output_sharding_specs
+    #
+    # def input_output_sharding_spec_on_mesh(self, logical_mesh):
+    #     """Return the input and output sharding spec on a given logical mesh."""
+    #     if not isinstance(logical_mesh, LogicalDeviceMesh):
+    #         raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
+    #     avals = [var.aval for var in self.invars]
+    #     out_avals = [var.aval for var in self.outvars]
+    #     input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
+    #         hlo_module, num_devices, avals, out_avals, logical_mesh_shape)
 
-    def get_runnable(self, mesh):
+    def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
         from parax.auto_sharding import HloProtoStatus
 
@@ -207,7 +235,6 @@ class XlaShardedPipelineStage(PipelineStage):
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
         xla_computation = xc.XlaComputation(self.hlo_proto)
-        tuple_args = False
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
@@ -225,6 +252,11 @@ class XlaShardedPipelineStage(PipelineStage):
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
             hlo_module, num_devices, avals, out_avals, logical_mesh_shape)
+
+        # TODO(Hao): make this better
+        self.input_sharding_specs = input_sharding_specs
+        self.output_sharding_specs = output_sharding_specs
+
         return mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
                                                   input_sharding_specs, output_sharding_specs,
                                                   self.donated_invars)
@@ -309,7 +341,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
 
 
 def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
-    """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker"""
+    """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params['mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params['mark_type'] == 'end'
     new_stage = copy(stage)
@@ -361,6 +393,7 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
 def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage], physical_mesh,
                                 logical_mesh_choices, logical_mesh_search_mode,
                                 memory_budget_per_device, search_task, record_file):
+    """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
     eqns = []
@@ -420,5 +453,3 @@ class StrVarPipelineStage:
             global_outvars={repr(var) for var in pipeline_stage.global_outvars},
             local_outvars={repr(var) for var in pipeline_stage.local_outvars},
         )
-
-

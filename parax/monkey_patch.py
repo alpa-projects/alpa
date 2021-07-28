@@ -4,6 +4,33 @@ import flax
 import jax
 from jax import core, lax, numpy as jnp
 
+from jax.lib.xla_bridge import get_backend as default_get_backend
+
+
+########################################
+##### Monkey patch the backend
+########################################
+
+override_backend = None
+
+
+def override_get_backend(*args, **kwargs):
+    """Override the `get_backend` in JAX to use PJRT backend managed by Parax."""
+    global override_backend
+    if override_backend is not None:
+        return override_backend
+    return default_get_backend(*args, **kwargs)
+
+
+setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
+
+
+def set_override_backend(backend):
+    """Enable the JAX backend monkey patch."""
+    global override_backend
+    override_backend = backend
+
+
 ########################################
 ##### Monkey patch Jax
 ########################################
@@ -29,6 +56,7 @@ jax.random.fold_in = remove_fold_in
 ########################################
 ##### Monkey patch Flax
 ########################################
+
 
 # Monkey patch the nn.Embed in flax to use onehot + matmul instead of gather/scatter.
 # Because we currently do not support 2d partition of gather/scatter.

@@ -1,25 +1,24 @@
 """pipeline stage definitions."""
 import itertools as it
-from copy import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Sequence, List, Set, Any, Dict
-import numpy as np
-
 from abc import ABC, abstractmethod
+from copy import copy
+
+import numpy as np
 from jax import jit
-from jax._src.util import partial, safe_map, extend_name_stack, wrap_name
+from jax._src.util import partial, safe_map
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun
-from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import xla
+from jax.lib import xla_bridge as xb, xla_client as xc
 
 # pylint: disable=redefined-builtin
-from parax import testing
 from parax.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
+from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh, LogicalDeviceMesh
-from parax.util import get_compile_options, jaxpr_to_hlo_computation
 from parax.pipeline_primitive_def import pipeline_p
+from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -226,8 +225,7 @@ class XlaShardedPipelineStage(PipelineStage):
     #     input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
     #         hlo_module, num_devices, avals, out_avals, logical_mesh_shape)
 
-
-    def get_runnable(self, mesh):
+    def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError("Require a pre-allocated physical mesh to compile the runnable.")
@@ -235,13 +233,12 @@ class XlaShardedPipelineStage(PipelineStage):
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
         xla_computation = xc.XlaComputation(self.hlo_proto)
-        tuple_args = False
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         compiled = compile_with_given_strategy(
-                backend, xla_computation, self.strategy_config,
-                num_devices, mesh.is_distributed, xla_computation_is_sharded=True)
+            backend, xla_computation, self.strategy_config,
+            num_devices, mesh.is_distributed, xla_computation_is_sharded=True)
         hlo_module = compiled.hlo_modules()[0]
         if mesh.is_distributed:
             compiled = mesh.compile_remote_executable(
@@ -341,7 +338,7 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
 
 
 def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
-    """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker"""
+    """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params['mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params['mark_type'] == 'end'
     new_stage = copy(stage)
@@ -393,6 +390,7 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
 def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage], physical_mesh,
                                 logical_mesh_choices, logical_mesh_search_mode,
                                 memory_budget_per_device, search_task, record_file):
+    """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
     eqns = []
@@ -452,5 +450,3 @@ class StrVarPipelineStage:
             global_outvars={repr(var) for var in pipeline_stage.global_outvars},
             local_outvars={repr(var) for var in pipeline_stage.local_outvars},
         )
-
-

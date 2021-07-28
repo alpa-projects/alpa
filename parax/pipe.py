@@ -2,7 +2,6 @@
 import logging
 import math
 from collections import OrderedDict
-from typing import (List)
 
 import functools
 import jax.numpy as jnp
@@ -12,7 +11,6 @@ from jax.core import Literal
 
 from parax.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.device_mesh import DistributedArray
-from parax.device_mesh import VirtualMesh
 from parax.pipeline_stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)
@@ -124,8 +122,7 @@ class RemoteRunner:
 
 class JaxPipeline:         # pylint: disable=too-many-instance-attributes
     """
-    (To be deprecated)
-    JAX distributed pipeline.
+    JAX distributed pipeline (To be deprecated).
 
     This class implements pipeline parallelism based on Ray RPC communication.
 
@@ -349,6 +346,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
     @property
     def num_mesh(self):
+        """Return the number of meshes in the pipeline job."""
         return len(self.physical_meshes)
 
     def _prepare(self):
@@ -372,7 +370,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._microbatches = None
 
     def _establish_nccl_groups(self):
-        """Identify and create NCCL groups based on specs.
+        """
+        Identify and create NCCL groups based on specs.
 
         We establish one collective group between two physical meshes, covering all the devices in
         these two meshes that require NCCL communication.
@@ -387,7 +386,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # Merge (i, j) and (j, i)
         for i, j, var_spec_map in self._communicator.task_spec_iter():
             participants = set()
-            for _, spec in var_spec_map.items(): # for each var
+            for _, spec in var_spec_map.items():  # for each var
                 participants = participants | spec.get_participant_device_strs()
             if i <= j:
                 device_str_groups[i][j] = device_str_groups[i][j] | participants
@@ -400,9 +399,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 if i >= j:
                     assert not device_str_groups[i][j]
                     continue
-                cg =  CollectiveGroup(device_str_groups[i][j],
-                                      self.physical_meshes[i],
-                                      self.physical_meshes[j])
+                cg = CollectiveGroup(device_str_groups[i][j],
+                                     self.physical_meshes[i],
+                                     self.physical_meshes[j])
                 cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
@@ -726,6 +725,7 @@ class GpipeSchedule:
 
     @property
     def num_mesh(self):
+        """Return the number of meshes in the schedule."""
         return self.num_pipeline_worker
 
     def slice_mesh(self, original_mesh):

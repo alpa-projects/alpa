@@ -8,12 +8,12 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.pipe import Jax3DPipeline, GpipeSchedule, gen_linear_dependency
-from parax.pipeline_stage import (PipelineStage, JaxPipelineStage, XlaPipelineStage,
-                                  generate_sharded_xla_stages, mark_global_and_local_vars,
+from parax.pipeline_stage import (generate_sharded_xla_stages, mark_global_and_local_vars,
                                   slice_closed_jaxpr_by_pipeline_marks)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 @lu.cache
 def three_d_parallel_callable(

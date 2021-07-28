@@ -26,7 +26,7 @@ tic = time.time()
 def log_time_stamp(message):
     global tic
     if message:
-        print(f"{message}: {time.time() - tic:.2f} s")
+        print(f" - {message}: {time.time() - tic:.2f} s")
     tic = time.time()
 
 
@@ -107,13 +107,20 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     rngkey = jax.random.PRNGKey(0)
     params = model.init_dummy(rngkey, batch["hidden_states"], batch["attention_mask"])
     optimizer = optim.Adam(1e-2).create(params)
-    params = rngkey = None
+    del (params, rngkey)
     log_time_stamp("Init model and optimizer")
+
+    # Compile executable
+    executable = train_step.get_executable(optimizer, batch, model.apply)
+    log_time_stamp("Compile (driver)")
+
+    physical_mesh.sync_workers()
+    log_time_stamp("Compile (workers)")
 
     # Shard inputs and weights
     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
-    gc.collect()
-    log_time_stamp("Compile and shard arguments")
+    physical_mesh.sync_workers()
+    log_time_stamp("Shard arguments")
 
     # Benchmark step time
     def run_func():
@@ -125,15 +132,18 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     costs = benchmark_func(run_func, sync_func,
                            warmup=1, repeat=2, number=args.number)
-    real_mem = testing.last_compiled_executable.total_allocation_size()
-    objective = testing.last_compiled_auto_sharding_objective or 0.0
+    log_time_stamp("Benchmark")
 
     # Check sharding strategy
+    real_mem = physical_mesh.get_total_allocation_size(executable)
+    objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print(f"#comm {hlo_ir.count('channel_id')}, " +
+    print(f" - #comm {hlo_ir.count('channel_id')}, " +
           f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
-    #print(hlo_ir)
+
+    with open("last.hlo", "w") as fout:
+        fout.write(hlo_ir)
     #assert_only_has_allreduce(hlo_ir)
     #print("===== HLO =====")
     #print(hlo_ir)

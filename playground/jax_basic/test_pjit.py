@@ -46,6 +46,40 @@ def test_matmul():
     np.testing.assert_allclose(out, x @ y, rtol=1e-5)
 
 
+def test_failed_matmul_case_1():
+    # Case 1: SR = RR x SR
+    @partial(pjit,
+             in_axis_resources=(P(None, None), P('y', None)),
+             out_axis_resources=P('x', None))
+    def f(x, y):
+        return x @ y
+
+    x = np.random.randn(4, 128).astype(np.float32)
+    y = np.random.randn(128, 4).astype(np.float32)
+
+    mesh_devices = np.array(jax.devices()[:4]).reshape((2, 2))
+    with mesh(mesh_devices, ('x', 'y')):
+        out = f(x, y)
+
+
+def test_failed_matmul_case_2():
+    # Case 2: SR = SR x SR
+    @partial(pjit,
+             in_axis_resources=(P('x', None), P('y', None)),
+             out_axis_resources=P('x', None))
+    def f(x, y):
+        return x @ y
+
+    x = np.random.randn(8, 4).astype(np.float32)
+    y = np.random.randn(4, 8).astype(np.float32)
+
+    mesh_devices = np.array(jax.devices()[:4]).reshape((2, 2))
+    with mesh(mesh_devices, ('x', 'y')):
+        out = f(x, y)
+
+    np.testing.assert_allclose(out, x @ y, rtol=1e-5)
+
+
 def split(a, axis):
     in_axis_resources = [None] * len(a.shape)
     in_axis_resources[axis] = 'x'
@@ -278,6 +312,8 @@ def test_embedding():
 if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
+    test_failed_matmul_case_1()
+    #test_failed_matmul_case_2()
     #test_matmul_speed()
     #test_dict_arg()
 
@@ -287,5 +323,5 @@ if __name__ == "__main__":
     #test_random_bits()
     #test_dropout()
 
-    test_embedding()
+    #test_embedding()
 

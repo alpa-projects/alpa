@@ -13,6 +13,7 @@ dist
 *.nvprof
 *.prof
 *.tsv
+*.hlo
 
 # pycharm
 .idea
@@ -20,3 +21,4 @@ dist
 # Profiling result cache
 *.prof.pkl
 tests/*.json
+

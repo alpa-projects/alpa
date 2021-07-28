@@ -135,6 +135,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                                      batch["attention_mask"],
                                      batch["token_type_ids"],
                                      batch["position_ids"],
+                                     deterministic=deterministic,
                                      rngs=rngs)[0]
                 label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
                 labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
@@ -453,11 +454,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                        device_mesh.all_reduce_cost(vocab_size * hidden_size * 4, i)
 
             assert_close(objective, expected)
-            # Check communication cost.
-            # Conceptually, all communiation primitives are all-reduce.
-            # However, in some cases, the SPMD partitioner generates all-gather due to
-            # its own optimizations.
-            assert hlo_ir.count("channel_id") <= hlo_ir.count("all-reduce(") + 2
+            assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             for weight in params:
@@ -538,12 +535,12 @@ class AutoShardingAttentionTest(unittest.TestCase):
             num_heads, vocab_size, deterministic, device_mesh)
 
         # Check communication cost.
-        # Conceptually, all communiation primitives are all-reduce.
-        # However, in some cases, the SPMD partitioner generates all-gather due to
-        # its own optimizations.
-        assert hlo_ir.count("channel_id") <= hlo_ir.count("all-reduce(") + 2
+        assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
+        assert "s32[4,4,4096]{2,1,0} iota()" not in hlo_ir
+        assert "s32[2,4,2048]{2,1,0} iota()" in hlo_ir
+
         embed_weight = optimizer.target["params"]["bert"]["embeddings"]["word_embeddings"]["embedding"]
         lm_head = optimizer.target["params"]["cls"]["predictions"]["transform"]["dense"]["kernel"]
 

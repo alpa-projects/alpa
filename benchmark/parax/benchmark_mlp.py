@@ -142,6 +142,11 @@ benchmark_suite_4_gpu = [
     (8,  256,  5760, 4, 2,  2),
 ]
 
+benchmark_suite_8_gpu = [
+    # B, S,    H,    L, D1, D2
+    (32, 1024, 2304, 2, 8,  1),
+]
+
 
 def benchmark_all(use_profiling):
     if args.local:
@@ -151,6 +156,7 @@ def benchmark_all(use_profiling):
 
     benchmark_suites = {
         4: benchmark_suite_4_gpu,
+        8: benchmark_suite_8_gpu,
     }
 
     for case in benchmark_suites[num_gpus]:

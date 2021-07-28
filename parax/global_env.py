@@ -31,6 +31,8 @@ class GlobalConfig:
         # data-independent benchmarks.
         self.use_dummy_value_for_benchmarking = False
 
+        ########## Options for logging ########## 
+        self.print_xla_compilation_time = False
 
 global_config = GlobalConfig()
 

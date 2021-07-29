@@ -42,7 +42,7 @@ def benchmark_all(args):
     for case in benchmark_suites[num_gpus]:
         case_str = str((args.model,) + case)
 
-        if args.master_addr is None:
+        if args.nnodes == 1:
             # Single node
             ret = run_cmd('python3 -m torch.distributed.launch '
                          f'--nproc_per_node {args.nproc_per_node} '

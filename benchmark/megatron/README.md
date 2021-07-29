@@ -12,7 +12,8 @@ pip3 install ninja
 git clone https://github.com/NVIDIA/Megatron-LM.git
 cd Megatron-LM
 pip3 install -e .
-echo 'export PYTHONPATH=$PYTHONPATH:~/Megatron-LM' >> ~/.bashrc   # use your own path
+echo 'export PYTHONPATH=$PYTHONPATH:~/efs/Megatron-LM' >> ~/.bashrc   # use your own path
+source ~/.bashrc
 
 # Install Apex
 git clone https://github.com/NVIDIA/apex

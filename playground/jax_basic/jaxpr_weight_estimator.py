@@ -2,10 +2,11 @@ from math import log2
 import jax
 import jax.numpy as jnp
 from jax import lax, ad_util
-from jax.core import JaxprEqn
+from jax.core import JaxprEqn, Jaxpr
 from jax.interpreters import xla
 from flax import optim
 from parax.model.bert_model import BertConfig, FlaxBertLayer
+from typing import List
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow
@@ -118,10 +119,6 @@ class Estimator:
             self.elementwise_flops_(eqn)
           else:
             unconsidered.append(eqn.primitive)
-          if eqn.primitive is xla.xla_call_p:
-            print(eqn, eqn.invars[0].aval.shape, eqn.invars[1].aval.shape)
-            print(self.prim_flops_[eqn.primitive](eqn))
-            raise Exception()
         unhandled = set(unhandled)
         todo = set(todo)
         unconsidered = set(unconsidered)
@@ -129,8 +126,20 @@ class Estimator:
         if todo: print(todo, "are in todo list")
         if unconsidered: print(unconsidered, "are not considered")
 
-    def edge_cost(self, eqn1 : JaxprEqn, eqn2 : JaxprEqn) -> int:
-      pass
+    def cluster_edges_cost(self, starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster. 
+      out_tensors = set()
+      for start in starts:
+        for eqn in start:
+          out_tensors = out_tensors.union(set(eqn.outvars))
+      in_tensors = set()
+      for eqn in end:
+        for invar in eqn.invars:
+          if invar in out_tensors:
+            in_tensors.add(invar)
+      acc = 0
+      for in_tensor in in_tensors:
+        acc += in_tensor.aval.size
+      return acc
 
 def bert_layer_jaxpr():
     batch_size = 64

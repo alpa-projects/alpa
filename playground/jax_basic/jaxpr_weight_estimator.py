@@ -134,21 +134,21 @@ class Estimator:
       in_tensors = set()
       for eqn in end:
         for invar in eqn.invars:
-          if invar is Var and invar in out_tensors:
+          if isinstance(invar, Var) and invar in out_tensors:
             in_tensors.add(invar)
       acc = 0
       for in_tensor in in_tensors:
         acc += in_tensor.aval.size
       return acc
 
-    def cluster_edge_cot(self, start : List['JaxprEqn'], end : List['JaxprEqn']):
+    def cluster_edges_cost(self, start : List['JaxprEqn'], end : List['JaxprEqn']):
       out_tensors = set()
       for eqn in start:
         out_tensors = out_tensors.union(set(eqn.outvars))
       in_tensors = set()
       for eqn in end:
         for invar in eqn.invars:
-          if invar is Var and invar in out_tensors:
+          if isinstance(invar, Var) and invar in out_tensors:
             in_tensors.add(invar)
       acc = 0
       for in_tensor in in_tensors:
@@ -254,7 +254,7 @@ def SliceJaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
     for i in range(length):
       for j in range(length):
         if (sum(weights[i : j + 1]) <= layer_weight_upper_bound):
-            solutions[i][j][0] = (0,)
+            solutions[i][j][0] = (0,None)
 
     for num in range(1, layer_num):
       for l in range(length - 1):
@@ -265,7 +265,7 @@ def SliceJaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
               prior = solutions[l][r][num][0]
               current = solutions[l][k][num - 1][0] + \
                   solutions[k + 1][r][0][0] + \
-                  estimator.cluster_edge_cot(jaxpr.eqns[l : k + 1], 
+                  estimator.cluster_edges_cost(jaxpr.eqns[l : k + 1], 
                     jaxpr.eqns[k + 1 : r + 1])
               if prior == -1 or prior > current:
                 solutions[l][r][num] = (current, k)
@@ -281,5 +281,11 @@ if __name__ == "__main__":
     # print(estimator.clusters_edges_cost(from_sets, to_set))
     layer_num = 2
     eqns = fwd_berts_jaxpr(layer_num).eqns
+    eqn_num = len(eqns)
+    edge_cost = estimator.cluster_edges_cost(
+                    eqns[0:int(eqn_num / layer_num)], 
+                    eqns[int(eqn_num / layer_num) : eqn_num])
     solutions = SliceJaxpr(fwd_berts_jaxpr(), layer_num, 0)
-    assert solutions[0][len(eqns) - 1][1][1] == int(len(eqns) / layer_num - 1)
+    assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
+    assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
+    print("success!")

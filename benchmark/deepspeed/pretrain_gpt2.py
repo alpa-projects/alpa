@@ -723,7 +723,7 @@ def main():
         costs = step_costs[1:]
 
         model_type = "gpt"
-        batch_size = args.batch_size
+        batch_size = args.batch_size * mpu.get_data_parallel_world_size()
         seq_len = args.seq_length
         num_layers = args.num_layers
         hidden_size = args.hidden_size

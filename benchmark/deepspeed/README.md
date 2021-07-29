@@ -24,4 +24,7 @@ ln -s $(pwd) ~/efs/parax/benchmark/deepspeed/data  # use your own path
 ```
 
 ## Run
-
+```
+# Single Node
+python3 benchmark_gpt2.py --nproc_per_node 8
+```

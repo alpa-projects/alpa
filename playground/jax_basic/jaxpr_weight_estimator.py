@@ -2,11 +2,11 @@ from math import log2
 import jax
 import jax.numpy as jnp
 from jax import lax, ad_util
-from jax.core import JaxprEqn, Jaxpr
+from jax.core import JaxprEqn, Jaxpr, Var
 from jax.interpreters import xla
 from flax import optim
-from parax.model.bert_model import BertConfig, FlaxBertLayer
-from typing import List
+from parax.model.bert_model import BertConfig, FlaxBertLayer, FlaxBertLayerCollection
+from typing import List, Union
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow
@@ -102,7 +102,7 @@ class Estimator:
           return self.default_fn_(eqn)
         if eqn.primitive in self.prim_flops_:
           return self.prim_flops_[eqn.primitive](eqn)
-        raise Exception("unimplemented")
+        raise Exception("unimplemented")  # TODO: or use default?
 
     def analyze_prims(self, jaxpr): 
         unhandled = []
@@ -126,7 +126,7 @@ class Estimator:
         if todo: print(todo, "are in todo list")
         if unconsidered: print(unconsidered, "are not considered")
 
-    def cluster_edges_cost(self, starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster. 
+    def clusters_edges_cost(self, starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster. 
       out_tensors = set()
       for start in starts:
         for eqn in start:
@@ -134,7 +134,21 @@ class Estimator:
       in_tensors = set()
       for eqn in end:
         for invar in eqn.invars:
-          if invar in out_tensors:
+          if invar is Var and invar in out_tensors:
+            in_tensors.add(invar)
+      acc = 0
+      for in_tensor in in_tensors:
+        acc += in_tensor.aval.size
+      return acc
+
+    def cluster_edge_cot(self, start : List['JaxprEqn'], end : List['JaxprEqn']):
+      out_tensors = set()
+      for eqn in start:
+        out_tensors = out_tensors.union(set(eqn.outvars))
+      in_tensors = set()
+      for eqn in end:
+        for invar in eqn.invars:
+          if invar is Var and invar in out_tensors:
             in_tensors.add(invar)
       acc = 0
       for in_tensor in in_tensors:
@@ -178,9 +192,94 @@ def bert_layer_jaxpr():
                             "rng": rngkey})
     return jaxpr
 
+def edge_weight_test_jaxpr(Depth : int):
+    inputs = []
+    N = 1024
+    for _ in range(2 ** Depth):
+      inputs.append(jnp.ones((N, N)))
+    def computation(inputs):
+        for d in range(Depth):
+          outputs = []
+          for i in range(2 ** (Depth - d - 1)):
+            outputs.append(inputs[i * 2] + inputs[i * 2 + 1])
+          inputs = outputs
+        return inputs[0].mean()
+    
+    return jax.make_jaxpr(computation)(inputs)
+
+def fwd_berts_jaxpr(num_layers : int = 2):
+    batch_size = 64
+    seq_len = 64
+    hidden_size = 768
+    num_heads = 768 // 96
+
+    hidden_states = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
+    attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+    label = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
+
+    model = FlaxBertLayerCollection(BertConfig(
+        num_hidden_layers=num_layers,
+        hidden_size=hidden_size,
+        intermediate_size=hidden_size * 4,
+        num_attention_heads=num_heads))
+    rngkey = jax.random.PRNGKey(0)
+    params = model.init(rngkey, hidden_states, attention_mask)
+    optimizer = optim.GradientDescent(1e-2).create(params)
+
+    def forward(batch):
+        rngs = {"dropout": batch["rng"]}
+        return model.apply(params, 
+                          batch["hidden_states"], 
+                          batch["attention_mask"], 
+                          rngs=rngs)[0]
+
+
+    jaxpr = jax.make_jaxpr(forward)({"hidden_states": hidden_states,
+                            "attention_mask": attention_mask,
+                            "label": label,
+                            "rng": rngkey})
+    return jaxpr
+
 estimator = Estimator()
 
-if __name__ == "__main__": 
-    jaxpr = bert_layer_jaxpr()
-    estimator.analyze_prims(jaxpr)
+def SliceJaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
+    length = len(jaxpr.eqns)
+    weights = [estimator.eqn_flops(eqn) for eqn in jaxpr.eqns]
+    layer_weight_upper_bound = float(sum(weights)) / layer_num * (1 + eps)
+    solutions = [
+      [[(-1,None)] * layer_num for _ in range(length)]
+      for _ in range(length)
+    ]
+    # init
+    for i in range(length):
+      for j in range(length):
+        if (sum(weights[i : j + 1]) <= layer_weight_upper_bound):
+            solutions[i][j][0] = (0,)
 
+    for num in range(1, layer_num):
+      for l in range(length - 1):
+        for r in range(l + 1, length):
+          for k in range(l, r):
+            if solutions[l][k][num-1][0] != -1 and\
+              solutions[k + 1][r][0][0] != -1:
+              prior = solutions[l][r][num][0]
+              current = solutions[l][k][num - 1][0] + \
+                  solutions[k + 1][r][0][0] + \
+                  estimator.cluster_edge_cot(jaxpr.eqns[l : k + 1], 
+                    jaxpr.eqns[k + 1 : r + 1])
+              if prior == -1 or prior > current:
+                solutions[l][r][num] = (current, k)
+    return solutions
+
+if __name__ == "__main__": 
+    estimator.analyze_prims(bert_layer_jaxpr())
+    # SliceJaxpr(fwd_berts_jaxpr(2), 2)
+    # Depth = 4
+    # jaxpr = edge_weight_test_jaxpr(Depth)
+    # from_sets = [[jaxpr.eqns[i],] for i in range(2 ** (Depth - 1))]
+    # to_set = [jaxpr.eqns[i + 2 ** (Depth - 1)] for i in range(2 ** (Depth - 1))]
+    # print(estimator.clusters_edges_cost(from_sets, to_set))
+    layer_num = 2
+    eqns = fwd_berts_jaxpr(layer_num).eqns
+    solutions = SliceJaxpr(fwd_berts_jaxpr(), layer_num, 0)
+    assert solutions[0][len(eqns) - 1][1][1] == int(len(eqns) / layer_num - 1)

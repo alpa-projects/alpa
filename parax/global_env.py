@@ -3,7 +3,11 @@ import os
 
 
 class GlobalConfig:
-    """Global configuration of parax."""
+    """Global configuration of parax.
+
+    See also the docstring of `set_parallelize_options` for the meanings
+    of the member variables.
+    """
 
     def __init__(self):
         ########## Options for @parallelize decorator ########## 
@@ -22,6 +26,7 @@ class GlobalConfig:
 
         ########## Options for auto-sharding solver ########## 
         self.allow_all_gather = True  # Do not allow all-gather during re-sharding.
+        self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
         ########## Options for benchmark ########## 
@@ -33,6 +38,7 @@ class GlobalConfig:
 
         ########## Options for logging ########## 
         self.print_xla_compilation_time = False
+
 
 global_config = GlobalConfig()
 

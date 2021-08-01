@@ -436,7 +436,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         objective = testing.last_compiled_auto_sharding_objective
         expected = \
             logical_mesh.all_reduce_cost(
-                vocab_size * hidden_size * 4 / mesh_shape[1], 0) * 2 +\
+                vocab_size * hidden_size * 4 / mesh_shape[1], 0) +\
             logical_mesh.all_reduce_cost(
                 batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1) * 2 +\
             logical_mesh.all_reduce_cost(
@@ -462,11 +462,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 num_heads, vocab_size, deterministic, device_mesh)
 
             # Check communication cost
-            # Cost = all-reduce on all parameters + one extra all-redcue for the shared embedding.
             params = jax.tree_util.tree_leaves(optimizer.target)
             expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
-                           for x in params) + \
-                       device_mesh.all_reduce_cost(vocab_size * hidden_size * 4, i)
+                           for x in params)
 
             assert_close(objective, expected)
             assert_only_has_allreduce(hlo_ir)
@@ -493,7 +491,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 num_heads, vocab_size, deterministic, device_mesh)
 
             # Check communication cost
-            # expected_cost = embed.forward (2) + embed.backward(2) +
+            # expected_cost = embed.forward (1) + embed.backward(2) +
             #                 LM_head.forward (1) + LM_head.backward (1) +
             #                 LM_head.weight.backward (1) +  log_softmax.forward (2) + 
             #                 transformer.backward (2 * num_layers) + transformer.backward (2 * num_layers)
@@ -502,7 +500,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             # The SPMD partitioner will eliminate some unnecessary communication in favor of
             # redundant computation (e.g., it will elimiate the all-reduce in embed.backward).
             expected = \
-              device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * 6 + \
+              device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * 5 + \
               device_mesh.all_reduce_cost(hidden_size * hidden_size * 4, i) + \
               device_mesh.all_reduce_cost(batch_size * seq_len * 4, i) * 2 + \
               device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * num_layers * 4

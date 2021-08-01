@@ -80,6 +80,23 @@ def test_failed_matmul_case_2():
     np.testing.assert_allclose(out, x @ y, rtol=1e-5)
 
 
+def test_reduce_scatter():
+    @partial(pjit,
+             in_axis_resources=(P(None, 'x'), P('x', None)),
+             out_axis_resources=P('x', None))
+    def f(x, y):
+        return x @ y
+
+    x = np.random.randn(8, 4).astype(np.float32)
+    y = np.random.randn(4, 8).astype(np.float32)
+
+    mesh_devices = np.array(jax.devices()[:2])
+    with mesh(mesh_devices, ('x',)):
+        out = f(x, y)
+
+    np.testing.assert_allclose(np.array(out), x @ y, rtol=1e-5)
+
+
 def split(a, axis):
     in_axis_resources = [None] * len(a.shape)
     in_axis_resources[axis] = 'x'
@@ -312,8 +329,9 @@ def test_embedding():
 if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
-    test_failed_matmul_case_1()
+    #test_failed_matmul_case_1()
     #test_failed_matmul_case_2()
+    test_reduce_scatter()
     #test_matmul_speed()
     #test_dict_arg()
 

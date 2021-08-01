@@ -185,6 +185,7 @@ def compile_with_search(backend,
             "auto_sharding::memory_budget_per_device": memory_budget_per_device,
             "auto_sharding::force_all_gather_cost": not global_config.allow_all_gather,
             "auto_sharding::all_gather_cost": 1e10,
+            "auto_sharding::prefer_reduce_scatter": global_config.prefer_reduce_scatter,
             "auto_sharding::allow_recompute_heavy_op": global_config.allow_recompute_heavy_op,
 
             # Device mesh
@@ -329,7 +330,7 @@ def compile_with_given_strategy(backend,
 
         # Auto-sharding solver options
         "auto_sharding::enable": run_auto_sharding,
-        "auto_sharding::load_strategy": True,
+        "auto_sharding::load_solution_vector": True,
         "auto_sharding::solution_vector": to_int_tuple(solution_vector),
 
         # Device mesh

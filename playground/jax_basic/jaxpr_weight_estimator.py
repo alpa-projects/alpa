@@ -2,7 +2,8 @@ from math import log2
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import lax, ad_util
+from jax import lax
+from jax._src import ad_util
 from jax.core import JaxprEqn, Jaxpr, Var
 from jax.interpreters import xla
 from flax import optim

@@ -1,4 +1,5 @@
 from math import log2
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax, ad_util
@@ -13,55 +14,55 @@ from typing import List, Union
 class Estimator:
     def __init__(self):
         self.pointwise_prims_ = (
-          lax.neg_p, lax.sign_p, 
-          lax.floor_p, lax.ceil_p, lax.round_p, lax.is_finite_p, 
-          lax.exp_p, lax.log_p, 
-          lax.pow_p, 
-          lax.tanh_p, lax.tan_p, lax.sin_p, lax.cos_p, 
-          lax.asin_p, lax.acos_p, lax.atan_p, lax.atan2_p, 
-          lax.sinh_p, lax.cosh_p, lax.asinh_p, lax.acosh_p, lax.tanh_p, 
-          lax.add_p, lax.sub_p, lax.abs_p, lax.sqrt_p, 
-          lax.not_p, lax.and_p, lax.or_p, lax.xor_p, lax.mul_p, lax.div_p, 
-          lax.max_p, lax.min_p, 
-          lax.shift_left_p, 
-          lax.shift_right_arithmetic_p, lax.shift_right_logical_p, 
-          lax.eq_p, lax.ne_p, lax.ge_p, lax.gt_p, lax.le_p, lax.lt_p, 
-          lax.convert_element_type_p, lax.bitcast_convert_type_p, 
-          lax.erf_p, 
+          lax.neg_p, lax.sign_p,
+          lax.floor_p, lax.ceil_p, lax.round_p, lax.is_finite_p,
+          lax.exp_p, lax.log_p,
+          lax.pow_p,
+          lax.tanh_p, lax.tan_p, lax.sin_p, lax.cos_p,
+          lax.asin_p, lax.acos_p, lax.atan_p, lax.atan2_p,
+          lax.sinh_p, lax.cosh_p, lax.asinh_p, lax.acosh_p, lax.tanh_p,
+          lax.add_p, lax.sub_p, lax.abs_p, lax.sqrt_p,
+          lax.not_p, lax.and_p, lax.or_p, lax.xor_p, lax.mul_p, lax.div_p,
+          lax.max_p, lax.min_p,
+          lax.shift_left_p,
+          lax.shift_right_arithmetic_p, lax.shift_right_logical_p,
+          lax.eq_p, lax.ne_p, lax.ge_p, lax.gt_p, lax.le_p, lax.lt_p,
+          lax.convert_element_type_p, lax.bitcast_convert_type_p,
+          lax.erf_p,
           lax.transpose_p,
           ad_util.add_jaxvals_p)
 
         self.unhandled_prims_ = (
-          lax.nextafter_p, 
-          lax.expm1_p, lax.log1p_p, 
-          lax.regularized_incomplete_beta_p, 
-          lax.lgamma_p, lax.digamma_p, lax.igamma_p, 
-          lax.igamma_grad_a_p, lax.igammac_p, lax.random_gamma_grad_p, 
-          lax.bessel_i0e_p, lax.bessel_i1e_p, 
-          lax.erfc_p, lax.erf_inv_p, 
-          lax.real_p, lax.imag_p, lax.complex_p, 
-          lax.conj_p, lax.population_count_p, 
-          lax.conv_general_dilated_p, 
+          lax.nextafter_p,
+          lax.expm1_p, lax.log1p_p,
+          lax.regularized_incomplete_beta_p,
+          lax.lgamma_p, lax.digamma_p, lax.igamma_p,
+          lax.igamma_grad_a_p, lax.igammac_p, lax.random_gamma_grad_p,
+          lax.bessel_i0e_p, lax.bessel_i1e_p,
+          lax.erfc_p, lax.erf_inv_p,
+          lax.real_p, lax.imag_p, lax.complex_p,
+          lax.conj_p, lax.population_count_p,
+          lax.conv_general_dilated_p,
           lax.squeeze_p)# missing: clz_p(?)
 
         # TODO: consider dtype
         self.elementwise_flops_ = lambda eqn : max(map(lambda var : var.aval.size, eqn.invars))
         self.default_fn_ = lambda _ : 0
-        
+
         self.prim_flops_ = {
           lax.dot_general_p: self._dot_flops,
           xla.xla_call_p : self._xla_call_flops,
-          lax.rsqrt_p: lambda eqn : 2 * self.elementwise_flops_(eqn), 
-          lax.integer_pow_p: 
+          lax.rsqrt_p: lambda eqn : 2 * self.elementwise_flops_(eqn),
+          lax.integer_pow_p:
             lambda eqn : log2(abs(eqn.params['y'])) * self.elementwise_flops_(eqn),
-          lax.broadcast_in_dim_p: 
+          lax.broadcast_in_dim_p:
             lambda eqn : eqn.outvars[0].aval.size - eqn.invars[0].aval.size,
-          lax.broadcast_p: 
+          lax.broadcast_p:
             lambda eqn : eqn.outvars[0].aval.size - eqn.invars[0].aval.size,
           lax.pad_p: self.elementwise_flops_,
           lax.reduce_sum_p: self.elementwise_flops_,
           lax.reduce_max_p: self.elementwise_flops_,
-          lax.reshape_p: self.default_fn_, 
+          lax.reshape_p: self.default_fn_,
           ad_util.stop_gradient_p: self.default_fn_,
           lax.select_p: self.default_fn_,
           lax.slice_p: self.default_fn_
@@ -104,18 +105,18 @@ class Estimator:
           return self.prim_flops_[eqn.primitive](eqn)
         raise Exception("unimplemented")  # TODO: or use default?
 
-    def analyze_prims(self, jaxpr): 
+    def analyze_prims(self, jaxpr):
         unhandled = []
         todo = []
         unconsidered = []
-        for eqn in jaxpr.eqns: 
-          if eqn.primitive in self.unhandled_prims_: 
+        for eqn in jaxpr.eqns:
+          if eqn.primitive in self.unhandled_prims_:
             unhandled.append(eqn.primitive)
           elif eqn.primitive in self.todo_prims_:
             todo.append(eqn.primitive)
           elif eqn.primitive in self.prim_flops_:
             self.prim_flops_[eqn.primitive](eqn)
-          elif eqn.primitive in self.pointwise_prims_: 
+          elif eqn.primitive in self.pointwise_prims_:
             self.elementwise_flops_(eqn)
           else:
             unconsidered.append(eqn.primitive)
@@ -126,7 +127,7 @@ class Estimator:
         if todo: print(todo, "are in todo list")
         if unconsidered: print(unconsidered, "are not considered")
 
-    def clusters_edges_cost(self, starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster. 
+    def clusters_edges_cost(self, starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster.
       out_tensors = set()
       for start in starts:
         for eqn in start:
@@ -204,7 +205,7 @@ def edge_weight_test_jaxpr(Depth : int):
             outputs.append(inputs[i * 2] + inputs[i * 2 + 1])
           inputs = outputs
         return inputs[0].mean()
-    
+
     return jax.make_jaxpr(computation)(inputs)
 
 def fwd_berts_jaxpr(num_layers : int = 2):
@@ -228,9 +229,9 @@ def fwd_berts_jaxpr(num_layers : int = 2):
 
     def forward(batch):
         rngs = {"dropout": batch["rng"]}
-        return model.apply(params, 
-                          batch["hidden_states"], 
-                          batch["attention_mask"], 
+        return model.apply(params,
+                          batch["hidden_states"],
+                          batch["attention_mask"],
                           rngs=rngs)[0]
 
 
@@ -265,13 +266,52 @@ def SliceJaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
               prior = solutions[l][r][num][0]
               current = solutions[l][k][num - 1][0] + \
                   solutions[k + 1][r][0][0] + \
-                  estimator.cluster_edges_cost(jaxpr.eqns[l : k + 1], 
+                  estimator.cluster_edges_cost(jaxpr.eqns[l : k + 1],
                     jaxpr.eqns[k + 1 : r + 1])
               if prior == -1 or prior > current:
                 solutions[l][r][num] = (current, k)
     return solutions
 
-if __name__ == "__main__": 
+def SliceJaxprOptimized(jaxpr : Jaxpr, layer_num : int, eps : float):
+    length = len(jaxpr.eqns)
+    weights = np.array([estimator.eqn_flops(eqn) for eqn in jaxpr.eqns])
+    layer_weight_upper_bound = np.sum(weights) / layer_num * (1 + eps)
+    A = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float)
+    A_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int)
+    B = np.full((length + 1, length +1), np.inf, dtype=np.float)
+    C = np.full((length + 1, length +1), 0, dtype=np.float)
+    # init
+    # FIXME (zhuohan): The initialization is O(n^3) right now. It should be optimized to O(n^2).
+    A[0, 0] = 0
+
+    for l in range(1, length + 1):
+      for r in range(r, length + 1):
+        if (sum(weights[l - 1 : r]) <= layer_weight_upper_bound):
+          B[l, r] = 0
+
+    for k in range(0, length + 1):
+      for r in range(k + 1, length + 1):
+          C[k, r] = estimator.cluster_edges_cost(jaxpr.eqns[0 : k], jaxpr.eqns[k : r])
+
+    for q in range(1, layer_num + 1):
+      for r in range(1, length + 1):
+        for k in range(0, r):
+          new_value = A[k, q - 1] + B[k + 1, r] + C[k, r]
+          if new_value > A[r, q]:
+            A[r, q] = new_value
+            A_argmin[r, q] = k
+
+    reversed_sliced_eqns = []
+
+    r = length
+    for q in range(layer_num, 0, -1):
+      k = A_argmin[r, q]
+      reversed_sliced_eqns.append(jaxpr.eqns[k: r])
+      r = k
+    assert r == 0
+    return reversed(reversed_sliced_eqns)
+
+if __name__ == "__main__":
     estimator.analyze_prims(bert_layer_jaxpr())
     # SliceJaxpr(fwd_berts_jaxpr(2), 2)
     # Depth = 4
@@ -283,9 +323,10 @@ if __name__ == "__main__":
     eqns = fwd_berts_jaxpr(layer_num).eqns
     eqn_num = len(eqns)
     edge_cost = estimator.cluster_edges_cost(
-                    eqns[0:int(eqn_num / layer_num)], 
+                    eqns[0:int(eqn_num / layer_num)],
                     eqns[int(eqn_num / layer_num) : eqn_num])
-    solutions = SliceJaxpr(fwd_berts_jaxpr(), layer_num, 0)
-    assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
-    assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
-    print("success!")
+    solutions = SliceJaxprOptimized(fwd_berts_jaxpr(), layer_num, 0)
+    print(solutions)
+    # assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
+    # assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
+    # print("success!")

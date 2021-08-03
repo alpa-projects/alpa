@@ -1,14 +1,17 @@
 from math import log2
+from jax._src.lax.lax import ge
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax
 from jax._src import ad_util
-from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar
+from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn
 from jax.interpreters import xla
 from flax import optim
+from parax import mark_pipeline_jaxpreqn
 from parax.model.bert_model import BertConfig, FlaxBertLayer, FlaxBertLayerCollection
 from typing import List, Union
+import copy
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow
@@ -330,8 +333,39 @@ def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
       for var in eqn.outvars:
         if not isinstance(var, DropVar):
           var_layer_dict[var] = i
-  print("layer_pipeline_invars", layer_pipeline_invars)
-  print("layer_pipeline_outvars", layer_pipeline_outvars)
+  gensym_func = gensym([closed_jaxpr.jaxpr])
+  var_mapping = {}
+  def get_mapping(var):
+    if isinstance(var, Var):
+      return var_mapping.get(var, var)
+    else:
+      return var
+
+  new_eqns = []
+  for i, eqns in enumerate(sliced_eqns):
+    # pipeline start eqn
+    pipeline_start_invars = []
+    pipeline_start_outvars = []
+    for var in layer_pipeline_invars[i]:
+      new_var = gensym_func()
+      pipeline_start_invars.append(get_mapping(var))
+      pipeline_start_outvars.append(new_var)
+      var_mapping[var] = new_var
+    new_eqns.append(mark_pipeline_jaxpreqn(pipeline_start_invars, pipeline_start_outvars, str(i), 'start'))
+    # all other eqns
+    for eqn in eqns:
+      new_invars = [get_mapping(var) for var in eqn.invars]
+      new_eqns.append(new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive, eqn.params, eqn.source_info))
+    # pipeline end eqn
+    pipeline_end_invars = []
+    pipeline_end_outvars = []
+    for var in layer_pipeline_outvars[i]:
+      new_var = gensym_func()
+      pipeline_end_invars.append(get_mapping(var))
+      pipeline_end_outvars.append(new_var)
+      var_mapping[var] = new_var
+    new_eqns.append(mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars, str(i), 'end'))
+  print(new_eqns)
 
 
 if __name__ == "__main__":

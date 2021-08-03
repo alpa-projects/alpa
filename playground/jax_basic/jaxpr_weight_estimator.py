@@ -364,14 +364,14 @@ def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
       pipeline_end_outvars.append(new_var)
       var_mapping[var] = new_var
     new_eqns.append(mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars, str(i), 'end'))
-    new_jaxpr = Jaxpr(
-        closed_jaxpr.jaxpr.constvars,
-        closed_jaxpr.jaxpr.invars,
-        [get_mapping(var) for var in closed_jaxpr.jaxpr.outvars],
-        new_eqns,
-        )
-    new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
-    return new_closed_jaxpr
+  new_jaxpr = Jaxpr(
+      closed_jaxpr.jaxpr.constvars,
+      closed_jaxpr.jaxpr.invars,
+      [get_mapping(var) for var in closed_jaxpr.jaxpr.outvars],
+      new_eqns,
+      )
+  new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+  return new_closed_jaxpr
 
 
 if __name__ == "__main__":

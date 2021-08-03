@@ -58,7 +58,7 @@ def mark_pipeline(*args, name: str, mark_type: str):
 def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
     if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
         raise ValueError('Unknown mark type: %s' % mark_type)
-    return new_jaxpr_eqn(invars, outvars, pipeline_p, {'name': name, mark_type: mark_type})
+    return new_jaxpr_eqn(invars, outvars, pipeline_p, {'name': name, 'mark_type': mark_type})
 
 
 def _pipeline_impl(*args, **kwargs):

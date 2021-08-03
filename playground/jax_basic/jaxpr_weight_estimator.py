@@ -347,7 +347,7 @@ def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
     pipeline_start_invars = []
     pipeline_start_outvars = []
     for var in layer_pipeline_invars[i]:
-      new_var = gensym_func()
+      new_var = gensym_func(var.aval)
       pipeline_start_invars.append(get_mapping(var))
       pipeline_start_outvars.append(new_var)
       var_mapping[var] = new_var
@@ -360,7 +360,7 @@ def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
     pipeline_end_invars = []
     pipeline_end_outvars = []
     for var in layer_pipeline_outvars[i]:
-      new_var = gensym_func()
+      new_var = gensym_func(var.aval)
       pipeline_end_invars.append(get_mapping(var))
       pipeline_end_outvars.append(new_var)
       var_mapping[var] = new_var
@@ -384,7 +384,6 @@ if __name__ == "__main__":
                     eqns[0:int(eqn_num / layer_num)],
                     eqns[int(eqn_num / layer_num) : eqn_num])
     solutions = slice_jaxpr_optimized(closed_jaxpr, layer_num, 0)
-    print(solutions)
     add_pipeline_markers(closed_jaxpr, solutions)
     # assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
     # assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost

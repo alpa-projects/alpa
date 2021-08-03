@@ -14,14 +14,18 @@ from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceM
 from parax.global_env import global_config
 from parax.testing import assert_only_has_allreduce,\
     assert_only_has_reduce_scatter_all_gather, assert_has_reduce_scatter
+from parax.util import map_to_shape
 
 MB = 1024 ** 2
+
 
 def assert_close(x, y):
     assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"
 
+
 def assert_less_equal(x, y):
     assert abs(x / y) < 1.01, f"{x} vs. {y}"
+
 
 def all_reduce_cost(num_devices, num_bytes):
     return 2.0 * (num_devices - 1) / num_devices * num_bytes
@@ -60,6 +64,12 @@ def assert_sharded(x):
         if isinstance(axis, ShardedAxis):
             return
     assert False, f"Not sharded: {str(x.sharding_spec)}"
+
+
+def assert_fully_sharded(x):
+    for axis in x.sharding_spec.mesh_mapping:
+        if not isinstance(axis, ShardedAxis):
+            assert False, f"Not fully sharded: {str(x.sharding_spec)}"
 
 
 class AutoShardingMLPTest(unittest.TestCase):
@@ -135,12 +145,21 @@ class AutoShardingMLPTest(unittest.TestCase):
                 device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4, i) +
                 device_mesh.all_reduce_cost(hidden_dim * 4, i))
             assert_close(objective, expected)
-            assert_only_has_allreduce(hlo_ir)
+
+            if global_config.prefer_reduce_scatter:
+                assert_has_reduce_scatter(hlo_ir)
+            else:
+                assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             for i in range(num_layers):
                 weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
                 assert_all_replicated(weight, np.prod(mesh_shape))
+
+            if global_config.prefer_reduce_scatter:
+                for i in range(num_layers):
+                    weight = optimizer.state.param_states["params"][f"Dense_{i}"]["kernel"].grad_ema
+                    assert_sharded(weight)
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
@@ -169,7 +188,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                     assert_row_partitioned(weight, mesh_shape[i], i)
 
     def test_n_layer_mlp_2d_mesh(self):
-        num_layers = 6
+        num_layers = 2
         batch_size = 512
         hidden_dim = 64
 
@@ -187,7 +206,11 @@ class AutoShardingMLPTest(unittest.TestCase):
             (num_layers - 1) *\
             device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
-        assert_only_has_allreduce(hlo_ir)
+
+        if global_config.prefer_reduce_scatter:
+            assert_has_reduce_scatter(hlo_ir)
+        else:
+            assert_only_has_allreduce(hlo_ir)
 
         # Check sharding specification
         for k in range(num_layers):
@@ -196,6 +219,23 @@ class AutoShardingMLPTest(unittest.TestCase):
                 assert_replicated_column_partitioned(weight, mesh_shape)
             else:
                 assert_replicated_row_partitioned(weight, mesh_shape)
+
+        if global_config.prefer_reduce_scatter:
+            for i in range(num_layers):
+                weight = optimizer.state.param_states["params"][f"Dense_{i}"]["kernel"].grad_ema
+                assert_fully_sharded(weight)
+
+    def test_n_layer_mlp_data_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_mlp_data_parallel()
+
+    def test_n_layer_mlp_model_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_mlp_model_parallel()
+
+    def test_n_layer_mlp_2d_mesh_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_mlp_2d_mesh()
 
     def test_weight_init(self):
         set_parallelize_options(devices=self.devices)
@@ -235,6 +275,10 @@ def suite():
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_data_parallel"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh"))
+
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
 
     suite.addTest(AutoShardingMLPTest("test_weight_init"))
     return suite

@@ -95,7 +95,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         class Model(nn.Module):
             @nn.compact
             def __call__(self, x):
-                for i in range(num_layers-1):
+                for i in range(num_layers - 1):
                     x = nn.Dense(features=hidden_dim)(x)
                     x = nn.relu(x)
                 x = nn.Dense(features=output_dim)(x)
@@ -152,14 +152,13 @@ class AutoShardingMLPTest(unittest.TestCase):
                 assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
-            for i in range(num_layers):
-                weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
+            for weight in jax.tree_util.tree_leaves(optimizer.target):
                 assert_all_replicated(weight, np.prod(mesh_shape))
 
             if global_config.prefer_reduce_scatter:
-                for i in range(num_layers):
-                    weight = optimizer.state.param_states["params"][f"Dense_{i}"]["kernel"].grad_ema
-                    assert_sharded(weight)
+                for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
+                    if len(weight.shape) > 1:
+                        assert_sharded(weight)
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
@@ -177,7 +176,9 @@ class AutoShardingMLPTest(unittest.TestCase):
             expected = (num_layers - 1) *\
               device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
-            assert_only_has_allreduce(hlo_ir)
+
+            if not global_config.prefer_reduce_scatter:
+                assert_only_has_allreduce(hlo_ir)
 
             # Check sharding specification
             for k in range(num_layers):
@@ -221,9 +222,9 @@ class AutoShardingMLPTest(unittest.TestCase):
                 assert_replicated_row_partitioned(weight, mesh_shape)
 
         if global_config.prefer_reduce_scatter:
-            for i in range(num_layers):
-                weight = optimizer.state.param_states["params"][f"Dense_{i}"]["kernel"].grad_ema
-                assert_fully_sharded(weight)
+            for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
+                if len(weight.shape) > 1:
+                    assert_fully_sharded(weight)
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True

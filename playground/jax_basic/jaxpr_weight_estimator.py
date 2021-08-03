@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax._src import ad_util
-from jax.core import JaxprEqn, Jaxpr, Var
+from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar
 from jax.interpreters import xla
 from flax import optim
 from parax.model.bert_model import BertConfig, FlaxBertLayer, FlaxBertLayerCollection
@@ -273,7 +273,7 @@ def SliceJaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
                 solutions[l][r][num] = (current, k)
     return solutions
 
-def SliceJaxprOptimized(jaxpr : Jaxpr, layer_num : int, eps : float):
+def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
     length = len(jaxpr.eqns)
     weights = np.array([estimator.eqn_flops(eqn) for eqn in jaxpr.eqns])
     layer_weight_upper_bound = np.sum(weights) / layer_num * (1 + eps)
@@ -286,7 +286,7 @@ def SliceJaxprOptimized(jaxpr : Jaxpr, layer_num : int, eps : float):
     A[0, 0] = 0
 
     for l in range(1, length + 1):
-      for r in range(r, length + 1):
+      for r in range(l, length + 1):
         if (sum(weights[l - 1 : r]) <= layer_weight_upper_bound):
           B[l, r] = 0
 
@@ -298,7 +298,7 @@ def SliceJaxprOptimized(jaxpr : Jaxpr, layer_num : int, eps : float):
       for r in range(1, length + 1):
         for k in range(0, r):
           new_value = A[k, q - 1] + B[k + 1, r] + C[k, r]
-          if new_value > A[r, q]:
+          if new_value < A[r, q]:
             A[r, q] = new_value
             A_argmin[r, q] = k
 
@@ -310,7 +310,29 @@ def SliceJaxprOptimized(jaxpr : Jaxpr, layer_num : int, eps : float):
       reversed_sliced_eqns.append(jaxpr.eqns[k: r])
       r = k
     assert r == 0
-    return reversed(reversed_sliced_eqns)
+    return list(reversed(reversed_sliced_eqns))
+
+def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
+  n_layers = len(sliced_eqns)
+  global_invars = set(closed_jaxpr.jaxpr.invars)
+  global_outvars = set(var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+  global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+  layer_pipeline_invars = [set() for _ in range(n_layers)]
+  layer_pipeline_outvars = [set() for _ in range(n_layers)]
+  var_layer_dict = {}
+  for i, eqns in enumerate(sliced_eqns):
+    for eqn in eqns:
+      for var in eqn.invars:
+        if (not isinstance(var, Literal) and var not in global_consts_dir
+            and var not in global_invars and var_layer_dict[var] != i):
+          layer_pipeline_invars[i].add(var)
+          layer_pipeline_outvars[var_layer_dict[var]].add(var)
+      for var in eqn.outvars:
+        if not isinstance(var, DropVar):
+          var_layer_dict[var] = i
+  print("layer_pipeline_invars", layer_pipeline_invars)
+  print("layer_pipeline_outvars", layer_pipeline_outvars)
+
 
 if __name__ == "__main__":
     estimator.analyze_prims(bert_layer_jaxpr())
@@ -321,13 +343,15 @@ if __name__ == "__main__":
     # to_set = [jaxpr.eqns[i + 2 ** (Depth - 1)] for i in range(2 ** (Depth - 1))]
     # print(estimator.clusters_edges_cost(from_sets, to_set))
     layer_num = 2
-    eqns = fwd_berts_jaxpr(layer_num).eqns
+    closed_jaxpr = fwd_berts_jaxpr(layer_num)
+    eqns = closed_jaxpr.eqns
     eqn_num = len(eqns)
     edge_cost = estimator.cluster_edges_cost(
                     eqns[0:int(eqn_num / layer_num)],
                     eqns[int(eqn_num / layer_num) : eqn_num])
-    solutions = SliceJaxprOptimized(fwd_berts_jaxpr(), layer_num, 0)
+    solutions = slice_jaxpr_optimized(closed_jaxpr, layer_num, 0)
     print(solutions)
+    add_pipeline_markers(closed_jaxpr, solutions)
     # assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
     # assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
     # print("success!")

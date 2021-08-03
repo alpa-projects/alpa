@@ -318,7 +318,6 @@ def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
 def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
   n_layers = len(sliced_eqns)
   global_invars = set(closed_jaxpr.jaxpr.invars)
-  global_outvars = set(var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
   global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
   layer_pipeline_invars = [set() for _ in range(n_layers)]
   layer_pipeline_outvars = [set() for _ in range(n_layers)]
@@ -365,7 +364,14 @@ def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
       pipeline_end_outvars.append(new_var)
       var_mapping[var] = new_var
     new_eqns.append(mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars, str(i), 'end'))
-  print(new_eqns)
+    new_jaxpr = Jaxpr(
+        closed_jaxpr.jaxpr.constvars,
+        closed_jaxpr.jaxpr.invars,
+        [get_mapping(var) for var in closed_jaxpr.jaxpr.outvars],
+        new_eqns,
+        )
+    new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+    return new_closed_jaxpr
 
 
 if __name__ == "__main__":
@@ -384,7 +390,8 @@ if __name__ == "__main__":
                     eqns[0:int(eqn_num / layer_num)],
                     eqns[int(eqn_num / layer_num) : eqn_num])
     solutions = slice_jaxpr_optimized(closed_jaxpr, layer_num, 0)
-    add_pipeline_markers(closed_jaxpr, solutions)
+    new_closed_jaxpr = add_pipeline_markers(closed_jaxpr, solutions)
+    print(new_closed_jaxpr)
     # assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
     # assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
     # print("success!")

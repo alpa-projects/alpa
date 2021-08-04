@@ -50,7 +50,19 @@ def test_equivalent():
     print(a.indices((4, 4)).flatten()[3])
 
 
+def test_multiple_chunks():
+    a = pxla.ShardingSpec(
+        sharding=(Chunked([2, 2]),),
+        mesh_mapping=(ShardedAxis(1), ShardedAxis(0))
+    )
+
+    print(a.indices((4,)).flatten()[0])
+    print(a.indices((4,)).flatten()[1])
+    print(a.indices((4,)).flatten()[2])
+    print(a.indices((4,)).flatten()[3])
+
 if __name__ == "__main__":
     #test_order()
-    test_equivalent()
+    #test_equivalent()
+    test_multiple_chunks()
 

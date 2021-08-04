@@ -15,17 +15,18 @@ from flax import optim, linen as nn
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
 from parax.model.bert_model import (BertConfig, FlaxBertAttention, FlaxBertLayerCollection,
                                     FlaxBertForMaskedLMModule)
+from parax.util import count_communication_primitives
 from test_auto_sharding_mlp import (assert_all_replicated,
                                     assert_close,
                                     assert_column_partitioned,
+                                    assert_data_parallel_cost,
                                     assert_fully_sharded,
-                                    assert_has_reduce_scatter,
                                     assert_less_equal,
-                                    assert_only_has_allreduce,
                                     assert_sharded,
                                     assert_replicated_column_partitioned,
                                     assert_replicated_row_partitioned,
-                                    assert_row_partitioned)
+                                    assert_row_partitioned,
+                                    is_fully_sharded)
 
 
 class AutoShardingAttentionTest(unittest.TestCase):
@@ -162,24 +163,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 num_layers, batch_size, seq_len, hidden_size,
                 num_heads, deterministic, device_mesh)
 
-            # Check communication cost
-            params = jax.tree_util.tree_leaves(optimizer.target)
-            expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
-                           for x in params)
-            assert_close(objective, expected)
-            if global_config.prefer_reduce_scatter:
-                assert_has_reduce_scatter(hlo_ir)
-            else:
-                assert_only_has_allreduce(hlo_ir)
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
 
-            # Check sharding specification
-            for weight in params:
-                assert_all_replicated(weight, np.prod(mesh_shape))
-
-            if global_config.prefer_reduce_scatter:
-                for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
-                    if len(weight.shape) > 1:
-                        assert_sharded(weight)
 
     def test_bert_layer_model_parallel(self):
         num_layers = 2
@@ -201,10 +186,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
 
-            if not global_config.prefer_reduce_scatter:
-                assert_only_has_allreduce(hlo_ir)
-                assert hlo_ir.count("channel_id") == num_layers * 4 - 1
-                assert hlo_ir.count("all-reduce(") == num_layers * 4 - 1
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+                count_communication_primitives(hlo_ir)
+            if global_config.prefer_reduce_scatter:
+                assert n_total == num_layers * 4 - 1
+                assert n_all_reduce == num_layers * 4 - 1
+                assert n_total == n_all_reduce
+            else:
+                assert n_total == num_layers * 4 - 1
+                assert n_all_reduce == num_layers * 4 - 1
+                assert n_total == n_all_reduce
 
             # Check sharding specification
             for k in range(num_layers):
@@ -243,14 +234,18 @@ class AutoShardingAttentionTest(unittest.TestCase):
             np.prod(x.shape) * 4 / mesh_shape[1], 0) for x in params) +\
             device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1) * (num_layers * 4 - 1)
-        # TODO(lmzheng): Revisit this. This test was broken after we correct the resharding
-        # cost of all-gather.
-        #assert_close(objective, expected)
-        #assert_only_has_allreduce(hlo_ir)
-        assert_less_equal(objective, expected)
+        assert_close(objective, expected)
 
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
-            assert_has_reduce_scatter(hlo_ir)
+            assert n_all_reduce == num_layers * 4 - 1
+            assert n_reduce_scatter == 2
+            assert n_all_gather == 1
+            assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
+        else:
+            assert n_all_reduce == num_layers * 4
+            assert n_total == n_all_reduce
 
         # Check sharding specification
         for k in range(num_layers):
@@ -334,7 +329,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * 4 / mesh_shape[0], 1) * 2
 
         assert_close(objective, expected)
-        assert_only_has_allreduce(hlo_ir)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            count_communication_primitives(hlo_ir)
+        assert n_total == n_all_reduce
 
     def test_bert_mlm_data_parallel(self):
         batch_size = 32
@@ -352,26 +349,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 num_layers, batch_size, seq_len, hidden_size,
                 num_heads, vocab_size, deterministic, device_mesh)
 
-            # Check communication cost
-            params = jax.tree_util.tree_leaves(optimizer.target)
-            expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, i)
-                           for x in params)
-
-            assert_close(objective, expected)
-
-            if global_config.prefer_reduce_scatter:
-                assert_has_reduce_scatter(hlo_ir)
-            else:
-                assert_only_has_allreduce(hlo_ir)
-
-            # Check sharding specification
-            for weight in params:
-                assert_all_replicated(weight, np.prod(mesh_shape))
-
-            if global_config.prefer_reduce_scatter:
-                for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
-                    if len(weight.shape) > 1:
-                        assert_sharded(weight)
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i, 1)
 
     def test_bert_mlm_model_parallel(self):
         batch_size = 16
@@ -394,7 +372,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             # expected_cost = embed.forward (1) + embed.backward(2) +
             #                 LM_head.forward (1) + LM_head.backward (1) +
             #                 LM_head.weight.backward (1) +  log_softmax.forward (2) + 
-            #                 transformer.backward (2 * num_layers) + transformer.backward (2 * num_layers)
+            #                 transformer.forward (2 * num_layers) + transformer.backward (2 * num_layers)
             #
             # Note that the final cost is different from this estimated cost in ILP solver.
             # The SPMD partitioner will eliminate some unnecessary communication in favor of
@@ -406,8 +384,13 @@ class AutoShardingAttentionTest(unittest.TestCase):
               device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * num_layers * 4
             assert_close(objective, expected)
 
-            if not global_config.prefer_reduce_scatter:
-                assert_only_has_allreduce(hlo_ir)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+                count_communication_primitives(hlo_ir)
+
+            # real number of all-reduce = transformers (4 * num_layers) + log_softmax (2) +
+            #                             embed.forward (1) + embad.backward (1)
+            assert n_all_reduce == num_layers * 4 + 4
+            assert n_total == n_all_reduce
 
             # Check sharding specification
             embed_weight = optimizer.target["params"]["bert"]["embeddings"]["word_embeddings"]["embedding"]
@@ -449,8 +432,18 @@ class AutoShardingAttentionTest(unittest.TestCase):
             num_heads, vocab_size, deterministic, device_mesh)
 
         # Check communication cost.
-        if not global_config.prefer_reduce_scatter:
-            assert_only_has_allreduce(hlo_ir)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            count_communication_primitives(hlo_ir)
+        if global_config.prefer_reduce_scatter:
+            assert n_all_reduce == 4 * num_layers + 2 + 2
+            assert n_reduce_scatter == 2
+            assert n_all_gather == 1
+            assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
+        else:
+            # real number of all-reduce = transformers (4 * num_layers) + log_softmax (2) + 
+            #                             embed.forward (1) + embad.backward (1) + weights (1)
+            assert n_all_reduce == 4 * num_layers + 2 + 2 + 1
+            assert n_total == n_all_reduce
 
         # Check sharding specification
         assert "s32[4,4,4096]{2,1,0} iota()" not in hlo_ir
@@ -478,9 +471,12 @@ class AutoShardingAttentionTest(unittest.TestCase):
                     assert_replicated_row_partitioned(weights[j], mesh_shape)
 
         if global_config.prefer_reduce_scatter:
+            num_not_sharded = 0
             for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
                 if len(weight.shape) > 1:
-                    assert_fully_sharded(weight)
+                    if not is_fully_sharded(weight):
+                        num_not_sharded += 1
+            assert num_not_sharded <= 2
 
     def test_bert_layer_data_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True

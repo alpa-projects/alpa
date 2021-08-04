@@ -12,9 +12,7 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 from parax.global_env import global_config
-from parax.testing import assert_only_has_allreduce,\
-    assert_only_has_reduce_scatter_all_gather, assert_has_reduce_scatter
-from parax.util import map_to_shape
+from parax.util import map_to_shape, count_communication_primitives
 
 MB = 1024 ** 2
 
@@ -25,10 +23,6 @@ def assert_close(x, y):
 
 def assert_less_equal(x, y):
     assert abs(x / y) < 1.01, f"{x} vs. {y}"
-
-
-def all_reduce_cost(num_devices, num_bytes):
-    return 2.0 * (num_devices - 1) / num_devices * num_bytes
 
 
 def assert_column_partitioned(x, num_chunks, mesh_dim):
@@ -59,17 +53,60 @@ def assert_all_replicated(x, num_replicas):
     assert x.sharding_spec.mesh_mapping[0] == Replicated(num_replicas)
 
 
-def assert_sharded(x):
+def is_sharded(x):
     for axis in x.sharding_spec.mesh_mapping:
         if isinstance(axis, ShardedAxis):
-            return
-    assert False, f"Not sharded: {str(x.sharding_spec)}"
+            return True
+    return False
+
+
+def assert_sharded(x):
+    assert is_sharded(x), f"Not sharded: {str(x.sharding_spec)}"
+
+
+def is_fully_sharded(x):
+    for axis in x.sharding_spec.mesh_mapping:
+        if not isinstance(axis, ShardedAxis):
+            return False
+    return True
 
 
 def assert_fully_sharded(x):
-    for axis in x.sharding_spec.mesh_mapping:
-        if not isinstance(axis, ShardedAxis):
-            assert False, f"Not fully sharded: {str(x.sharding_spec)}"
+    assert is_fully_sharded(x), f"Not fully sharded: {str(x.sharding_spec)}"
+
+
+def assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, mesh_dim,
+                              allow_not_sharded_params=0):
+    # Check communication cost
+    params = jax.tree_util.tree_leaves(optimizer.target)
+    expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
+                   for x in params)
+    assert_close(objective, expected)
+
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        count_communication_primitives(hlo_ir)
+    if global_config.prefer_reduce_scatter:
+        assert n_reduce_scatter == 1
+        assert n_all_gather == 1
+        if allow_not_sharded_params:
+            assert n_all_reduce == 1
+        else:
+            assert n_all_reduce == 0
+        assert n_total == n_reduce_scatter + n_all_gather + n_all_reduce
+    else:
+        assert n_all_reduce == 1
+        assert n_total == n_all_reduce
+
+    # Check sharding specification
+    for weight in params:
+        assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
+
+    num_not_sharded = 0
+    if global_config.prefer_reduce_scatter:
+        for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
+            if not is_sharded(weight):
+                num_not_sharded += 1
+    assert num_not_sharded <= allow_not_sharded_params * 2
 
 
 class AutoShardingMLPTest(unittest.TestCase):
@@ -130,8 +167,8 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def test_n_layer_mlp_data_parallel(self):
         num_layers = 6
-        batch_size = 512
-        hidden_dim = 64
+        batch_size = 256
+        hidden_dim = 32
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -140,30 +177,12 @@ class AutoShardingMLPTest(unittest.TestCase):
               num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
             )
 
-            # Check communication cost
-            expected = num_layers * (
-                device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4, i) +
-                device_mesh.all_reduce_cost(hidden_dim * 4, i))
-            assert_close(objective, expected)
-
-            if global_config.prefer_reduce_scatter:
-                assert_has_reduce_scatter(hlo_ir)
-            else:
-                assert_only_has_allreduce(hlo_ir)
-
-            # Check sharding specification
-            for weight in jax.tree_util.tree_leaves(optimizer.target):
-                assert_all_replicated(weight, np.prod(mesh_shape))
-
-            if global_config.prefer_reduce_scatter:
-                for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
-                    if len(weight.shape) > 1:
-                        assert_sharded(weight)
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
-        batch_size = 64
-        hidden_dim = 512
+        batch_size = 32
+        hidden_dim = 256
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -177,8 +196,15 @@ class AutoShardingMLPTest(unittest.TestCase):
               device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
 
-            if not global_config.prefer_reduce_scatter:
-                assert_only_has_allreduce(hlo_ir)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+                count_communication_primitives(hlo_ir)
+            if global_config.prefer_reduce_scatter:
+                assert n_all_reduce + n_reduce_scatter == num_layers - 1
+                assert n_reduce_scatter == n_all_gather
+                assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
+            else:
+                assert n_all_reduce == num_layers - 1
+                assert n_total == n_all_reduce
 
             # Check sharding specification
             for k in range(num_layers):
@@ -189,9 +215,9 @@ class AutoShardingMLPTest(unittest.TestCase):
                     assert_row_partitioned(weight, mesh_shape[i], i)
 
     def test_n_layer_mlp_2d_mesh(self):
-        num_layers = 2
-        batch_size = 512
-        hidden_dim = 64
+        num_layers = 6
+        batch_size = 256
+        hidden_dim = 32
 
         # Test on different device meshes
         mesh_shape = [2, 2]
@@ -208,10 +234,16 @@ class AutoShardingMLPTest(unittest.TestCase):
             device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
 
+
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
-            assert_has_reduce_scatter(hlo_ir)
+            assert n_all_reduce == num_layers - 1
+            assert n_all_gather == 1
+            assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
         else:
-            assert_only_has_allreduce(hlo_ir)
+            assert n_all_reduce == num_layers
+            assert n_total == n_all_reduce
 
         # Check sharding specification
         for k in range(num_layers):

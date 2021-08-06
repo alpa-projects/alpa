@@ -10,7 +10,6 @@ from flax import optim
 from parax import mark_pipeline_jaxpreqn
 from parax.model.bert_model import BertConfig, FlaxBertLayer, FlaxBertLayerCollection
 from typing import List, Union
-import copy
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow
@@ -180,17 +179,27 @@ def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
     B = np.full((length + 1, length +1), np.inf, dtype=np.float)
     C = np.full((length + 1, length +1), 0, dtype=np.float)
     # init
-    # FIXME (zhuohan): The initialization is O(n^3) right now. It should be optimized to O(n^2).
     A[0, 0] = 0
 
     for l in range(1, length + 1):
+      tot = 0
       for r in range(l, length + 1):
-        if (sum(weights[l - 1 : r]) <= layer_weight_upper_bound):
+        tot += weights[r - 1]
+        if tot <= layer_weight_upper_bound:
           B[l, r] = 0
 
+    outvars = set()
     for k in range(0, length + 1):
+      if k > 0: outvars = outvars.union(jaxpr.eqns[k - 1].outvars)
+      invars = set()
+      tot = 0
       for r in range(k + 1, length + 1):
-          C[k, r] = cluster_edges_cost(jaxpr.eqns[0 : k], jaxpr.eqns[k : r])
+          for invar in jaxpr.eqns[r - 1].invars:
+            if isinstance(invar, Var) and invar in outvars\
+              and invar not in invars:
+              invars.add(invar)
+              tot += invar.aval.size
+          C[k, r] = tot
 
     for q in range(1, layer_num + 1):
       for r in range(1, length + 1):
@@ -282,4 +291,15 @@ if __name__ == "__main__":
     print(new_closed_jaxpr)
     # assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
     # assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
-    # print("success!")
+    '''---testing compilation time---'''
+    # from timeit import timeit
+    # def process(closed_jaxpr, layer_num):
+    #   solutions = slice_jaxpr_optimized(closed_jaxpr, layer_num, 0)
+    #   return add_pipeline_markers(closed_jaxpr, solutions)
+    # layer_num = 70
+    # print('building jaxpr...')
+    # closed_jaxpr = fwd_berts_jaxpr(layer_num)
+    # stmt = 'process(closed_jaxpr, layer_num)'
+    # print('testing...')
+    # number = 1
+    # print(timeit(stmt, globals={**globals(), **locals()}, number=number) / number)

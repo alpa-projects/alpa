@@ -3,8 +3,7 @@ from jax._src.lax.lax import ge
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jax._src import ad_util
+from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn
 from jax.interpreters import xla
 from flax import optim
@@ -15,150 +14,77 @@ import copy
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow
-class Estimator:
-    def __init__(self):
-        self.pointwise_prims_ = (
-          lax.neg_p, lax.sign_p,
-          lax.floor_p, lax.ceil_p, lax.round_p, lax.is_finite_p,
-          lax.exp_p, lax.log_p,
-          lax.pow_p,
-          lax.tanh_p, lax.tan_p, lax.sin_p, lax.cos_p,
-          lax.asin_p, lax.acos_p, lax.atan_p, lax.atan2_p,
-          lax.sinh_p, lax.cosh_p, lax.asinh_p, lax.acosh_p, lax.tanh_p,
-          lax.add_p, lax.sub_p, lax.abs_p, lax.sqrt_p,
-          lax.not_p, lax.and_p, lax.or_p, lax.xor_p, lax.mul_p, lax.div_p,
-          lax.max_p, lax.min_p,
-          lax.shift_left_p,
-          lax.shift_right_arithmetic_p, lax.shift_right_logical_p,
-          lax.eq_p, lax.ne_p, lax.ge_p, lax.gt_p, lax.le_p, lax.lt_p,
-          lax.convert_element_type_p, lax.bitcast_convert_type_p,
-          lax.erf_p,
-          lax.transpose_p,
-          ad_util.add_jaxvals_p)
 
-        self.unhandled_prims_ = (
-          lax.nextafter_p,
-          lax.expm1_p, lax.log1p_p,
-          lax.regularized_incomplete_beta_p,
-          lax.lgamma_p, lax.digamma_p, lax.igamma_p,
-          lax.igamma_grad_a_p, lax.igammac_p, lax.random_gamma_grad_p,
-          lax.bessel_i0e_p, lax.bessel_i1e_p,
-          lax.erfc_p, lax.erf_inv_p,
-          lax.real_p, lax.imag_p, lax.complex_p,
-          lax.conj_p, lax.population_count_p,
-          lax.conv_general_dilated_p,
-          lax.squeeze_p)# missing: clz_p(?)
+gpu_backend = xc.get_local_backend("gpu")
 
-        # TODO: consider dtype
-        self.elementwise_flops_ = lambda eqn : max(map(lambda var : var.aval.size, eqn.invars))
-        self.default_fn_ = lambda _ : 0
+def call_to_xla_computation(eqn : JaxprEqn):
+  xe = xc._xla
+  prim = eqn.primitive
+  backend = gpu_backend
 
-        self.prim_flops_ = {
-          lax.dot_general_p: self._dot_flops,
-          xla.xla_call_p : self._xla_call_flops,
-          lax.rsqrt_p: lambda eqn : 2 * self.elementwise_flops_(eqn),
-          lax.integer_pow_p:
-            lambda eqn : log2(abs(eqn.params['y'])) * self.elementwise_flops_(eqn),
-          lax.broadcast_in_dim_p:
-            lambda eqn : eqn.outvars[0].aval.size - eqn.invars[0].aval.size,
-          lax.broadcast_p:
-            lambda eqn : eqn.outvars[0].aval.size - eqn.invars[0].aval.size,
-          lax.pad_p: self.elementwise_flops_,
-          lax.reduce_sum_p: self.elementwise_flops_,
-          lax.reduce_max_p: self.elementwise_flops_,
-          lax.reshape_p: self.default_fn_,
-          ad_util.stop_gradient_p: self.default_fn_,
-          lax.select_p: self.default_fn_,
-          lax.slice_p: self.default_fn_
-        }
+  c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
 
-        self.todo_prims_ = (lax.clamp_p, lax.concatenate_p)
+  name = xla.extend_name_stack(prim.name)
 
-    def _dot_flops(self, eqn : JaxprEqn) -> int:
-        dims = eqn.params['dimension_numbers']
-        contract_dims = dims[0]
-        batch_dims = dims[1]
-        acc = 1
-        for i, var in enumerate(eqn.invars):
-          contract_dim = contract_dims[i]
-          batch_dim = batch_dims[i]
-          shape = var.aval.shape
-          for j, size in enumerate(shape):
-            if j not in contract_dim and j not in batch_dim: acc *= size
-        for var_dim in contract_dims[0]:
-          shape = eqn.invars[0].aval.shape
-          acc *= shape[var_dim]
-        for var_dim in batch_dims[0]:
-          shape = eqn.invars[0].aval.shape
-          acc *= shape[var_dim]
-        return acc
+  op_metadata = xla.make_op_metadata(prim, eqn.params)
+  c.set_op_metadata(op_metadata)
+  xla_args, _ = xla._xla_callable_args(
+      c, list(map(lambda x : x.aval, eqn.invars)), 
+      len(eqn.invars) > 100)
+  axis_env = xla.AxisEnv(1, (), ())
 
-    def _xla_call_flops(self, eqn : JaxprEqn) -> int:
-        called_jaxpr = eqn.params['call_jaxpr']
-        acc = 0
-        for eqn in called_jaxpr.eqns:
-          acc += self.eqn_flops(eqn)
-        return acc
+  new_params = xla.check_backend_params(eqn.params, backend)
+  rule = xla.call_translations[eqn.primitive]
+  ans = rule(c, axis_env, xla_args,
+              name, backend=backend, **new_params)
 
-    def eqn_flops(self, eqn : JaxprEqn) -> int:
-        if eqn.primitive in self.pointwise_prims_:
-          return self.elementwise_flops_(eqn)
-        if eqn.primitive in self.unhandled_prims_:
-          return self.default_fn_(eqn)
-        if eqn.primitive in self.prim_flops_:
-          return self.prim_flops_[eqn.primitive](eqn)
-        raise Exception("unimplemented")  # TODO: or use default?
+  assert isinstance(ans, xe.XlaOp)
+  c.clear_op_metadata()
+  try:
+    return c.build(ans)
+  except RuntimeError as e:
+    msg = (" ".join(map(str, e.args)) + "\n"
+           "This is a bug in JAX's shape-checking rules; please report it!\n"
+           "https://github.com/google/jax/issues\n")
+    raise RuntimeError(msg) from e
 
-    def analyze_prims(self, jaxpr):
-        unhandled = []
-        todo = []
-        unconsidered = []
-        for eqn in jaxpr.eqns:
-          if eqn.primitive in self.unhandled_prims_:
-            unhandled.append(eqn.primitive)
-          elif eqn.primitive in self.todo_prims_:
-            todo.append(eqn.primitive)
-          elif eqn.primitive in self.prim_flops_:
-            self.prim_flops_[eqn.primitive](eqn)
-          elif eqn.primitive in self.pointwise_prims_:
-            self.elementwise_flops_(eqn)
-          else:
-            unconsidered.append(eqn.primitive)
-        unhandled = set(unhandled)
-        todo = set(todo)
-        unconsidered = set(unconsidered)
-        if unhandled: print(unhandled, "are unhandled")
-        if todo: print(todo, "are in todo list")
-        if unconsidered: print(unconsidered, "are not considered")
+def eqn_flops(eqn : JaxprEqn) -> float:
+    if eqn.primitive in xla.call_translations:
+      xla_computation = call_to_xla_computation(eqn)
+    else: 
+      xla_computation = xla.primitive_subcomputation(eqn.primitive, *map(lambda x : x.aval, eqn.invars), **eqn.params)
+    hlo_module = xla_computation.as_hlo_module()
+    properties = xc._xla.hlo_module_cost_analysis(gpu_backend, hlo_module)
+    return properties["flops"] if "flops" in properties else 0.0
 
-    def clusters_edges_cost(self, starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster.
-      out_tensors = set()
-      for start in starts:
-        for eqn in start:
-          out_tensors = out_tensors.union(set(eqn.outvars))
-      in_tensors = set()
-      for eqn in end:
-        for invar in eqn.invars:
-          if isinstance(invar, Var) and invar in out_tensors:
-            in_tensors.add(invar)
-      acc = 0
-      for in_tensor in in_tensors:
-        acc += in_tensor.aval.size
-      return acc
-
-    def cluster_edges_cost(self, start : List['JaxprEqn'], end : List['JaxprEqn']):
-      out_tensors = set()
+def clusters_edges_cost(starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster.
+    out_tensors = set()
+    for start in starts:
       for eqn in start:
         out_tensors = out_tensors.union(set(eqn.outvars))
-      in_tensors = set()
-      for eqn in end:
-        for invar in eqn.invars:
-          if isinstance(invar, Var) and invar in out_tensors:
-            in_tensors.add(invar)
-      acc = 0
-      for in_tensor in in_tensors:
-        acc += in_tensor.aval.size
-      return acc
+    in_tensors = set()
+    for eqn in end:
+      for invar in eqn.invars:
+        if isinstance(invar, Var) and invar in out_tensors:
+          in_tensors.add(invar)
+    acc = 0
+    for in_tensor in in_tensors:
+      acc += in_tensor.aval.size
+    return acc
+
+def cluster_edges_cost(start : List['JaxprEqn'], end : List['JaxprEqn']):
+    out_tensors = set()
+    for eqn in start:
+      out_tensors = out_tensors.union(set(eqn.outvars))
+    in_tensors = set()
+    for eqn in end:
+      for invar in eqn.invars:
+        if isinstance(invar, Var) and invar in out_tensors:
+          in_tensors.add(invar)
+    acc = 0
+    for in_tensor in in_tensors:
+      acc += in_tensor.aval.size
+    return acc
 
 def bert_layer_jaxpr():
     batch_size = 64
@@ -245,40 +171,9 @@ def fwd_berts_jaxpr(num_layers : int = 2):
                             "rng": rngkey})
     return jaxpr
 
-estimator = Estimator()
-
-def SliceJaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
-    length = len(jaxpr.eqns)
-    weights = [estimator.eqn_flops(eqn) for eqn in jaxpr.eqns]
-    layer_weight_upper_bound = float(sum(weights)) / layer_num * (1 + eps)
-    solutions = [
-      [[(-1,None)] * layer_num for _ in range(length)]
-      for _ in range(length)
-    ]
-    # init
-    for i in range(length):
-      for j in range(length):
-        if (sum(weights[i : j + 1]) <= layer_weight_upper_bound):
-            solutions[i][j][0] = (0,None)
-
-    for num in range(1, layer_num):
-      for l in range(length - 1):
-        for r in range(l + 1, length):
-          for k in range(l, r):
-            if solutions[l][k][num-1][0] != -1 and\
-              solutions[k + 1][r][0][0] != -1:
-              prior = solutions[l][r][num][0]
-              current = solutions[l][k][num - 1][0] + \
-                  solutions[k + 1][r][0][0] + \
-                  estimator.cluster_edges_cost(jaxpr.eqns[l : k + 1],
-                    jaxpr.eqns[k + 1 : r + 1])
-              if prior == -1 or prior > current:
-                solutions[l][r][num] = (current, k)
-    return solutions
-
 def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
     length = len(jaxpr.eqns)
-    weights = np.array([estimator.eqn_flops(eqn) for eqn in jaxpr.eqns])
+    weights = np.array([eqn_flops(eqn) for eqn in jaxpr.eqns])
     layer_weight_upper_bound = np.sum(weights) / layer_num * (1 + eps)
     A = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float)
     A_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int)
@@ -295,7 +190,7 @@ def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
 
     for k in range(0, length + 1):
       for r in range(k + 1, length + 1):
-          C[k, r] = estimator.cluster_edges_cost(jaxpr.eqns[0 : k], jaxpr.eqns[k : r])
+          C[k, r] = cluster_edges_cost(jaxpr.eqns[0 : k], jaxpr.eqns[k : r])
 
     for q in range(1, layer_num + 1):
       for r in range(1, length + 1):
@@ -375,18 +270,11 @@ def add_pipeline_markers(closed_jaxpr : ClosedJaxpr, sliced_eqns):
 
 
 if __name__ == "__main__":
-    estimator.analyze_prims(bert_layer_jaxpr())
-    # SliceJaxpr(fwd_berts_jaxpr(2), 2)
-    # Depth = 4
-    # jaxpr = edge_weight_test_jaxpr(Depth)
-    # from_sets = [[jaxpr.eqns[i],] for i in range(2 ** (Depth - 1))]
-    # to_set = [jaxpr.eqns[i + 2 ** (Depth - 1)] for i in range(2 ** (Depth - 1))]
-    # print(estimator.clusters_edges_cost(from_sets, to_set))
     layer_num = 2
     closed_jaxpr = fwd_berts_jaxpr(layer_num)
     eqns = closed_jaxpr.eqns
     eqn_num = len(eqns)
-    edge_cost = estimator.cluster_edges_cost(
+    edge_cost = cluster_edges_cost(
                     eqns[0:int(eqn_num / layer_num)],
                     eqns[int(eqn_num / layer_num) : eqn_num])
     solutions = slice_jaxpr_optimized(closed_jaxpr, layer_num, 0)

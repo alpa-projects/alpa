@@ -1,5 +1,4 @@
-from math import log2
-from jax._src.lax.lax import ge
+import numba
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -9,7 +8,7 @@ from jax.interpreters import xla
 from flax import optim
 from parax import mark_pipeline_jaxpreqn
 from parax.model.bert_model import BertConfig, FlaxBertLayer, FlaxBertLayerCollection
-from typing import List, Union
+from typing import List
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow
@@ -174,19 +173,8 @@ def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
     length = len(jaxpr.eqns)
     weights = np.array([eqn_flops(eqn) for eqn in jaxpr.eqns])
     layer_weight_upper_bound = np.sum(weights) / layer_num * (1 + eps)
-    A = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float)
-    A_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int)
-    B = np.full((length + 1, length +1), np.inf, dtype=np.float)
-    C = np.full((length + 1, length +1), 0, dtype=np.float)
+    C = np.full((length + 1, length +1), 0, dtype=np.float32)
     # init
-    A[0, 0] = 0
-
-    for l in range(1, length + 1):
-      tot = 0
-      for r in range(l, length + 1):
-        tot += weights[r - 1]
-        if tot <= layer_weight_upper_bound:
-          B[l, r] = 0
 
     outvars = set()
     for k in range(0, length + 1):
@@ -201,13 +189,29 @@ def slice_jaxpr_optimized(jaxpr : Jaxpr, layer_num : int, eps : float):
               tot += invar.aval.size
           C[k, r] = tot
 
-    for q in range(1, layer_num + 1):
-      for r in range(1, length + 1):
-        for k in range(0, r):
-          new_value = A[k, q - 1] + B[k + 1, r] + C[k, r]
-          if new_value < A[r, q]:
-            A[r, q] = new_value
-            A_argmin[r, q] = k
+    @numba.jit(nopython=True)
+    def DP(C):
+      A = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
+      A_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int32)
+      B = np.full((length + 1, length +1), np.inf, dtype=np.float32)
+      A[0, 0] = 0
+      for l in range(1, length + 1):
+        tot = 0
+        for r in range(l, length + 1):
+          tot += weights[r - 1]
+          if tot <= layer_weight_upper_bound:
+            B[l, r] = 0
+
+      for q in range(1, layer_num + 1):
+        for r in range(1, length + 1):
+          for k in range(0, r):
+            new_value = A[k, q - 1] + B[k + 1, r] + C[k, r]
+            if new_value < A[r, q]:
+              A[r, q] = new_value
+              A_argmin[r, q] = k
+      return A_argmin
+    
+    A_argmin = DP(C)
 
     reversed_sliced_eqns = []
 
@@ -289,8 +293,6 @@ if __name__ == "__main__":
     solutions = slice_jaxpr_optimized(closed_jaxpr, layer_num, 0)
     new_closed_jaxpr = add_pipeline_markers(closed_jaxpr, solutions)
     print(new_closed_jaxpr)
-    # assert solutions[0][eqn_num - 1][layer_num - 1][1] == int(eqn_num / layer_num - 1)
-    # assert solutions[0][eqn_num - 1][layer_num - 1][0] == edge_cost
     '''---testing compilation time---'''
     # from timeit import timeit
     # def process(closed_jaxpr, layer_num):

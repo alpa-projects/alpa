@@ -202,7 +202,9 @@ def compile_with_search(backend,
 
             # Debug options
             "auto_sharding::simplify_graph": True,
-            "auto_sharding::print_strategy": False,
+            "auto_sharding::print_strategy": True,
+            "auto_sharding::force_batch_dim_to_mesh_dim":
+                global_config.force_batch_dim_to_mesh_dim,
             "auto_sharding::force_strategy": False,
             "auto_sharding::force_strategy_inst_indices": [],
             "auto_sharding::force_strategy_stra_names": [],

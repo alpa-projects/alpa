@@ -14,7 +14,7 @@ import ray
 
 import parax
 from parax import parallelize, global_config, testing, PhysicalDeviceMesh, DeviceCluster
-from parax.testing import assert_only_has_allreduce
+
 
 def get_number_of_lines(filename):
     ct = 0

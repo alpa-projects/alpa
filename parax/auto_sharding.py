@@ -197,12 +197,15 @@ def compile_with_search(backend,
                 getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # All-reduce options
-            "combiner::all_reduce_threshold": 1 << 30,
+            "combiner::all_gather_threshold": 1 << 60,
+            "combiner::all_reduce_threshold": 1 << 60,
             "combiner::use_continuous_buffer": True,
 
             # Debug options
             "auto_sharding::simplify_graph": True,
             "auto_sharding::print_strategy": False,
+            "auto_sharding::force_batch_dim_to_mesh_dim":
+                global_config.force_batch_dim_to_mesh_dim,
             "auto_sharding::force_strategy": False,
             "auto_sharding::force_strategy_inst_indices": [],
             "auto_sharding::force_strategy_stra_names": [],
@@ -397,22 +400,32 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
         # try to map dimension between provided mesh and real mesh
         mesh_mapping = [None] * len(logical_mesh.id_mesh.shape)
         tensor_dim_to_mesh_dim = logical_mesh.get_tensor_dim_to_mesh_dim(
-            aval.shape, tile_assignment_dimensions, tile_assignment_devices)
+            len(aval.shape), tile_assignment_dimensions, tile_assignment_devices)
 
-        pt = 0
-        for tensor_dim in range(len(aval.shape)):
-            if tile_assignment_dimensions[tensor_dim] == 1:
-                sharding.append(pxla.NoSharding())
-            else:
-                sharding.append(pxla.Chunked([tile_assignment_dimensions[tensor_dim]]))
-                mesh_dim = tensor_dim_to_mesh_dim[tensor_dim]
-                mesh_mapping[mesh_dim] = pxla.ShardedAxis(pt)
-                pt += 1
+        if tensor_dim_to_mesh_dim:
+            pt = 0
+            for tensor_dim in range(len(aval.shape)):
+                if tile_assignment_dimensions[tensor_dim] == 1:
+                    sharding.append(pxla.NoSharding())
+                else:
+                    sharding.append(pxla.Chunked([tile_assignment_dimensions[tensor_dim]]))
+                    mesh_dim = tensor_dim_to_mesh_dim[tensor_dim]
+                    mesh_mapping[mesh_dim] = pxla.ShardedAxis(pt)
+                    pt += 1
 
-        # All other dims are replicated
-        for mesh_dim, _ in enumerate(mesh_mapping):
-            if mesh_mapping[mesh_dim] is None:
-                mesh_mapping[mesh_dim] = pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
+            # All other dims are replicated
+            for mesh_dim, _ in enumerate(mesh_mapping):
+                if mesh_mapping[mesh_dim] is None:
+                    mesh_mapping[mesh_dim] = \
+                        pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
+        else:
+            assert len(aval.shape) == 1, "Only support 1d case"
+            assert len(tile_assignment_dimensions) == len(aval.shape)
+            for col in range(len(tile_assignment_devices)):
+                if tile_assignment_devices[col] == 1:
+                    break
+            sharding = (pxla.Chunked((tile_assignment_dimensions[0] // col, col)),)
+            mesh_mapping = (pxla.ShardedAxis(1), pxla.ShardedAxis(0))
     elif sharding_type == OpSharding.Type.REPLICATED:
         sharding = (pxla.NoSharding(),) * len(aval.shape)
         mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)

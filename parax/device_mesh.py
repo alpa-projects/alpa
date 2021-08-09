@@ -82,25 +82,26 @@ class LogicalDeviceMesh:
                 self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes +
                 0.001)
 
-    def get_tensor_dim_to_mesh_dim(self, shape,
+    def get_tensor_dim_to_mesh_dim(self, tensor_rank,
                                    tile_assignment_dimensions, tile_assignment_devices):
         tile_assignment = np.array(tile_assignment_devices).reshape(tile_assignment_dimensions)
 
         tensor_dim_vals = tuple(get_dim_last_value(tile_assignment, i)
-                                for i in range(len(shape)))
+                                for i in range(tensor_rank))
 
         mesh_dim_vals = tuple(get_dim_last_value(self.id_mesh, j)
                               for j in range(len(self.id_mesh.shape)))
 
-        ret = [-1] * len(shape)
-        for i in range(len(shape)):
+        ret = [-1] * tensor_rank
+        for i in range(tensor_rank):
             if tile_assignment_dimensions[i] != 1:
                 found = False
                 for j in range(len(self.id_mesh.shape)):
                     if tensor_dim_vals[i] == mesh_dim_vals[j]:
                         ret[i] = j
                         found = True
-                assert found
+                if not found:
+                    return None
 
         return ret
 

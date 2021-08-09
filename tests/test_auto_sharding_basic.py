@@ -15,9 +15,15 @@ from flax import optim
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 
-from test_auto_sharding_mlp import assert_close, all_reduce_cost
+from test_auto_sharding_mlp import assert_close
+
 
 MB = 1024 ** 2
+
+
+def all_reduce_cost(num_devices, num_bytes):
+    return 2.0 * (num_devices - 1) / num_devices * num_bytes
+
 
 class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):

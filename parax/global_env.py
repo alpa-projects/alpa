@@ -28,6 +28,7 @@ class GlobalConfig:
         self.allow_all_gather = True  # Do not allow all-gather during re-sharding.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.force_batch_dim_to_mesh_dim = -1 # Forcely map the batch dim to a tensor dim
 
         ########## Options for benchmark ########## 
         # If true, the system is allowed to use dummy values during

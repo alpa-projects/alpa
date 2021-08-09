@@ -30,17 +30,3 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         return
     else:
         raise TypeError((type(x), type(y)))
-
-
-def assert_only_has_allreduce(hlo_ir):
-    """Assert all communication primitives in a HLO IR are all-reduce."""
-    assert hlo_ir.count("channel_id") == \
-           hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")
-
-def assert_only_has_reduce_scatter_all_gather(hlo_ir):
-    """Assert all communication primitives in a HLO IR are all-reduce."""
-    assert hlo_ir.count("channel_id") == \
-           hlo_ir.count("all-gather(") + hlo_ir.count("reduce-scatter(")
-
-def assert_has_reduce_scatter(hlo_ir):
-    assert hlo_ir.count("reduce-scatter(") > 0

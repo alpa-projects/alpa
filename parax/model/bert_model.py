@@ -107,7 +107,7 @@ class FlaxBertEmbeddings(nn.Module):
             token_type_embeddings = 0.0
 
         # Sum all embeddings
-        hidden_states = inputs_embeds + token_type_embeddings + position_embeds
+        hidden_states = inputs_embeds + position_embeds + token_type_embeddings
         hidden_states = self.dropout(hidden_states, deterministic=deterministic)
         hidden_states = self.LayerNorm(hidden_states)
         return hidden_states

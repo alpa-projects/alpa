@@ -12,19 +12,17 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 from parax.global_env import global_config
-from parax.testing import assert_only_has_allreduce,\
-    assert_only_has_reduce_scatter_all_gather, assert_has_reduce_scatter
+from parax.util import map_to_shape, count_communication_primitives
 
 MB = 1024 ** 2
+
 
 def assert_close(x, y):
     assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"
 
+
 def assert_less_equal(x, y):
     assert abs(x / y) < 1.01, f"{x} vs. {y}"
-
-def all_reduce_cost(num_devices, num_bytes):
-    return 2.0 * (num_devices - 1) / num_devices * num_bytes
 
 
 def assert_column_partitioned(x, num_chunks, mesh_dim):
@@ -55,11 +53,66 @@ def assert_all_replicated(x, num_replicas):
     assert x.sharding_spec.mesh_mapping[0] == Replicated(num_replicas)
 
 
-def assert_sharded(x):
+def is_sharded(x):
     for axis in x.sharding_spec.mesh_mapping:
         if isinstance(axis, ShardedAxis):
-            return
-    assert False, f"Not sharded: {str(x.sharding_spec)}"
+            return True
+    return False
+
+
+def assert_sharded(x):
+    assert is_sharded(x), f"Not sharded: {str(x.sharding_spec)}"
+
+
+def is_fully_sharded(x):
+    for axis in x.sharding_spec.mesh_mapping:
+        if not isinstance(axis, ShardedAxis):
+            return False
+    return True
+
+
+def assert_fully_sharded(x):
+    assert is_fully_sharded(x), f"Not fully sharded: {str(x.sharding_spec)}"
+
+
+def assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, mesh_dim,
+                              allow_not_sharded_params=0):
+    # Check communication cost
+    params = jax.tree_util.tree_leaves(optimizer.target)
+    expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
+                   for x in params)
+    assert_close(objective, expected)
+
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        count_communication_primitives(hlo_ir)
+    if global_config.prefer_reduce_scatter:
+        assert n_reduce_scatter == 1
+        assert n_all_gather == 1
+        if allow_not_sharded_params:
+            assert n_all_reduce == 1
+        else:
+            assert n_all_reduce == 0
+        assert n_total == n_reduce_scatter + n_all_gather + n_all_reduce
+    else:
+        assert n_all_reduce == 1
+        assert n_total == n_all_reduce
+
+    # Check sharding specification
+    if global_config.prefer_reduce_scatter:
+        num_not_sharded = 0
+        for weight in params:
+            if not is_sharded(weight):
+                num_not_sharded += 1
+        assert num_not_sharded <= allow_not_sharded_params * 2
+
+        num_not_sharded = 0
+        for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
+            if not is_sharded(weight):
+                num_not_sharded += 1
+        assert num_not_sharded <= allow_not_sharded_params * 2
+    else:
+        for weight in params:
+            assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
 
 
 class AutoShardingMLPTest(unittest.TestCase):
@@ -78,15 +131,17 @@ class AutoShardingMLPTest(unittest.TestCase):
         device_mesh = PhysicalDeviceMesh(devices=self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
-    def run_2_layer_mlp(self, batch_size, input_dim, output_dim, hidden_dim,
-                        device_mesh, use_bias=True):
+    def run_n_layer_mlp(self, num_layers, batch_size,
+                        input_dim, output_dim, hidden_dim, device_mesh,
+                        use_bias=True):
         set_parallelize_options(devices=device_mesh)
 
         class Model(nn.Module):
             @nn.compact
             def __call__(self, x):
-                x = nn.Dense(features=hidden_dim, use_bias=use_bias)(x)
-                x = nn.relu(x)
+                for i in range(num_layers - 1):
+                    x = nn.Dense(features=hidden_dim, use_bias=use_bias)(x)
+                    x = nn.relu(x)
                 x = nn.Dense(features=output_dim, use_bias=use_bias)(x)
                 return x
 
@@ -107,48 +162,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        optimizer = optim.GradientDescent(1e-2).create(params)
-
-        # JIT compile
-        optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
-
-        # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-
-        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
-
-    def run_n_layer_mlp(self, num_layers, batch_size,
-                        input_dim, output_dim, hidden_dim, device_mesh):
-        set_parallelize_options(devices=device_mesh)
-
-        class Model(nn.Module):
-            @nn.compact
-            def __call__(self, x):
-                for i in range(num_layers-1):
-                    x = nn.Dense(features=hidden_dim)(x)
-                    x = nn.relu(x)
-                x = nn.Dense(features=output_dim)(x)
-                return x
-
-        @parallelize
-        def train_step(optimizer, batch, apply_fn):
-            def loss_func(params):
-                out = apply_fn(params, batch["x"])
-                return jnp.mean((out - batch["y"]) ** 2)
-
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
-
-        x = jnp.ones((batch_size, input_dim))
-        y = jnp.ones((batch_size, output_dim))
-
-        # Init model and optimizer
-        model = Model()
-        rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, x)
-        optimizer = optim.GradientDescent(1e-2).create(params)
+        optimizer = optim.Adam(1e-2).create(params)
 
         # JIT compile
         optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
@@ -157,156 +171,11 @@ class AutoShardingMLPTest(unittest.TestCase):
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
-
-    def test_2_layer_mlp_data_parallel(self):
-        batch_size = 512
-        hidden_dim = 64
-
-        # Test on different device meshes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
-            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_2_layer_mlp(
-              batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
-            )
-
-            # Check communication cost
-            expected = 2 * (
-                device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4, i) +
-                device_mesh.all_reduce_cost(hidden_dim * 4, i))
-
-            assert_close(objective, expected)
-            assert_only_has_allreduce(hlo_ir)
-
-            # Check sharding specification
-            weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
-            weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-            assert_all_replicated(weight0, np.prod(mesh_shape))
-            assert_all_replicated(weight1, np.prod(mesh_shape))
-
-    def test_2_layer_mlp_model_parallel(self):
-        batch_size = 64
-        hidden_dim = 512
-
-        # Test on different device meshes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
-            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_2_layer_mlp(
-              batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
-            )
-
-            # Check communication cost
-            expected = device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
-            assert_close(objective, expected)
-            assert_only_has_allreduce(hlo_ir)
-
-            # Check sharding specification
-            weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
-            weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-            assert_column_partitioned(weight0, mesh_shape[i], i)
-            assert_row_partitioned(weight1, mesh_shape[i], i)
-
-    def test_2_layer_mlp_2d_mesh(self):
-        batch_size = 512
-        hidden_dim = 64
-
-        # Test on different device meshes
-        mesh_shape = [2, 2]
-        device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.1])
-        optimizer, hlo_ir, objective = self.run_2_layer_mlp(
-          batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
-        )
-
-        # Check communication cost
-        expected = 2 * (
-            device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) +
-            device_mesh.all_reduce_cost(hidden_dim * 4, 0)) +\
-            device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
-        assert_close(objective, expected)
-        assert_only_has_allreduce(hlo_ir)
-
-        # Check sharding specification
-        weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
-        weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-        assert_replicated_column_partitioned(weight0, mesh_shape)
-        assert_replicated_row_partitioned(weight1, mesh_shape)
-
-    def test_2_layer_mlp_reduce_scatter_data_parallel(self):
-        global_config.prefer_reduce_scatter = True
-        batch_size = 512
-        hidden_dim = 64
-
-        # Test on different device meshes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
-            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_2_layer_mlp(
-              batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh,
-            )
-
-            # Check communication cost
-            expected = 2 * (
-                device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4, i) +
-                device_mesh.all_reduce_cost(hidden_dim * 4, i))
-
-            assert_close(objective, expected)
-            assert "(f32[64,16]{0,1}, f32[64,16]{0,1}) reduce-scatter" in hlo_ir
-
-            # Check sharding specification
-            weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-            assert_all_replicated(weight1, np.prod(mesh_shape))
-
-    def test_2_layer_mlp_reduce_scatter_model_parallel(self):
-        global_config.prefer_reduce_scatter = True
-        batch_size = 64
-        hidden_dim = 512
-
-        # Test on different device meshes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
-            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_2_layer_mlp(
-              batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
-            )
-
-            # Check communication cost
-            expected = device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
-            assert_close(objective, expected)
-            assert_only_has_reduce_scatter_all_gather(hlo_ir)
-
-            # Check sharding specification
-            weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
-            weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-            assert_column_partitioned(weight0, mesh_shape[i], i)
-            assert_row_partitioned(weight1, mesh_shape[i], i)
-
-    def test_2_layer_mlp_reduce_scatter_2d_mesh(self):
-        global_config.prefer_reduce_scatter = True
-        batch_size = 512
-        hidden_dim = 64
-
-        # Test on different device meshes
-        mesh_shape = [2, 2]
-        device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.1])
-        optimizer, hlo_ir, objective = self.run_2_layer_mlp(
-          batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
-        )
-
-        # Check communication cost
-        expected = 2 * (
-            device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) +
-            device_mesh.all_reduce_cost(hidden_dim * 4, 0)) +\
-            device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
-        assert_close(objective, expected)
-        assert_has_reduce_scatter(hlo_ir)
-
-        # Check sharding specification
-        weight0 = optimizer.target["params"]["Dense_0"]["kernel"]
-        weight1 = optimizer.target["params"]["Dense_1"]["kernel"]
-        assert_replicated_column_partitioned(weight0, mesh_shape)
-        assert_replicated_row_partitioned(weight1, mesh_shape)
 
     def test_n_layer_mlp_data_parallel(self):
         num_layers = 6
-        batch_size = 512
-        hidden_dim = 64
+        batch_size = 256
+        hidden_dim = 32
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -315,22 +184,12 @@ class AutoShardingMLPTest(unittest.TestCase):
               num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
             )
 
-            # Check communication cost
-            expected = num_layers * (
-                device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4, i) +
-                device_mesh.all_reduce_cost(hidden_dim * 4, i))
-            assert_close(objective, expected)
-            assert_only_has_allreduce(hlo_ir)
-
-            # Check sharding specification
-            for i in range(num_layers):
-                weight = optimizer.target["params"][f"Dense_{i}"]["kernel"]
-                assert_all_replicated(weight, np.prod(mesh_shape))
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
-        batch_size = 64
-        hidden_dim = 512
+        batch_size = 32
+        hidden_dim = 256
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
@@ -343,7 +202,16 @@ class AutoShardingMLPTest(unittest.TestCase):
             expected = (num_layers - 1) *\
               device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
-            assert_only_has_allreduce(hlo_ir)
+
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+                count_communication_primitives(hlo_ir)
+            if global_config.prefer_reduce_scatter:
+                assert n_all_reduce + n_reduce_scatter == num_layers - 1
+                assert n_reduce_scatter == n_all_gather
+                assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
+            else:
+                assert n_all_reduce == num_layers - 1
+                assert n_total == n_all_reduce
 
             # Check sharding specification
             for k in range(num_layers):
@@ -355,8 +223,8 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def test_n_layer_mlp_2d_mesh(self):
         num_layers = 6
-        batch_size = 512
-        hidden_dim = 64
+        batch_size = 256
+        hidden_dim = 32
 
         # Test on different device meshes
         mesh_shape = [2, 2]
@@ -372,15 +240,59 @@ class AutoShardingMLPTest(unittest.TestCase):
             (num_layers - 1) *\
             device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
-        assert_only_has_allreduce(hlo_ir)
+
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            count_communication_primitives(hlo_ir)
+        if global_config.prefer_reduce_scatter:
+            assert n_all_reduce == num_layers - 1
+            assert n_all_gather == 1
+            assert n_reduce_scatter == 2
+            assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
+        else:
+            assert n_all_reduce == num_layers
+            assert n_total == n_all_reduce
 
         # Check sharding specification
-        for k in range(num_layers):
-            weight = optimizer.target["params"][f"Dense_{k}"]["kernel"]
-            if k % 2 == 0:
-                assert_replicated_column_partitioned(weight, mesh_shape)
-            else:
-                assert_replicated_row_partitioned(weight, mesh_shape)
+        if global_config.prefer_reduce_scatter:
+            for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
+                if len(weight.shape) > 1:
+                    assert_fully_sharded(weight)
+        else:
+            for k in range(num_layers):
+                weight = optimizer.target["params"][f"Dense_{k}"]["kernel"]
+                if k % 2 == 0:
+                    assert_replicated_column_partitioned(weight, mesh_shape)
+                else:
+                    assert_replicated_row_partitioned(weight, mesh_shape)
+
+    def test_n_layer_mlp_force_data_parallel(self):
+        num_layers = 6
+        batch_size = 32
+        hidden_dim = 256
+
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+            global_config.force_batch_dim_to_mesh_dim = i
+            global_config.allow_all_gather = False
+
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            optimizer, hlo_ir, objective = self.run_n_layer_mlp(
+              num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim, device_mesh
+            )
+
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
+
+    def test_n_layer_mlp_data_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_mlp_data_parallel()
+
+    def test_n_layer_mlp_model_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_mlp_model_parallel()
+
+    def test_n_layer_mlp_2d_mesh_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_mlp_2d_mesh()
 
     def test_weight_init(self):
         set_parallelize_options(devices=self.devices)
@@ -417,19 +329,17 @@ class AutoShardingMLPTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_data_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_model_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_2d_mesh"))
-
-    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_reduce_scatter_data_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_reduce_scatter_model_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_2_layer_mlp_reduce_scatter_2d_mesh"))
-
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_data_parallel"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_force_data_parallel"))
+
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))
+    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
 
     suite.addTest(AutoShardingMLPTest("test_weight_init"))
+
     return suite
 
 

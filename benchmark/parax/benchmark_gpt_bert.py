@@ -1,4 +1,5 @@
 import argparse
+import copy
 import gc
 import os
 import time
@@ -15,10 +16,9 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 
-from parax.testing import assert_only_has_allreduce
-from parax.util import run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func
+from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
+                        count_communication_primitives)
 
-import timeit
 
 MB = 1024 ** 2
 GB = 1024 ** 3
@@ -75,8 +75,12 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Model configs
     model_type = args.model
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        mesh_dim1, mesh_dim2 = benchmark_case
+        mesh_dim1, mesh_dim2, force_data_parallel = benchmark_case
     dtype = jnp.float16
+
+    if force_data_parallel:
+        global_config.force_batch_dim_to_mesh_dim = 0
+        global_config.allow_all_gather = False
 
     parameter_count = compute_parameter_count(
         num_layers, hidden_size, vocab_size)
@@ -203,15 +207,15 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()
-    print(f" - #comm {hlo_ir.count('channel_id')}, " +
-          f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
 
     with open("last.hlo", "w") as fout:
         fout.write(hlo_ir)
-    #assert_only_has_allreduce(hlo_ir)
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        count_communication_primitives(hlo_ir)
+    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")
     #print("===== HLO =====")
     #print(hlo_ir)
-    #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     # Log benchmark results
     tflops = compute_tflops(batch_size, seq_len, num_layers,
@@ -220,7 +224,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                             np.mean(costs))
     heads = ["Type", "Case", "Mesh Shape", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
-    values = [model_type, str(benchmark_case[:-2]), str(benchmark_case[-2:]),
+    values = [model_type, str(benchmark_case[:-3]), str(benchmark_case[-3:]),
               f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
@@ -229,27 +233,29 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
+# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2, FD = force_data_parallel
 
 benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1),
-    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, FD
+    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  False),
+    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  False),
 ]
 
 benchmark_suite_4_gpu = [
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1),
-    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, FD
+    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  True),
+    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  False),
 ]
 
 benchmark_suite_16_gpu = [
     # B,  S,    H,    L,  #head,     V,     D1, D2
-    (512, 512,  1024, 10, 1024//64,  25600, 16, 1),
-    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8),
+    (512, 512,  1024, 10, 1024//64,  25600, 16, 1,  False),
+    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,  False),
 ]
 
 def benchmark_all(use_profiling):
@@ -266,7 +272,13 @@ def benchmark_all(use_profiling):
     }
 
     for case in benchmark_suites[int(num_gpus)]:
+        # Backup global config
+        old_global_config = copy.deepcopy(global_config.__dict__)
+
         benchmark_transformer_one_case(case, use_profiling)
+
+        # Restore global config
+        global_config.__dict__ = old_global_config
 
 
 if __name__ == "__main__":
@@ -286,7 +298,7 @@ if __name__ == "__main__":
         jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True
-    global_config.print_xla_compilation_time = False
+    global_config.prefer_reduce_scatter = True
 
     benchmark_all(args.use_profiling)
 

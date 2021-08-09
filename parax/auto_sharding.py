@@ -197,12 +197,13 @@ def compile_with_search(backend,
                 getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # All-reduce options
-            "combiner::all_reduce_threshold": 1 << 30,
+            "combiner::all_gather_threshold": 1 << 60,
+            "combiner::all_reduce_threshold": 1 << 60,
             "combiner::use_continuous_buffer": True,
 
             # Debug options
             "auto_sharding::simplify_graph": True,
-            "auto_sharding::print_strategy": True,
+            "auto_sharding::print_strategy": False,
             "auto_sharding::force_batch_dim_to_mesh_dim":
                 global_config.force_batch_dim_to_mesh_dim,
             "auto_sharding::force_strategy": False,

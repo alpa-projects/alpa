@@ -142,6 +142,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     sys.argv += ["--bert-no-binary-head"]
     sys.argv += ["--DDP-impl", "local" if ddp_impl else "torch"]
     sys.argv += ["--fp16"]
+    sys.argv += ["--loss-scale", "8"]
     if checkpoint_activations:
         sys.argv += ["--checkpoint-activations"]
     initialize_megatron()
@@ -173,8 +174,9 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     # Warmup and reset timers
     run_func()
     timers = get_timers()
-    names = ['forward-compute', 'backward-compute', 'backward-params-all-reduce',
-             'backward-embedding-all-reduce', 'optimizer']
+    #names = ['forward-compute', 'backward-compute', 'backward-params-all-reduce',
+    #         'backward-embedding-all-reduce', 'optimizer']
+    names = list(timers.timers.keys())
     for name in names:
         timers(name).reset()
 

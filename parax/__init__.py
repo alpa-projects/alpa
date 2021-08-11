@@ -10,6 +10,6 @@ from .api import clear_callable_cache, parallelize
 from .device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from .global_env import global_config, set_parallelize_options
 from .pipeline_primitive_def import mark_pipeline, mark_pipeline_jaxpreqn
-from .pipeline_layer_clustering import slice_jaxpr_optimized
+from .pipeline_layer_clustering import forward
 from .util import compute_bytes
 from .xla_pass_context import XlaPassContext

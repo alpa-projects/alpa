@@ -511,8 +511,8 @@ class PhysicalDeviceMesh:
         # Do some argument check
         if not use_ray and not devices:
             raise RuntimeError("`devices` are required for single-host device mesh.")
-        if devices and use_ray:
-            raise RuntimeError("`devices` should not be passed in when using a Ray cluster.")
+        # if devices and use_ray:
+        #     raise RuntimeError("`devices` should not be passed in when using a Ray cluster.")
         if not use_ray:
             self.devices = devices
             self.host_ids = [0]
@@ -523,10 +523,19 @@ class PhysicalDeviceMesh:
 
         if use_ray:
             self.device_strs = []
+            if devices:
+                if len(devices) != len(host_ids):
+                    raise RuntimeError("Please specify the gpu IDs used on each host.")
+                if not all(len(ids) == num_devices_per_host for ids in devices):
+                    raise RuntimeError("Devices specified for each host does not align "
+                                       "with `num_devices_per_host`.")
+            else:
+                devices = [list(range(num_devices_per_host)) for i, _ in enumerate(host_ids)]
+            self.devices = devices
             for i, _ in enumerate(self.host_ids):
                 ip = self.host_info[i]["NodeManagerAddress"]
-                self.device_strs.extend([device_id_to_str(ip, i)
-                                         for i in range(self.num_devices_per_host)])
+                self.device_strs.extend([device_id_to_str(ip, i) for devices_this_host in self.devices
+                                         for i in devices_this_host])
             self._launch_xla_servers()
 
     @property
@@ -555,7 +564,9 @@ class PhysicalDeviceMesh:
                 "NCCL_USE_MULTISTREAM": "False",
                 # "NCCL_SHM_DISABLE": "1",
                 # "TF_CUDA_REMAP_DEVICE_ID": "False"
-                # "NCCL_DEBUG": "INFO"
+                # "NCCL_DEBUG": "INFO",
+                # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
+                # "BETTER_EXCEPTIONS": "1",
             }
 
             # Launch a ray actor
@@ -578,7 +589,7 @@ class PhysicalDeviceMesh:
     @property
     def total_devices(self):
         """Return the total number of GPUs on this mesh."""
-        return len(self.device_ids)
+        return len(self.device_ids_flat)
 
     @property
     def num_hosts(self):
@@ -588,7 +599,16 @@ class PhysicalDeviceMesh:
     @property
     def device_ids(self):
         """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.device_strs]
+        if not self.use_ray:
+            return [self.devices]
+        else:
+            return self.devices
+
+    @property
+    def device_ids_flat(self):
+        """Return the flattened device ids (do not distinguish host IPs)."""
+        ids = [id for device_ids_this_host in self.device_ids for id in device_ids_this_host]
+        return ids
 
     @property
     def is_distributed(self):
@@ -912,25 +932,37 @@ class VirtualMesh:
                  host_ids=None,
                  host_info=None,
                  head_ip=None,
-                 num_devices_per_host=1):
+                 num_devices_per_host=1,
+                 devices=None):
         self.host_ids = host_ids
         self.host_info = host_info
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
 
+        if devices:
+            if len(devices) != len(host_ids):
+                raise RuntimeError("Please specify the gpu IDs used on each host.")
+            if not all(len(ids) == num_devices_per_host for ids in devices):
+                raise RuntimeError("Device IDs specified for each host does not align "
+                                   "with `num_devices_per_host`.")
+        else:
+            devices = [list(range(num_devices_per_host)) for _ in host_ids]
+
+        self.devices = devices
+        # Depending on gpu_ids, generate device strs and ask Ray to allocate.
         self.device_strs = []
         for i, _ in enumerate(self.host_ids):
             ip = self.host_info[i]["NodeManagerAddress"]
-            self.device_strs.extend([device_id_to_str(ip, i)
-                                     for i in range(self.num_devices_per_host)])
+            self.device_strs.extend([device_id_to_str(ip, i) for devices_this_host in devices
+                                     for i in devices_this_host])
 
     def slice(self, dim, indices):
         """
         Slice a mesh given the slicing config.
 
         Args:
-            dim (int): which dimension to slice from, num_host or num_gpu
-            indices (List[int]):
+            dim (int): which dimension to slice from, 0 is host or 1 is the gpu
+            indices (List[int]): indices to include along this dimension.
 
         Returns:
             mesh (PhysicalDeviceMesh)
@@ -944,12 +976,13 @@ class VirtualMesh:
         else:
             # slicing along the device dimension
             return VirtualMesh(host_ids=self.host_ids, host_info=self.host_info,
-                               head_ip=self.head_ip, num_devices_per_host=len(indices))
+                               head_ip=self.head_ip, num_devices_per_host=len(indices[0]),
+                               devices=indices)
 
     @property
     def total_devices(self):
         """Return the total number of GPUs on this mesh."""
-        return len(self.device_ids)
+        return len(self.device_ids_flat)
 
     @property
     def num_hosts(self):
@@ -959,7 +992,13 @@ class VirtualMesh:
     @property
     def device_ids(self):
         """Return the device ids (does not distinguish host IPs)."""
-        return [device_str_to_id(device_str) for device_str in self.device_strs]
+        return self.devices
+
+    @property
+    def device_ids_flat(self):
+        """Return the flattened device ids (do not distinguish host IPs)."""
+        ids = [id for device_ids_this_host in self.device_ids for id in device_ids_this_host]
+        return ids
 
     @property
     def is_distributed(self):
@@ -972,6 +1011,7 @@ class VirtualMesh:
                                   host_info=self.host_info,
                                   head_ip=self.head_ip,
                                   num_devices_per_host=self.num_devices_per_host,
+                                  devices=self.device_ids,
                                   use_ray=True)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):

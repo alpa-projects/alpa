@@ -759,7 +759,7 @@ class GpipeSchedule:
                 mesh_idx = i % num_mesh_per_host
                 ind = list(range(num_device_per_host))
                 mesh = original_mesh.slice(0, [host_idx])\
-                    .slice(1, ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) * num_device_per_mesh])
+                    .slice(1, [ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) * num_device_per_mesh]])
                 output_meshes.append(mesh)
         else:
             num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)

@@ -230,7 +230,7 @@ class ReshardingTask:
             # we need to find out its mesh_worker, and the corresponded sender remotebuf (uuid-indexed).
             sender_buf = self.src_array.remote_buffers[self.task_spec.src.device_str_to_flat_index[sender]]
             sender_worker = self.collective_group.device_str_to_mesh_worker_map[sender]
-            assert sender_buf.device_id == int(sender[-1])
+            # assert sender_buf.device_id == i
             sender_rank, sender_gpu_idx = self.collective_group.device_str_to_rank_map[sender]
             # launch NCCL send/recv
             tile = src_tiles[i]

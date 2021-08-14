@@ -2,14 +2,16 @@ import argparse
 
 from util import run_cmd
 
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size,
-# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DPI = ddp_implementation,
-# CK = checkpoint_activations
+# B = global_batch_size, S = seq_len,
+# H = hidden_size, L = num_layers, V = vocab_size, #head = num_heads,
+# DP = data_parallel, TP = tensor_model_parallel, PP = pipeline_model_parallel,
+# NB = num_micro_batches
+# DI = ddp_implementation, CK = checkpoint_activations
 
 benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,   1,   0),
-    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,   1,   0),
+    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
+    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  1,  1,  1,  0),
+    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  1,  1,  1,  0),
 ]
 
 benchmark_suite_4_gpu = [
@@ -17,15 +19,20 @@ benchmark_suite_4_gpu = [
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,   1,   0),
-    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,   1,   0),
+    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
+    (128, 512,  1024, 24, 1024//64,  32000, 8,  1,  1,  1,  1,  0),
+    (256, 512,  1024, 24, 1024//64,  32000, 8,  1,  1,  2,  1,  0),
+    (8,   1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  1,  1,  0),
+    (16,  1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  2,  1,  0),
+    (256, 1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  32, 1,  0),
 ]
 
 benchmark_suite_16_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
-    (512, 512,  1024, 10, 1024//64,  25600, 16, 1,   1,   0),
-    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,   1,   0),
+    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
+    (256, 512,  1024, 24, 1024//64,  32000, 16, 1,  1,  1,  1,  0),
+    (512, 512,  1024, 24, 1024//64,  32000, 16, 1,  1,  2,  1,  0),
+    (16,  1024, 4096, 20, 4096//128, 32000, 2,  8,  1,  1,  1,  0),
+    (256, 1024, 4096, 20, 4096//128, 32000, 2,  8,  1,  16, 1,  0),
 ]
 
 

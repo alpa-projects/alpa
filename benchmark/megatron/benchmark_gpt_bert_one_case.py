@@ -120,17 +120,19 @@ def get_bert_functions():
 
 def benchmark_gpt_bert_one_case(benchmark_case):
     # Model configs
-    model_type, batch_size, seq_len, hidden_size, num_layers, num_heads, \
-        vocab_size, dp_size, tensor_mp_size, ddp_impl, checkpoint_activations \
-        = benchmark_case
+    model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,\
+        vocab_size, dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches,\
+        ddp_impl, checkpoint_activations = benchmark_case
+
+    assert global_batch_size % (dp_size * num_micro_batches) == 0
+    micro_batch_size = global_batch_size // dp_size // num_micro_batches
 
     # Parallel configs
-    micro_batch_size = batch_size // dp_size
-
     # Initialize megatron
     sys.argv += ["--micro-batch-size", str(micro_batch_size)]
     sys.argv += ["--tensor-model-parallel-size", str(tensor_mp_size)]
-    sys.argv += ["--global-batch-size", str(batch_size)]
+    sys.argv += ["--pipeline-model-parallel-size", str(pipeline_mp_size)]
+    sys.argv += ["--global-batch-size", str(global_batch_size)]
     sys.argv += ["--num-layers", str(num_layers)]
     sys.argv += ["--hidden-size", str(hidden_size)]
     sys.argv += ["--num-attention-heads", str(num_heads)]
@@ -142,6 +144,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     sys.argv += ["--bert-no-binary-head"]
     sys.argv += ["--DDP-impl", "local" if ddp_impl else "torch"]
     sys.argv += ["--fp16"]
+    sys.argv += ["--loss-scale", "8"]
     if checkpoint_activations:
         sys.argv += ["--checkpoint-activations"]
     initialize_megatron()
@@ -152,6 +155,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     # Check initialization
     assert dp_size == mpu.get_data_parallel_world_size()
     assert tensor_mp_size == mpu.get_tensor_model_parallel_world_size()
+    assert pipeline_mp_size == mpu.get_pipeline_model_parallel_world_size()
 
     # Build model
     if model_type == "gpt":
@@ -173,14 +177,13 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     # Warmup and reset timers
     run_func()
     timers = get_timers()
-    names = ['forward-compute', 'backward-compute', 'backward-params-all-reduce',
-             'backward-embedding-all-reduce', 'optimizer']
+    names = list(timers.timers.keys())
     for name in names:
         timers(name).reset()
 
     # Benchmark step time
-    repeat = 3
-    number = 3
+    repeat = 10
+    number = 1
     costs = benchmark_func(run_func, sync_func=None,
                            warmup=0, repeat=repeat, number=number)
     timers.log(names, normalizer=repeat * number)
@@ -188,14 +191,14 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     # Print results
     if rank == 0:
         peak_mem = torch.cuda.max_memory_allocated(0)
-        tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
+        tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
                                     hidden_size, vocab_size,
                                     torch.distributed.get_world_size(),
                                     np.mean(costs))
         heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Checkpointing",
                  "Parameter Count", "Peak Mem", "Mean Time", "Std Time", "TFLOPS"]
-        values = [model_type, str(benchmark_case[1:-4]),
-                  str((dp_size, tensor_mp_size)),
+        values = [model_type, str(benchmark_case[1:-6]),
+                  str((dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches)),
                   "local" if ddp_impl else "torch",
                   str(checkpoint_activations),
                   f"{parameter_count/1e9:.3f}", f"{peak_mem/GB:5.3f}",

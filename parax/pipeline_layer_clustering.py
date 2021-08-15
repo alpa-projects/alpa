@@ -55,21 +55,6 @@ def eqn_flops(eqn : JaxprEqn) -> float:
     properties = xc._xla.hlo_module_cost_analysis(gpu_backend, hlo_module)
     return properties["flops"] if "flops" in properties else 0.0
 
-def clusters_edges_cost(starts : List[List['JaxprEqn']], end : List['JaxprEqn']): # from a list of culsters, to a cluster.
-    out_tensors = set()
-    for start in starts:
-      for eqn in start:
-        out_tensors = out_tensors.union(set(eqn.outvars))
-    in_tensors = set()
-    for eqn in end:
-      for invar in eqn.invars:
-        if isinstance(invar, Var) and invar in out_tensors:
-          in_tensors.add(invar)
-    acc = 0
-    for in_tensor in in_tensors:
-      acc += in_tensor.aval.size
-    return acc
-
 def cluster_edges_cost(start : List['JaxprEqn'], end : List['JaxprEqn']):
     out_tensors = set()
     for eqn in start:
@@ -81,7 +66,7 @@ def cluster_edges_cost(start : List['JaxprEqn'], end : List['JaxprEqn']):
           in_tensors.add(invar)
     acc = 0
     for in_tensor in in_tensors:
-      acc += in_tensor.aval.size
+      acc += in_tensor.aval.size * in_tensor.aval.dtype.itemsize
     return acc
 
 def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):

@@ -14,8 +14,6 @@ from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceM
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
-MB = 1024 ** 2
-
 
 def assert_close(x, y):
     assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"

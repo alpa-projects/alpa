@@ -124,10 +124,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         model = FlaxBertForMaskedLMModule(BertConfig(
             num_hidden_layers=num_layers,
-            vocab_size=vocab_size,
             hidden_size=hidden_size,
-            num_attention_heads=num_heads,
             intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            max_position_embeddings=seq_len,
         ))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, input_ids, attention_mask, token_type_ids, position_ids)
@@ -360,6 +361,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         vocab_size = 512
         deterministic = False
         global_config.allow_all_gather = False  # Temporary hack
+        global_config.allow_all_to_all = False  # Temporary hack
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):

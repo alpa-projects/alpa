@@ -148,20 +148,22 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Init model and optimizer
     if model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            max_position_embeddings=seq_len,
             type_vocab_size=0,
         ), dtype=dtype)
     elif model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            max_position_embeddings=seq_len,
             type_vocab_size=0,
         ), dtype=dtype)
     else:

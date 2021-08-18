@@ -17,11 +17,9 @@ class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         assert len(jax.local_devices()) >= 4
-        # self.devices = tuple(jax.local_devices()[:4])
-        self.devices = FrozenDict({
-            "1": tuple(jax.local_devices()[0:2]),
-            "2": tuple(jax.local_devices()[2:4]),
-        })
+        device_cluster = DeviceCluster()
+        mesh = device_cluster.get_virtual_mesh()
+        self.devices = mesh
         ray.init(address='auto')
 
     def tearDown(self):
@@ -81,12 +79,10 @@ class PipelineMLPTest(unittest.TestCase):
 
     @unittest.skip("Temporarily disable it")
     def test_2_layer_mlp_distributed_pipeline_parallel(self):
-        self.train_2_layer_mlp("distributed_pipeline_parallel")
+        self.train_2_layer_mlp(self.devices, "distributed_pipeline_parallel")
 
     def test_2_layer_mlp_3d_parallel(self):
-        device_cluster = DeviceCluster()
-        mesh = device_cluster.get_virtual_mesh()
-        self.train_2_layer_mlp(mesh, "3d_parallel")
+        self.train_2_layer_mlp(self.devices, "3d_parallel")
 
 
 def suite():

@@ -80,7 +80,7 @@ class PipelineBERTTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_mask}, model.apply)
         pipelined_train_step = parallelize(donate_argnums=())(train_step)
-        gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
+        gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_mask}, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 
     def test_2_layer_bert_pipeline_parallel(self):

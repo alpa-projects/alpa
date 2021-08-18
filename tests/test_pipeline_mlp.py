@@ -17,10 +17,10 @@ class PipelineMLPTest(unittest.TestCase):
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         assert len(jax.local_devices()) >= 4
+        ray.init(address='auto')
         device_cluster = DeviceCluster()
         mesh = device_cluster.get_virtual_mesh()
         self.devices = mesh
-        ray.init(address='auto')
 
     def tearDown(self):
         ray.shutdown()

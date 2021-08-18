@@ -63,9 +63,9 @@ class PipelineBERTTest(unittest.TestCase):
             return grad_param
 
         batch_size = 4
-        seq_len = 2048
-        hidden_size = 1024
-        num_heads = 1024 // 64
+        seq_len = 128
+        hidden_size = 128
+        num_heads = 4
 
         x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
         y = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23 # * np.arange(hidden_size)[None, None, :]

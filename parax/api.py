@@ -19,8 +19,7 @@ from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMe
 from parax.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
-from parax.pipeline_parallel import pipeline_parallel_callable, \
-    distributed_pipeline_parallel_callable
+from parax.pipeline_parallel import pipeline_parallel_callable
 from parax.three_d_parallel import three_d_parallel_callable
 
 
@@ -225,8 +224,6 @@ def auto_parallel_callable(
         )
     elif strategy == "pipeline_parallel":
         return pipeline_parallel_callable(fun, devices, *avals)
-    elif strategy == "distributed_pipeline_parallel":
-        return distributed_pipeline_parallel_callable(fun, *avals)
     elif strategy == "3d_parallel":
         # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
         assert not global_config.search_logical_mesh_shape

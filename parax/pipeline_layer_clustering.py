@@ -27,7 +27,7 @@ def call_to_xla_computation(eqn : JaxprEqn):
   op_metadata = xla.make_op_metadata(prim, eqn.params)
   c.set_op_metadata(op_metadata)
   xla_args, _ = xla._xla_callable_args(
-      c, list(map(lambda x : x.aval, eqn.invars)), 
+      c, list(map(lambda x : x.aval, eqn.invars)),
       len(eqn.invars) > 100)
   axis_env = xla.AxisEnv(1, (), ())
 
@@ -49,7 +49,7 @@ def call_to_xla_computation(eqn : JaxprEqn):
 def eqn_flops(eqn : JaxprEqn) -> float:
     if eqn.primitive in xla.call_translations:
       xla_computation = call_to_xla_computation(eqn)
-    else: 
+    else:
       xla_computation = xla.primitive_subcomputation(eqn.primitive, *map(lambda x : x.aval, eqn.invars), **eqn.params)
     hlo_module = xla_computation.as_hlo_module()
     properties = xc._xla.hlo_module_cost_analysis(gpu_backend, hlo_module)
@@ -91,7 +91,7 @@ def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
     heavy_op_bound = np.sum(weights) * 0.01
     LAYER_HEAVY_OP_BOUND = np.count_nonzero(weights >= heavy_op_bound) / layer_num
     # TODO(yonghao): if LAYER_HEAVY_OP_BOUND <= 2, layer num too large
-    LAYER_HEAVY_OP_BOUND = int(max(LAYER_HEAVY_OP_BOUND + 2, 
+    LAYER_HEAVY_OP_BOUND = int(max(LAYER_HEAVY_OP_BOUND + 2,
                                    LAYER_HEAVY_OP_BOUND * (1 + eps)))
 
     @numba.jit(nopython=True)
@@ -103,7 +103,7 @@ def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
       for l in range(1, length + 1):
         cnt = 0
         for r in range(l, length + 1):
-          if weights[r - 1] >= heavy_op_bound: 
+          if weights[r - 1] >= heavy_op_bound:
             cnt += 1
           if cnt < 1: continue
           elif cnt <= LAYER_HEAVY_OP_BOUND:
@@ -117,7 +117,7 @@ def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
               A[r, q] = new_value
               A_argmin[r, q] = k
       return A_argmin
-    
+
     A_argmin = DP(C)
 
     reversed_sliced_eqns = []

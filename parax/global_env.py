@@ -10,7 +10,7 @@ class GlobalConfig:
     """
 
     def __init__(self):
-        ########## Options for @parallelize decorator ########## 
+        ########## Options for @parallelize decorator ##########
         self.devices = None
         self.strategy = "auto_sharding_parallel"
         self.memory_budget_per_device = None
@@ -24,20 +24,20 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
-        ########## Options for auto-sharding solver ########## 
+        ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Do not allow all-gather during re-sharding.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
         self.force_batch_dim_to_mesh_dim = -1 # Forcely map the batch dim to a tensor dim
 
-        ########## Options for benchmark ########## 
+        ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.
         # This will produce wrong results but is acceptable for
         # data-independent benchmarks.
         self.use_dummy_value_for_benchmarking = False
 
-        ########## Options for logging ########## 
+        ########## Options for logging ##########
         self.print_xla_compilation_time = False
 
 
@@ -61,7 +61,7 @@ def set_parallelize_options(devices=None,
       strategy (str): The parallelization strategy.
         Possible choices: {"auto_sharding_parallel",
         "pmap_data_parallel", "shard_data_parallel",
-        "pipeline_parallel", "distributed_pipeline_parallel", "3d_parallel"}.
+        "pipeline_parallel", "3d_parallel"}.
       memory_budget_per_device (Optional[float]): The memory budget of one device in bytes.
       search_logical_mesh_shape (bool): Whether to include the choices of logical mesh shape
         into the search space.

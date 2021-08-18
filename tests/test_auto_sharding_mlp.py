@@ -33,6 +33,11 @@ def assert_row_partitioned(x, num_chunks, mesh_dim):
     assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)
 
 
+def assert_expert_partitioned(x, num_chunks, mesh_dim):
+    assert x.sharding_spec.sharding == (Chunked([num_chunks]), NoSharding(), NoSharding())
+    assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)
+
+
 def assert_replicated_column_partitioned(x, mesh_shape):
     assert x.sharding_spec.sharding == (NoSharding(), Chunked([mesh_shape[1]]))
     assert x.sharding_spec.mesh_mapping[0] == Replicated(mesh_shape[0])
@@ -81,7 +86,7 @@ def assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, mesh_di
                    for x in params)
     assert_close(objective, expected)
 
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir)
     if global_config.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
@@ -201,7 +206,7 @@ class AutoShardingMLPTest(unittest.TestCase):
               device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(hlo_ir)
             if global_config.prefer_reduce_scatter:
                 assert n_all_reduce + n_reduce_scatter == num_layers - 1
@@ -239,7 +244,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
         assert_close(objective, expected)
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == num_layers - 1
@@ -344,4 +349,3 @@ def suite():
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

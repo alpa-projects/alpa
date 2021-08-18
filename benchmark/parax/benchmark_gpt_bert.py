@@ -212,7 +212,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     with open("last.hlo", "w") as fout:
         fout.write(hlo_ir)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
           f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")

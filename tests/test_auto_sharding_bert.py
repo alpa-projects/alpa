@@ -187,7 +187,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(hlo_ir)
             if global_config.prefer_reduce_scatter:
                 assert n_total == num_layers * 4 - 1
@@ -237,7 +237,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1) * (num_layers * 4 - 1)
         assert_close(objective, expected)
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
@@ -330,7 +330,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * 4 / mesh_shape[0], 1) * 2
 
         assert_close(objective, expected)
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         assert n_total == n_all_reduce
 
@@ -386,7 +386,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
               device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * num_layers * 4
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(hlo_ir)
 
             # real number of all-reduce = transformers (4 * num_layers) + log_softmax (2) +
@@ -434,7 +434,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             num_heads, vocab_size, deterministic, device_mesh)
 
         # Check communication cost.
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == 4 * num_layers + 2 + 2

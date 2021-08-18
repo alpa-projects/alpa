@@ -51,13 +51,13 @@ class PipelineBERTTest(unittest.TestCase):
                 return x
 
         def train_step(optimizer, batch, apply_fn):
-            def loss_func(params, x, y):
-                out = apply_fn(params, x)
+            def loss_func(params, x, y, attention_mask):
+                out = apply_fn(params, x, attention_mask)
                 loss = jnp.mean((out - y) ** 2)
                 loss, = mark_pipeline(loss, name='2', mark_type='end')
                 return loss
 
-            grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'])
+            grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'], batch['attention_mask'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param

@@ -76,7 +76,7 @@ class PipelineBERTTest(unittest.TestCase):
             hidden_size=hidden_size,
             num_attention_heads=num_heads))
         rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, x)
+        params = model.init(rngkey, x, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y, "attention_mask": attention_mask}, model.apply)
         pipelined_train_step = parallelize(donate_argnums=())(train_step)

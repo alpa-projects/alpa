@@ -9,7 +9,6 @@ from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_primitive_def import pipeline_p
 from parax.pipeline_stage import PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_pipeline_marks
-from parax.pipe import JaxPipeline
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -122,22 +121,3 @@ def pipeline_parallel_callable(
                            for stage in jax_pipeline_stages]
     return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)
 
-
-@lu.cache
-def distributed_pipeline_parallel_callable(
-        fun: lu.WrappedFun,
-        *avals
-):
-    """Distributed pipeline parallel callable."""
-    with jax.disable_jit():
-        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
-    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
-    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage)
-                           for stage in jax_pipeline_stages]
-    jp = JaxPipeline(pipeline_stages=xla_pipeline_stages,
-                     global_invars=global_invars,
-                     global_outvars=global_outvars)
-    return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda

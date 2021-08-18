@@ -15,8 +15,9 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 
-from parax.model.bert_model import (FlaxBertAttention, FlaxBertAttention, FlaxBertIntermediate, FlaxBertOutput,
-    FlaxMaskedLMOutput)
+from parax.model.bert_model import (FlaxBaseModelOutput, FlaxBaseModelOutputWithPooling,
+    FlaxBertAttention, FlaxBertEmbeddings, FlaxBertIntermediate, FlaxBertLayer,
+    FlaxBertOutput, FlaxMaskedLMOutput)
 
 
 class MoEConfig:
@@ -107,7 +108,7 @@ class FlaxPositionWiseMoELayer(nn.Module):
         return outputs
 
 
-class FlaxMoeLayer(nn.Module):
+class FlaxMoELayer(nn.Module):
     config: MoEConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
@@ -133,14 +134,21 @@ class FlaxMoeLayer(nn.Module):
             outputs += (attention_outputs[1],)
         return outputs
 
-class FlaxBertLayerCollection(nn.Module):
+
+class FlaxMoELayerCollection(nn.Module):
     config: MoEConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
-        self.layers = [
-            FlaxBertLayer(self.config, name=str(i), dtype=self.dtype) for i in range(self.config.num_hidden_layers)
-        ]
+        assert self.config.num_hidden_layers % 2 == 0
+
+        layers = []
+        for i in range(self.config.num_hidden_layers):
+            if i % 2 == 0:
+                layers.append(FlaxMoELayer(self.config, name=str(i), dtype=self.dtype))
+            else:
+                layers.append(FlaxBertLayer(self.config, name=str(i), dtype=self.dtype))
+        self.layers = layers
 
     def __call__(
         self,
@@ -177,6 +185,82 @@ class FlaxBertLayerCollection(nn.Module):
 
         return FlaxBaseModelOutput(
             last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=all_attentions
+        )
+
+
+class FlaxMoEEncoder(nn.Module):
+    config: MoEConfig
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+
+    def setup(self):
+        self.layer = FlaxMoELayerCollection(self.config, dtype=self.dtype)
+
+    def __call__(
+        self,
+        hidden_states,
+        attention_mask,
+        deterministic: bool = True,
+        output_attentions: bool = False,
+        output_hidden_states: bool = False,
+        return_dict: bool = True,
+    ):
+        return self.layer(
+            hidden_states,
+            attention_mask,
+            deterministic=deterministic,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+
+class FlaxMoEModule(nn.Module):
+    config: MoEConfig
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    add_pooling_layer: bool = True
+
+    def setup(self):
+        self.embeddings = FlaxBertEmbeddings(self.config, dtype=self.dtype)
+        self.encoder = FlaxMoEEncoder(self.config, dtype=self.dtype)
+        if self.add_pooling_layer:
+            self.pooler = FlaxBertPooler(self.config, dtype=self.dtype)
+
+    def __call__(
+        self,
+        input_ids,
+        attention_mask,
+        token_type_ids,
+        position_ids,
+        deterministic: bool = True,
+        output_attentions: bool = False,
+        output_hidden_states: bool = False,
+        return_dict: bool = True,
+    ):
+        hidden_states = self.embeddings(
+            input_ids, token_type_ids, position_ids, attention_mask, deterministic=deterministic
+        )
+        outputs = self.encoder(
+            hidden_states,
+            attention_mask,
+            deterministic=deterministic,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = outputs[0]
+        pooled = self.pooler(hidden_states) if self.add_pooling_layer else None
+
+        if not return_dict:
+            # if pooled is None, don't return it
+            if pooled is None:
+                return (hidden_states,) + outputs[1:]
+            return (hidden_states, pooled) + outputs[1:]
+
+        return FlaxBaseModelOutputWithPooling(
+            last_hidden_state=hidden_states,
+            pooler_output=pooled,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
 
 

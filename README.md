@@ -58,7 +58,7 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_parallel/xla_custom_call_marker/README.md))
   ```bash
-  cd parax/xla_custom_call_marker
+  cd parax/pipeline_parallel/xla_custom_call_marker
   bash build.sh
   ```
 

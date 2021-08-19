@@ -56,9 +56,9 @@ This repo depends on our private fork of jax and tensorflow.
   pip3 install -e .
   ```
 
-- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_custom_call/README.md))
+- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_parallel/xla_custom_call_marker/README.md))
   ```bash
-  cd parax/pipeline_custom_call
+  cd parax/xla_custom_call_marker
   bash build.sh
   ```
 

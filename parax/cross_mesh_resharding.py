@@ -9,7 +9,7 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
 from parax.device_mesh import DistributedArray, RemoteBufferRef
-from parax.pipeline_stage import XlaShardedPipelineStage
+from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 
 
 class VirtualDistributedArray:

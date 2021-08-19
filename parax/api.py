@@ -19,7 +19,7 @@ from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMe
 from parax.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
-from parax.pipeline_parallel import pipeline_parallel_callable
+from parax.pipeline_parallel.callable import pipeline_parallel_callable
 from parax.three_d_parallel import three_d_parallel_callable
 
 

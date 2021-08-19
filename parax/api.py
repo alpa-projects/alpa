@@ -22,14 +22,11 @@ from parax.measure_record import SearchTask, load_best_record
 from parax.pipeline_parallel.callable import pipeline_parallel_callable
 from parax.three_d_parallel import three_d_parallel_callable
 
-
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None,
-                donate_argnums="auto",
-                static_argnums="auto"):
+def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
     """
     Automatically parallelize a jax function.
 
@@ -42,6 +39,7 @@ def parallelize(fun=None,
     """
 
     def decorate_fun(fun):
+
         @wraps(fun)
         def ret_func(*args, **kwargs):
             return_value_mode = kwargs.pop("__return_value_mode", "normal")
@@ -55,7 +53,9 @@ def parallelize(fun=None,
                 static_argnums = util.auto_static_argnums(args)
 
             if static_argnums:
-                dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+                dyn_argnums = [
+                    i for i in range(len(args)) if i not in static_argnums
+                ]
                 # Freeze static dict to make it hashable
                 frozen_args = []
                 for i, arg in enumerate(args):
@@ -71,7 +71,8 @@ def parallelize(fun=None,
             args_flat, in_tree = tree_flatten(dyn_args)
             f, out_tree = flatten_fun_nokwargs(f, in_tree)
             # pylint: disable=unnecessary-lambda
-            out_tree_hashable = HashableFunction(lambda: out_tree(), closure=None)
+            out_tree_hashable = HashableFunction(lambda: out_tree(),
+                                                 closure=None)
 
             # Deal with donate argnums
             nonlocal donate_argnums
@@ -90,10 +91,9 @@ def parallelize(fun=None,
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = auto_parallel_callable(
-                f, in_tree, out_tree_hashable, donated_invars,
-                devices, global_config.strategy,
-                global_config.memory_budget_per_device, *abstract_args
-            )
+                f, in_tree, out_tree_hashable, donated_invars, devices,
+                global_config.strategy, global_config.memory_budget_per_device,
+                *abstract_args)
 
             if return_value_mode == "normal":
                 # Execute the compiled func and return results
@@ -109,7 +109,8 @@ def parallelize(fun=None,
                 # Return the compiled executable
                 return compiled_func.args[0]
             else:
-                raise ValueError(f"Invalid return_value_mode: {return_value_mode}")
+                raise ValueError(
+                    f"Invalid return_value_mode: {return_value_mode}")
 
         @wraps(fun)
         def preshard_dynamic_args(*args, **kwargs):
@@ -170,7 +171,8 @@ def auto_parallel_callable(
 
             if global_config.search_logical_mesh_shape:
                 # Check cached strategy folder
-                compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
+                compute_key = get_compute_key(fun, in_tree, donated_invars,
+                                              *avals)
                 device_key = physical_mesh.get_signature()
                 search_task = SearchTask(compute_key, device_key)
                 record_file = global_config.mesh_shape_search_log_file
@@ -187,50 +189,49 @@ def auto_parallel_callable(
                     for i in range(1, total_devices):
                         if total_devices % i == 0:
                             logical_mesh_shape = (total_devices // i, i)
-                            logical_mesh_choices.append(physical_mesh.get_logical_mesh(
-                                mesh_shape=logical_mesh_shape,
-                                # TODO(lmzheng): export this as an arugment in
-                                # set_parallelize_options or physical_mesh.
-                                #mesh_alpha=[1,1],
-                                #mesh_beta=[1,1]))
-                                mesh_topology="tree",
-                                inter_host_bandwidth=1,
-                                intra_host_bandwidth=30))
+                            logical_mesh_choices.append(
+                                physical_mesh.get_logical_mesh(
+                                    mesh_shape=logical_mesh_shape,
+                                    # TODO(lmzheng): export this as an arugment in
+                                    # set_parallelize_options or physical_mesh.
+                                    #mesh_alpha=[1,1],
+                                    #mesh_beta=[1,1]))
+                                    mesh_topology="tree",
+                                    inter_host_bandwidth=1,
+                                    intra_host_bandwidth=30))
                 else:
                     logical_mesh_choices = []
                     strategy_config = inp.config
             else:
-                logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+                logical_mesh_choices = [
+                    physical_mesh.get_default_logical_mesh()
+                ]
         elif isinstance(devices, LogicalDeviceMesh):
             physical_mesh = devices.physical_mesh
             logical_mesh_choices = [devices]
         else:
             raise ValueError("Invalid value of devices")
 
-        return auto_sharding_callable(
-            fun, in_tree, out_tree_thunk, donated_invars,
-            physical_mesh, logical_mesh_choices,
-            global_config.mesh_shape_search_mode,
-            memory_budget_per_device,
-            search_task, record_file, strategy_config, *avals
-        )
+        return auto_sharding_callable(fun, in_tree, out_tree_thunk,
+                                      donated_invars, physical_mesh,
+                                      logical_mesh_choices,
+                                      global_config.mesh_shape_search_mode,
+                                      memory_budget_per_device, search_task,
+                                      record_file, strategy_config, *avals)
     elif strategy == "shard_data_parallel":
-        return shard_data_parallel_callable(
-            fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
-        )
+        return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,
+                                            devices, donated_invars, *avals)
     elif strategy == "pmap_data_parallel":
-        return pmap_data_parallel_callable(
-            fun, in_tree, out_tree_thunk, devices, donated_invars, *avals
-        )
+        return pmap_data_parallel_callable(fun, in_tree, out_tree_thunk,
+                                           devices, donated_invars, *avals)
     elif strategy == "pipeline_parallel":
         return pipeline_parallel_callable(fun, devices, *avals)
     elif strategy == "3d_parallel":
         # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
         assert not global_config.search_logical_mesh_shape
-        return three_d_parallel_callable(
-            fun, in_tree, out_tree_thunk, devices, donated_invars,
-            memory_budget_per_device, *avals
-        )
+        return three_d_parallel_callable(fun, in_tree, out_tree_thunk, devices,
+                                         donated_invars,
+                                         memory_budget_per_device, *avals)
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)
 

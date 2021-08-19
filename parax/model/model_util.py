@@ -56,7 +56,8 @@ class ModelOutput(OrderedDict):
         ), f"{self.__class__.__name__} should not have more than one required field."
 
         first_field = getattr(self, class_fields[0].name)
-        other_fields_are_none = all(getattr(self, field.name) is None for field in class_fields[1:])
+        other_fields_are_none = all(
+            getattr(self, field.name) is None for field in class_fields[1:])
 
         if other_fields_are_none and not is_tensor(first_field):
             try:
@@ -69,11 +70,9 @@ class ModelOutput(OrderedDict):
             # set the associated fields
             if first_field_iterator:
                 for element in iterator:
-                    if (
-                        not isinstance(element, (list, tuple))
-                        or not len(element) == 2
-                        or not isinstance(element[0], str)
-                    ):
+                    if (not isinstance(element, (list, tuple)) or
+                            not len(element) == 2 or
+                            not isinstance(element[0], str)):
                         break
                     setattr(self, element[0], element[1])
                     if element[1] is not None:
@@ -87,16 +86,23 @@ class ModelOutput(OrderedDict):
                     self[field.name] = v
 
     def __delitem__(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``__delitem__`` on a {self.__class__.__name__} instance.")
+        raise Exception(
+            f"You cannot use ``__delitem__`` on a {self.__class__.__name__} instance."
+        )
 
     def setdefault(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``setdefault`` on a {self.__class__.__name__} instance.")
+        raise Exception(
+            f"You cannot use ``setdefault`` on a {self.__class__.__name__} instance."
+        )
 
     def pop(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``pop`` on a {self.__class__.__name__} instance.")
+        raise Exception(
+            f"You cannot use ``pop`` on a {self.__class__.__name__} instance.")
 
     def update(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``update`` on a {self.__class__.__name__} instance.")
+        raise Exception(
+            f"You cannot use ``update`` on a {self.__class__.__name__} instance."
+        )
 
     def __getitem__(self, k):
         if isinstance(k, str):
@@ -202,7 +208,6 @@ class FlaxBertForPreTrainingOutput(ModelOutput):
     attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
 
 
-
 @flax.struct.dataclass
 class FlaxMaskedLMOutput(ModelOutput):
     """
@@ -225,6 +230,6 @@ class FlaxMaskedLMOutput(ModelOutput):
     hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
     attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
 
+
 def softmax_cross_entropy(logits, labels):
     return -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
-

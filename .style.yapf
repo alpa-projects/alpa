@@ -1,0 +1,4 @@
+[style]
+based_on_style = google
+indent_dictionary_value = true
+allow_split_before_dict_value = false

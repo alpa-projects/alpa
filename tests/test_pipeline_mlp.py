@@ -11,9 +11,11 @@ import ray
 from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster
 from parax.testing import assert_allclose
 
-MB = 1024 ** 2
+MB = 1024**2
+
 
 class PipelineMLPTest(unittest.TestCase):
+
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         assert len(jax.local_devices()) >= 4
@@ -46,13 +48,17 @@ class PipelineMLPTest(unittest.TestCase):
                 return x
 
         def train_step(optimizer, batch, apply_fn):
+
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
-                loss = jnp.mean((out - y) ** 2)
+                loss = jnp.mean((out - y)**2)
                 loss, = mark_pipeline(loss, name='2', mark_type='end')
                 return loss
 
-            grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'])
+            grad_param, grad_x = jax.grad(loss_func,
+                                          argnums=(0, 1))(optimizer.target,
+                                                          batch['x'],
+                                                          batch['y'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
@@ -71,7 +77,10 @@ class PipelineMLPTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
         pipelined_train_step = parallelize(donate_argnums=())(train_step)
-        gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
+        gradients_with_pipeline = pipelined_train_step(optimizer, {
+            "x": x,
+            "y": y
+        }, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 
     def test_2_layer_mlp_pipeline_parallel(self):

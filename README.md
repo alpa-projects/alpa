@@ -77,14 +77,19 @@ Organization
 - `tests`: unit tests
 
 
-Linting
+Formatting & Linting
 ============
-Install prospector via:
-```python
-pip install prospector
+Install prospector and yapf via:
+```bash
+pip install prospector yapf
+```
+
+Use yapf to automatically format the code:
+```bash
+./format.sh
 ```
 
 Then use prospector to run linting for the folder ``parax/``:
-```python
+```bash
 prospector parax/
 ```

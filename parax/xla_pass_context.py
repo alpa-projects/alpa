@@ -16,6 +16,6 @@ class XlaPassContext:
         XlaPassContext.current = self
         _xla.set_pass_context(self.value_dict)
 
-    def __exit__(self, exc_type, exc_value, exc_traceback): 
+    def __exit__(self, exc_type, exc_value, exc_traceback):
         XlaPassContext.current = None
         _xla.clear_pass_context()

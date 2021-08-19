@@ -32,7 +32,6 @@ import numpy as np
 
 from parax import util, testing
 
-
 unsafe_map, map = map, safe_map  # type: ignore
 
 
@@ -79,14 +78,8 @@ def should_replicate_is_leaf(x):
 
 
 @lu.cache
-def pmap_data_parallel_callable(
-    fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    devices,
-    donated_invars,
-    *avals
-):
+def pmap_data_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
+                                devices, donated_invars, *avals):
     fun_name = fun.__name__
     devices = devices or tuple(jax.devices())
     axis_name = "data_parallel_batch"
@@ -94,40 +87,39 @@ def pmap_data_parallel_callable(
 
     # Detect weight tensors and mark them as "should_replicate"
     dyn_args = tree_unflatten(in_tree, avals)
-    should_replicate = tree_map(
-        should_replicate_map, dyn_args, is_leaf=should_replicate_is_leaf
-    )
+    should_replicate = tree_map(should_replicate_map,
+                                dyn_args,
+                                is_leaf=should_replicate_is_leaf)
     should_replicate = tuple(
-        flatten_axes("pmap_data_parallel_callable should_replicate", in_tree, should_replicate)
-    )
+        flatten_axes("pmap_data_parallel_callable should_replicate", in_tree,
+                     should_replicate))
 
     # Create in_axes paritition spec
-    flatten_in_axes = tuple(unsafe_map(lambda x: None if x else 0, should_replicate))
+    flatten_in_axes = tuple(
+        unsafe_map(lambda x: None if x else 0, should_replicate))
 
     # Get jaxpr and XLA hlo
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, avals)
 
     # Create out_axes paritition spec
     unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
-    out_should_replicate = tree_map(
-        should_replicate_map, unflatten_out_avals, is_leaf=should_replicate_is_leaf
-    )
+    out_should_replicate = tree_map(should_replicate_map,
+                                    unflatten_out_avals,
+                                    is_leaf=should_replicate_is_leaf)
     out_should_replicate = flatten_axes(
         "pmap_data_parallel_callable out_should_replicate",
         out_tree_thunk(),
         out_should_replicate,
     )
     flatten_out_axes = tuple(
-        unsafe_map(lambda x: None if x else 0, out_should_replicate)
-    )
+        unsafe_map(lambda x: None if x else 0, out_should_replicate))
 
     # Compile parallel_callable
     backend = None
     global_axis_size = None
     name = fun.__name__
-    out_axes_thunk = HashableFunction(
-        lambda: flatten_out_axes, closure=flatten_out_axes
-    )
+    out_axes_thunk = HashableFunction(lambda: flatten_out_axes,
+                                      closure=flatten_out_axes)
     global_arg_shapes = (None,) * len(avals)
 
     # Clean stores for the next call
@@ -135,34 +127,22 @@ def pmap_data_parallel_callable(
         store and store.reset()
 
     # Split avals and lower to parallel_callable
-    split_avals = (
-        avals[i] if should_replicate[i] else data_parallel_split(avals[i], axis_size)
-        for i in range(len(avals))
-    )
-    compiled_fun = parallel_callable(
-        fun,
-        backend,
-        axis_name,
-        axis_size,
-        global_axis_size,
-        devices,
-        name,
-        flatten_in_axes,
-        out_axes_thunk,
-        donated_invars,
-        global_arg_shapes,
-        *split_avals
-    )
+    split_avals = (avals[i] if should_replicate[i] else data_parallel_split(
+        avals[i], axis_size) for i in range(len(avals)))
+    compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
+                                     global_axis_size, devices, name,
+                                     flatten_in_axes, out_axes_thunk,
+                                     donated_invars, global_arg_shapes,
+                                     *split_avals)
     testing.last_compiled_executable = compiled_fun.args[0]
 
     def ret_func(*args):
-        split_args = (
-            args[i] if should_replicate[i] else data_parallel_split(args[i], axis_size)
-            for i in range(len(args))
-        )
+        split_args = (args[i] if should_replicate[i] else data_parallel_split(
+            args[i], axis_size) for i in range(len(args)))
         return compiled_fun(*split_args)
 
     return ret_func
+
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -174,14 +154,8 @@ def shard_first_dim(x):
 
 
 @lu.cache
-def shard_data_parallel_callable(
-    fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    devices,
-    donated_invars,
-    *avals
-):
+def shard_data_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
+                                 devices, donated_invars, *avals):
     fun_name = fun.__name__
     devices = devices or np.array(jax.devices())
 
@@ -190,29 +164,31 @@ def shard_data_parallel_callable(
 
     # Detect weight tensors and mark them as "should_replicate"
     dyn_args = tree_unflatten(in_tree, avals)
-    should_replicate = tree_map(
-        should_replicate_map, dyn_args, is_leaf=should_replicate_is_leaf
-    )
+    should_replicate = tree_map(should_replicate_map,
+                                dyn_args,
+                                is_leaf=should_replicate_is_leaf)
     should_replicate = tuple(
-        flatten_axes("shard_parallel_callable should_replicate", in_tree, should_replicate)
-    )
+        flatten_axes("shard_parallel_callable should_replicate", in_tree,
+                     should_replicate))
 
     # Create in_axes paritition spec
-    in_axes = tuple(OrderedDict() if should_replicate[i] else shard_first_dim(avals[i])
-                    for i in range(len(avals)))
+    in_axes = tuple(
+        OrderedDict() if should_replicate[i] else shard_first_dim(avals[i])
+        for i in range(len(avals)))
 
     # Create out_axes paritition spec
     unflatten_out_avals = tree_unflatten(out_tree_thunk(), out_avals)
-    out_should_replicate = tree_map(
-        should_replicate_map, unflatten_out_avals, is_leaf=should_replicate_is_leaf
-    )
+    out_should_replicate = tree_map(should_replicate_map,
+                                    unflatten_out_avals,
+                                    is_leaf=should_replicate_is_leaf)
     out_should_replicate = flatten_axes(
         "shard_parallel_callable out_should_replicate",
         out_tree_thunk(),
         out_should_replicate,
     )
-    out_axes = tuple(OrderedDict() if out_should_replicate[i] else shard_first_dim(out_avals[i])
-                    for i in range(len(out_avals)))
+    out_axes = tuple(OrderedDict(
+    ) if out_should_replicate[i] else shard_first_dim(out_avals[i])
+                     for i in range(len(out_avals)))
 
     devices = np.array(devices)
     mesh = Mesh(devices, ('mesh_x',))
@@ -223,10 +199,16 @@ def shard_data_parallel_callable(
         store and store.reset()
 
     # Lower to mesh_callable
-    compiled_func = mesh_callable(fun, fun_name, None, mesh,
-                                  in_axes, out_axes_thunk, donated_invars,
-                                  True, *avals, tile_by_mesh_axes=False,
+    compiled_func = mesh_callable(fun,
+                                  fun_name,
+                                  None,
+                                  mesh,
+                                  in_axes,
+                                  out_axes_thunk,
+                                  donated_invars,
+                                  True,
+                                  *avals,
+                                  tile_by_mesh_axes=False,
                                   do_resource_typecheck=None)
     testing.last_compiled_executable = compiled_func.args[0]
     return compiled_func
-

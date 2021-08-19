@@ -14,10 +14,7 @@ def run_unittest_files(files):
             continue
 
         def func():
-            ret = unittest.main(
-                module=None,
-                argv=["", "-vb"] + [filename]
-            )
+            ret = unittest.main(module=None, argv=["", "-vb"] + [filename])
 
         p = multiprocessing.Process(target=func)
         p.start()
@@ -31,4 +28,3 @@ if __name__ == "__main__":
     files = glob.glob("*.py")
     files.sort()
     run_unittest_files(files)
-

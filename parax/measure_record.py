@@ -38,9 +38,7 @@ class SearchTask:
 class StrategyConfig:
     """A configuration that specifies all details of a parallelization strategy."""
 
-    def __init__(self,
-                 build_random_seed: int,
-                 logical_mesh_shape: Tuple[int],
+    def __init__(self, build_random_seed: int, logical_mesh_shape: Tuple[int],
                  auto_sharding_solution_vector: np.ndarray):
         self.build_random_seed = build_random_seed
         self.logical_mesh_shape = logical_mesh_shape
@@ -67,8 +65,9 @@ class MeasureInput(namedtuple("MeasureInput", ["task", "config"])):
     """
 
 
-class MeasureResult(namedtuple("MeasureResult",
-                               ["time_costs", "estimated_cost", "error_no", "timestamp"])):
+class MeasureResult(
+        namedtuple("MeasureResult",
+                   ["time_costs", "estimated_cost", "error_no", "timestamp"])):
     """
     Stores all the results of a measurement.
 
@@ -95,8 +94,8 @@ def save_to_file(inputs, results, filename, protocol="json"):
     with open(filename, "a") as fout:
         for inp, res in zip(inputs, results):
             obj = (inp.task.to_jsonable(), inp.config.to_jsonable(),
-                   res.time_costs, res.estimated_cost, res.error_no, res.timestamp,
-                   RECORD_VERSION)
+                   res.time_costs, res.estimated_cost, res.error_no,
+                   res.timestamp, RECORD_VERSION)
             fout.write(json.dumps(obj) + "\n")
 
 

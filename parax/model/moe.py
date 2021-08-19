@@ -15,34 +15,36 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 
-from parax.model.bert_model import (FlaxBaseModelOutput, FlaxBaseModelOutputWithPooling,
-    FlaxBertAttention, FlaxBertEmbeddings, FlaxBertIntermediate, FlaxBertLayer,
-    FlaxBertOutput, FlaxMaskedLMOutput)
+from parax.model.bert_model import (FlaxBaseModelOutput,
+                                    FlaxBaseModelOutputWithPooling,
+                                    FlaxBertAttention, FlaxBertEmbeddings,
+                                    FlaxBertIntermediate, FlaxBertLayer,
+                                    FlaxBertOutput, FlaxMaskedLMOutput)
 
 
 class MoEConfig:
+
     def __init__(
-        self,
-        vocab_size=30522,
-        hidden_size=768,
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        intermediate_size=3072,
-        hidden_act="gelu",
-        hidden_dropout_prob=0.1,
-        attention_probs_dropout_prob=0.1,
-        max_position_embeddings=512,
-        type_vocab_size=0,
-        initializer_range=0.02,
-        layer_norm_eps=1e-12,
-        gradient_checkpointing=False,
-        position_embedding_type="absolute",
-        use_cache=True,
-        tie_word_embeddings=True,
-        expert_group_size=8192,    # S in the paper
-        expert_number=128,         # E in the paper
-        **kwargs
-    ):
+            self,
+            vocab_size=30522,
+            hidden_size=768,
+            num_hidden_layers=12,
+            num_attention_heads=12,
+            intermediate_size=3072,
+            hidden_act="gelu",
+            hidden_dropout_prob=0.1,
+            attention_probs_dropout_prob=0.1,
+            max_position_embeddings=512,
+            type_vocab_size=0,
+            initializer_range=0.02,
+            layer_norm_eps=1e-12,
+            gradient_checkpointing=False,
+            position_embedding_type="absolute",
+            use_cache=True,
+            tie_word_embeddings=True,
+            expert_group_size=8192,  # S in the paper
+            expert_number=128,  # E in the paper
+            **kwargs):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
@@ -75,7 +77,7 @@ def top2gating(gates):  # [GSE] -> [GSEC, GSEC]
 
 class FlaxPositionWiseMoELayer(nn.Module):
     config: MoEConfig
-    kernel_init:  Callable[..., np.ndarray] = lecun_normal()
+    kernel_init: Callable[..., np.ndarray] = lecun_normal()
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     @nn.compact
@@ -86,9 +88,20 @@ class FlaxPositionWiseMoELayer(nn.Module):
         H = self.config.intermediate_size
         E = self.config.expert_number
 
-        wg = self.param("wg", self.kernel_init, (M, E,))
-        wi = self.param("wi", self.kernel_init, (E, M, H,))
-        wo = self.param("wo", self.kernel_init, (E, H, M,))
+        wg = self.param("wg", self.kernel_init, (
+            M,
+            E,
+        ))
+        wi = self.param("wi", self.kernel_init, (
+            E,
+            M,
+            H,
+        ))
+        wo = self.param("wo", self.kernel_init, (
+            E,
+            H,
+            M,
+        ))
 
         inputs = jnp.asarray(inputs, self.dtype)
         wg = jnp.asarray(wg, self.dtype)
@@ -98,8 +111,8 @@ class FlaxPositionWiseMoELayer(nn.Module):
         reshaped_inputs = jnp.reshape(inputs, (-1, S, M))
         gates = jnp.einsum("GSM,ME->GSE", reshaped_inputs, wg)
         combined_weights, dispatch_mask = top2gating(gates)
-        dispatched_expert_inputs = jnp.einsum(
-            "GSEC,GSM->EGCM", dispatch_mask, reshaped_inputs)
+        dispatched_expert_inputs = jnp.einsum("GSEC,GSM->EGCM", dispatch_mask,
+                                              reshaped_inputs)
         h = jnp.einsum("EGCM,EMH->EGCH", dispatched_expert_inputs, wi)
         h = nn.relu(h)
         expert_outputs = jnp.einsum("EGCH,EHM->GECM", h, wo)
@@ -116,12 +129,18 @@ class FlaxMoELayer(nn.Module):
         self.attention = FlaxBertAttention(self.config, dtype=self.dtype)
         self.moe = FlaxPositionWiseMoELayer(self.config, dtype=self.dtype)
         self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
-        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
+        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
+                                      dtype=self.dtype)
 
-    def __call__(self, hidden_states, attention_mask, deterministic: bool = True, output_attentions: bool = False):
-        attention_outputs = self.attention(
-            hidden_states, attention_mask, deterministic=deterministic, output_attentions=output_attentions
-        )
+    def __call__(self,
+                 hidden_states,
+                 attention_mask,
+                 deterministic: bool = True,
+                 output_attentions: bool = False):
+        attention_outputs = self.attention(hidden_states,
+                                           attention_mask,
+                                           deterministic=deterministic,
+                                           output_attentions=output_attentions)
         attention_output = attention_outputs[0]
 
         hidden_states = self.moe(attention_output)
@@ -145,9 +164,11 @@ class FlaxMoELayerCollection(nn.Module):
         layers = []
         for i in range(self.config.num_hidden_layers):
             if i % 2 == 0:
-                layers.append(FlaxMoELayer(self.config, name=str(i), dtype=self.dtype))
+                layers.append(
+                    FlaxMoELayer(self.config, name=str(i), dtype=self.dtype))
             else:
-                layers.append(FlaxBertLayer(self.config, name=str(i), dtype=self.dtype))
+                layers.append(
+                    FlaxBertLayer(self.config, name=str(i), dtype=self.dtype))
         self.layers = layers
 
     def __call__(
@@ -166,9 +187,10 @@ class FlaxMoELayerCollection(nn.Module):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            layer_outputs = layer(
-                hidden_states, attention_mask, deterministic=deterministic, output_attentions=output_attentions
-            )
+            layer_outputs = layer(hidden_states,
+                                  attention_mask,
+                                  deterministic=deterministic,
+                                  output_attentions=output_attentions)
 
             hidden_states = layer_outputs[0]
 
@@ -183,9 +205,9 @@ class FlaxMoELayerCollection(nn.Module):
         if not return_dict:
             return tuple(v for v in outputs if v is not None)
 
-        return FlaxBaseModelOutput(
-            last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=all_attentions
-        )
+        return FlaxBaseModelOutput(last_hidden_state=hidden_states,
+                                   hidden_states=all_hidden_states,
+                                   attentions=all_attentions)
 
 
 class FlaxMoEEncoder(nn.Module):
@@ -236,9 +258,11 @@ class FlaxMoEModule(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ):
-        hidden_states = self.embeddings(
-            input_ids, token_type_ids, position_ids, attention_mask, deterministic=deterministic
-        )
+        hidden_states = self.embeddings(input_ids,
+                                        token_type_ids,
+                                        position_ids,
+                                        attention_mask,
+                                        deterministic=deterministic)
         outputs = self.encoder(
             hidden_states,
             attention_mask,
@@ -270,13 +294,18 @@ class FlaxMoEForLMModule(nn.Module):
     bias_init: Callable[..., np.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
-        self.transformers = FlaxMoEModule(config=self.config, add_pooling_layer=False, dtype=self.dtype)
+        self.transformers = FlaxMoEModule(config=self.config,
+                                          add_pooling_layer=False,
+                                          dtype=self.dtype)
 
         if self.config.tie_word_embeddings:
             self.decoder = None
         else:
-            self.decoder = nn.Dense(self.config.vocab_size, dtype=self.dtype, use_bias=False)
-        self.decoder_bias = self.param("bias", self.bias_init, (self.config.vocab_size,))
+            self.decoder = nn.Dense(self.config.vocab_size,
+                                    dtype=self.dtype,
+                                    use_bias=False)
+        self.decoder_bias = self.param("bias", self.bias_init,
+                                       (self.config.vocab_size,))
 
     def __call__(
         self,
@@ -303,7 +332,8 @@ class FlaxMoEForLMModule(nn.Module):
 
         hidden_states = outputs[0]
         if self.config.tie_word_embeddings:
-            shared_embedding = self.transformers.variables["params"]["embeddings"]["word_embeddings"]["embedding"]
+            shared_embedding = self.transformers.variables["params"][
+                "embeddings"]["word_embeddings"]["embedding"]
             assert self.decoder is None
             logits = hidden_states @ shared_embedding.T
         else:
@@ -321,4 +351,3 @@ class FlaxMoEForLMModule(nn.Module):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-

@@ -8,7 +8,8 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.runtime import Jax3DPipeline, GpipeSchedule, gen_linear_dependency
-from parax.pipeline_parallel.stage import (generate_sharded_xla_stages, mark_global_and_local_vars,
+from parax.pipeline_parallel.stage import (generate_sharded_xla_stages,
+                                           mark_global_and_local_vars,
                                            slice_closed_jaxpr_by_pipeline_marks)
 
 logger = logging.getLogger(__name__)
@@ -16,19 +17,14 @@ logger.setLevel(logging.INFO)
 
 
 @lu.cache
-def three_d_parallel_callable(
-        fun: lu.WrappedFun,
-        in_tree,
-        out_tree_thunk,
-        devices,
-        donated_invars,
-        memory_budget_per_device,
-        *avals
-):
+def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
+                              devices, donated_invars, memory_budget_per_device,
+                              *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
     if not isinstance(devices, VirtualMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
-                           "expected type: {}.".format(type(devices), "VirtualMesh"))
+                           "expected type: {}.".format(type(devices),
+                                                       "VirtualMesh"))
 
     # Slice the jaxpr into pipeline stages
     virtual_mesh = devices
@@ -37,13 +33,18 @@ def three_d_parallel_callable(
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     gensym_func = gensym([closed_jaxpr.jaxpr])
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    jax_pipeline_stages = [mark_global_and_local_vars(stage, gensym_func) for stage in jax_pipeline_stages]
+    jax_pipeline_stages = [
+        mark_global_and_local_vars(stage, gensym_func)
+        for stage in jax_pipeline_stages
+    ]
 
     # Generate schedule and placement
     num_batch = 1
     n_stages = len(jax_pipeline_stages)
     dependency = gen_linear_dependency(n_stages)
-    schedule = GpipeSchedule(dependency=dependency, mesh=virtual_mesh, num_batch=num_batch)
+    schedule = GpipeSchedule(dependency=dependency,
+                             mesh=virtual_mesh,
+                             num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
     # TODO(Hao): delay the creation of physical mesh here

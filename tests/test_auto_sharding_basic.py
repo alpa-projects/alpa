@@ -17,8 +17,7 @@ from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceM
 
 from test_auto_sharding_mlp import assert_close
 
-
-MB = 1024 ** 2
+MB = 1024**2
 
 
 def all_reduce_cost(num_devices, num_bytes):
@@ -26,11 +25,13 @@ def all_reduce_cost(num_devices, num_bytes):
 
 
 class AutoShardingBasicTest(unittest.TestCase):
+
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         set_parallelize_options(jax.devices()[:4])
 
     def test_donate_buffer(self):
+
         @parallelize(donate_argnums=(0,))
         def add_one(x):
             x = x + 1
@@ -75,7 +76,9 @@ class AutoShardingBasicTest(unittest.TestCase):
         np.testing.assert_allclose(expected, actual)
 
     def test_dropout(self):
+
         class Model(nn.Module):
+
             @nn.compact
             def __call__(self, x, deterministic):
                 x = nn.Dense(16, use_bias=False)(x)
@@ -94,9 +97,11 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         @parallelize
         def func(optimizer, x, y, rngs):
+
             def loss_func(params):
                 out = model.apply(params, x, False, rngs=rngs)
-                return jnp.mean((out - y) ** 2)
+                return jnp.mean((out - y)**2)
+
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
@@ -139,4 +144,3 @@ def suite():
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

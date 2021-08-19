@@ -24,6 +24,7 @@ def get_number_of_lines(filename):
 
 
 class SearchAPITest(unittest.TestCase):
+
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
@@ -32,7 +33,9 @@ class SearchAPITest(unittest.TestCase):
         ray.shutdown()
 
     def run_2_layer_mlp(self, batch_size, hidden_dim):
+
         class Model(nn.Module):
+
             @nn.compact
             def __call__(self, x):
                 x = nn.Dense(features=hidden_dim)(x)
@@ -41,9 +44,10 @@ class SearchAPITest(unittest.TestCase):
 
         @parallelize
         def train_step(optimizer, batch, apply_fn):
+
             def loss_func(params):
                 out = apply_fn(params, batch["x"])
-                return jnp.mean((out - batch["y"]) ** 2)
+                return jnp.mean((out - batch["y"])**2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -118,4 +122,3 @@ def suite():
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

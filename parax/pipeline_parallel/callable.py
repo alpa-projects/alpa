@@ -31,7 +31,9 @@ class LocalPipelineRunner:
         self.env = {}
         self.global_invals = global_invals
 
-    def run_stage(self, stage: PipelineStage, prev_stage_pipeline_outvals: Set[Var] = None):
+    def run_stage(self,
+                  stage: PipelineStage,
+                  prev_stage_pipeline_outvals: Set[Var] = None):
         """
         Run a pipeline stage.
 
@@ -67,7 +69,8 @@ class LocalPipelineRunner:
         return pipeline_outvals, global_outvals
 
 
-def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage], global_invars: Sequence[Var],
+def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
+                           global_invars: Sequence[Var],
                            global_outvars: Sequence[Var]):
     """
     Return a callable that runs all pipeline stages on a single local device.
@@ -90,8 +93,10 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage], global_inva
         pipeline_outvals = None
         for stage in pipeline_stages:
             if stage.name not in runners:
-                runners[stage.name] = LocalPipelineRunner(stage.name, global_invals)
-            pipeline_outvals, stage_global_outvals = runners[stage.name].run_stage(stage, pipeline_outvals)
+                runners[stage.name] = LocalPipelineRunner(
+                    stage.name, global_invals)
+            pipeline_outvals, stage_global_outvals = runners[
+                stage.name].run_stage(stage, pipeline_outvals)
             global_outvals.update(stage_global_outvals)
         global_outvals_list = []
         for var in global_outvars:
@@ -105,11 +110,8 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage], global_inva
 
 
 @lu.cache
-def pipeline_parallel_callable(
-        fun: lu.WrappedFun,
-        devices: Mapping[str, Any],
-        *avals
-):
+def pipeline_parallel_callable(fun: lu.WrappedFun, devices: Mapping[str, Any],
+                               *avals):
     """Pipeline parallel callable."""
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
@@ -117,7 +119,9 @@ def pipeline_parallel_callable(
     jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    xla_pipeline_stages = [XlaPipelineStage.from_jax_pipeline_stage(stage)
-                           for stage in jax_pipeline_stages]
-    return local_pipeline_runtime(xla_pipeline_stages, global_invars, global_outvars)
-
+    xla_pipeline_stages = [
+        XlaPipelineStage.from_jax_pipeline_stage(stage)
+        for stage in jax_pipeline_stages
+    ]
+    return local_pipeline_runtime(xla_pipeline_stages, global_invars,
+                                  global_outvars)

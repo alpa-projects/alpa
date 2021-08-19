@@ -1,7 +1,9 @@
 """Layer clustering and remat by layer."""
-from jax._src.api import make_jaxpr
 import numba
 import numpy as np
+from jax import tree_flatten
+from jax import lax
+from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun
 from jax.interpreters import xla
@@ -69,9 +71,11 @@ def cluster_edges_cost(start : List['JaxprEqn'], end : List['JaxprEqn']):
       acc += in_tensor.aval.size * in_tensor.aval.dtype.itemsize
     return acc
 
+non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
     length = len(jaxpr.eqns)
-    weights = np.array([eqn_flops(eqn) for eqn in jaxpr.eqns])
+    non_trivial = [eqn.primitive in non_trivial_primitive for eqn in jaxpr.eqns]
+    non_trivial = np.array(non_trivial)
     C = np.full((length + 1, length +1), 0, dtype=np.float32)
     # init
 
@@ -88,12 +92,9 @@ def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
               tot += invar.aval.size
           C[k, r] = tot
 
-    heavy_op_bound = np.sum(weights) * 0.01
-    LAYER_HEAVY_OP_BOUND = np.count_nonzero(weights >= heavy_op_bound) / layer_num
-    # TODO(yonghao): if LAYER_HEAVY_OP_BOUND <= 2, layer num too large
-    LAYER_HEAVY_OP_BOUND = int(max(LAYER_HEAVY_OP_BOUND + 2,
-                                   LAYER_HEAVY_OP_BOUND * (1 + eps)))
-
+    LAYER_HEAVY_OP_BOUND = non_trivial.sum() / layer_num
+    LAYER_HEAVY_OP_BOUND = max(LAYER_HEAVY_OP_BOUND + 1, 
+                               LAYER_HEAVY_OP_BOUND * (1 + eps))
     @numba.jit(nopython=True)
     def DP(C):
       A = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
@@ -103,7 +104,7 @@ def slice_jaxpr(jaxpr : Jaxpr, layer_num : int, eps : float):
       for l in range(1, length + 1):
         cnt = 0
         for r in range(l, length + 1):
-          if weights[r - 1] >= heavy_op_bound:
+          if non_trivial[r - 1]: 
             cnt += 1
           if cnt < 1: continue
           elif cnt <= LAYER_HEAVY_OP_BOUND:
@@ -195,7 +196,9 @@ def forward(fn : Callable, layer_num : int, eps : float = 0.1, use_pipeline = Fa
         origin_jaxpr = make_jaxpr(fn)(*args)
         solution = slice_jaxpr(origin_jaxpr, layer_num, eps)
         new_jaxpr = add_pipeline_markers(origin_jaxpr, solution)
-        ans = jaxpr_as_fun(new_jaxpr)(*args)
+        flatten_args, _ = tree_flatten(args)
+        ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
+        assert len(ans) == 1 and _check_scalar(ans[0]), 'forward should return a scalar'
         return ans if len(ans) != 1 else ans[0]
       else:
         return fn(*args)

@@ -17,7 +17,7 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from parax.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.pipeline_primitive_def import pipeline_p
+from parax.pipeline_parallel.primitive_def import pipeline_p
 from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
 unsafe_map, map = map, safe_map  # type: ignore

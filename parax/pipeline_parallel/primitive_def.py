@@ -5,7 +5,7 @@ from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 
-from .pipeline_custom_call import xla_pipeline_marker
+from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker
 xc.register_custom_call_target(b'xla_pipeline_marker', xla_pipeline_marker(), platform='gpu')
 
 def flatten_shape_byte_sizes(shape):

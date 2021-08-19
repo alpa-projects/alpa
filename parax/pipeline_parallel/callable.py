@@ -7,8 +7,8 @@ from jax._src.util import safe_map
 from jax.core import Var, DropVar, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
 
-from parax.pipeline_primitive_def import pipeline_p
-from parax.pipeline_stage import PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_pipeline_marks
+from parax.pipeline_parallel.primitive_def import pipeline_p
+from parax.pipeline_parallel.stage import PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_pipeline_marks
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore

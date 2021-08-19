@@ -15,11 +15,12 @@ from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 from parax.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig
 
-from test_auto_sharding_mlp import (assert_all_replicated,
-                                    assert_close,
+from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
                                     assert_expert_partitioned)
 
+
 class AutoShardingMoETest(unittest.TestCase):
+
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
@@ -35,18 +36,21 @@ class AutoShardingMoETest(unittest.TestCase):
         device_mesh = PhysicalDeviceMesh(self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
-    def run_moe_layer(self, batch_size, seq_len, hidden_size,
-            num_heads, S, E, deterministic, device_mesh):
+    def run_moe_layer(self, batch_size, seq_len, hidden_size, num_heads, S, E,
+                      deterministic, device_mesh):
         set_parallelize_options(devices=device_mesh)
 
         @parallelize
         def train_step(optimizer, batch, deterministic, apply_fn):
+
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}
                 out = apply_fn(params,
-                               batch["hidden_states"], batch["attention_mask"],
-                               deterministic, rngs=rngs)[0]
-                return jnp.mean((out - batch["labels"]) ** 2) * 0.12345
+                               batch["hidden_states"],
+                               batch["attention_mask"],
+                               deterministic,
+                               rngs=rngs)[0]
+                return jnp.mean((out - batch["labels"])**2) * 0.12345
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -57,37 +61,39 @@ class AutoShardingMoETest(unittest.TestCase):
         labels = jnp.ones((batch_size, seq_len, hidden_size))
 
         # Init model and optimizer
-        model = FlaxMoELayer(MoEConfig(
-            hidden_size=hidden_size,
-            intermediate_size=hidden_size*4,
-            num_attention_heads=num_heads,
-            expert_group_size=S,
-            expert_number=E,
-        ))
+        model = FlaxMoELayer(
+            MoEConfig(
+                hidden_size=hidden_size,
+                intermediate_size=hidden_size * 4,
+                num_attention_heads=num_heads,
+                expert_group_size=S,
+                expert_number=E,
+            ))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.Adam(1e-2).create(params)
 
         # JIT compile
-        optimizer = train_step(optimizer,
-                               {"hidden_states": hidden_states,
-                                "attention_mask": attention_mask,
-                                "labels": labels,
-                                "rng": rngkey},
-                               deterministic,
-                               model.apply)
+        optimizer = train_step(
+            optimizer, {
+                "hidden_states": hidden_states,
+                "attention_mask": attention_mask,
+                "labels": labels,
+                "rng": rngkey
+            }, deterministic, model.apply)
 
         # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
-    def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size, num_heads,
-                   vocab_size, S, E, deterministic, device_mesh):
+    def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size,
+                   num_heads, vocab_size, S, E, deterministic, device_mesh):
         set_parallelize_options(devices=device_mesh)
 
         @parallelize
         def train_step(optimizer, batch):
+
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}
                 logits = model.apply(params,
@@ -99,7 +105,8 @@ class AutoShardingMoETest(unittest.TestCase):
                                      rngs=rngs)[0]
                 label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
                 labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
-                loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+                loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1),
+                                axis=-1)
                 return (label_mask * loss).sum() / label_mask.sum() * 0.1234
 
             grad = jax.grad(loss_func)(optimizer.target)
@@ -113,28 +120,32 @@ class AutoShardingMoETest(unittest.TestCase):
         position_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         labels = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
 
-        model = FlaxMoEForLMModule(MoEConfig(
-            num_hidden_layers=num_layers,
-            hidden_size=hidden_size,
-            intermediate_size=hidden_size*4,
-            num_attention_heads=num_heads,
-            max_position_embeddings=seq_len,
-            vocab_size=vocab_size,
-            expert_group_size=S,
-            expert_number=E,
-        ))
+        model = FlaxMoEForLMModule(
+            MoEConfig(
+                num_hidden_layers=num_layers,
+                hidden_size=hidden_size,
+                intermediate_size=hidden_size * 4,
+                num_attention_heads=num_heads,
+                max_position_embeddings=seq_len,
+                vocab_size=vocab_size,
+                expert_group_size=S,
+                expert_number=E,
+            ))
         rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, input_ids, attention_mask, token_type_ids, position_ids)
+        params = model.init(rngkey, input_ids, attention_mask, token_type_ids,
+                            position_ids)
         optimizer = optim.Adam(1e-2).create(params)
 
         # JIT compile
-        optimizer = train_step(optimizer,
-                               {"input_ids": input_ids,
-                                "attention_mask": attention_mask,
-                                "token_type_ids": token_type_ids,
-                                "position_ids": position_ids,
-                                "labels": labels,
-                                "rng": rngkey})
+        optimizer = train_step(
+            optimizer, {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
+                "position_ids": position_ids,
+                "labels": labels,
+                "rng": rngkey
+            })
 
         # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
@@ -151,11 +162,11 @@ class AutoShardingMoETest(unittest.TestCase):
         deterministic = True
 
         # Test on different logical mesh shapes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_moe_layer(
-                batch_size, seq_len, hidden_size,
-                num_heads, S, E, deterministic, device_mesh)
+                batch_size, seq_len, hidden_size, num_heads, S, E,
+                deterministic, device_mesh)
 
             # Check communication cost
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
@@ -180,10 +191,12 @@ class AutoShardingMoETest(unittest.TestCase):
                     ["dense"]["kernel"], num_devices)
             assert_all_replicated(optimizer.target["params"]["attention"]["self"]\
                     ["qvk_combined"]["kernel"], num_devices)
-            assert_all_replicated(optimizer.target["params"]["moe"]["wg"], num_devices)
-            assert_expert_partitioned(optimizer.target["params"]["moe"]["wi"], num_devices, i)
-            assert_expert_partitioned(optimizer.target["params"]["moe"]["wo"], num_devices, i)
-
+            assert_all_replicated(optimizer.target["params"]["moe"]["wg"],
+                                  num_devices)
+            assert_expert_partitioned(optimizer.target["params"]["moe"]["wi"],
+                                      num_devices, i)
+            assert_expert_partitioned(optimizer.target["params"]["moe"]["wo"],
+                                      num_devices, i)
 
     def test_moe_lm(self):
         num_layers = 2
@@ -197,7 +210,7 @@ class AutoShardingMoETest(unittest.TestCase):
         deterministic = True
 
         # Test on different logical mesh shapes
-        for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_moe_lm(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
@@ -223,4 +236,3 @@ def suite():
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

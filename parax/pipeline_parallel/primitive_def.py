@@ -6,9 +6,14 @@ from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 
 from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker
-xc.register_custom_call_target(b'xla_pipeline_marker', xla_pipeline_marker(), platform='gpu')
+
+xc.register_custom_call_target(b'xla_pipeline_marker',
+                               xla_pipeline_marker(),
+                               platform='gpu')
+
 
 def flatten_shape_byte_sizes(shape):
+
     def _flatten_shape_byte_sizes(shape):
         if shape.is_tuple():
             res = []
@@ -17,6 +22,7 @@ def flatten_shape_byte_sizes(shape):
             return res
         else:
             return [shape.numpy_dtype().itemsize * np.prod(shape.dimensions())]
+
     res = _flatten_shape_byte_sizes(shape)
     return np.array(res, dtype=np.int64)
 
@@ -26,11 +32,10 @@ def mark_pipeline_xla(c, *args):
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     output_tuple = xc.ops.CustomCall(c,
-        b'xla_pipeline_marker',
-        operands=(input_params, ),
-        shape=input_shape,
-        opaque=flattened_byte_sizes.tobytes()
-        )
+                                     b'xla_pipeline_marker',
+                                     operands=(input_params,),
+                                     shape=input_shape,
+                                     opaque=flattened_byte_sizes.tobytes())
     return output_tuple
 
 
@@ -60,7 +65,10 @@ def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
         raise ValueError('Unknown mark type: %s' % mark_type)
     if len(outvars) == 0:
         outvars = [dropvar]
-    return new_jaxpr_eqn(invars, outvars, pipeline_p, {'name': name, 'mark_type': mark_type})
+    return new_jaxpr_eqn(invars, outvars, pipeline_p, {
+        'name': name,
+        'mark_type': mark_type
+    })
 
 
 def _pipeline_impl(*args, **kwargs):
@@ -85,7 +93,9 @@ def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
         tangent_mark_type = "jvp_end"
     else:
         raise ValueError("Invalid mark_type")
-    tangent_outs = mark_pipeline(*arg_tangents, name=name, mark_type=tangent_mark_type)
+    tangent_outs = mark_pipeline(*arg_tangents,
+                                 name=name,
+                                 mark_type=tangent_mark_type)
     return primal_outs, tangent_outs
 
 

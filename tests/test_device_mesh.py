@@ -15,6 +15,7 @@ from parax.testing import assert_allclose
 
 
 class DeviceMeshTest(unittest.TestCase):
+
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
@@ -26,7 +27,8 @@ class DeviceMeshTest(unittest.TestCase):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
-        total_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
+        total_devices = len(
+            physical_mesh.host_ids) * physical_mesh.num_devices_per_host
         logical_mesh = physical_mesh.get_logical_mesh([1, total_devices])
         set_parallelize_options(devices=logical_mesh)
 
@@ -60,6 +62,7 @@ class DeviceMeshTest(unittest.TestCase):
         input_dim = hidden_dim = output_dim = 32
 
         class Model(nn.Module):
+
             @nn.compact
             def __call__(self, x):
                 x = nn.Dense(features=hidden_dim)(x)
@@ -68,14 +71,14 @@ class DeviceMeshTest(unittest.TestCase):
                 return x
 
         def train_step(optimizer, batch, apply_fn):
+
             def loss_func(params):
                 out = apply_fn(params, batch["x"])
-                return jnp.mean((out - batch["y"]) ** 2)
+                return jnp.mean((out - batch["y"])**2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
-
 
         # One batch of data and label
         batch = {
@@ -113,4 +116,3 @@ def suite():
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

@@ -52,7 +52,8 @@ class VirtualDistributedArray:
     def indices(self):
         """Return the indices of the sharded tensor."""
         if not self._indices:
-            self._indices = pxla.spec_to_indices(self.tensor_shape, self.sharding_spec)
+            self._indices = pxla.spec_to_indices(self.tensor_shape,
+                                                 self.sharding_spec)
         return self._indices
 
     @property
@@ -61,8 +62,9 @@ class VirtualDistributedArray:
         if self._tile_assignments is None:
             if self.replicated:
                 mesh_flat = np.arange(self.device_mesh.total_devices)
-                self._tile_assignments = np.reshape(mesh_flat,
-                                                    self.tile_shape + [self.device_mesh.total_devices])
+                self._tile_assignments = np.reshape(
+                    mesh_flat,
+                    self.tile_shape + [self.device_mesh.total_devices])
             else:
                 # Generate tile assignments using proto
                 proto = self._sharding_spec_proto
@@ -133,14 +135,18 @@ class VirtualDistributedArray:
             self._tiles = np.empty(self.tile_shape, dtype=object)
             for tile_index_flat in range(num_tiles):
                 # get its index
-                tile_index = unflatten_tile_index(tile_index_flat, self.tile_shape)
+                tile_index = unflatten_tile_index(tile_index_flat,
+                                                  self.tile_shape)
                 device_ids = list(self.tile_assignments[tuple(tile_index)])
                 indices = [None] * len(self.tensor_shape)
                 for i, dim in enumerate(self.tensor_shape):
                     tile_size, ragged = divmod(dim, self.tile_shape[i])
                     assert not ragged
-                    indices[i] = slice(tile_size * tile_index[i], tile_size * (tile_index[i] + 1))
-                device_strs = [self.device_mesh.device_strs[d] for d in device_ids]
+                    indices[i] = slice(tile_size * tile_index[i],
+                                       tile_size * (tile_index[i] + 1))
+                device_strs = [
+                    self.device_mesh.device_strs[d] for d in device_ids
+                ]
                 dst_tile = Tile(index=tile_index,
                                 index_flat=tile_index_flat,
                                 replica_device_ids=device_ids,
@@ -186,66 +192,73 @@ class ReshardingTask:
         """According to the task_spec, launch send/recv operations."""
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
-        for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(self.task_spec.dst_tile_to_src_tiles_map):
+        for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
+                self.task_spec.dst_tile_to_src_tiles_map):
             # Loop over each dst tile for this shard
             s = self.task_spec.strategy[i]
             # strategy is len(dst_tile.device_strs) by len(src_tiles)
-            for replica_index, receiver in enumerate(dst_tile.replica_device_strs):
+            for replica_index, receiver in enumerate(
+                    dst_tile.replica_device_strs):
                 # loop over this replica (hence a specific destination gpu device)
-                senders = [s[replica_index][src_tile_index]
-                           for src_tile_index, src_tile in enumerate(src_tiles)]
-                device_str_to_buf_map[receiver] = self.same_destination_group_send_recv(
-                    senders, src_tiles, dst_tile, indices_in_dst_tiles, receiver)
+                senders = [
+                    s[replica_index][src_tile_index]
+                    for src_tile_index, src_tile in enumerate(src_tiles)
+                ]
+                device_str_to_buf_map[
+                    receiver] = self.same_destination_group_send_recv(
+                        senders, src_tiles, dst_tile, indices_in_dst_tiles,
+                        receiver)
         # Assemble the buffer based on the order present in indices
-        for i, device_str in enumerate(self.task_spec.dst.device_mesh.device_strs):
+        for i, device_str in enumerate(
+                self.task_spec.dst.device_mesh.device_strs):
             # for each replica
-            bufs[self.task_spec.dst.device_str_to_flat_index[device_str]] = device_str_to_buf_map[device_str]
+            bufs[self.task_spec.dst.device_str_to_flat_index[
+                device_str]] = device_str_to_buf_map[device_str]
 
         # Now construct the distributed array
-        dst_array = DistributedArray(self.dst_mesh,
-                                     self.src_array.aval,
-                                     self.task_spec.dst_sharding_spec,
-                                     bufs,
+        dst_array = DistributedArray(self.dst_mesh, self.src_array.aval,
+                                     self.task_spec.dst_sharding_spec, bufs,
                                      self.task_spec.dst_indices)
         return dst_array
 
-    def same_destination_group_send_recv(self,
-                                         senders,
-                                         src_tiles,
-                                         dst_tile,
-                                         indices_in_dst_tiles,
-                                         receiver):
+    def same_destination_group_send_recv(self, senders, src_tiles, dst_tile,
+                                         indices_in_dst_tiles, receiver):
         """P2P Communication accounting for multiple senders and one receiver (a destination tile)."""
         # construct a remote buf for this tile
-        receiver_host_id = self.collective_group.device_str_to_host_id_map[receiver]
-        receiver_device_id = self.collective_group.device_str_to_device_id_map[receiver]
-        receiver_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
-        result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id, receiver_device_id)
+        receiver_host_id = self.collective_group.device_str_to_host_id_map[
+            receiver]
+        receiver_device_id = self.collective_group.device_str_to_device_id_map[
+            receiver]
+        receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
+            receiver]
+        result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
+                                     receiver_device_id)
         # Put an empty buffer first.
-        ray.get(receiver_worker.put_empty_buffer.remote(
-            result_buf.uuid, result_buf.device_id, dst_tile.tile_shape))
-        receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[receiver]
+        ray.get(
+            receiver_worker.put_empty_buffer.remote(result_buf.uuid,
+                                                    result_buf.device_id,
+                                                    dst_tile.tile_shape))
+        receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
+            receiver]
         for i, sender in enumerate(senders):
             # send is a device_str in src_mesh
             # we need to find out its mesh_worker, and the corresponded sender remotebuf (uuid-indexed).
-            sender_buf = self.src_array.remote_buffers[self.task_spec.src.device_str_to_flat_index[sender]]
-            sender_worker = self.collective_group.device_str_to_mesh_worker_map[sender]
+            sender_buf = self.src_array.remote_buffers[
+                self.task_spec.src.device_str_to_flat_index[sender]]
+            sender_worker = self.collective_group.device_str_to_mesh_worker_map[
+                sender]
             # assert sender_buf.device_id == i
-            sender_rank, sender_gpu_idx = self.collective_group.device_str_to_rank_map[sender]
+            sender_rank, sender_gpu_idx = self.collective_group.device_str_to_rank_map[
+                sender]
             # launch NCCL send/recv
             tile = src_tiles[i]
             indices_in_dst_tile = indices_in_dst_tiles[i]
-            send_done_ref = sender_worker.send_tile.remote(sender_buf.uuid,
-                                                           tile.offset,
-                                                           receiver_rank,
-                                                           receiver_gpu_idx,
-                                                           self.collective_group.group_name)
-            recv_done_ref = receiver_worker.recv_tile.remote(result_buf.uuid,
-                                                             result_buf.device_id,
-                                                             indices_in_dst_tile,
-                                                             sender_rank,
-                                                             sender_gpu_idx,
-                                                             self.collective_group.group_name)
+            send_done_ref = sender_worker.send_tile.remote(
+                sender_buf.uuid, tile.offset, receiver_rank, receiver_gpu_idx,
+                self.collective_group.group_name)
+            recv_done_ref = receiver_worker.recv_tile.remote(
+                result_buf.uuid, result_buf.device_id, indices_in_dst_tile,
+                sender_rank, sender_gpu_idx, self.collective_group.group_name)
             ray.get([send_done_ref, recv_done_ref])
         return result_buf
 
@@ -345,26 +358,34 @@ class CollectiveGroup:
         for i, _ in enumerate(src_mesh.host_ips):
             self.mesh_workers[i] = self.src_mesh.workers[i]
             for j in range(src_mesh.num_devices_per_host):
-                device_str = self.src_mesh.device_strs[i * src_mesh.num_devices_per_host + j]
+                device_str = self.src_mesh.device_strs[
+                    i * src_mesh.num_devices_per_host + j]
                 self.device_str_to_rank_map[device_str] = (i, j)
-                self.device_str_to_mesh_worker_map[device_str] = self.src_mesh.workers[i]
+                self.device_str_to_mesh_worker_map[
+                    device_str] = self.src_mesh.workers[i]
                 self.device_str_to_host_id_map[device_str] = i
                 self.device_str_to_device_id_map[device_str] = j
         for i, _ in enumerate(dst_mesh.host_ips):
-            self.mesh_workers[i + len(self.src_mesh.host_ips)] = self.dst_mesh.workers[i]
+            self.mesh_workers[
+                i + len(self.src_mesh.host_ips)] = self.dst_mesh.workers[i]
             for j in range(dst_mesh.num_devices_per_host):
-                device_str = self.dst_mesh.device_strs[i * src_mesh.num_devices_per_host + j]
-                self.device_str_to_rank_map[device_str] = (i + len(src_mesh.host_ips), j)
-                self.device_str_to_mesh_worker_map[device_str] = self.dst_mesh.workers[i]
+                device_str = self.dst_mesh.device_strs[
+                    i * src_mesh.num_devices_per_host + j]
+                self.device_str_to_rank_map[device_str] = (
+                    i + len(src_mesh.host_ips), j)
+                self.device_str_to_mesh_worker_map[
+                    device_str] = self.dst_mesh.workers[i]
                 self.device_str_to_host_id_map[device_str] = i
                 self.device_str_to_device_id_map[device_str] = j
 
     def instantiate(self):
         """Instantiate the collective group in Ray."""
-        options = {"group_name": self.group_name,
-                   "world_size": len(self.mesh_workers),
-                   "ranks": [i for i, _ in enumerate(self.mesh_workers)],
-                   "backend": "nccl"}
+        options = {
+            "group_name": self.group_name,
+            "world_size": len(self.mesh_workers),
+            "ranks": [i for i, _ in enumerate(self.mesh_workers)],
+            "backend": "nccl"
+        }
         col.create_collective_group(self.mesh_workers, **options)
 
     def destroy(self):
@@ -447,8 +468,10 @@ class ReshardingTaskSpec:
         dst_tile_to_src_tiles_map = []
         for tile in self.dst.tiles.flatten():
             # loop over each tile
-            src_tile_slices, indices_in_dst_tile = self._look_up_dst_tile_from_src(tile)
-            dst_tile_to_src_tiles_map.append((tile, src_tile_slices, indices_in_dst_tile))
+            src_tile_slices, indices_in_dst_tile = self._look_up_dst_tile_from_src(
+                tile)
+            dst_tile_to_src_tiles_map.append(
+                (tile, src_tile_slices, indices_in_dst_tile))
         return dst_tile_to_src_tiles_map
 
     def _look_up_dst_tile_from_src(self, tile):
@@ -471,8 +494,10 @@ class ReshardingTaskSpec:
         for i, dim in enumerate(self.src.tensor_shape):
             tile_length, ragged = divmod(dim, self.src.tile_shape[i])
             assert not ragged
-            start_tile, start_tile_offset = divmod(tile.indices[i].start, tile_length)
-            end_tile, end_tile_offset = divmod(tile.indices[i].stop, tile_length)
+            start_tile, start_tile_offset = divmod(tile.indices[i].start,
+                                                   tile_length)
+            end_tile, end_tile_offset = divmod(tile.indices[i].stop,
+                                               tile_length)
             # if falling on the middle a src tile, increase the index of the final tile by 1.
             if end_tile_offset:
                 end_tile = end_tile + 1
@@ -490,17 +515,21 @@ class ReshardingTaskSpec:
         src_tileslices = []
         indices_in_dst_tile = []
         for tileslice_index in range(num_src_tileslices):
-            tile_index_relative = unflatten_tile_index(tileslice_index,
-                                                       [end - start for start, end in related_tile_start_end])
-            tile_index_absolute = [start + tile_index_relative[dim_index]
-                                   for dim_index, (start, end) in enumerate(related_tile_start_end)]
+            tile_index_relative = unflatten_tile_index(
+                tileslice_index,
+                [end - start for start, end in related_tile_start_end])
+            tile_index_absolute = [
+                start + tile_index_relative[dim_index]
+                for dim_index, (start, end) in enumerate(related_tile_start_end)
+            ]
             # depending on its index, calculate a slice for it
             offsets = []
             indices = []
             # loop over each dimension
             for i, r in enumerate(tile_index_absolute):
                 start, end = related_tile_start_end[i]
-                tile_length_on_this_dim = self.src.tiles[tuple(tile_index_absolute)].tile_shape[i]
+                tile_length_on_this_dim = self.src.tiles[tuple(
+                    tile_index_absolute)].tile_shape[i]
                 if r == start:
                     # meaning it is the first involved tile
                     offset = related_tile_offset[i][0]
@@ -510,7 +539,8 @@ class ReshardingTaskSpec:
                     # meaning it is the last involved tile
                     offset = related_tile_offset[i][1]
                     offsets.append(slice(0, offset))
-                    indices.append(slice(tile.tile_shape[i] - offset, tile.tile_shape[i]))
+                    indices.append(
+                        slice(tile.tile_shape[i] - offset, tile.tile_shape[i]))
                 else:
                     # meaning it is a fully involved tile
                     offset = related_tile_offset[i][0]
@@ -520,7 +550,8 @@ class ReshardingTaskSpec:
                     right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
-            this_tileslice = TileSlice(self.src.tiles[tuple(tile_index_absolute)], offset=offsets)
+            this_tileslice = TileSlice(
+                self.src.tiles[tuple(tile_index_absolute)], offset=offsets)
             src_tileslices.append(this_tileslice)
             indices_in_dst_tile.append(indices)
         return src_tileslices, indices_in_dst_tile
@@ -575,7 +606,8 @@ class CrossMeshCommunicator:
     def __init__(self, sharded_stages, schedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
-        if not all([isinstance(s, XlaShardedPipelineStage) for s in sharded_stages]):
+        if not all(
+            [isinstance(s, XlaShardedPipelineStage) for s in sharded_stages]):
             raise RuntimeError("Require a list of sharded stages.")
 
         # Do not mutate
@@ -588,10 +620,14 @@ class CrossMeshCommunicator:
         self.resharding_cache = dict()
 
         # Loads for load balancing.
-        self._sender_loads = {device_str: 0 for mesh in self._schedule.meshes
-                              for device_str in mesh.device_strs}
-        self._receiver_loads = {device_str: 0 for mesh in self._schedule.meshes
-                                for device_str in mesh.device_strs}
+        self._sender_loads = {
+            device_str: 0 for mesh in self._schedule.meshes
+            for device_str in mesh.device_strs
+        }
+        self._receiver_loads = {
+            device_str: 0 for mesh in self._schedule.meshes
+            for device_str in mesh.device_strs
+        }
 
         # Initialize all resharding specs
         self._create_resharding_specs()
@@ -608,15 +644,18 @@ class CrossMeshCommunicator:
         stages = self._sharded_stages
         meshes = self._schedule.meshes
         num_stage = len(self._sharded_stages)
-        stage_placements = [list(self._schedule.stage_placement(i))[0] for i in range(num_stage)]
+        stage_placements = [
+            list(self._schedule.stage_placement(i))[0] for i in range(num_stage)
+        ]
         deps = self._schedule.dependency
         assert deps.shape[0] == num_stage
         assert deps.shape[1] == num_stage
 
         # Note(Hao): resharding_specs is num_mesh x num_mesh matrix
         # Each element is a dict: the name of variables are keys, ReshardingSpec are values.
-        self.resharding_specs = [[dict() for i in range(self.num_mesh)]
-                                 for j in range(self.num_mesh)]
+        self.resharding_specs = [
+            [dict() for i in range(self.num_mesh)] for j in range(self.num_mesh)
+        ]
 
         # find stages that will communicate
         pairs = np.argwhere(deps > 0)
@@ -655,7 +694,8 @@ class CrossMeshCommunicator:
                                 aval=var.aval,
                                 sharding_spec=dst_sharding_spec)
                 task_spec = ReshardingTaskSpec(src_array, dst_array)
-                self.resharding_specs[src_mesh_index][dst_mesh_index][repr(var)] = task_spec
+                self.resharding_specs[src_mesh_index][dst_mesh_index][repr(
+                    var)] = task_spec
 
     def _generate_resharding_strategy(self):
         """
@@ -687,11 +727,17 @@ class CrossMeshCommunicator:
         strategy = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array
-            per_spec_plan = np.empty((len(dst_tile.replica_device_strs), len(src_tileslices)),
-                                     dtype=object)
-            for receiver_idx, receiver in enumerate(dst_tile.replica_device_strs):
-                for src_tileslice_idx, src_tileslice in enumerate(src_tileslices):
-                    loads = {sender: self._sender_loads[sender] for sender in src_tileslice.replica_device_strs}
+            per_spec_plan = np.empty(
+                (len(dst_tile.replica_device_strs), len(src_tileslices)),
+                dtype=object)
+            for receiver_idx, receiver in enumerate(
+                    dst_tile.replica_device_strs):
+                for src_tileslice_idx, src_tileslice in enumerate(
+                        src_tileslices):
+                    loads = {
+                        sender: self._sender_loads[sender]
+                        for sender in src_tileslice.replica_device_strs
+                    }
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
                     # upload load on-the-fly

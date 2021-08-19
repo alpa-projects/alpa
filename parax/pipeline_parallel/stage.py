@@ -22,7 +22,6 @@ from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
 unsafe_map, map = map, safe_map  # type: ignore
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -142,7 +141,8 @@ class XlaPipelineStage(PipelineStage):
         """Return a callable of the pipeline stage."""
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
-        tuple_args = len(self.invars) > 100  # pass long arg lists as tuple for TPU
+        tuple_args = len(
+            self.invars) > 100  # pass long arg lists as tuple for TPU
         backend = 'gpu'
         backend = xb.get_backend(backend)
         device = backend.get_default_device_assignment(1)[0]
@@ -156,9 +156,11 @@ class XlaPipelineStage(PipelineStage):
         )
 
         compiled = backend.compile(xla_computation, compile_options=options)
-        result_handlers = map(partial(xla.aval_to_result_handler, device), out_avals)
+        result_handlers = map(partial(xla.aval_to_result_handler, device),
+                              out_avals)
         kept_var_idx = range(len(self.invars))
-        return partial(xla._execute_compiled, compiled, out_avals, result_handlers, kept_var_idx)
+        return partial(xla._execute_compiled, compiled, out_avals,
+                       result_handlers, kept_var_idx)
 
 
 @dataclass
@@ -181,7 +183,7 @@ class XlaShardedPipelineStage(PipelineStage):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline stage."""
         if not donated_invars:
-            donated_invars = (False, ) * len(jax_pipeline_stage.invars)
+            donated_invars = (False,) * len(jax_pipeline_stage.invars)
         return cls(
             name=jax_pipeline_stage.name,
             hlo_proto=auto_sharded_hlo_proto,
@@ -230,7 +232,9 @@ class XlaShardedPipelineStage(PipelineStage):
         from parax.auto_sharding import HloProtoStatus
 
         if not isinstance(mesh, PhysicalDeviceMesh):
-            raise RuntimeError("Require a pre-allocated physical mesh to compile the runnable.")
+            raise RuntimeError(
+                "Require a pre-allocated physical mesh to compile the runnable."
+            )
 
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
@@ -239,8 +243,8 @@ class XlaShardedPipelineStage(PipelineStage):
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         compiled = compile_with_given_strategy(
-                backend, xla_computation, self.strategy_config,
-                num_devices, mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED)
+            backend, xla_computation, self.strategy_config, num_devices,
+            mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED)
         hlo_module = compiled.hlo_modules()[0]
         if mesh.is_distributed:
             compiled = mesh.compile_remote_executable(
@@ -258,11 +262,13 @@ class XlaShardedPipelineStage(PipelineStage):
         self.output_sharding_specs = output_sharding_specs
 
         return mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                  input_sharding_specs, output_sharding_specs,
+                                                  input_sharding_specs,
+                                                  output_sharding_specs,
                                                   self.donated_invars)
 
 
-def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]: # noqa MC0001
+def slice_closed_jaxpr_by_pipeline_marks(
+        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:  # noqa MC0001
     """Slice a Jaxpr into multiple pipeline stages.
 
     We assume the closed_jaxpr includes pipeline start and end markers. Also,
@@ -277,8 +283,10 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
         Sequence[JaxPipelineStage]: A list of sliced pipeline stages.
     """
     global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_outvars = set(var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    global_consts_dir = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    global_outvars = set(
+        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+    global_consts_dir = dict(
+        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
     var2stage = {}
     result_stages = []
 
@@ -296,8 +304,9 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
         assert current_stage is not None
 
         for var in eqn.invars:
-            if isinstance(var, Literal) or (var in current_stage.pipeline_invars) or (
-                    var in current_stage_intermediate_vars):
+            if isinstance(
+                    var, Literal) or (var in current_stage.pipeline_invars) or (
+                        var in current_stage_intermediate_vars):
                 continue
             if var in global_consts_dir:
                 if var not in current_stage.consts_dir:
@@ -315,7 +324,9 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
                     if var not in current_stage.local_invars:
                         current_stage.local_invars.add(var)
                 else:
-                    raise ValueError("Variable {} should be indicated as a pipeline stage input.".format(var))
+                    raise ValueError(
+                        "Variable {} should be indicated as a pipeline stage input."
+                        .format(var))
 
         for var in eqn.outvars:
             if not isinstance(var, DropVar):
@@ -328,27 +339,35 @@ def slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr: ClosedJaxpr) -> Sequence[
 
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
             assert current_stage is not None, "Ending a pipeline stage before its start."
-            assert current_stage.name == eqn.params['name'], "Ending a pipeline stage different from its start."
-            current_stage.pipeline_outvars = set(var for var in eqn.outvars if not isinstance(var, DropVar))
+            assert current_stage.name == eqn.params[
+                'name'], "Ending a pipeline stage different from its start."
+            current_stage.pipeline_outvars = set(
+                var for var in eqn.outvars if not isinstance(var, DropVar))
             result_stages.append(current_stage)
             current_stage = None
 
     for stage in result_stages:
-        stage.invars = list(stage.pipeline_invars | stage.global_invars | stage.local_invars)
-        stage.outvars = list(stage.pipeline_outvars | stage.global_outvars | stage.local_outvars)
+        stage.invars = list(stage.pipeline_invars | stage.global_invars |
+                            stage.local_invars)
+        stage.outvars = list(stage.pipeline_outvars | stage.global_outvars |
+                             stage.local_outvars)
 
     return result_stages
 
 
 def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
-    assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params['mark_type'] == 'start'
-    assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params['mark_type'] == 'end'
+    assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
+        'mark_type'] == 'start'
+    assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
+        'mark_type'] == 'end'
     new_stage = copy(stage)
     new_stage.eqns = []
-    var_alias = {var: gensym_func(var.aval) for var in it.chain(
-        stage.global_invars, stage.local_invars, stage.global_outvars,
-        stage.local_outvars)}
+    var_alias = {
+        var: gensym_func(var.aval)
+        for var in it.chain(stage.global_invars, stage.local_invars,
+                            stage.global_outvars, stage.local_outvars)
+    }
 
     def get_alias(var):
         if isinstance(var, Var) and var in var_alias:
@@ -359,7 +378,8 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     for eqn in stage.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             # Pipeline start marker
-            global_and_local_invars = list(it.chain(stage.global_invars, stage.local_invars))
+            global_and_local_invars = list(
+                it.chain(stage.global_invars, stage.local_invars))
             eqn_invars_without_literal = []
             eqn_outvars_without_literal = []
             for invar, outvar in zip(eqn.invars, eqn.outvars):
@@ -369,17 +389,24 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
                     eqn_invars_without_literal.append(invar)
                     eqn_outvars_without_literal.append(outvar)
             invars = eqn_invars_without_literal + global_and_local_invars
-            outvars = [get_alias(var) for var in eqn_outvars_without_literal + global_and_local_invars]
+            outvars = [
+                get_alias(var)
+                for var in eqn_outvars_without_literal + global_and_local_invars
+            ]
             new_stage.invars = invars
         elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            global_and_local_outvars = list(it.chain(stage.global_outvars, stage.local_outvars))
+            global_and_local_outvars = list(
+                it.chain(stage.global_outvars, stage.local_outvars))
             eqn_invars_without_dropvar = []
             eqn_outvars_without_dropvar = []
             for invar, outvar in zip(eqn.invars, eqn.outvars):
                 if not isinstance(outvar, DropVar):
                     eqn_invars_without_dropvar.append(invar)
                     eqn_outvars_without_dropvar.append(outvar)
-            invars = [get_alias(var) for var in eqn_invars_without_dropvar + global_and_local_outvars]
+            invars = [
+                get_alias(var)
+                for var in eqn_invars_without_dropvar + global_and_local_outvars
+            ]
             outvars = eqn_outvars_without_dropvar + global_and_local_outvars
             new_stage.outvars = outvars
         else:
@@ -390,9 +417,12 @@ def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     return new_stage
 
 
-def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage], physical_mesh,
-                                logical_mesh_choices, logical_mesh_search_mode,
-                                memory_budget_per_device, search_task, record_file):
+def generate_sharded_xla_stages(name: str,
+                                jax_stages: Sequence[JaxPipelineStage],
+                                physical_mesh, logical_mesh_choices,
+                                logical_mesh_search_mode,
+                                memory_budget_per_device, search_task,
+                                record_file):
     """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
@@ -412,14 +442,26 @@ def generate_sharded_xla_stages(name: str, jax_stages: Sequence[JaxPipelineStage
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
-    built_computation = jaxpr_to_hlo_computation(name, closed_jaxpr, backend_name=backend_name)
+    built_computation = jaxpr_to_hlo_computation(name,
+                                                 closed_jaxpr,
+                                                 backend_name=backend_name)
     stage_protos, strategy_config = compile_with_search(
-        backend, built_computation, physical_mesh, logical_mesh_choices,
-        logical_mesh_search_mode, memory_budget_per_device, search_task, record_file,
+        backend,
+        built_computation,
+        physical_mesh,
+        logical_mesh_choices,
+        logical_mesh_search_mode,
+        memory_budget_per_device,
+        search_task,
+        record_file,
         multiple_stages=True)
-    stages = [XlaShardedPipelineStage.from_auto_sharded_stage(auto_sharded_hlo_proto=proto, jax_pipeline_stage=stage,
-                                                              strategy_config=strategy_config)
-              for stage, proto in zip(jax_stages, stage_protos)]
+    stages = [
+        XlaShardedPipelineStage.from_auto_sharded_stage(
+            auto_sharded_hlo_proto=proto,
+            jax_pipeline_stage=stage,
+            strategy_config=strategy_config)
+        for stage, proto in zip(jax_stages, stage_protos)
+    ]
     return stages
 
 
@@ -445,11 +487,15 @@ class StrVarPipelineStage:
         return cls(
             name=pipeline_stage.name,
             invars=[repr(var) for var in pipeline_stage.invars],
-            pipeline_invars={repr(var) for var in pipeline_stage.pipeline_invars},
+            pipeline_invars={
+                repr(var) for var in pipeline_stage.pipeline_invars
+            },
             global_invars={repr(var) for var in pipeline_stage.global_invars},
             local_invars={repr(var) for var in pipeline_stage.local_invars},
             outvars=[repr(var) for var in pipeline_stage.outvars],
-            pipeline_outvars={repr(var) for var in pipeline_stage.pipeline_outvars},
+            pipeline_outvars={
+                repr(var) for var in pipeline_stage.pipeline_outvars
+            },
             global_outvars={repr(var) for var in pipeline_stage.global_outvars},
             local_outvars={repr(var) for var in pipeline_stage.local_outvars},
         )

@@ -52,15 +52,13 @@ class RemoteRunner:
         stages (dict): serializable stages assigned to this runner.
     """
 
-    def __init__(self,
-                 *,
-                 name,
-                 stages):
+    def __init__(self, *, name, stages):
         self.name = name
         self._raw_stages = stages
         self.stages = dict()
         for stage_idx, stage in self._raw_stages.items():
-            self.stages[stage_idx] = StrVarPipelineStage.from_pipeline_stage(stage)
+            self.stages[stage_idx] = StrVarPipelineStage.from_pipeline_stage(
+                stage)
 
         self.runnables = None
         # TODO: we could defer this compile to later.+
@@ -105,7 +103,8 @@ class RemoteRunner:
         global_outvals = dict()
         logger.debug("all outputs: {}".format(list(outvals.keys())))
         logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
-        logger.debug("pipeline_outvars: {}".format(list(stage.pipeline_outvars)))
+        logger.debug("pipeline_outvars: {}".format(list(
+            stage.pipeline_outvars)))
         logger.debug("global outvars: {}".format(list(stage.global_outvars)))
         for var, val in outvals.items():
             if var in stage.local_outvars:
@@ -163,8 +162,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
         # for resharding
         self._communicator = None
-        self._collective_groups = [[None for _ in range(self.num_mesh)]
-                                   for _ in range(self.num_mesh)]
+        self._collective_groups = [
+            [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+        ]
         self._prepare()
 
     @property
@@ -179,7 +179,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
             assert len(mesh_indices) == 1
             mesh_idx = mesh_indices[0]
-            self._runnables.append(stage.get_runnable(self.physical_meshes[mesh_idx]))
+            self._runnables.append(
+                stage.get_runnable(self.physical_meshes[mesh_idx]))
 
         # Based on dependency and sharding specs, infer communication spec (cross-mesh).
         self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
@@ -204,8 +205,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
                 (spec[i][j], spec[j][i]) will share collective groups.
         """
-        device_str_groups = [[set() for _ in range(self.num_mesh)]
-                             for _ in range(self.num_mesh)]
+        device_str_groups = [
+            [set() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+        ]
         # Merge (i, j) and (j, i)
         for i, j, var_spec_map in self._communicator.task_spec_iter():
             participants = set()
@@ -238,26 +240,31 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
             # submit work in parallel
-            logger.info(">>> At clock {}, working on tasks {}.".format(clock, sched))
+            logger.info(">>> At clock {}, working on tasks {}.".format(
+                clock, sched))
             for _, task in enumerate(sched):
                 # i is micro-batch idx
                 # j is stage idx
                 if not task:
                     continue
                 batch_idx, stage_idx = task
-                inputs = self._identify_stage_inputs(clock, stage_idx, batch_idx)
+                inputs = self._identify_stage_inputs(clock, stage_idx,
+                                                     batch_idx)
                 # check DistributedArray colocation.
                 inputs_list = self._process_stage_inputs(stage_idx, inputs)
                 outputs = self._runnables[stage_idx](*inputs_list)
                 pipeline_outvals, global_outvals, local_outvals = \
                     self._process_stage_outputs(stage_idx, outputs)
                 if pipeline_outvals:
-                    self._stage_outputs[batch_idx][stage_idx].update(pipeline_outvals)
+                    self._stage_outputs[batch_idx][stage_idx].update(
+                        pipeline_outvals)
                 if local_outvals:
-                    self._stage_outputs[batch_idx][stage_idx].update(local_outvals)
+                    self._stage_outputs[batch_idx][stage_idx].update(
+                        local_outvals)
                 if global_outvals:
                     global_outputs.update(global_outvals)
-            logger.info(">>> At clock {}, pipelining jobs finished!".format(clock))
+            logger.info(
+                ">>> At clock {}, pipelining jobs finished!".format(clock))
 
         global_outvals_list = []
         for var in self.global_outvars:
@@ -277,14 +284,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
         it is a C by S matrix where C is the #clocks and S is #stages.
         """
-        stage_outputs = [[dict() for _ in range(self.num_stage)]
+        stage_outputs = [[dict()
+                          for _ in range(self.num_stage)]
                          for _ in range(self.num_batch)]
         return stage_outputs
 
-    def _make_microbatches(self,
-                           *inputs,
-                           batch_dim=0,
-                           batch_size=128):
+    def _make_microbatches(self, *inputs, batch_dim=0, batch_size=128):
         assert len(inputs) == len(self.global_invars)
         microbatches = [dict() for _ in range(self.num_batch)]
         for i, var in enumerate(self.global_invars):
@@ -317,8 +322,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         stage_inputs = OrderedDict()
         stage = self.stages[stage_idx]
         # find stages that depend on it
-        ancestors = list(np.squeeze(
-            np.argwhere(self.dependency[stage_idx] == 1), axis=1))
+        ancestors = list(
+            np.squeeze(np.argwhere(self.dependency[stage_idx] == 1), axis=1))
         for var in stage.invars:
             key = repr(var)
             if var in stage.pipeline_invars:
@@ -327,18 +332,22 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 else:
                     for ans in ancestors:
                         if key in self._stage_outputs[batch_idx][ans]:
-                            stage_inputs[key] = self._stage_outputs[batch_idx][ans][key]
+                            stage_inputs[key] = self._stage_outputs[batch_idx][
+                                ans][key]
             elif var in stage.local_invars:
                 counter_stage_idx = self.num_stage - stage_idx - 1
-                stage_inputs[key] = self._stage_outputs[batch_idx][counter_stage_idx][key]
+                stage_inputs[key] = self._stage_outputs[batch_idx][
+                    counter_stage_idx][key]
             elif var in stage.global_invars:
                 stage_inputs[key] = self._microbatches[batch_idx][key]
             else:
-                raise RuntimeError("Var `{}` not in any of global, pipeline or local "
-                                   "var sets.".format(repr(var)))
+                raise RuntimeError(
+                    "Var `{}` not in any of global, pipeline or local "
+                    "var sets.".format(repr(var)))
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs. "
-                               "`stage_inputs` got {}, but expect {}.".format(len(stage_inputs), len(stage.invars)))
+                               "`stage_inputs` got {}, but expect {}.".format(
+                                   len(stage_inputs), len(stage.invars)))
         return stage_inputs
 
     def _process_stage_inputs(self, stage_idx, inputs):
@@ -355,9 +364,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 else:
                     # find the corresponded resharding task
                     src_mesh_idx = self.physical_meshes.index(val.device_mesh)
-                    task_spec = self._communicator.resharding_specs[src_mesh_idx][mesh_idx][key]
+                    task_spec = self._communicator.resharding_specs[
+                        src_mesh_idx][mesh_idx][key]
                     assert task_spec
-                    task = ReshardingTask(task_spec, self._collective_groups[src_mesh_idx][mesh_idx], val)
+                    task = ReshardingTask(
+                        task_spec,
+                        self._collective_groups[src_mesh_idx][mesh_idx], val)
                     resharded_val = task.do()
                     inputs_list.append(resharded_val)
             else:
@@ -373,7 +385,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         local_outvals = dict()
         logger.debug("all outputs: {}".format(list(outvals.keys())))
         logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
-        logger.debug("pipeline_outvars: {}".format(list(stage.pipeline_outvars)))
+        logger.debug("pipeline_outvars: {}".format(list(
+            stage.pipeline_outvars)))
         logger.debug("global outvars: {}".format(list(stage.global_outvars)))
         for var, val in outvals.items():
             key = repr(var)
@@ -426,7 +439,8 @@ class GpipeSchedule:
         self.num_stage = dependency.shape[0]
 
         if self.num_stage % 2 != 0:
-            raise RuntimeError("Gpipe schedule require an even number of stages.")
+            raise RuntimeError(
+                "Gpipe schedule require an even number of stages.")
         self.num_pipeline_worker = self.num_stage // 2
         # TODO (zhuohan): Seperate device placement and runtime scheduling
         if not self.meshes:
@@ -484,11 +498,14 @@ class GpipeSchedule:
     def pprint_schedule(self):
         """Pretty print the schedule."""
         printout = "\n"
-        device_str = " ".join(["{:<8}".format("d" + str(d))
-                               for d in range(self.num_pipeline_worker)])
+        device_str = " ".join([
+            "{:<8}".format("d" + str(d))
+            for d in range(self.num_pipeline_worker)
+        ])
         printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
         for clock, scheds in enumerate(self.schedules):
-            sched_str = " ".join(["{:<8}".format(str(sched)) for sched in scheds])
+            sched_str = " ".join(
+                ["{:<8}".format(str(sched)) for sched in scheds])
             printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
         return printout
 
@@ -572,7 +589,8 @@ class GpipeSchedule:
         if original_mesh.total_devices < num_mesh_expected:
             raise RuntimeError("#device < #workers.")
 
-        num_device_per_mesh = int(original_mesh.total_devices / num_mesh_expected)
+        num_device_per_mesh = int(original_mesh.total_devices /
+                                  num_mesh_expected)
         num_device_per_host = original_mesh.num_devices_per_host
         num_host = original_mesh.num_hosts
         if num_device_per_host >= num_device_per_mesh:
@@ -585,9 +603,10 @@ class GpipeSchedule:
                     .slice(1, [ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) * num_device_per_mesh]])
                 output_meshes.append(mesh)
         else:
-            num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)
+            num_host_per_mesh = math.ceil(num_device_per_mesh /
+                                          num_device_per_host)
             ind = list(range(num_host))
             for i in range(num_mesh_expected):
-                output_meshes.append((
-                    original_mesh.slice(0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
+                output_meshes.append((original_mesh.slice(
+                    0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
         return output_meshes

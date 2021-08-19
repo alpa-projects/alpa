@@ -11,6 +11,7 @@ from parax import parallelize, DeviceCluster, global_config, testing
 
 
 class DistributedArrayTest(unittest.TestCase):
+
     def setUp(self):
         ray.init(address="auto")
 
@@ -37,4 +38,3 @@ def suite():
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

@@ -6,7 +6,6 @@ from jax import core, lax, numpy as jnp
 
 from jax.lib.xla_bridge import get_backend as default_get_backend
 
-
 ########################################
 ##### Monkey patch the backend
 ########################################
@@ -34,6 +33,7 @@ def set_override_backend(backend):
 ########################################
 ##### Monkey patch Jax
 ########################################
+
 
 # Monkey patch random generator to use the stateful random generator.
 # This can simplify the computational graph for dropout.
@@ -68,14 +68,12 @@ def embed_call_one_hot(self, inputs):
 
 # Monkey patch the nn.Embed in flax to use always use fp32 as parameter type
 def embed_setup(self):
-    self.embedding = self.param('embedding',
-                                self.embedding_init,
+    self.embedding = self.param('embedding', self.embedding_init,
                                 (self.num_embeddings, self.features))
 
 
 setattr(flax.linen.Embed, "setup", embed_setup)
 setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
-
 
 # Monkey patch to make the nn.LayerNorm an identity function.
 # This is used for debugging

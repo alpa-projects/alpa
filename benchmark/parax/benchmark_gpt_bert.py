@@ -148,20 +148,22 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Init model and optimizer
     if model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            max_position_embeddings=seq_len,
             type_vocab_size=0,
         ), dtype=dtype)
     elif model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            max_position_embeddings=seq_len,
             type_vocab_size=0,
         ), dtype=dtype)
     else:
@@ -210,7 +212,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     with open("last.hlo", "w") as fout:
         fout.write(hlo_ir)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
           f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")

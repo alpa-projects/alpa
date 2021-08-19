@@ -45,7 +45,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         device_mesh = PhysicalDeviceMesh(self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
-    def run_bert_layers(self, num_layers, batch_size, seq_len, hidden_size,
+    def run_bert_layers(self, batch_size, seq_len, num_layers, hidden_size,
                         num_heads, deterministic, device_mesh):
         set_parallelize_options(devices=device_mesh)
 
@@ -91,7 +91,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
-    def run_bert_mlm(self, num_layers, batch_size, seq_len, hidden_size,
+    def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
                      num_heads, vocab_size, deterministic, device_mesh):
         set_parallelize_options(devices=device_mesh)
 
@@ -124,10 +124,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         model = FlaxBertForMaskedLMModule(BertConfig(
             num_hidden_layers=num_layers,
-            vocab_size=vocab_size,
             hidden_size=hidden_size,
-            num_attention_heads=num_heads,
             intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            max_position_embeddings=seq_len,
         ))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, input_ids, attention_mask, token_type_ids, position_ids)
@@ -149,9 +150,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
         return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
 
     def test_bert_layer_data_parallel(self):
-        num_layers = 2
         batch_size = 64
         seq_len = 64
+        num_layers = 2
         hidden_size = 32
         num_heads = 8
         deterministic = False
@@ -160,16 +161,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_layers(
-                num_layers, batch_size, seq_len, hidden_size,
+                batch_size, seq_len, num_layers, hidden_size,
                 num_heads, deterministic, device_mesh)
 
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
 
 
     def test_bert_layer_model_parallel(self):
-        num_layers = 2
         batch_size = 8
         seq_len = 8
+        num_layers = 2
         hidden_size = 128
         num_heads = 8
         deterministic = False
@@ -178,7 +179,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_layers(
-                num_layers, batch_size, seq_len, hidden_size,
+                batch_size, seq_len, num_layers, hidden_size,
                 num_heads, deterministic, device_mesh)
 
             # Check communication cost
@@ -186,7 +187,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(hlo_ir)
             if global_config.prefer_reduce_scatter:
                 assert n_total == num_layers * 4 - 1
@@ -214,9 +215,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
                         assert_row_partitioned(weights[j], mesh_shape[i], i)
 
     def test_bert_layer_2d_mesh(self):
-        num_layers = 2
         batch_size = 8
         seq_len = 8
+        num_layers = 2
         hidden_size = 128
         num_heads = 8
         deterministic = False
@@ -225,7 +226,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
         optimizer, hlo_ir, objective = self.run_bert_layers(
-            num_layers, batch_size, seq_len, hidden_size,
+            batch_size, seq_len, num_layers, hidden_size,
             num_heads, deterministic, device_mesh)
 
         # Check communication cost
@@ -236,7 +237,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1) * (num_layers * 4 - 1)
         assert_close(objective, expected)
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
@@ -329,16 +330,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * 4 / mesh_shape[0], 1) * 2
 
         assert_close(objective, expected)
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         assert n_total == n_all_reduce
 
     def test_bert_mlm_data_parallel(self):
         batch_size = 32
         seq_len = 32
+        num_layers = 2
         hidden_size = 16
         num_heads = 4
-        num_layers = 2
         vocab_size = 128
         deterministic = False
 
@@ -346,7 +347,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_mlm(
-                num_layers, batch_size, seq_len, hidden_size,
+                batch_size, seq_len, num_layers, hidden_size,
                 num_heads, vocab_size, deterministic, device_mesh)
 
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i, 1)
@@ -354,18 +355,19 @@ class AutoShardingAttentionTest(unittest.TestCase):
     def test_bert_mlm_model_parallel(self):
         batch_size = 16
         seq_len = 16
+        num_layers = 2
         hidden_size = 128
         num_heads = 4
-        num_layers = 2
         vocab_size = 512
         deterministic = False
         global_config.allow_all_gather = False  # Temporary hack
+        global_config.allow_all_to_all = False  # Temporary hack
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([ (4, 1), (1, 4) ]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_mlm(
-                num_layers, batch_size, seq_len, hidden_size,
+                batch_size, seq_len, num_layers, hidden_size,
                 num_heads, vocab_size, deterministic, device_mesh)
 
             # Check communication cost
@@ -384,7 +386,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
               device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * num_layers * 4
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(hlo_ir)
 
             # real number of all-reduce = transformers (4 * num_layers) + log_softmax (2) +
@@ -416,9 +418,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
     def test_bert_mlm_2d_mesh(self):
         batch_size = 4
         seq_len = 4
+        num_layers = 2
         hidden_size = 512
         num_heads = 4
-        num_layers = 2
         vocab_size = 4096
         deterministic = False
         global_config.allow_all_gather = False  # Temporary hack
@@ -428,11 +430,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
 
         optimizer, hlo_ir, objective = self.run_bert_mlm(
-            num_layers, batch_size, seq_len, hidden_size,
+            batch_size, seq_len, num_layers, hidden_size,
             num_heads, vocab_size, deterministic, device_mesh)
 
         # Check communication cost.
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_ir)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == 4 * num_layers + 2 + 2

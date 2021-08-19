@@ -148,11 +148,13 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, backend_name='gpu'):
 
 
 def count_communication_primitives(hlo_ir):
+    """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
     all_reduce = hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")
     all_gather = hlo_ir.count("all-gather(") + hlo_ir.count("all-gather-start(")
     reduce_scatter = hlo_ir.count("reduce-scatter(") + hlo_ir.count("reduce-scatter-start(")
-    return total, all_reduce, all_gather, reduce_scatter
+    all_to_all = hlo_ir.count("all-to-all(") + hlo_ir.count("all-to-all-start(")
+    return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 
 ########################################

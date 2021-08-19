@@ -467,7 +467,8 @@ class FlaxBertModule(nn.Module):
     def setup(self):
         self.embeddings = FlaxBertEmbeddings(self.config, dtype=self.dtype)
         self.encoder = FlaxBertEncoder(self.config, dtype=self.dtype)
-        self.pooler = FlaxBertPooler(self.config, dtype=self.dtype)
+        if self.add_pooling_layer:
+            self.pooler = FlaxBertPooler(self.config, dtype=self.dtype)
 
     def __call__(
         self,

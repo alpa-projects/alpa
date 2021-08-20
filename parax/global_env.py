@@ -10,9 +10,9 @@ class GlobalConfig:
     """
 
     def __init__(self):
-        ########## Options for @parallelize decorator ########## 
+        ########## Options for @parallelize decorator ##########
         self.devices = None
-        self.strategy = "auto_sharding_parallel"
+        self.strategy = "shard_parallel"
         self.memory_budget_per_device = None
 
         # logical mesh shape related options
@@ -24,20 +24,21 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
-        ########## Options for auto-sharding solver ########## 
-        self.allow_all_gather = True  # Do not allow all-gather during re-sharding.
+        ########## Options for auto-sharding solver ##########
+        self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
+        self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
-        self.force_batch_dim_to_mesh_dim = -1 # Forcely map the batch dim to a tensor dim
+        self.force_batch_dim_to_mesh_dim = -1  # Forcely map the batch dim to a tensor dim.
 
-        ########## Options for benchmark ########## 
+        ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.
         # This will produce wrong results but is acceptable for
         # data-independent benchmarks.
         self.use_dummy_value_for_benchmarking = False
 
-        ########## Options for logging ########## 
+        ########## Options for logging ##########
         self.print_xla_compilation_time = False
 
 
@@ -45,7 +46,7 @@ global_config = GlobalConfig()
 
 
 def set_parallelize_options(devices=None,
-                            strategy="auto_sharding_parallel",
+                            strategy="shard_parallel",
                             memory_budget_per_device=None,
                             search_logical_mesh_shape=False,
                             mesh_shape_search_mode="cost_model",
@@ -59,9 +60,9 @@ def set_parallelize_options(devices=None,
     Args:
       devices: The device cluster.
       strategy (str): The parallelization strategy.
-        Possible choices: {"auto_sharding_parallel",
+        Possible choices: {"shard_parallel",
         "pmap_data_parallel", "shard_data_parallel",
-        "pipeline_parallel", "distributed_pipeline_parallel", "3d_parallel"}.
+        "local_pipeline_parallel", "3d_parallel"}.
       memory_budget_per_device (Optional[float]): The memory budget of one device in bytes.
       search_logical_mesh_shape (bool): Whether to include the choices of logical mesh shape
         into the search space.
@@ -90,5 +91,6 @@ def set_parallelize_options(devices=None,
 
 # Don't let the compilation on the driver node use GPUs.
 # TODO(lmzheng): enable auto-tuning for compilation on workers.
-os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0"
+os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
+                                         "") + " --xla_gpu_autotune_level=0"
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

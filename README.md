@@ -27,7 +27,7 @@ This repo depends on our private fork of jax and tensorflow.
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install numpy scipy flax ray
+    pip3 install numpy scipy flax ray numba
     ```
   - ILP Solver:
     ```bash
@@ -56,9 +56,9 @@ This repo depends on our private fork of jax and tensorflow.
   pip3 install -e .
   ```
 
-- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_custom_call/README.md))
+- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_parallel/xla_custom_call_marker/README.md))
   ```bash
-  cd parax/pipeline_custom_call
+  cd parax/pipeline_parallel/xla_custom_call_marker
   bash build.sh
   ```
 
@@ -77,14 +77,19 @@ Organization
 - `tests`: unit tests
 
 
-Linting
+Formatting & Linting
 ============
-Install prospector via:
-```python
-pip install prospector
+Install prospector and yapf via:
+```bash
+pip install prospector yapf
+```
+
+Use yapf to automatically format the code:
+```bash
+./format.sh
 ```
 
 Then use prospector to run linting for the folder ``parax/``:
-```python
+```bash
 prospector parax/
 ```

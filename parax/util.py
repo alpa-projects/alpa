@@ -7,7 +7,6 @@ import time
 
 import cupy as cp
 import flax
-import numpy as np
 import jax
 from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
@@ -16,16 +15,18 @@ from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.interpreters.xla import _DeviceArray
-from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
-
+import numpy as np
 
 ########################################
 ##### Parax API Utilities
 ########################################
 
+
 def freeze_dict(pytree):
     """Convert a pytree to a FrozenDict."""
+
     def is_leaf(x):
         return isinstance(x, dict)
 
@@ -39,6 +40,7 @@ def freeze_dict(pytree):
 
 def auto_static_argnums(args):
     """Return the indices of static arguments according to heuristic rules."""
+
     def is_static_arg(arg):
         if isinstance(arg, (bool, int, float, str)):
             return True
@@ -59,6 +61,7 @@ def auto_static_argnums(args):
 
 def auto_donate_argnums(args):
     """Return the indices of donated arguments according to heuristic rules."""
+
     def should_donate(x):
         # Always donate optimizer
         if isinstance(x, flax.optim.base.Optimizer):
@@ -72,6 +75,7 @@ def auto_donate_argnums(args):
 ##### Data Structure Utilities
 ########################################
 
+
 def to_int_tuple(array):
     """Convert a numpy array to int tuple."""
     if array is None:
@@ -81,11 +85,13 @@ def to_int_tuple(array):
 
 def get_dim_last_value(array, dim):
     """Get the value of the last element in a dimension."""
-    indices = tuple(0 if i != dim else array.shape[dim] - 1 for i in range(len(array.shape)))
+    indices = tuple(0 if i != dim else array.shape[dim] - 1
+                    for i in range(len(array.shape)))
     return array[indices]
 
 
 class FastLookupList:
+
     def __init__(self, iterable=()):
         self.elements = list(iterable)
         self.elements_set = set(iterable)
@@ -108,11 +114,9 @@ class FastLookupList:
 ##### XLA API Utilities
 ########################################
 
-def get_compile_options(num_replicas,
-                        num_partitions,
-                        device_assignment,
-                        use_spmd_partitioning,
-                        parameter_is_tupled_arguments,
+
+def get_compile_options(num_replicas, num_partitions, device_assignment,
+                        use_spmd_partitioning, parameter_is_tupled_arguments,
                         build_random_seed):
     """Return CompileOptions for XLA compilation."""
     compile_options = xb.get_compile_options(
@@ -137,27 +141,54 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, backend_name='gpu'):
 
     c = xb.make_computation_builder("pipeline_stage_{}".format(name))
     xla_consts = xla._xla_consts(c, consts)
-    xla_args, _ = xla._xla_callable_args(c, in_avals, tuple_args, donated_invars=None)
-    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
-    out_nodes = xla.jaxpr_subcomp(
-        c, closed_jaxpr.jaxpr, backend_name, axis_env, xla_consts,
-        extend_name_stack(wrap_name(name, 'stage')), *xla_args)
+    xla_args, _ = xla._xla_callable_args(c,
+                                         in_avals,
+                                         tuple_args,
+                                         donated_invars=None)
+    axis_env = xla.AxisEnv(nreps=1, names=(),
+                           sizes=())  # All named axes have been vmapped
+    out_nodes = xla.jaxpr_subcomp(c, closed_jaxpr.jaxpr, backend_name, axis_env,
+                                  xla_consts,
+                                  extend_name_stack(wrap_name(name, 'stage')),
+                                  *xla_args)
     out_tuple = xc.ops.Tuple(c, out_nodes)
     built = c.build(out_tuple)
     return built
 
 
 def count_communication_primitives(hlo_ir):
+    """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
     all_reduce = hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")
     all_gather = hlo_ir.count("all-gather(") + hlo_ir.count("all-gather-start(")
-    reduce_scatter = hlo_ir.count("reduce-scatter(") + hlo_ir.count("reduce-scatter-start(")
-    return total, all_reduce, all_gather, reduce_scatter
+    reduce_scatter = hlo_ir.count("reduce-scatter(") + hlo_ir.count(
+        "reduce-scatter-start(")
+    all_to_all = hlo_ir.count("all-to-all(") + hlo_ir.count("all-to-all-start(")
+    return total, all_reduce, all_gather, reduce_scatter, all_to_all
+
+
+class XlaPassContext:
+    """A global context for passing arguments from python to XLA c++ passes."""
+
+    current = None
+
+    def __init__(self, value_dict):
+        self.value_dict = value_dict
+
+    def __enter__(self):
+        assert XlaPassContext.current is None, "Do not support recurrent context"
+        XlaPassContext.current = self
+        xe.set_pass_context(self.value_dict)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        XlaPassContext.current = None
+        xe.clear_pass_context()
 
 
 ########################################
 ##### Profiling Utilities
 ########################################
+
 
 def profile_xla_executable(compiled, backend, local_devices):
     """Measure the time costs of a xla executable."""
@@ -167,15 +198,16 @@ def profile_xla_executable(compiled, backend, local_devices):
     input_shapes = hlo_module.parameter_shapes()
     device_inputs = []
     for shape in input_shapes:
-        device_inputs.append(
-            [backend.buffer_from_pyval(np.empty(shape.dimensions(), shape.numpy_dtype()),
-                                       local_devices[i])
-             for i in range(len(local_devices))]
-        )
+        device_inputs.append([
+            backend.buffer_from_pyval(
+                np.empty(shape.dimensions(), shape.numpy_dtype()),
+                local_devices[i]) for i in range(len(local_devices))
+        ])
 
     # Run benchmark
     def run_func():
-        device_outputs = compiled.execute_sharded_on_local_devices(device_inputs)
+        device_outputs = compiled.execute_sharded_on_local_devices(
+            device_inputs)
 
         # Reset the value for donate buffers
         for j in range(len(device_inputs)):
@@ -189,7 +221,12 @@ def profile_xla_executable(compiled, backend, local_devices):
     return costs
 
 
-def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5, min_repeat_second=None):
+def benchmark_func(run_func,
+                   sync_func,
+                   warmup=1,
+                   repeat=3,
+                   number=5,
+                   min_repeat_second=None):
     """Benchmark the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
@@ -231,6 +268,7 @@ def benchmark_func(run_func, sync_func, warmup=1, repeat=3, number=5, min_repeat
 ##### Array conversion
 ########################################
 
+
 def xla_buffer_to_jax_buffer(xla_buf):
     """
     Convert an xla buffer to a JAX DeviceArray.
@@ -261,9 +299,7 @@ def jax_buffer_set(src_buf, update, start_indices):
     return src_buf
 
 
-jax_buffer_set = jax.jit(jax_buffer_set,
-                         donate_argnums=(0),
-                         static_argnums=(2))
+jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
 
 
 def to_cupy(tensors):
@@ -283,13 +319,14 @@ def to_jax_tensor(tensor):
 
 def get_jax_dlpack(tensor):
     """Helper function for calling dlpack in JAX."""
-    return xc._xla.buffer_to_dlpack_managed_tensor(
-        tensor.device_buffer, take_ownership=False)
+    return xc._xla.buffer_to_dlpack_managed_tensor(tensor.device_buffer,
+                                                   take_ownership=False)
 
 
 ########################################
 ##### OS / IO Utilities
 ########################################
+
 
 def run_cmd(cmd):
     """Run a bash commond."""

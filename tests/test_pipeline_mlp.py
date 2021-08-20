@@ -11,18 +11,18 @@ import ray
 from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster
 from parax.testing import assert_allclose
 
-MB = 1024 ** 2
+MB = 1024**2
+
 
 class PipelineMLPTest(unittest.TestCase):
+
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         assert len(jax.local_devices()) >= 4
-        # self.devices = tuple(jax.local_devices()[:4])
-        self.devices = FrozenDict({
-            "1": tuple(jax.local_devices()[0:2]),
-            "2": tuple(jax.local_devices()[2:4]),
-        })
         ray.init(address='auto')
+        device_cluster = DeviceCluster()
+        mesh = device_cluster.get_virtual_mesh()
+        self.devices = mesh
 
     def tearDown(self):
         ray.shutdown()
@@ -48,13 +48,17 @@ class PipelineMLPTest(unittest.TestCase):
                 return x
 
         def train_step(optimizer, batch, apply_fn):
+
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
-                loss = jnp.mean((out - y) ** 2)
+                loss = jnp.mean((out - y)**2)
                 loss, = mark_pipeline(loss, name='2', mark_type='end')
                 return loss
 
-            grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'])
+            grad_param, grad_x = jax.grad(loss_func,
+                                          argnums=(0, 1))(optimizer.target,
+                                                          batch['x'],
+                                                          batch['y'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
@@ -73,26 +77,22 @@ class PipelineMLPTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
         pipelined_train_step = parallelize(donate_argnums=())(train_step)
-        gradients_with_pipeline = pipelined_train_step(optimizer, {"x": x, "y": y}, model.apply)
+        gradients_with_pipeline = pipelined_train_step(optimizer, {
+            "x": x,
+            "y": y
+        }, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 
-    def test_2_layer_mlp_pipeline_parallel(self):
-        self.train_2_layer_mlp(self.devices, "pipeline_parallel")
-
-    @unittest.skip("Temporarily disable it")
-    def test_2_layer_mlp_distributed_pipeline_parallel(self):
-        self.train_2_layer_mlp("distributed_pipeline_parallel")
+    def test_2_layer_mlp_local_pipeline_parallel(self):
+        self.train_2_layer_mlp(self.devices, "local_pipeline_parallel")
 
     def test_2_layer_mlp_3d_parallel(self):
-        device_cluster = DeviceCluster()
-        mesh = device_cluster.get_virtual_mesh()
-        self.train_2_layer_mlp(mesh, "3d_parallel")
+        self.train_2_layer_mlp(self.devices, "3d_parallel")
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineMLPTest("test_2_layer_mlp_pipeline_parallel"))
-    suite.addTest(PipelineMLPTest("test_2_layer_mlp_distributed_pipeline_parallel"))
+    suite.addTest(PipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
     suite.addTest(PipelineMLPTest("test_2_layer_mlp_3d_parallel"))
     return suite
 

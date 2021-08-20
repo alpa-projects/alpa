@@ -156,7 +156,8 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       donated_invars, devices, memory_budget_per_device, *avals)
+                                       donated_invars, devices,
+                                       memory_budget_per_device, *avals)
     elif strategy == "shard_data_parallel":
         return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,
                                             donated_invars, devices, *avals)

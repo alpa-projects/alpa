@@ -27,7 +27,8 @@ from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.util import (get_dim_last_value, list_gpu_info,
                         profile_xla_executable, GB, to_cupy, to_jax_tensor,
-                        jax_buffer_set, xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer)
+                        jax_buffer_set, xla_buffer_to_jax_buffer,
+                        jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -73,8 +73,7 @@ def shard_parallel_callable(
 
         if global_config.search_logical_mesh_shape:
             # Check cached strategy folder
-            compute_key = get_compute_key(fun, in_tree, donated_invars,
-                                          *avals)
+            compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
             device_key = physical_mesh.get_signature()
             search_task = SearchTask(compute_key, device_key)
             record_file = global_config.mesh_shape_search_log_file
@@ -105,18 +104,15 @@ def shard_parallel_callable(
                 logical_mesh_choices = []
                 strategy_config = inp.config
         else:
-            logical_mesh_choices = [
-                physical_mesh.get_default_logical_mesh()
-            ]
+            logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
     elif isinstance(devices, LogicalDeviceMesh):
         physical_mesh = devices.physical_mesh
         logical_mesh_choices = [devices]
     else:
         raise ValueError("Invalid value of devices")
 
-    return shard_parallel_internal(fun, in_tree, out_tree_thunk,
-                                   donated_invars, physical_mesh,
-                                   logical_mesh_choices,
+    return shard_parallel_internal(fun, in_tree, out_tree_thunk, donated_invars,
+                                   physical_mesh, logical_mesh_choices,
                                    global_config.mesh_shape_search_mode,
                                    memory_budget_per_device, search_task,
                                    record_file, strategy_config, *avals)

@@ -14,14 +14,32 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.device_mesh import LogicalDeviceMesh
+from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.measure_record import MeasureInput, MeasureResult, StrategyConfig, save_to_file
 from parax.global_env import global_config
-from parax.xla_pass_context import XlaPassContext
-from parax.util import to_int_tuple, get_compile_options
+from parax.util import get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def get_compute_key(fun, in_tree, donated_invars, *aval):
+    """Return a unique string as the query key of a computation definition."""
+    # Algorithm:
+    # Concatenate the definition location, source code,
+    # input arguments specification to a string.
+    # Then compute a hash value of this string.
+    #
+    # TODO(lmzheng): use jaxpr or hlo instead of source code?
+
+    location = fun.f.__str__().split("at")[0]
+    source_code = inspect.getsource(fun.f)
+    donated_invars = str(donated_invars)
+    aval = "".join(x.str_short() for x in aval)
+
+    string = location + source_code + donated_invars + aval
+    hash_key = hashlib.md5(string.encode(encoding="utf-8")).hexdigest()
+    return hash_key
 
 
 def shard_parallel_callable(
@@ -30,7 +48,6 @@ def shard_parallel_callable(
     out_tree_thunk,
     donated_invars,
     devices,
-    strategy,
     memory_budget_per_device,
     *avals,
 ):

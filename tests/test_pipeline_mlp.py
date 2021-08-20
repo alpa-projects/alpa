@@ -83,8 +83,8 @@ class PipelineMLPTest(unittest.TestCase):
         }, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 
-    def test_2_layer_mlp_pipeline_parallel(self):
-        self.train_2_layer_mlp(self.devices, "pipeline_parallel")
+    def test_2_layer_mlp_local_pipeline_parallel(self):
+        self.train_2_layer_mlp(self.devices, "local_pipeline_parallel")
 
     def test_2_layer_mlp_3d_parallel(self):
         self.train_2_layer_mlp(self.devices, "3d_parallel")
@@ -92,7 +92,7 @@ class PipelineMLPTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineMLPTest("test_2_layer_mlp_pipeline_parallel"))
+    suite.addTest(PipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
     suite.addTest(PipelineMLPTest("test_2_layer_mlp_3d_parallel"))
     return suite
 

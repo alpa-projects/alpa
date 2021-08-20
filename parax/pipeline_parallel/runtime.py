@@ -9,7 +9,7 @@ import numpy as np
 import ray
 from jax.core import Literal
 
-from parax.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
+from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.device_mesh import DistributedArray
 from parax.pipeline_parallel.stage import StrVarPipelineStage
 

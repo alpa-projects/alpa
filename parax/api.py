@@ -19,7 +19,7 @@ from parax.measure_record import SearchTask, load_best_record
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
-from parax.shard_parallel.shard_parallel import shard_parallel_callable
+from parax.shard_parallel.auto_sharding import shard_parallel_callable
 from parax.util import auto_donate_argnums, auto_static_argnums
 
 # pylint: disable=redefined-builtin
@@ -156,20 +156,20 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       devices, donated_invars,memory_budget_per_device, *avals)
+                                       donated_invars, devices, memory_budget_per_device, *avals)
     elif strategy == "shard_data_parallel":
         return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,
-                                            devices, donated_invars, *avals)
+                                            donated_invars, devices, *avals)
     elif strategy == "pmap_data_parallel":
         return pmap_data_parallel_callable(fun, in_tree, out_tree_thunk,
-                                           devices, donated_invars, *avals)
+                                           donated_invars, devices, *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices, *avals)
     elif strategy == "3d_parallel":
         # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
         assert not global_config.search_logical_mesh_shape
-        return three_d_parallel_callable(fun, in_tree, out_tree_thunk, devices,
-                                         donated_invars,
+        return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
+                                         donated_invars, devices,
                                          memory_budget_per_device, *avals)
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)
@@ -178,22 +178,3 @@ def parallelize_callable(
 def clear_callable_cache():
     """Clear all cached auto_parallel_callable."""
     parallelize_callable.cache_clear()
-
-
-def get_compute_key(fun, in_tree, donated_invars, *aval):
-    """Return a unique string as the query key of a computation definition."""
-    # Algorithm:
-    # Concatenate the definition location, source code,
-    # input arguments specification to a string.
-    # Then compute a hash value of this string.
-    #
-    # TODO(lmzheng): use jaxpr or hlo instead of source code?
-
-    location = fun.f.__str__().split("at")[0]
-    source_code = inspect.getsource(fun.f)
-    donated_invars = str(donated_invars)
-    aval = "".join(x.str_short() for x in aval)
-
-    string = location + source_code + donated_invars + aval
-    hash_key = hashlib.md5(string.encode(encoding="utf-8")).hexdigest()
-    return hash_key

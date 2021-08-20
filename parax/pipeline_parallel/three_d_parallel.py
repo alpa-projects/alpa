@@ -18,7 +18,7 @@ logger.setLevel(logging.INFO)
 
 @lu.cache
 def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                              devices, donated_invars, memory_budget_per_device,
+                              donated_invars, devices, memory_budget_per_device,
                               *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
     if not isinstance(devices, VirtualMesh):

@@ -229,7 +229,7 @@ class XlaShardedPipelineStage(PipelineStage):
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
-        from parax.auto_sharding import HloProtoStatus
+        from parax.shard_parallel.auto_sharding import HloProtoStatus
 
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError(

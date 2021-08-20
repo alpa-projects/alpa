@@ -1,4 +1,7 @@
 """Layer clustering and remat by layer."""
+from functools import wraps
+from typing import List, Callable
+
 import numba
 import numpy as np
 from jax import tree_flatten
@@ -7,10 +10,8 @@ from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun
 from jax.interpreters import xla
-from parax import mark_pipeline_jaxpreqn
 
-from functools import wraps
-from typing import List, Callable
+from parax import mark_pipeline_jaxpreqn
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow

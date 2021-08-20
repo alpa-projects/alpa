@@ -12,7 +12,7 @@ class GlobalConfig:
     def __init__(self):
         ########## Options for @parallelize decorator ##########
         self.devices = None
-        self.strategy = "auto_sharding_parallel"
+        self.strategy = "shard_parallel"
         self.memory_budget_per_device = None
 
         # logical mesh shape related options
@@ -46,7 +46,7 @@ global_config = GlobalConfig()
 
 
 def set_parallelize_options(devices=None,
-                            strategy="auto_sharding_parallel",
+                            strategy="shard_parallel",
                             memory_budget_per_device=None,
                             search_logical_mesh_shape=False,
                             mesh_shape_search_mode="cost_model",
@@ -60,9 +60,9 @@ def set_parallelize_options(devices=None,
     Args:
       devices: The device cluster.
       strategy (str): The parallelization strategy.
-        Possible choices: {"auto_sharding_parallel",
+        Possible choices: {"shard_parallel",
         "pmap_data_parallel", "shard_data_parallel",
-        "pipeline_parallel", "3d_parallel"}.
+        "local_pipeline_parallel", "3d_parallel"}.
       memory_budget_per_device (Optional[float]): The memory budget of one device in bytes.
       search_logical_mesh_shape (bool): Whether to include the choices of logical mesh shape
         into the search space.

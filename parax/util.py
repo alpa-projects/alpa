@@ -7,7 +7,6 @@ import time
 
 import cupy as cp
 import flax
-import numpy as np
 import jax
 from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
@@ -16,8 +15,9 @@ from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.interpreters.xla import _DeviceArray
-from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
+import numpy as np
 
 ########################################
 ##### Parax API Utilities
@@ -165,6 +165,24 @@ def count_communication_primitives(hlo_ir):
         "reduce-scatter-start(")
     all_to_all = hlo_ir.count("all-to-all(") + hlo_ir.count("all-to-all-start(")
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
+
+
+class XlaPassContext:
+    """A global context for passing arguments from python to XLA c++ passes."""
+
+    current = None
+
+    def __init__(self, value_dict):
+        self.value_dict = value_dict
+
+    def __enter__(self):
+        assert XlaPassContext.current is None, "Do not support recurrent context"
+        XlaPassContext.current = self
+        xe.set_pass_context(self.value_dict)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        XlaPassContext.current = None
+        xe.clear_pass_context()
 
 
 ########################################

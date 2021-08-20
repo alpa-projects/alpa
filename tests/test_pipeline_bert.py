@@ -101,8 +101,8 @@ class PipelineBERTTest(unittest.TestCase):
         }, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 
-    def test_2_layer_bert_pipeline_parallel(self):
-        self.train_2_layer_bert(self.devices, "pipeline_parallel")
+    def test_2_layer_bert_local_pipeline_parallel(self):
+        self.train_2_layer_bert(self.devices, "local_pipeline_parallel")
 
     def test_2_layer_bert_3d_parallel(self):
         self.train_2_layer_bert(self.devices, "3d_parallel")
@@ -110,7 +110,7 @@ class PipelineBERTTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineBERTTest("test_2_layer_bert_pipeline_parallel"))
+    suite.addTest(PipelineBERTTest("test_2_layer_bert_local_pipeline_parallel"))
     suite.addTest(PipelineBERTTest("test_2_layer_bert_3d_parallel"))
     return suite
 

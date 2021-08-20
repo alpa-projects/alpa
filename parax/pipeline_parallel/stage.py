@@ -35,14 +35,32 @@ class PipelineStage(ABC):
         name (str): The name of the pipeline stage.
         invars (Sequence[Var]): The list of input variables, corresponding to
             the order of the runnable inputs.
+        outvars (Sequence[Var]): The list of output variables, corresponding to
+            the order of the runnable outputs.
+    """
+
+    name: str
+    invars: Sequence[Var] = field(default_factory=list)
+    outvars: Sequence[Var] = field(default_factory=list)
+
+    @abstractmethod
+    def get_runnable(self, mesh=None):
+        """Compile the stage and get the runnable."""
+        raise NotImplementedError()
+
+
+@dataclass
+class ManualPipelineStage(PipelineStage):
+    """
+    Base class of manual pipeline stages.
+
+    Attributes:
         pipeline_invars (Set[Var]): The set of input variables receiving from
             the previous pipeline stage.
         global_invars (Set[Var]): The set of input variables from driver
             function inputs.
         local_invars (Set[Var]): The set of input variables from previous
             stages running on the same device.
-        outvars (Sequence[Var]): The list of output variables, corresponding to
-            the order of the runnable outputs.
         pipeline_outvars (Set[Var]): The set of output variables sending to
             the next pipeline stage.
         global_outvars (Set[Var]): The set of output variables that will be
@@ -51,22 +69,14 @@ class PipelineStage(ABC):
             by future stages running on the same device.
     """
 
-    name: str
     # invars
-    invars: Sequence[Var] = field(default_factory=list)
     pipeline_invars: Set[Var] = field(default_factory=set)
     global_invars: Set[Var] = field(default_factory=set)
     local_invars: Set[Var] = field(default_factory=set)
     # outvars
-    outvars: Sequence[Var] = field(default_factory=list)
     pipeline_outvars: Set[Var] = field(default_factory=set)
     global_outvars: Set[Var] = field(default_factory=set)
     local_outvars: Set[Var] = field(default_factory=set)
-
-    @abstractmethod
-    def get_runnable(self, mesh=None):
-        """Compile the stage and get the runnable."""
-        raise NotImplementedError()
 
 
 @dataclass
@@ -106,6 +116,11 @@ class JaxPipelineStage(PipelineStage):
 
 
 @dataclass
+class JaxManualPipelineStage(JaxPipelineStage, ManualPipelineStage):
+    pass
+
+
+@dataclass
 class XlaPipelineStage(PipelineStage):
     """A pipeline stage defined by XLA HLO proto."""
 
@@ -121,8 +136,6 @@ class XlaPipelineStage(PipelineStage):
         """
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
         built = jaxpr_to_hlo_computation(jax_pipeline_stage.name, closed_jaxpr)
-        #print("=" * 80)
-        #print("built", built.as_hlo_text())
 
         return cls(
             name=jax_pipeline_stage.name,

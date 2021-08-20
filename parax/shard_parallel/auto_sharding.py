@@ -1,5 +1,7 @@
 """Use the auto sharding pass in XLA."""
 import enum
+import hashlib
+import inspect
 import logging
 import multiprocessing
 import time
@@ -15,8 +17,10 @@ from jaxlib.xla_client import OpSharding
 
 from parax import testing
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
-from parax.measure_record import MeasureInput, MeasureResult, StrategyConfig, save_to_file
 from parax.global_env import global_config
+from parax.measure_record import (MeasureInput, MeasureResult, SearchTask,
+                                  StrategyConfig, load_best_record,
+                                  save_to_file)
 from parax.util import get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)

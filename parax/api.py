@@ -1,7 +1,5 @@
 """Top-level user API."""
 from functools import wraps
-import hashlib
-import inspect
 
 from jax import linear_util as lu
 from jax._src.util import safe_map, HashableFunction
@@ -15,7 +13,6 @@ from jax.tree_util import tree_flatten, tree_unflatten
 
 from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
-from parax.measure_record import SearchTask, load_best_record
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable

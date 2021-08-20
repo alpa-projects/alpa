@@ -1,10 +1,10 @@
 """pipeline stage definitions."""
-import itertools as it
-import logging
-from dataclasses import dataclass, field
-from typing import Sequence, List, Set, Any, Dict
 from abc import ABC, abstractmethod
 from copy import copy
+from dataclasses import dataclass, field
+import itertools as it
+import logging
+from typing import Sequence, List, Set, Any, Dict
 
 import numpy as np
 from jax import jit
@@ -13,13 +13,13 @@ from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, 
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 
-# pylint: disable=redefined-builtin
-from parax.shard_parallel.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.pipeline_parallel.primitive_def import pipeline_p
+from parax.shard_parallel.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
 from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
+# pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
 
 logger = logging.getLogger(__name__)

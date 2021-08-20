@@ -7,7 +7,6 @@ import time
 
 import cupy as cp
 import flax
-import numpy as np
 import jax
 from jax._src.dlpack import from_dlpack
 from jax._src.util import extend_name_stack, wrap_name
@@ -18,6 +17,7 @@ from jax.interpreters import xla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
+import numpy as np
 
 ########################################
 ##### Parax API Utilities

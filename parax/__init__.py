@@ -4,6 +4,7 @@ from . import global_env
 from . import measure_record
 from . import monkey_patch
 from . import pipeline_parallel
+from . import shard_parallel
 from . import util
 
 # Shortcut

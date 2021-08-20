@@ -199,34 +199,6 @@ class XlaShardedPipelineStage(PipelineStage):
             local_outvars=jax_pipeline_stage.local_outvars,
         )
 
-    # def input_sharding_specs_on_mesh(self, logical_mesh):
-    #     """Return the input sharding spec on a given logical mesh."""
-    #     if not isinstance(logical_mesh, LogicalDeviceMesh):
-    #         raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
-    #     avals = [var.aval for var in self.invars]
-    #     input_shardings = self.hlo_module.spmd_parameters_shardings()
-    #     input_sharding_specs = [hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh)
-    #                             for (proto_tuple, aval) in zip(input_shardings, avals)]
-    #     return input_sharding_specs
-    #
-    # def output_sharding_specs_on_mesh(self, logical_mesh):
-    #     """Return the output sharding spec on a given logical mesh."""
-    #     if not isinstance(logical_mesh, LogicalDeviceMesh):
-    #         raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
-    #     out_avals = [var.aval for var in self.outvars]
-    #     output_sharding = self.hlo_module.spmd_output_sharding()
-    #     output_sharding_specs = hlo_sharding_to_sharding_spec(output_sharding, out_avals, logical_mesh)
-    #     return output_sharding_specs
-    #
-    # def input_output_sharding_spec_on_mesh(self, logical_mesh):
-    #     """Return the input and output sharding spec on a given logical mesh."""
-    #     if not isinstance(logical_mesh, LogicalDeviceMesh):
-    #         raise RuntimeError("Require a logical mesh to obtain the input sharding spec.")
-    #     avals = [var.aval for var in self.invars]
-    #     out_avals = [var.aval for var in self.outvars]
-    #     input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-    #         hlo_module, num_devices, avals, out_avals, logical_mesh_shape)
-
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
         from parax.auto_sharding import HloProtoStatus

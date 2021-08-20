@@ -79,7 +79,7 @@ def should_replicate_is_leaf(x):
 
 @lu.cache
 def pmap_data_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                                devices, donated_invars, *avals):
+                                donated_invars, devices, *avals):
     fun_name = fun.__name__
     devices = devices or tuple(jax.devices())
     axis_name = "data_parallel_batch"
@@ -155,7 +155,7 @@ def shard_first_dim(x):
 
 @lu.cache
 def shard_data_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                                 devices, donated_invars, *avals):
+                                 donated_invars, devices, *avals):
     fun_name = fun.__name__
     devices = devices or np.array(jax.devices())
 

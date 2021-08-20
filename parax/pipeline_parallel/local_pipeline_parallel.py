@@ -110,8 +110,8 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
 
 
 @lu.cache
-def pipeline_parallel_callable(fun: lu.WrappedFun, devices: Mapping[str, Any],
-                               *avals):
+def local_pipeline_parallel_callable(fun: lu.WrappedFun,
+                                     devices: Mapping[str, Any], *avals):
     """Pipeline parallel callable."""
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)

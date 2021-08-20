@@ -1,16 +1,16 @@
 """Distributed JAX pipeline parallelism."""
+from collections import OrderedDict
+import functools
 import logging
 import math
-from collections import OrderedDict
 
-import functools
-import jax.numpy as jnp
 import numpy as np
 import ray
 from jax.core import Literal
+import jax.numpy as jnp
 
-from parax.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.device_mesh import DistributedArray
+from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)

@@ -1,16 +1,17 @@
 """Cluster related configurations (e.g., topology)."""
 import logging
-import time
 from collections.abc import Iterable
 from collections import defaultdict
 import pickle
+import time
 from typing import Union, List
 from operator import attrgetter
 
-import jax.numpy
 import numpy as np
 import ray
 import ray.util.collective as col
+
+import jax.numpy
 from jax import core, xla, eval_shape
 from jax._src.util import (partial, unzip3)
 from jax.abstract_arrays import array_types
@@ -20,13 +21,14 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    _hashable_index, ShardedDeviceArray)
 from jax.lib import xla_client, xla_bridge
 
-from parax.measure_record import StrategyConfig
 from parax.global_env import global_config
-from parax.profile_communication import profile_collective_one_config, ProfilingResult
-from parax.util import (get_dim_last_value, list_gpu_info,
-                        profile_xla_executable, GB, to_cupy, to_jax_tensor)
+from parax.measure_record import StrategyConfig
 from parax.monkey_patch import set_override_backend
-from parax.util import jax_buffer_set, xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer
+from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
+from parax.util import (get_dim_last_value, list_gpu_info,
+                        profile_xla_executable, GB, to_cupy, to_jax_tensor,
+                        jax_buffer_set, xla_buffer_to_jax_buffer,
+                        jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -328,7 +330,7 @@ class MeshHostWorker:
                            strategy_config: StrategyConfig,
                            hlo_proto_status: "HloProtoStatus"):
         # pylint: disable=import-outside-toplevel
-        from parax.auto_sharding import compile_with_given_strategy
+        from parax.shard_parallel.auto_sharding import compile_with_given_strategy
 
         xla_computation = xla_client.XlaComputation(hlo_proto)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
@@ -621,9 +623,9 @@ class PhysicalDeviceMesh:
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
-            worker = cls.options(
-                override_environment_variables=env_vars).remote(
-                    self.server_address, self.num_hosts, i)
+            worker = cls.options(runtime_env={
+                "env_vars": env_vars
+            }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
 
@@ -947,7 +949,7 @@ class PhysicalDeviceMesh:
 
     def profile_executable(self, compiled):
         """Profile the time cost of an xla executable."""
-        from parax.auto_sharding import HloProtoStatus
+        from parax.shard_parallel.auto_sharding import HloProtoStatus
 
         if self.is_distributed:
             tasks = []

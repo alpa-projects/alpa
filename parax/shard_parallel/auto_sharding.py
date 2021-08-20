@@ -1,5 +1,7 @@
 """Use the auto sharding pass in XLA."""
 import enum
+import hashlib
+import inspect
 import logging
 import multiprocessing
 import time
@@ -14,20 +16,116 @@ from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib.xla_client import OpSharding
 
 from parax import testing
-from parax.device_mesh import LogicalDeviceMesh
-from parax.measure_record import MeasureInput, MeasureResult, StrategyConfig, save_to_file
+from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
-from parax.xla_pass_context import XlaPassContext
-from parax.util import to_int_tuple, get_compile_options
+from parax.measure_record import (MeasureInput, MeasureResult, SearchTask,
+                                  StrategyConfig, load_best_record,
+                                  save_to_file)
+from parax.util import get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def auto_sharding_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                           donated_invars, physical_mesh, logical_mesh_choices,
-                           logical_mesh_search_mode, memory_budget_per_device,
-                           search_task, record_file, strategy_config, *avals):
+def get_compute_key(fun, in_tree, donated_invars, *aval):
+    """Return a unique string as the query key of a computation definition."""
+    # Algorithm:
+    # Concatenate the definition location, source code,
+    # input arguments specification to a string.
+    # Then compute a hash value of this string.
+    #
+    # TODO(lmzheng): use jaxpr or hlo instead of source code?
+
+    location = fun.f.__str__().split("at")[0]
+    source_code = inspect.getsource(fun.f)
+    donated_invars = str(donated_invars)
+    aval = "".join(x.str_short() for x in aval)
+
+    string = location + source_code + donated_invars + aval
+    hash_key = hashlib.md5(string.encode(encoding="utf-8")).hexdigest()
+    return hash_key
+
+
+def shard_parallel_callable(
+    fun: lu.WrappedFun,
+    in_tree,
+    out_tree_thunk,
+    donated_invars,
+    devices,
+    memory_budget_per_device,
+    *avals,
+):
+    """
+    Compile a callable with auto-sharding pass.
+    """
+    # This function resolves the polymorphism in arguments and global configurations
+    # and calls actual compilation in shard_parallel_internal.
+
+    # Get physical mesh and logical mesh.
+    if devices is None:
+        devices = PhysicalDeviceMesh(devices=xb.devices())
+    elif isinstance(devices, (list, tuple)):
+        devices = PhysicalDeviceMesh(devices=devices)
+    elif isinstance(devices, DeviceCluster):
+        devices = devices.get_physical_mesh()
+
+    search_task = None
+    record_file = None
+    strategy_config = None
+    if isinstance(devices, PhysicalDeviceMesh):
+        physical_mesh = devices
+
+        if global_config.search_logical_mesh_shape:
+            # Check cached strategy folder
+            compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
+            device_key = physical_mesh.get_signature()
+            search_task = SearchTask(compute_key, device_key)
+            record_file = global_config.mesh_shape_search_log_file
+
+            if record_file:
+                inp, _ = load_best_record(search_task, filename=record_file)
+            else:
+                inp = None
+
+            if inp is None:
+                # Generate a search space that contains all possible mesh shapes.
+                logical_mesh_choices = []
+                total_devices = physical_mesh.total_devices
+                for i in range(1, total_devices):
+                    if total_devices % i == 0:
+                        logical_mesh_shape = (total_devices // i, i)
+                        logical_mesh_choices.append(
+                            physical_mesh.get_logical_mesh(
+                                mesh_shape=logical_mesh_shape,
+                                # TODO(lmzheng): export this as an arugment in
+                                # set_parallelize_options or physical_mesh.
+                                #mesh_alpha=[1,1],
+                                #mesh_beta=[1,1]))
+                                mesh_topology="tree",
+                                inter_host_bandwidth=1,
+                                intra_host_bandwidth=30))
+            else:
+                logical_mesh_choices = []
+                strategy_config = inp.config
+        else:
+            logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+    elif isinstance(devices, LogicalDeviceMesh):
+        physical_mesh = devices.physical_mesh
+        logical_mesh_choices = [devices]
+    else:
+        raise ValueError("Invalid value of devices")
+
+    return shard_parallel_internal(fun, in_tree, out_tree_thunk, donated_invars,
+                                   physical_mesh, logical_mesh_choices,
+                                   global_config.mesh_shape_search_mode,
+                                   memory_budget_per_device, search_task,
+                                   record_file, strategy_config, *avals)
+
+
+def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
+                            donated_invars, physical_mesh, logical_mesh_choices,
+                            logical_mesh_search_mode, memory_budget_per_device,
+                            search_task, record_file, strategy_config, *avals):
     """
     Compile a callable with auto-sharding pass.
 

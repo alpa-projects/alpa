@@ -7,7 +7,7 @@ from jax.core import ClosedJaxpr, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
-from parax.pipeline_parallel.runtime import Jax3DPipeline, GpipeSchedule, gen_linear_dependency
+from parax.pipeline_parallel.runtime import GpipeSchedule, Jax3DPipeline, gen_linear_dependency
 from parax.pipeline_parallel.stage import (generate_sharded_xla_stages,
                                            mark_global_and_local_vars,
                                            slice_closed_jaxpr_by_pipeline_marks)
@@ -18,7 +18,7 @@ logger.setLevel(logging.INFO)
 
 @lu.cache
 def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                              devices, donated_invars, memory_budget_per_device,
+                              donated_invars, devices, memory_budget_per_device,
                               *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
     if not isinstance(devices, VirtualMesh):
@@ -88,14 +88,3 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                        num_batch=num_batch)
 
     return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda
-
-
-def mock_slicing_algo(fun, avals, mesh):
-    """Slice and generate the stages."""
-    with jax.disable_jit():
-        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
-    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
-    global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
-    return jax_pipeline_stages, global_invars, global_outvars

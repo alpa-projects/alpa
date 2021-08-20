@@ -5,10 +5,13 @@ from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 
-from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker
+from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
 
 xc.register_custom_call_target(b'xla_pipeline_marker',
                                xla_pipeline_marker(),
+                               platform='gpu')
+xc.register_custom_call_target(b'identity',
+                               identity(),
                                platform='gpu')
 
 
@@ -27,12 +30,12 @@ def flatten_shape_byte_sizes(shape):
     return np.array(res, dtype=np.int64)
 
 
-def mark_pipeline_xla(c, *args):
+def mark_pipeline_xla(c, *args, name=b'xla_pipeline_marker'):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     output_tuple = xc.ops.CustomCall(c,
-                                     b'xla_pipeline_marker',
+                                     name,
                                      operands=(input_params,),
                                      shape=input_shape,
                                      opaque=flattened_byte_sizes.tobytes())

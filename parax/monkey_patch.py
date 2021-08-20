@@ -53,29 +53,42 @@ jax.random.uniform = fast_uniform
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
-def _remat_using_bias(
-    c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr):
-  from jax.interpreters.xla import (xb, xc, xops, jaxpr_subcomp, extend_name_stack, wrap_name)
-  import numpy as np
-  rng_dict = {}
-  def get_rng(c, node):
-    dtype = c.get_shape(node).element_type()
-    if dtype in rng_dict:
-      return rng_dict[dtype]
-    etype = c.get_shape(node).xla_element_type()
-    rng = xops.RngUniform(xb.constant(c, np.array(1, dtype=dtype)),
-                          xb.constant(c, np.array(1.001, dtype=dtype)),
-                          xc.Shape.array_shape(etype, []))
-    rng_dict[dtype] = rng
-    return rng
-  remat_subc = xb.make_computation_builder("remat_call_subcomputation")
-  args = [xb.parameter(remat_subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
-  bias_args = map(lambda node : xops.Add(node, get_rng(remat_subc, node)), args)
-  outs = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (), extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
 
-  remat_subc = remat_subc.build(xops.Tuple(remat_subc, outs))
-  return xops.Call(c, remat_subc, list(in_nodes))
+def _remat_using_bias(c, axis_env, in_nodes, name_stack, backend, name,
+                      call_jaxpr):
+    from jax.interpreters.xla import (xb, xc, xops, jaxpr_subcomp,
+                                      extend_name_stack, wrap_name)
+    import numpy as np
+    rng_dict = {}
+
+    def get_rng(c, node):
+        dtype = c.get_shape(node).element_type()
+        if dtype in rng_dict:
+            return rng_dict[dtype]
+        etype = c.get_shape(node).xla_element_type()
+        rng = xops.RngUniform(xb.constant(c, np.array(1, dtype=dtype)),
+                              xb.constant(c, np.array(1.001, dtype=dtype)),
+                              xc.Shape.array_shape(etype, []))
+        rng_dict[dtype] = rng
+        return rng
+
+    remat_subc = xb.make_computation_builder("remat_call_subcomputation")
+    args = [
+        xb.parameter(remat_subc, i, c.get_shape(n))
+        for i, n in enumerate(in_nodes)
+    ]
+    bias_args = map(lambda node: xops.Add(node, get_rng(remat_subc, node)),
+                    args)
+    outs = jaxpr_subcomp(
+        remat_subc, call_jaxpr, backend, axis_env, (),
+        extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
+
+    remat_subc = remat_subc.build(xops.Tuple(remat_subc, outs))
+    return xops.Call(c, remat_subc, list(in_nodes))
+
+
 jax.xla._remat_using_while = _remat_using_bias
+
 ########################################
 ##### Monkey patch Flax
 ########################################

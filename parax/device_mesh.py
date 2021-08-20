@@ -573,7 +573,9 @@ class PhysicalDeviceMesh:
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
-            worker = cls.options(override_environment_variables=env_vars).remote(
+            # worker = cls.options(override_environment_variables=env_vars).remote(
+            #     self.server_address, self.num_hosts, i)
+            worker = cls.options(runtime_env={"env_vars": env_vars}).remote(
                 self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()

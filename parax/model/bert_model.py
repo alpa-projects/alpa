@@ -37,6 +37,7 @@ class BertConfig:
         position_embedding_type="absolute",
         use_cache=True,
         tie_word_embeddings=True,
+        annotated=False,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -55,6 +56,7 @@ class BertConfig:
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.tie_word_embeddings = tie_word_embeddings
+        self.annotated = annotated
 
 
 ACT2FN = {

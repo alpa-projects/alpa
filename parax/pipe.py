@@ -467,6 +467,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         for i, var in enumerate(self.global_invars):
             key = repr(var)
             array = inputs[i]
+            # FIXME: this filter might break when the 1st dimension of a param = batch_size
             if not array.shape or array.shape[batch_dim] != batch_size:
                 # empty shape means it is not the input batch
                 # no need to split

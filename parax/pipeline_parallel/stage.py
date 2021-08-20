@@ -14,7 +14,7 @@ from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 
 # pylint: disable=redefined-builtin
-from parax.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
+from parax.shard_parallel.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.pipeline_parallel.primitive_def import pipeline_p

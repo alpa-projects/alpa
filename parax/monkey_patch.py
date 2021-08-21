@@ -56,10 +56,21 @@ jax.random.fold_in = remove_fold_in
 
 def _remat_using_identity(
     c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr):
-    from jax.interpreters.xla import (xb, xc, xops, jaxpr_subcomp,
+    from jax.interpreters.xla import (xops, jaxpr_subcomp,
                                       extend_name_stack, wrap_name)
-    from parax.pipeline_parallel.primitive_def import mark_pipeline_xla as id
-    bias_args = id(c, *in_nodes, name=b'identity')
+    from jax.lib import xla_client as xc
+    def id(c, *args):
+        from parax.pipeline_parallel.primitive_def import identity as id
+        input_params = xc.ops.Tuple(c, args)
+        input_shape = c.get_shape(input_params)
+        output_tuple = xc.ops.CustomCallWithOnlyAliasing(c, 
+                                                        b'identity',
+                                                        operands=(input_params,),
+                                                        shape=input_shape,
+                                                        output_operand_aliasing=None    # TODO
+                                                        )
+        return output_tuple
+    bias_args = id(c, *in_nodes)
     bias_args = [xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))]
     outs = jaxpr_subcomp(c, call_jaxpr, backend, axis_env, (), extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
 

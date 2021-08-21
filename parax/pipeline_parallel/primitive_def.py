@@ -30,12 +30,12 @@ def flatten_shape_byte_sizes(shape):
     return np.array(res, dtype=np.int64)
 
 
-def mark_pipeline_xla(c, *args, name=b'xla_pipeline_marker'):
+def mark_pipeline_xla(c, *args):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     output_tuple = xc.ops.CustomCall(c,
-                                     name,
+                                     b'xla_pipeline_marker',
                                      operands=(input_params,),
                                      shape=input_shape,
                                      opaque=flattened_byte_sizes.tobytes())

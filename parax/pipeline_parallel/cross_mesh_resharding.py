@@ -530,13 +530,19 @@ class ReshardingTaskSpec:
                 start, end = related_tile_start_end[i]
                 tile_length_on_this_dim = self.src.tiles[tuple(
                     tile_index_absolute)].tile_shape[i]
-                if r == start:
-                    # meaning it is the first involved tile
+                if r == start and r == end - 1:
+                    # the dst tile is smaller or equal to the src tile
+                    left_offset = related_tile_offset[i][0]
+                    right_offset = related_tile_offset[i][1]
+                    offsets.append(slice(left_offset, right_offset))
+                    indices.append(slice(0, tile.tile_shape[i]))  # all included
+                elif r == start:
+                    # meaning it is the first involved tile, and not the last
                     offset = related_tile_offset[i][0]
                     offsets.append(slice(offset, tile_length_on_this_dim))
                     indices.append(slice(0, tile_length_on_this_dim - offset))
                 elif r == end - 1:
-                    # meaning it is the last involved tile
+                    # meaning it is the last involved tile, and not the first
                     offset = related_tile_offset[i][1]
                     offsets.append(slice(0, offset))
                     indices.append(

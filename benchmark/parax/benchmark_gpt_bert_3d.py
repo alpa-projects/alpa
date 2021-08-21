@@ -178,7 +178,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
-            annotated=True
+            pipeline_mp_size=pipeline_mp_size
         ), dtype=dtype)
     elif model_type == "gpt_annotated":
         model = FlaxGPTForLMModule(BertConfig(
@@ -188,7 +188,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
-            annotated=True
+            pipeline_mp_size=pipeline_mp_size
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")

@@ -16,7 +16,7 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
-from parax.shard_parallel.auto_sharding import shard_parallel_callable
+from parax.shard_parallel.shard_callable import shard_parallel_callable
 from parax.util import auto_donate_argnums, auto_static_argnums
 
 # pylint: disable=redefined-builtin

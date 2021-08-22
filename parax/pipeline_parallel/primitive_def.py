@@ -4,6 +4,7 @@ import numpy as np
 from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
+from jax.tree_util import tree_flatten, tree_unflatten
 
 from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
 
@@ -117,3 +118,10 @@ pipeline_p.def_abstract_eval(_pipeline_abstract_eval)
 xla.translations[pipeline_p] = _pipeline_xla_translation
 ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
 ad.primitive_transposes[pipeline_p] = _pipeline_transpose
+
+
+def mark_gradient(grad):
+    grad_flat, tree = tree_flatten(grad)
+    grad_flat = pipeline_p.bind(*grad_flat, name='grad', mark_type='grad')
+    grad = tree_unflatten(tree, grad_flat)
+    return grad

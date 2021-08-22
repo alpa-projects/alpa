@@ -1,7 +1,5 @@
 """Test auto sharding with simple computational graphs."""
 
-from functools import partial
-import os
 import unittest
 
 import numpy as np

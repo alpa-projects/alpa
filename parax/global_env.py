@@ -14,6 +14,7 @@ class GlobalConfig:
         self.devices = None
         self.strategy = "shard_parallel"
         self.memory_budget_per_device = None
+        self.num_micro_batches = None
 
         # logical mesh shape related options
         self.search_logical_mesh_shape = False

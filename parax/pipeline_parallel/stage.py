@@ -101,12 +101,12 @@ class JaxPipelineStage(PipelineStage):
             ClosedJaxpr: The result ClosedJaxpr.
         """
         jaxpr = Jaxpr(
-            constvars=self.consts_dir.keys(),
+            constvars=list(self.consts_dir.keys()),
             invars=self.invars,
             outvars=self.outvars,
             eqns=self.eqns,
         )
-        closed_jaxpr = ClosedJaxpr(jaxpr, self.consts_dir.values())
+        closed_jaxpr = ClosedJaxpr(jaxpr, list(self.consts_dir.values()))
         return closed_jaxpr
 
     def get_runnable(self, mesh=None):
@@ -141,13 +141,7 @@ class XlaPipelineStage(PipelineStage):
             name=jax_pipeline_stage.name,
             hlo_proto=built.as_serialized_hlo_module_proto(),
             invars=jax_pipeline_stage.invars,
-            pipeline_invars=jax_pipeline_stage.pipeline_invars,
-            global_invars=jax_pipeline_stage.global_invars,
-            local_invars=jax_pipeline_stage.local_invars,
             outvars=jax_pipeline_stage.outvars,
-            pipeline_outvars=jax_pipeline_stage.pipeline_outvars,
-            global_outvars=jax_pipeline_stage.global_outvars,
-            local_outvars=jax_pipeline_stage.local_outvars,
         )
 
     def get_runnable(self, mesh=None):
@@ -203,13 +197,7 @@ class XlaShardedPipelineStage(PipelineStage):
             strategy_config=strategy_config,
             donated_invars=donated_invars,
             invars=jax_pipeline_stage.invars,
-            pipeline_invars=jax_pipeline_stage.pipeline_invars,
-            global_invars=jax_pipeline_stage.global_invars,
-            local_invars=jax_pipeline_stage.local_invars,
             outvars=jax_pipeline_stage.outvars,
-            pipeline_outvars=jax_pipeline_stage.pipeline_outvars,
-            global_outvars=jax_pipeline_stage.global_outvars,
-            local_outvars=jax_pipeline_stage.local_outvars,
         )
 
     def get_runnable(self, mesh=None):
@@ -252,8 +240,8 @@ class XlaShardedPipelineStage(PipelineStage):
                                                   self.donated_invars)
 
 
-def slice_closed_jaxpr_by_pipeline_marks(
-        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:  # noqa MC0001
+def slice_closed_jaxpr_by_manual_pipeline_marks(
+        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxManualPipelineStage]:  # noqa MC0001
     """Slice a Jaxpr into multiple pipeline stages.
 
     We assume the closed_jaxpr includes pipeline start and end markers. Also,
@@ -281,7 +269,7 @@ def slice_closed_jaxpr_by_pipeline_marks(
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage = JaxPipelineStage(name=eqn.params['name'])
+            current_stage = JaxManualPipelineStage(name=eqn.params['name'])
             current_stage_intermediate_vars = set()
             for var in eqn.invars:
                 if not isinstance(var, Literal):
@@ -340,14 +328,13 @@ def slice_closed_jaxpr_by_pipeline_marks(
     return result_stages
 
 
-def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
+def mark_global_and_local_vars(stage: JaxManualPipelineStage, gensym_func) -> JaxPipelineStage:
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
         'mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
         'mark_type'] == 'end'
-    new_stage = copy(stage)
-    new_stage.eqns = []
+    new_stage = JaxPipelineStage(stage.name, invars=stage.invars, outvars=stage.outvars, consts_dir=stage.consts_dir)
     var_alias = {
         var: gensym_func(var.aval)
         for var in it.chain(stage.global_invars, stage.local_invars,
@@ -415,16 +402,17 @@ def generate_sharded_xla_stages(name: str,
     consts_dir = {}
     for stage in jax_stages:
         consts_dir.update(stage.consts_dir)
-        invars.update(stage.global_invars, stage.pipeline_invars)
-        outvars.update(stage.global_outvars, stage.pipeline_outvars)
+        # Do not add local invars into the invars
+        invars.update([var for var in stage.invars if var not in outvars])
+        outvars.update(stage.outvars)
         eqns += stage.eqns
     jaxpr = Jaxpr(
-        constvars=consts_dir.keys(),
-        invars=invars,
-        outvars=outvars,
+        constvars=list(consts_dir.keys()),
+        invars=list(invars),
+        outvars=list(outvars),
         eqns=eqns,
     )
-    closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
+    closed_jaxpr = ClosedJaxpr(jaxpr, list(consts_dir.values()))
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
     built_computation = jaxpr_to_hlo_computation(name,
@@ -455,16 +443,8 @@ class StrVarPipelineStage:
     """Stringified stage with all Set/Dict have string keys."""
 
     name: str
-    # invars
     invars: Sequence[str]
-    pipeline_invars: Set[str]
-    global_invars: Set[str]
-    local_invars: Set[str]
-    # outvars
     outvars: Sequence[str]
-    pipeline_outvars: Set[str]
-    global_outvars: Set[str]
-    local_outvars: Set[str]
 
     @classmethod
     def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
@@ -472,15 +452,5 @@ class StrVarPipelineStage:
         return cls(
             name=pipeline_stage.name,
             invars=[repr(var) for var in pipeline_stage.invars],
-            pipeline_invars={
-                repr(var) for var in pipeline_stage.pipeline_invars
-            },
-            global_invars={repr(var) for var in pipeline_stage.global_invars},
-            local_invars={repr(var) for var in pipeline_stage.local_invars},
             outvars=[repr(var) for var in pipeline_stage.outvars],
-            pipeline_outvars={
-                repr(var) for var in pipeline_stage.pipeline_outvars
-            },
-            global_outvars={repr(var) for var in pipeline_stage.global_outvars},
-            local_outvars={repr(var) for var in pipeline_stage.local_outvars},
         )

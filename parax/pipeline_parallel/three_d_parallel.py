@@ -10,7 +10,7 @@ from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.runtime import GpipeSchedule, Jax3DPipeline, gen_linear_dependency
 from parax.pipeline_parallel.stage import (generate_sharded_xla_stages,
                                            mark_global_and_local_vars,
-                                           slice_closed_jaxpr_by_pipeline_marks)
+                                           slice_closed_jaxpr_by_manual_pipeline_marks)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -32,7 +32,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     gensym_func = gensym([closed_jaxpr.jaxpr])
-    jax_pipeline_stages = slice_closed_jaxpr_by_pipeline_marks(closed_jaxpr)
+    jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(closed_jaxpr)
     jax_pipeline_stages = [
         mark_global_and_local_vars(stage, gensym_func)
         for stage in jax_pipeline_stages

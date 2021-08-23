@@ -69,5 +69,9 @@ def suite():
 
 
 if __name__ == "__main__":
-    runner = unittest.TextTestRunner()
-    runner.run(suite())
+    #runner = unittest.TextTestRunner()
+    #runner.run(suite())
+
+    a = AutoShardingBasicTest()
+    a.setUp()
+    a.test_gradient_accumulation()

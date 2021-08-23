@@ -157,7 +157,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
     # Convert jaxpr to XLA HLO
-    name = f"{fun.__name__}_auto_shard"
+    name = f"{fun.__name__}_shard_parallel"
     backend = xb.get_backend("gpu")
     built = jaxpr_to_hlo_computation(name, ClosedJaxpr(jaxpr, consts),
                                      donated_invars, backend)
@@ -203,89 +203,6 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                        output_sharding_specs,
                                                        donated_invars)
 
-def list_minus(a, b):
-    b = set(b)
-    return [x for x in a if x not in b]
-
-
-def list_intersect(a, b):
-    b = set(b)
-    return [x for x in a if x in b]
-
-
-def copy_closed_jaxpr(src):
-    jaxpr = Jaxpr(src.jaxpr.constvars, src.jaxpr.invars, src.jaxpr.outvars, src.jaxpr.eqns)
-    return ClosedJaxpr(jaxpr, src.consts)
-
-
-class GradAccumulationInfo:
-    def __init__(self, original_jaxpr):
-        # Slice the jaxpr into two functions: compute_grad and apply_grad
-        sliced_jaxprs = slice_closed_jaxpr_by_gradient_mark(original_jaxpr)
-        assert len(sliced_jaxprs) == 2, "Must have exactly one gradient marker" 
-        compute_grad_jaxpr, apply_grad_jaxpr = sliced_jaxprs
-
-        # Signatures of the functions:
-        #
-        # original_jaxpr(opt_state, param, batch) -> [new_opt_state, new_param]
-        # compute_grad(param, batch) -> out_grad
-        # accumulate_grad(old_grad, param, batch) -> new_grad
-        # apply_grad(opt_state, param, in_grad) -> [new_opt_state, new_param]
-        #
-        # TODO(lmzheng): handle other auxiliary variables (e.g., loss)
-
-        # Derive batch, grad, param and opt_state variables
-        param_vars = list_intersect(apply_grad_jaxpr.jaxpr.invars, compute_grad_jaxpr.jaxpr.invars)
-        batch_vars = list_minus(original_jaxpr.jaxpr.invars, apply_grad_jaxpr.jaxpr.invars)
-        out_grad_vars = compute_grad_jaxpr.jaxpr.outvars
-        in_grad_vars = apply_grad_jaxpr.jaxpr.invars[:len(out_grad_vars)]
-        opt_state_vars = list_minus(original_jaxpr.jaxpr.invars, compute_grad_jaxpr.jaxpr.invars)
-
-        # TODO(lmzheng): add some assertion to veirfy the results.
-
-        # Build accumulate_grad jaxpr from compute_grad jaxpr
-        gensym_func = gensym([original_jaxpr.jaxpr])
-        old_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
-        new_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
-        accumulate_grad_jaxpr = copy_closed_jaxpr(compute_grad_jaxpr)
-        accumulate_grad_jaxpr.jaxpr.invars = \
-            old_grad_vars + accumulate_grad_jaxpr.jaxpr.invars
-        for i in range(len(out_grad_vars)):
-            accumulate_grad_jaxpr.eqns.append(new_jaxpr_eqn(
-                [old_grad_vars[i], out_grad_vars[i]], [new_grad_vars[i]],
-                add_p, {}, None))
-        accumulate_grad_jaxpr.jaxpr.outvars = new_grad_vars
-
-        # Reorganize the order of invars
-        apply_grad_jaxpr.jaxpr.invars = apply_grad_jaxpr.jaxpr.invars[len(in_grad_vars):] +\
-                                        apply_grad_jaxpr.jaxpr.invars[:len(in_grad_vars)]
-
-        # Store useful information
-        self.original_jaxpr = original_jaxpr
-        self.compute_grad_jaxpr = compute_grad_jaxpr
-        self.apply_grad_jaxpr = apply_grad_jaxpr
-        self.accumulate_grad_jaxpr = accumulate_grad_jaxpr
-
-        self.param_vars = param_vars
-        self.batch_vars = batch_vars
-        self.old_grad_vars = old_grad_vars
-        self.new_grad_vars = new_grad_vars
-        self.in_grad_vars = in_grad_vars
-        self.opt_state_vars = opt_state_vars
-
-    def __str__(self):
-        ret = ""
-        ret += f"param vars: {self.param_vars}\n"
-        ret += f"batch_vars: {self.batch_vars}\n"
-        ret += f"old_grad_vars: {self.old_grad_vars}\n"
-        ret += f"new_grad_vars: {self.new_grad_vars}\n"
-        ret += f"in_grad_vars: {self.in_grad_vars}\n"
-        ret += f"opt_state_vars: {self.opt_state_vars}\n\n"
-
-        ret += f"accumulate_grad: {self.accumulate_grad_jaxpr}\n"
-        ret += f"apply_grad: {self.apply_grad_jaxpr}\n"
-        return ret
-
 
 def shard_parallel_internal_gradient_accumulation(
     fun: lu.WrappedFun, in_tree, out_tree_thunk,
@@ -305,85 +222,142 @@ def shard_parallel_internal_gradient_accumulation(
         else:
             avals.append(aval)
 
-    # Trace the function and split the jaxpr for gradient accumulation.
+    # Trace the function to get jaxpr
     with disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    grad_acc_info = GradAccumulationInfo(closed_jaxpr)
+    closed_jaxpr, accumulate_grad_invars, apply_grad_invars, num_grads =\
+        add_gradient_accumulation(closed_jaxpr)
 
-    # Compile accumulate_grad
     backend = xb.get_backend("gpu")
-    accumulate_grad_jaxpr = grad_acc_info.accumulate_grad_jaxpr
-    n_all_invars = len(accumulate_grad_jaxpr.jaxpr.invars)
-    n_old_grad_vars = len(grad_acc_info.old_grad_vars)
-    donated_invars = (True,) * n_old_grad_vars + (False,) * (n_all_invars - n_old_grad_vars)
-    accumulate_grad_hlo = jaxpr_to_hlo_computation(
-        f"{fun.__name__}_accumulate_grad",
-        grad_acc_info.accumulate_grad_jaxpr,
-        donated_invars, backend)
+    donated_invars = donated_invars + (False,) * num_grads
+    name = f"{fun.__name__}_shard_parallel"
+    built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend)
 
-    compiled, strategy_config = compile_with_search(
+    hlo_protos, strategy_config = compile_with_search(
         backend,
-        accumulate_grad_hlo,
+        built,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,
         memory_budget_per_device,
         search_task,
         record_file,
-        multiple_stages=False)
+        multiple_stages=True)
+    assert len(hlo_protos) == 2
 
-    # Compile apply_grad
+    accumulate_grad = xc.XlaComputation(hlo_protos[0])
+    apply_grad = xc.XlaComputation(hlo_protos[1])
+
+    print(accumulate_grad.as_hlo_text())
+    print(apply_grad.as_hlo_text())
+    exit()
 
 
-def slice_closed_jaxpr_by_gradient_mark(closed_jaxpr):
+def filter_used_vars(all_vars, eqns):
+    """Return the vars in all_vars that are used by eqns.
+    The returned vars preserve their original order in all_vars.
+    """
+    used_vars = set()
+    for eqn in eqns:
+        used_vars.update(x for x in eqn.invars if not isinstance(x, Literal))
+    return [var for var in all_vars if var in used_vars]
+
+
+def add_gradient_accumulation(raw_jaxpr):
     from parax.pipeline_parallel.primitive_def import pipeline_p
 
-    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_invars = set(raw_jaxpr.jaxpr.invars)
     global_outvars = set(
-        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+        var for var in raw_jaxpr.jaxpr.outvars if isinstance(var, Var))
     global_consts_dir = dict(
-        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    result_jaxprs = []
-    var2jaxpr_id = {}
+        zip(raw_jaxpr.jaxpr.constvars, raw_jaxpr.consts))
+    gensym_func = gensym([raw_jaxpr.jaxpr])
 
-    cur_constvars = cur_invars = cur_outvars = cur_eqns = cur_intermediate_vars = None
-
-    def begin_jaxpr():
-        nonlocal cur_constvars, cur_invars, cur_outvars, cur_eqns, cur_intermediate_vars
-        cur_constvars, cur_invars = OrderedSet(), OrderedSet()
-        cur_outvars, cur_eqns = OrderedSet(), list()
-        cur_intermediate_vars = set()
-
-    def end_jaxpr():
-        jaxpr = Jaxpr(cur_constvars, cur_invars, cur_outvars, cur_eqns)
-        consts = [global_consts_dir[x] for x in jaxpr.constvars]
-        result_jaxprs.append(ClosedJaxpr(jaxpr, consts))
-
-    begin_jaxpr()
-    for eqn in closed_jaxpr.jaxpr.eqns:
+    # Find the gradient separator marker.
+    # This separator partitions orginal_jaxpr into two part:
+    # compute_grad and apply_grad
+    marker_eqn = None
+    for marker_pos, eqn in enumerate(raw_jaxpr.jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
-            cur_outvars.update(eqn.invars)
-            end_jaxpr()
-            begin_jaxpr()
-            cur_invars.update(eqn.outvars)
+            marker_eqn = eqn
+            break
+    assert marker_eqn is not None, "Must have exactly one gradient marker"
+    compute_grad_eqns = raw_jaxpr.jaxpr.eqns[:marker_pos]
+    apply_grad_eqns = raw_jaxpr.jaxpr.eqns[marker_pos + 1:]
+
+    # Build the new jaxpr with gradient accumulation and pipeline marker
+    global_invar_substitute = {}
+    combined_eqns = []
+
+    # Create vars for gradient accumulation
+    out_grad_vars = marker_eqn.invars
+    old_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
+    new_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
+
+    # Wrap all invars of compute_grad
+    old_invars = filter_used_vars(raw_jaxpr.jaxpr.invars, compute_grad_eqns) + old_grad_vars
+    new_invars = [gensym_func(x.aval) for x in old_invars]
+    combined_eqns.append(new_jaxpr_eqn(
+        new_invars, old_invars, pipeline_p, {"mark_type" : "start"}, None
+    ))
+    global_invar_substitute.update({x:y for x, y in zip(old_invars, new_invars)})
+    accumulate_grad_invars = new_invars
+
+    # Append eqns of compute_grad
+    combined_eqns.extend(raw_jaxpr.jaxpr.eqns[:marker_pos])
+
+    # Append eqns of gradient accumulation
+    for i in range(len(out_grad_vars)):
+        combined_eqns.append(new_jaxpr_eqn(
+            [old_grad_vars[i], out_grad_vars[i]], [new_grad_vars[i]],
+            add_p, {}, None))
+
+    # Wrap all outvars of compute_grad
+    inter_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
+    combined_eqns.append(new_jaxpr_eqn(
+        new_grad_vars, inter_grad_vars, pipeline_p, {"mark_type" : "end"}, None
+    ))
+
+    # Wrap all invars of apply_grad
+    in_grad_vars = marker_eqn.outvars
+    old_invars = filter_used_vars(raw_jaxpr.jaxpr.invars, apply_grad_eqns) + in_grad_vars
+    new_invars = []
+    for var in old_invars:
+        if var in global_invars:
+            if var in global_invar_substitute:
+                new_invars.append(global_invar_substitute[var])
+            else:
+                new_var = gensym_func(var.aval)
+                global_invar_substitute[var] = new_var
+                new_invars.append(new_var)
         else:
-            cur_eqns.append(eqn)
+            new_invars.append(inter_grad_vars[in_grad_vars.index(var)])
+    apply_grad_invars = new_invars
+    combined_eqns.append(new_jaxpr_eqn(
+        new_invars, old_invars, pipeline_p, {"mark_type" : "start"}, None
+    ))
 
-            for var in eqn.invars:
-                if isinstance(var, Literal) or var in cur_intermediate_vars:
-                    continue
-                if var in global_consts_dir:
-                    cur_constvars.add(var)
-                elif var in global_invars:
-                    cur_invars.add(var)
+    # Append eqns of apply_grad
+    combined_eqns.extend(apply_grad_eqns)
+    # TODO(lmzheng): the param vars are used in both compute_grad and apply_grad,
+    # so there will be some duplicated intermediate vars in compute_grad_eqns
+    # and apply_grad_eqns. This breaks the SSA property of the combined_eqns.
+    # But I found jaxpr can combine this ill-defined jaxpr correctly,
+    # so I leave this issue as todo. To fix this, we should substitute
+    # all param vars in apply_grad_eqns with new vars.
 
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    cur_intermediate_vars.add(var)
-                    var2jaxpr_id[var] = len(result_jaxprs)
-                    if var in global_outvars:
-                        cur_outvars.add(var)
-    end_jaxpr()
+    # Wrap all outvars of apply_grad
+    old_outvars = raw_jaxpr.jaxpr.outvars
+    new_outvars = [gensym_func(x.aval) for x in old_outvars]
+    combined_eqns.append(new_jaxpr_eqn(
+        old_outvars, new_outvars, pipeline_p, {"mark_type" : "end"}, None
+    ))
 
-    return result_jaxprs
+    # Make the new jaxpr
+    combined_jaxpr = ClosedJaxpr(Jaxpr(
+        raw_jaxpr.jaxpr.constvars,
+        [global_invar_substitute.get(x, x) for x in (raw_jaxpr.jaxpr.invars + old_grad_vars)],
+        new_outvars, combined_eqns), raw_jaxpr.consts)
+
+    return combined_jaxpr, accumulate_grad_invars, apply_grad_invars, len(in_grad_vars)

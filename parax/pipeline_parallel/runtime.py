@@ -41,84 +41,6 @@ def ref_to_array(array_ref):
     return device_array
 
 
-class RemoteRunner:
-    """
-    Distributed pipeline parallelism worker.
-
-    NOTE: This class shall always be instantiated as a Ray remote actor.
-
-    Args:
-        name (str): The name of this runner
-        stages (dict): serializable stages assigned to this runner.
-    """
-
-    def __init__(self, *, name, stages):
-        self.name = name
-        self._raw_stages = stages
-        self.stages = dict()
-        for stage_idx, stage in self._raw_stages.items():
-            self.stages[stage_idx] = StrVarPipelineStage.from_pipeline_stage(
-                stage)
-
-        self.runnables = None
-        # TODO: we could defer this compile to later.+
-        self.compile()
-        self.env = {}
-
-    def compile(self):
-        """Compile the HLO and get the runnable."""
-        self.runnables = dict()
-        for stage_idx, stage in self._raw_stages.items():
-            self.runnables[stage_idx] = stage.get_runnable()
-
-    def compute(self, input_refs, stage_idx):
-        """
-        Compute on a given stage.
-
-        Args:
-            input_refs (OrderedDict): with key being `repr(var)` and value being its reference.
-            stage_idx (int): the stage to run.
-        """
-        runnable = self.runnables[stage_idx]
-        stage = self.stages[stage_idx]
-
-        logger.debug("stage invars: {}".format(stage.invars))
-        logger.debug("input refs: {}".format(input_refs.keys()))
-
-        # sanity check
-        inputs = []
-        for var in stage.invars:
-            val_ref = input_refs[var]
-            if val_ref:
-                inputs.append(ref_to_array(val_ref))
-            else:
-                assert var in self.env
-                inputs.append(self.env[var])
-
-        outputs = runnable(*inputs)
-        outvals = dict(zip(stage.outvars, outputs))
-
-        # now split the outputs_dict
-        pipeline_outvals = dict()
-        global_outvals = dict()
-        logger.debug("all outputs: {}".format(list(outvals.keys())))
-        logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
-        logger.debug("pipeline_outvars: {}".format(list(
-            stage.pipeline_outvars)))
-        logger.debug("global outvars: {}".format(list(stage.global_outvars)))
-        for var, val in outvals.items():
-            if var in stage.local_outvars:
-                self.env.update({var: val})
-            if var in stage.pipeline_outvars:
-                pipeline_outvals[var] = ray.put(val)
-            if var in stage.global_outvars:
-                global_outvals[var] = ray.put(val)
-        logger.debug("pipeline outvals: {}".format(pipeline_outvals.keys()))
-        logger.debug("global outvals: {}".format(global_outvals.keys()))
-        logger.debug("worker {} env : {}".format(self.name, self.env.keys()))
-        return pipeline_outvals, global_outvals
-
-
 class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
     """
     A class to coordinate 3D parallelism.
@@ -253,16 +175,14 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 # check DistributedArray colocation.
                 inputs_list = self._process_stage_inputs(stage_idx, inputs)
                 outputs = self._runnables[stage_idx](*inputs_list)
-                pipeline_outvals, global_outvals, local_outvals = \
-                    self._process_stage_outputs(stage_idx, outputs)
-                if pipeline_outvals:
-                    self._stage_outputs[batch_idx][stage_idx].update(
-                        pipeline_outvals)
-                if local_outvals:
-                    self._stage_outputs[batch_idx][stage_idx].update(
-                        local_outvals)
-                if global_outvals:
-                    global_outputs.update(global_outvals)
+                outvals = self._process_stage_outputs(stage_idx, outputs)
+                # FIXME: We need to accumulate the gradients and remerge the inputs
+                # TODO: Add reference counting here to reduce memory usage
+                self._stage_outputs[batch_idx][stage_idx].update(outvals)
+                for key, val in outvals.items():
+                    if key in self.global_outvars:
+                        # FIXME: This is wrong!! We should accumulate the gradient
+                        global_outputs[key] = val
             logger.info(
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
 
@@ -326,24 +246,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             np.squeeze(np.argwhere(self.dependency[stage_idx] == 1), axis=1))
         for var in stage.invars:
             key = repr(var)
-            if var in stage.pipeline_invars:
-                if stage_idx == 0:
-                    stage_inputs[key] = self._microbatches[batch_idx][key]
-                else:
-                    for ans in ancestors:
-                        if key in self._stage_outputs[batch_idx][ans]:
-                            stage_inputs[key] = self._stage_outputs[batch_idx][
-                                ans][key]
-            elif var in stage.local_invars:
-                counter_stage_idx = self.num_stage - stage_idx - 1
-                stage_inputs[key] = self._stage_outputs[batch_idx][
-                    counter_stage_idx][key]
-            elif var in stage.global_invars:
+            if var in self.global_invars:
                 stage_inputs[key] = self._microbatches[batch_idx][key]
             else:
-                raise RuntimeError(
-                    "Var `{}` not in any of global, pipeline or local "
-                    "var sets.".format(repr(var)))
+                for ans in ancestors:
+                    if key in self._stage_outputs[batch_idx][ans]:
+                        stage_inputs[key] = self._stage_outputs[batch_idx][
+                            ans][key]
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs. "
                                "`stage_inputs` got {}, but expect {}.".format(
@@ -379,28 +288,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
     def _process_stage_outputs(self, stage_idx, outputs):
         stage = self.stages[stage_idx]
         outvals = dict(zip(stage.outvars, outputs))
-        # now split the outputs_dict
-        pipeline_outvals = dict()
-        global_outvals = dict()
-        local_outvals = dict()
-        logger.debug("all outputs: {}".format(list(outvals.keys())))
-        logger.debug("local_outvars: {}".format(list(stage.local_outvars)))
-        logger.debug("pipeline_outvars: {}".format(list(
-            stage.pipeline_outvars)))
-        logger.debug("global outvars: {}".format(list(stage.global_outvars)))
-        for var, val in outvals.items():
-            key = repr(var)
-            if var in stage.local_outvars:
-                # self.env.update({var: val})
-                local_outvals[key] = val
-            if var in stage.pipeline_outvars:
-                pipeline_outvals[key] = val
-            if var in stage.global_outvars:
-                global_outvals[key] = val
-        logger.debug("pipeline outvals: {}".format(pipeline_outvals.keys()))
-        logger.debug("global outvals: {}".format(global_outvals.keys()))
-        logger.debug("local outvals: {}".format(local_outvals.keys()))
-        return pipeline_outvals, global_outvals, local_outvals
+        return outvals
 
 
 def gen_linear_dependency(num_stage):

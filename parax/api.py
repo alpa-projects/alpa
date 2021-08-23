@@ -1,11 +1,13 @@
 """Top-level user API."""
 from functools import wraps
+from typing import Callable, Optional, Sequence
 
 from jax import linear_util as lu
 from jax._src.util import safe_map, HashableFunction
 from jax.api import _check_callable
 from jax.api_util import (argnums_partial, donation_vector,
-                          flatten_fun_nokwargs, rebase_donate_argnums)
+                          flatten_fun_nokwargs, rebase_donate_argnums, PyTreeDef)
+from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb
@@ -23,7 +25,7 @@ from parax.util import auto_donate_argnums, auto_static_argnums
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
+def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
@@ -33,8 +35,11 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
           If is "auto", parax uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.
+        batch_argnums: The indices of arguments that are the data batch.
+          This information is used to split the original data batch into micro batches
+          to perform gradient accumulation or pipeline parallelism.
+          Parax assumes the first dimension of the tensor is the batch dimension.
     """
-
     def decorate_fun(fun):
 
         @wraps(fun)
@@ -82,14 +87,18 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
             else:
                 donated_invars = (False,) * len(args_flat)
 
+            # Deal with batch argnums
+            batch_tuple = rebase_donate_argnums(batch_argnums, static_argnums)
+            batch_invars = donation_vector(batch_argnums, dyn_args, kwargs)
+
             # JIT compile and call the compiled func
             abstract_args = unsafe_map(xla.abstractify, args_flat)
             devices = global_config.devices
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
-                f, in_tree, out_tree_hashable, donated_invars, devices,
-                global_config.strategy, global_config.memory_budget_per_device,
+                f, in_tree, out_tree_hashable, donated_invars, batch_invars,
+                devices, global_config.strategy, global_config.memory_budget_per_device,
                 *abstract_args)
 
             if return_value_mode == "normal":
@@ -136,13 +145,14 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
 @lu.cache
 def parallelize_callable(
     fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    donated_invars,
+    in_tree: PyTreeDef,
+    out_tree_thunk: Callable[[], PyTreeDef],
+    donated_invars: Sequence[bool],
+    batch_invars: Sequence[bool],
     devices,
-    strategy,
-    memory_budget_per_device,
-    *avals,
+    strategy: str,
+    memory_budget_per_device: Optional[float],
+    *avals: Sequence[AbstractValue],
 ):
     """Auto parallel callable."""
     # Clean stores for the next call
@@ -153,7 +163,7 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       donated_invars, devices,
+                                       donated_invars, batch_invars, devices,
                                        memory_budget_per_device, *avals)
     elif strategy == "shard_data_parallel":
         return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,

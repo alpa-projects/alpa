@@ -1,7 +1,8 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
-import os
+from collections import OrderedDict
 import itertools as it
+import os
 import subprocess
 import time
 
@@ -108,6 +109,24 @@ class FastLookupList:
     def append(self, element):
         self.elements.append(element)
         self.elements_set.add(element)
+
+
+class OrderedSet:
+
+    def __init__(self):
+        self.dict = OrderedDict()
+
+    def add(self, *args):
+        for x in args:
+            self.dict[x] = None
+
+    def update(self, container):
+        for x in container:
+            self.dict[x] = None
+
+    def __iter__(self):
+        for x in self.dict:
+            yield x
 
 
 ########################################

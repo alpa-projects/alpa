@@ -54,25 +54,39 @@ jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
 
-def _remat_using_identity(
-    c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr):
-    from jax.interpreters.xla import (xops, jaxpr_subcomp,
-                                      extend_name_stack, wrap_name)
+def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
+                          call_jaxpr):
+    from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
+                                      wrap_name)
     from jax.lib import xla_client as xc
+    def all_index(shape, cur):
+        out = []
+        if shape.is_tuple():
+          for i, subshape in enumerate(shape.tuple_shapes()):
+            out.extend(all_index(subshape, cur + [i]))
+        elif shape.is_array():
+          out.append(xc.ShapeIndex(cur))
+        return out
+
     def id(c, *args):
-        from parax.pipeline_parallel.primitive_def import identity as id
         input_params = xc.ops.Tuple(c, args)
         input_shape = c.get_shape(input_params)
-        output_tuple = xc.ops.CustomCallWithOnlyAliasing(c, 
-                                                        b'identity',
-                                                        operands=(input_params,),
-                                                        shape=input_shape,
-                                                        output_operand_aliasing=None    # TODO
-                                                        )
+        aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
+        output_tuple = xc.ops.CustomCallWithOnlyAliasing(
+            c,
+            b'identity',
+            operands=(input_params,),
+            shape=input_shape,
+            output_operand_aliasing=aliasing)
         return output_tuple
+
     bias_args = id(c, *in_nodes)
-    bias_args = [xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))]
-    outs = jaxpr_subcomp(c, call_jaxpr, backend, axis_env, (), extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
+    bias_args = [
+        xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))
+    ]
+    outs = jaxpr_subcomp(
+        c, call_jaxpr, backend, axis_env, (),
+        extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
 
     return (xops.Tuple(c, outs))
 

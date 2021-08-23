@@ -16,7 +16,7 @@ from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
 from parax.shard_parallel.auto_sharding import (compile_with_search, compile_with_given_strategy,
                                                 get_input_output_sharding_specs, HloProtoStatus)
-from parax.util import OrderedSet
+from parax.util import jaxpr_to_hlo_computation, OrderedSet
 
 
 def get_compute_key(fun, in_tree, donated_invars, *aval):
@@ -152,41 +152,18 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         according to this configuration.
     """
     tic = time.time()
+
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
     # Convert jaxpr to XLA HLO
-    c = xb.make_computation_builder(f"auto_shard_{fun.__name__}")
-    xla_consts = map(partial(xb.constant, c), consts)
-    tuple_args = False
-    xla_args, donated_invars = xla._xla_callable_args(
-        c, avals, tuple_args, donated_invars=donated_invars)
-    backend_name = 'gpu'
-    axis_env = xla.AxisEnv(nreps=1, names=(),
-                           sizes=())  # All named axes have been vmapped
-    transformed_name = fun.__name__
-    out_nodes = xla.jaxpr_subcomp(
-        c, jaxpr, backend_name, axis_env, xla_consts,
-        extend_name_stack(wrap_name(transformed_name, 'auto_sharding')),
-        *xla_args)
-    out_tuple = xc.ops.Tuple(c, out_nodes)
-
-    # Set up aliases (donating invars)
-    backend = xb.get_backend(backend_name)
-    if backend.platform in ("gpu", "tpu"):
-        donation_results = xla.set_up_aliases(c, xla_args, out_tuple,
-                                              donated_invars, tuple_args)
-    if any(donation_results):
-        # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-        unused_donations = [
-            str(c.GetShape(a)) for a, d in zip(xla_args, donation_results) if d
-        ]
-        warn("Some donated buffers were not usable: {}".format(
-            ", ".join(unused_donations)))
-
-    # Compile and optimize HLO to an executable
-    built = c.Build(out_tuple)
+    name = f"{fun.__name__}_auto_shard"
+    backend = xb.get_backend("gpu")
+    built = jaxpr_to_hlo_computation(name, ClosedJaxpr(jaxpr, consts),
+                                     donated_invars, backend)
     #print(built.as_hlo_text())
+
+    # Compile an executable
     if strategy_config is None:
         compiled, strategy_config = compile_with_search(
             backend,
@@ -310,38 +287,6 @@ class GradAccumulationInfo:
         return ret
 
 
-def jaxpr_to_hlo(name, closed_jaxpr, donated_invars, backend):
-    avals = [x.aval for x in closed_jaxpr.jaxpr.invars]
-
-    # Convert jaxpr to XLA HLO
-    c = xb.make_computation_builder(name)
-    xla_consts = map(partial(xb.constant, c), closed_jaxpr.consts)
-    tuple_args = False
-    xla_args, donated_invars = xla._xla_callable_args(
-        c, avals, tuple_args, donated_invars=donated_invars)
-    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    out_nodes = xla.jaxpr_subcomp(
-        c, closed_jaxpr.jaxpr, backend.platform, axis_env, xla_consts,
-        extend_name_stack(wrap_name(name, 'jaxpr_to_hlo')),
-        *xla_args)
-    out_tuple = xc.ops.Tuple(c, out_nodes)
-
-    # Set up aliases (donating invars)
-    if backend.platform in ("gpu", "tpu"):
-        donation_results = xla.set_up_aliases(c, xla_args, out_tuple,
-                                              donated_invars, tuple_args)
-    if any(donation_results):
-        unused_donations = [
-            str(c.GetShape(a)) for a, d in zip(xla_args, donation_results) if d
-        ]
-        warn("Some donated buffers were not usable: {}".format(
-            ", ".join(unused_donations)))
-
-    # Compile and optimize HLO to an executable
-    built = c.Build(out_tuple)
-    return built
-
-
 def shard_parallel_internal_gradient_accumulation(
     fun: lu.WrappedFun, in_tree, out_tree_thunk,
     donated_invars, batch_invars, physical_mesh, logical_mesh_choices,
@@ -372,11 +317,10 @@ def shard_parallel_internal_gradient_accumulation(
     n_all_invars = len(accumulate_grad_jaxpr.jaxpr.invars)
     n_old_grad_vars = len(grad_acc_info.old_grad_vars)
     donated_invars = (True,) * n_old_grad_vars + (False,) * (n_all_invars - n_old_grad_vars)
-    accumulate_grad_hlo = jaxpr_to_hlo(
+    accumulate_grad_hlo = jaxpr_to_hlo_computation(
         f"{fun.__name__}_accumulate_grad",
         grad_acc_info.accumulate_grad_jaxpr,
-        donated_invars,
-        backend)
+        donated_invars, backend)
 
     compiled, strategy_config = compile_with_search(
         backend,

@@ -55,6 +55,9 @@ class LocalPipelineRunner:
     def get_val(self, var):
         return self.env[var]
 
+    def del_var(self, var):
+        del self.env[var]
+
 
 def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
                            global_invars: Sequence[Var],
@@ -76,8 +79,24 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
         assert not kwargs, "kwargs not supported"
         global_invals = dict(zip(global_invars, args))
         runners = {}
-        # Mark pipeline variables
+
         var_stage_mapping = {}
+        var_reference_count = {}
+
+        # Create variable dependency mapping.
+        for stage in pipeline_stages:
+            for var in stage.invars:
+                if var not in global_invals:
+                    assert var in var_stage_mapping, f"referred to an unknown var {var}"
+                    var_reference_count[var] = var_reference_count.get(var, 0) + 1
+            for var in stage.outvars:
+                var_stage_mapping[var] = stage.name
+
+        for var in global_outvars:
+            if not isinstance(var, Literal):
+                assert var in var_stage_mapping, f"referred to an unknown var {var}"
+                var_reference_count[var] = var_reference_count.get(var, 0) + 1
+
         for stage in pipeline_stages:
             stage_invals = {}
             for var in stage.invars:
@@ -85,13 +104,16 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
                     stage_invals[var] = global_invals[var]
                 else:
                     assert var in var_stage_mapping, f"referred to an unknown var {var}"
-                    stage_invals[var] = runners[var_stage_mapping[var]].get_val(var)
+                    sender_runner = runners[var_stage_mapping[var]]
+                    stage_invals[var] = sender_runner.get_val(var)
+                    var_reference_count[var] -= 1
+                    if var_reference_count[var] == 0:
+                        sender_runner.del_var(var)
+
             if stage.name not in runners:
                 runners[stage.name] = LocalPipelineRunner(
                     stage.name, global_invals)
             runners[stage.name].run_stage(stage, stage_invals)
-            for var in stage.outvars:
-                var_stage_mapping[var] = stage.name
 
         global_outvals_list = []
         for var in global_outvars:
@@ -99,7 +121,11 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
                 global_outvals_list.append(var.val)
             else:
                 assert var in var_stage_mapping, f"referred to an unknown var {var}"
-                global_outvals_list.append(runners[var_stage_mapping[var]].get_val(var))
+                sender_runner = runners[var_stage_mapping[var]]
+                global_outvals_list.append(sender_runner.get_val(var))
+                var_reference_count[var] -= 1
+                if var_reference_count[var] == 0:
+                    sender_runner.del_var(var)
         return global_outvals_list
 
     return ret_func

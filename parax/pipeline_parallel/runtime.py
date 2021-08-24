@@ -74,7 +74,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self.global_outvars_repr_set = {}
         for var in self.global_outvars:
             if not isinstance(var, Literal):
-                self.global_outvars_repr.add(repr(var))
+                self.global_outvars_repr_set.add(repr(var))
         self.num_stage = len(self.stages)
         self.num_batch = num_batch
         self.dependency = dependency

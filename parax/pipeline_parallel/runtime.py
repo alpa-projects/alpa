@@ -308,7 +308,7 @@ def gen_linear_pipeline_dependency(num_stage):
     d = np.zeros([num_stage, num_stage], dtype=np.int)
     for i in range(num_stage - 1):
         d[i + 1][i] = 1
-    for i in range(num_stage / 2):
+    for i in range(num_stage // 2):
         d[num_stage - 1 - i][i] = 1
     return d
 

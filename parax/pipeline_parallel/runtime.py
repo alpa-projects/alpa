@@ -71,6 +71,10 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self.stages = pipeline_stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
+        self.global_outvars_repr_set = {}
+        for var in self.global_outvars:
+            if not isinstance(var, Literal):
+                self.global_outvars_repr.add(repr(var))
         self.num_stage = len(self.stages)
         self.num_batch = num_batch
         self.dependency = dependency
@@ -180,7 +184,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 # TODO: Add reference counting here to reduce memory usage
                 self._stage_outputs[batch_idx][stage_idx].update(outvals)
                 for key, val in outvals.items():
-                    if key in self.global_outvars:
+                    if key in self.global_outvars_repr_set:
                         # FIXME: This is wrong!! We should accumulate the gradient
                         global_outputs[key] = val
             logger.info(

@@ -287,7 +287,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
     def _process_stage_outputs(self, stage_idx, outputs):
         stage = self.stages[stage_idx]
-        outvals = dict(zip(stage.outvars, outputs))
+        outvals = {repr(var): val for var, val in zip(stage.outvars, outputs)}
         return outvals
 
 

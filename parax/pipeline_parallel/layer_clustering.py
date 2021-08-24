@@ -12,10 +12,9 @@ from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun
 from jax.interpreters import xla
-from parax import mark_pipeline_jaxpreqn
-from .primitive_def import mark_pipeline
 
 from parax import mark_pipeline_jaxpreqn
+from .primitive_def import mark_pipeline
 
 # TODO: different operations takes different time
 # e.g. add v.s. pow

@@ -3,6 +3,7 @@ import copy
 import gc
 import os
 import time
+from functools import partial
 
 from flax import linen as nn
 from flax import optim
@@ -12,7 +13,7 @@ import numpy as np
 import ray
 
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
+                   DeviceCluster, PhysicalDeviceMesh, forward)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 
@@ -75,7 +76,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Model configs
     model_type = args.model
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        mesh_dim1, mesh_dim2, force_data_parallel = benchmark_case
+        mesh_dim1, mesh_dim2, force_data_parallel, use_remat = benchmark_case
     dtype = jnp.float16
 
     if force_data_parallel:
@@ -113,6 +114,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     @parallelize
     def train_step(optimizer, batch, apply_func):
+        @partial(forward, layer_num = num_layers, use_remat = use_remat)
         def loss_func(params):
             rngs = {"dropout": batch["rng"]}
             logits = apply_func(params,
@@ -236,28 +238,29 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2, FD = force_data_parallel
+# CK = use checkpoint
 
 benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, FD
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  False),
-    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  False),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, FD,    CK
+    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  False, False),
+    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  False, False),
 ]
 
 benchmark_suite_4_gpu = [
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, FD
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  True),
-    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  False),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, FD,    CK
+    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  False, False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  False, False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  False, False),
 ]
 
 benchmark_suite_16_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2
-    (512, 512,  1024, 10, 1024//64,  25600, 16, 1,  False),
-    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,  False),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, FD,    CK
+    (512, 512,  1024, 10, 1024//64,  25600, 16, 1,  False, False),
+    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,  False, False),
 ]
 
 def benchmark_all(use_profiling):

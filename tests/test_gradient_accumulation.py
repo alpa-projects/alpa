@@ -10,8 +10,8 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 
-from parax import (parallelize, set_parallelize_options, grad,
-                   testing, global_config)
+from parax import (parallelize, set_parallelize_options, grad, testing,
+                   global_config)
 from parax.testing import assert_allclose
 
 
@@ -32,6 +32,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         use_bias = False
 
         class Model(nn.Module):
+
             @nn.compact
             def __call__(self, x):
                 x = nn.Dense(hidden_size, use_bias=use_bias)(x)
@@ -39,7 +40,8 @@ class AutoShardingBasicTest(unittest.TestCase):
                 return x
 
         batch = {
-            "x": jnp.ones((batch_size, hidden_size)),
+            "x": jnp.ones(
+                (batch_size, hidden_size)) * jnp.arange(batch_size)[:, None],
             "y": jnp.ones((batch_size, hidden_size)),
         }
 
@@ -50,6 +52,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         optimizer = optim.Momentum(1e-2).create(params)
 
         def train_step(optimizer, batch, apply_func):
+
             def loss_func(params):
                 out = apply_func(params, batch['x'])
                 return jnp.mean((out - batch['y'])**2)

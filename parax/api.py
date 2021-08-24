@@ -5,7 +5,8 @@ from typing import Callable, Optional, Sequence
 from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
 from jax.api_util import (argnums_partial, donation_vector,
-                          flatten_fun_nokwargs, rebase_donate_argnums, PyTreeDef)
+                          flatten_fun_nokwargs, rebase_donate_argnums,
+                          PyTreeDef)
 from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
@@ -25,7 +26,10 @@ from parax.util import auto_donate_argnums, auto_static_argnums
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", batch_argnums=(1,)):
+def parallelize(fun=None,
+                donate_argnums="auto",
+                static_argnums="auto",
+                batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
@@ -40,6 +44,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", batch_ar
           to perform gradient accumulation or pipeline parallelism.
           Parax assumes the first dimension of the tensor is the batch dimension.
     """
+
     def decorate_fun(fun):
 
         @wraps(fun)
@@ -98,8 +103,8 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", batch_ar
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
                 f, in_tree, out_tree_hashable, donated_invars, batch_invars,
-                devices, global_config.strategy, global_config.memory_budget_per_device,
-                *abstract_args)
+                devices, global_config.strategy,
+                global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
                 # Execute the compiled func and return results
@@ -187,8 +192,12 @@ def clear_callable_cache():
     """Clear all cached auto_parallel_callable."""
     parallelize_callable.cache_clear()
 
+
 def grad(*args, **kwargs):
+    """The same as jax.grad, but inserts a gradient marker after the gradient computation."""
+
     def ret(*call_args, **call_kwargs):
         func = api.grad(*args, **kwargs)
         return mark_gradient(func(*call_args, **call_kwargs))
+
     return ret

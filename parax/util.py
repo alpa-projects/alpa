@@ -176,7 +176,9 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
                                                   donated_invars, tuple_args)
         if any(donation_results):
             unused_donations = [
-                str(c.GetShape(a)) for a, d in zip(xla_args, donation_results) if d
+                str(c.GetShape(a))
+                for a, d in zip(xla_args, donation_results)
+                if d
             ]
             warn("Some donated buffers were not usable: {}".format(
                 ", ".join(unused_donations)))

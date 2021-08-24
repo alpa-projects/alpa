@@ -12,10 +12,9 @@ from jaxlib.xla_client import OpSharding
 from parax import testing
 from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
-from parax.measure_record import (MeasureInput, MeasureResult,
-                                  StrategyConfig, save_to_file)
+from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
+                                  save_to_file)
 from parax.util import get_compile_options, to_int_tuple, XlaPassContext
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -31,9 +31,7 @@ class LocalPipelineRunner:
         self.env = {}
         self.global_invals = global_invals
 
-    def run_stage(self,
-                  stage: PipelineStage,
-                  invals: Dict[Var, Any]):
+    def run_stage(self, stage: PipelineStage, invals: Dict[Var, Any]):
         """
         Run a pipeline stage.
 
@@ -88,7 +86,8 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
             for var in stage.invars:
                 if var not in global_invals:
                     assert var in var_stage_mapping, f"referred to an unknown var {var}"
-                    var_reference_count[var] = var_reference_count.get(var, 0) + 1
+                    var_reference_count[var] = var_reference_count.get(var,
+                                                                       0) + 1
             for var in stage.outvars:
                 var_stage_mapping[var] = stage.name
 
@@ -138,7 +137,8 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(closed_jaxpr)
+    jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
+        closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     xla_pipeline_stages = [

@@ -299,6 +299,20 @@ def gen_linear_dependency(num_stage):
     return d
 
 
+def gen_linear_pipeline_dependency(num_stage):
+    """
+    Generate a dependency matrix that marks the neighbors and forward/backward
+    stage pairs as neighbors.
+    """
+    assert num_stage % 2 == 0
+    d = np.zeros([num_stage, num_stage], dtype=np.int)
+    for i in range(num_stage - 1):
+        d[i + 1][i] = 1
+    for i in range(num_stage / 2):
+        d[num_stage - 1 - i][i] = 1
+    return d
+
+
 class GpipeSchedule:
     """
     Construct a Gpipe-like schedule.

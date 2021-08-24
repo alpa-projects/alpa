@@ -7,7 +7,7 @@ from jax.core import ClosedJaxpr, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
-from parax.pipeline_parallel.runtime import GpipeSchedule, Jax3DPipeline, gen_linear_dependency
+from parax.pipeline_parallel.runtime import (GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency)
 from parax.pipeline_parallel.stage import (generate_sharded_xla_stages,
                                            mark_global_and_local_vars,
                                            slice_closed_jaxpr_by_manual_pipeline_marks)
@@ -41,7 +41,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Generate schedule and placement
     num_batch = 1
     n_stages = len(jax_pipeline_stages)
-    dependency = gen_linear_dependency(n_stages)
+    dependency = gen_linear_pipeline_dependency(n_stages)
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
                              num_batch=num_batch)

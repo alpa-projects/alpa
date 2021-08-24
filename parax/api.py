@@ -2,9 +2,8 @@
 from functools import wraps
 from typing import Callable, Optional, Sequence
 
-from jax import linear_util as lu
+from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
-from jax.api import _check_callable
 from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums, PyTreeDef)
 from jax.core import AbstractValue
@@ -16,6 +15,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
+from parax.pipeline_parallel.primitive_def import mark_gradient
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.shard_parallel.shard_callable import shard_parallel_callable
@@ -138,7 +138,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", batch_ar
     if fun is None:
         return decorate_fun
     else:
-        _check_callable(fun)
+        api._check_callable(fun)
         return decorate_fun(fun)
 
 
@@ -186,3 +186,9 @@ def parallelize_callable(
 def clear_callable_cache():
     """Clear all cached auto_parallel_callable."""
     parallelize_callable.cache_clear()
+
+def grad(*args, **kwargs):
+    def ret(*call_args, **call_kwargs):
+        func = api.grad(*args, **kwargs)
+        return mark_gradient(func(*call_args, **call_kwargs))
+    return ret

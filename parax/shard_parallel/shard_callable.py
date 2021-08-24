@@ -7,9 +7,10 @@ from jax import linear_util as lu, disable_jit
 from jax._src.util import (partial, extend_name_stack, wrap_name)
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       jaxpr_as_fun, new_jaxpr_eqn, gensym)
-from jax.interpreters import xla, partial_eval as pe
-from jax.lax import add_p
+from jax.interpreters import xla, partial_eval as pe, pxla
+from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc
+import jax.numpy as jnp
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
@@ -226,14 +227,19 @@ def shard_parallel_internal_gradient_accumulation(
     with disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    closed_jaxpr, accumulate_grad_invars, apply_grad_invars, num_grads =\
-        add_gradient_accumulation(closed_jaxpr)
+    closed_jaxpr, accumulate_grad_invar_ids, apply_grad_invar_ids, num_grads =\
+        add_gradient_accumulation(closed_jaxpr, num_micro_batches)
+    global_in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars]
+    global_out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
+    grad_avals = global_in_avals[-num_grads:]
+    accumulate_grad_in_avals = [global_in_avals[i] for i in accumulate_grad_invar_ids]
+    apply_grad_in_avals = [global_in_avals[i] for i in apply_grad_invar_ids] + grad_avals
 
+    # Run auto-sharding and slice the combined HLO into two HLO: accumulate_grad and apply_grad
     backend = xb.get_backend("gpu")
     donated_invars = donated_invars + (False,) * num_grads
     name = f"{fun.__name__}_shard_parallel"
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend)
-
     hlo_protos, strategy_config = compile_with_search(
         backend,
         built,
@@ -246,12 +252,93 @@ def shard_parallel_internal_gradient_accumulation(
         multiple_stages=True)
     assert len(hlo_protos) == 2
 
+    # Compile these two HLOs separately to get two executable
     accumulate_grad = xc.XlaComputation(hlo_protos[0])
     apply_grad = xc.XlaComputation(hlo_protos[1])
+    logical_mesh_shape = strategy_config.logical_mesh_shape
 
-    print(accumulate_grad.as_hlo_text())
-    print(apply_grad.as_hlo_text())
-    exit()
+    accumulate_grad = compile_with_given_strategy(
+        backend, accumulate_grad, strategy_config, physical_mesh.total_devices,
+        False, HloProtoStatus.SHARDING_ANNOTATED)
+    apply_grad = compile_with_given_strategy(
+        backend, apply_grad, strategy_config, physical_mesh.total_devices,
+        False, HloProtoStatus.SHARDING_ANNOTATED)
+
+    assert not physical_mesh.is_distributed
+
+    # Read sharding specs
+    accumulate_grad_input_sharding_specs, grad_sharding_specs =\
+        get_input_output_sharding_specs(
+        accumulate_grad.hlo_modules()[0], physical_mesh.total_devices,
+        accumulate_grad_in_avals, grad_avals, logical_mesh_shape)
+    apply_grad_input_sharding_specs, output_sharding_specs =\
+        get_input_output_sharding_specs(
+        apply_grad.hlo_modules()[0], physical_mesh.total_devices,
+        apply_grad_in_avals, global_out_avals, logical_mesh_shape)
+
+    input_sharding_specs = [None] * len(global_in_avals)
+    for i, idx in enumerate(accumulate_grad_invar_ids):
+        input_sharding_specs[idx] = accumulate_grad_input_sharding_specs[i]
+    for i, idx in enumerate(apply_grad_invar_ids):
+        input_sharding_specs[idx] = apply_grad_input_sharding_specs[i]
+    assert input_sharding_specs[-num_grads:] == grad_sharding_specs
+
+    # Cache indices
+    global_in_indices = [
+        pxla.spec_to_indices(aval.shape, spec)
+        for aval, spec in zip(global_in_avals, input_sharding_specs)
+    ]
+    global_is_batch_arg = batch_invars + (False,) * num_grads
+    devices = physical_mesh.devices
+    outs_handler = pxla.avals_to_results_handler(
+        1, len(devices), output_sharding_specs, global_out_avals)
+
+    def final_callable(*args):
+        global_args = list(args)
+
+        # Prepare gradient buffers
+        for i in range(num_grads):
+            global_args.append(jnp.zeros(grad_avals[i].shape, grad_avals[i].dtype))
+
+        # Shard args
+        global_buffers = []
+        for i, arg in enumerate(global_args):
+            if global_is_batch_arg[i]:
+                new_shape = (num_micro_batches, arg.shape[0] // num_micro_batches) + arg.shape[1:]
+                reshaped = arg.reshape(new_shape)
+                micro_batches = jnp.split(reshaped, num_micro_batches)
+                micro_batches = [x.squeeze(0) for x in micro_batches]
+                micro_batches = [pxla.shard_args(devices, [global_in_indices[i]], [x])[0] for x in micro_batches]
+                global_buffers.append(micro_batches)
+            else:
+                global_buffers.append(pxla.shard_args(devices, [global_in_indices[i]], [arg])[0])
+
+        # Gradient accumulation loop
+        for j in range(num_micro_batches):
+            input_buffers = []
+            for i in accumulate_grad_invar_ids:
+                if global_is_batch_arg[i]:
+                    input_buffers.append(global_buffers[i][j])
+                else:
+                    input_buffers.append(global_buffers[i])
+
+            output_bufs = accumulate_grad.execute_sharded_on_local_devices(input_buffers)
+            global_buffers[-num_grads:] = output_bufs
+
+        input_buffers = []
+        for i in apply_grad_invar_ids:
+            if global_is_batch_arg[i]:
+                assert False, "cannot use batch data in apply_grad"
+            else:
+                input_buffers.append(global_buffers[i])
+        input_buffers.extend(global_buffers[-num_grads:])
+        output_bufs = apply_grad.execute_sharded_on_local_devices(input_buffers)
+
+        # Wrap buffers as ShardedArray
+        output = outs_handler(output_bufs)
+        return output
+
+    return final_callable
 
 
 def filter_used_vars(all_vars, eqns):
@@ -264,7 +351,7 @@ def filter_used_vars(all_vars, eqns):
     return [var for var in all_vars if var in used_vars]
 
 
-def add_gradient_accumulation(raw_jaxpr):
+def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     from parax.pipeline_parallel.primitive_def import pipeline_p
 
     global_invars = set(raw_jaxpr.jaxpr.invars)
@@ -294,6 +381,7 @@ def add_gradient_accumulation(raw_jaxpr):
     out_grad_vars = marker_eqn.invars
     old_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
     new_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
+    num_grads = len(out_grad_vars)
 
     # Wrap all invars of compute_grad
     old_invars = filter_used_vars(raw_jaxpr.jaxpr.invars, compute_grad_eqns) + old_grad_vars
@@ -318,6 +406,7 @@ def add_gradient_accumulation(raw_jaxpr):
     combined_eqns.append(new_jaxpr_eqn(
         new_grad_vars, inter_grad_vars, pipeline_p, {"mark_type" : "end"}, None
     ))
+    accumulate_grad_outvars = new_grad_vars
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
@@ -338,12 +427,22 @@ def add_gradient_accumulation(raw_jaxpr):
         new_invars, old_invars, pipeline_p, {"mark_type" : "start"}, None
     ))
 
+    # Append eqns for gradient reduction
+    for i in range(num_grads):
+        combined_eqns.append(new_jaxpr_eqn(
+            [old_invars[-(i+1)], Literal(float(num_micro_batches))], [old_invars[-(i+1)]],
+            div_p, {}, None))
+    # TODO(lmzheng): This breaks the SSA form of the combined_eqns
+    # But I found jax can convert this non-SSA jaxpr to HLO correctly,
+    # so I leave this issue as todo. To fix this, we should substitute
+    # all new grad vars in these equation with new vars.
+
     # Append eqns of apply_grad
     combined_eqns.extend(apply_grad_eqns)
-    # TODO(lmzheng): the param vars are used in both compute_grad and apply_grad,
+    # TODO(lmzheng): The param vars are used in both compute_grad and apply_grad,
     # so there will be some duplicated intermediate vars in compute_grad_eqns
-    # and apply_grad_eqns. This breaks the SSA property of the combined_eqns.
-    # But I found jaxpr can combine this ill-defined jaxpr correctly,
+    # and apply_grad_eqns. This breaks the SSA form of the combined_eqns.
+    # But I found jax can convert this non-SSA jaxpr to HLO correctly,
     # so I leave this issue as todo. To fix this, we should substitute
     # all param vars in apply_grad_eqns with new vars.
 
@@ -353,6 +452,7 @@ def add_gradient_accumulation(raw_jaxpr):
     combined_eqns.append(new_jaxpr_eqn(
         old_outvars, new_outvars, pipeline_p, {"mark_type" : "end"}, None
     ))
+    apply_grad_outvars = new_outvars
 
     # Make the new jaxpr
     combined_jaxpr = ClosedJaxpr(Jaxpr(
@@ -360,4 +460,10 @@ def add_gradient_accumulation(raw_jaxpr):
         [global_invar_substitute.get(x, x) for x in (raw_jaxpr.jaxpr.invars + old_grad_vars)],
         new_outvars, combined_eqns), raw_jaxpr.consts)
 
-    return combined_jaxpr, accumulate_grad_invars, apply_grad_invars, len(in_grad_vars)
+    # Build argument map that maps an invar of original jaxpr to accumulate_grad
+    # and apply_grad.
+    accumulate_grad_invar_ids = [combined_jaxpr.jaxpr.invars.index(var) for
+                                 var in accumulate_grad_invars]
+    apply_grad_invar_ids = [combined_jaxpr.jaxpr.invars.index(var) for
+                                 var in apply_grad_invars[:-num_grads]]
+    return (combined_jaxpr, accumulate_grad_invar_ids, apply_grad_invar_ids, num_grads)

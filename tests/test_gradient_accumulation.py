@@ -10,8 +10,9 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 
-from parax import (parallelize, set_parallelize_options, mark_gradient,
+from parax import (parallelize, set_parallelize_options, grad,
                    testing, global_config)
+from parax.testing import assert_allclose
 
 
 def all_reduce_cost(num_devices, num_bytes):
@@ -27,39 +28,46 @@ class AutoShardingBasicTest(unittest.TestCase):
     def test_gradient_accumulation(self):
         batch_size = 16
         num_micro_batches = 2
-        hidden_size = 64
+        hidden_size = 32
         use_bias = False
 
         class Model(nn.Module):
             @nn.compact
-            def __call__(self, x, deterministic):
+            def __call__(self, x):
                 x = nn.Dense(hidden_size, use_bias=use_bias)(x)
-                #x = nn.Dense(hidden_size, use_bias=use_bias)(x)
+                x = nn.Dense(hidden_size, use_bias=use_bias)(x)
                 return x
 
-        x = jnp.ones((batch_size, hidden_size))
-        y = jnp.ones((batch_size, hidden_size))
+        batch = {
+            "x": jnp.ones((batch_size, hidden_size)),
+            "y": jnp.ones((batch_size, hidden_size)),
+        }
 
         # Init model and optimizer
         model = Model()
         rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, x, True)
+        params = model.init(rngkey, batch["x"])
         optimizer = optim.Momentum(1e-2).create(params)
-        #optimizer = optim.Adam(1e-2).create(params)
 
-        @parallelize
-        def func(optimizer, batch):
+        def train_step(optimizer, batch, apply_func):
             def loss_func(params):
-                out = model.apply(params, batch['x'], False)
+                out = apply_func(params, batch['x'])
                 return jnp.mean((out - batch['y'])**2)
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            grad = mark_gradient(grad)
-            new_optimizer = optimizer.apply_gradient(grad)
+            grads = grad(loss_func)(optimizer.target)
+            new_optimizer = optimizer.apply_gradient(grads)
             return new_optimizer
 
+        # Serial execution
+        optimizer_expected = train_step(optimizer, batch, model.apply)
+
+        # Distributed execution
         global_config.num_micro_batches = num_micro_batches
-        func(optimizer, {"x": x, "y": y})
+        train_step_parallel = parallelize(train_step)
+        optimizer_actual = train_step_parallel(optimizer, batch, model.apply)
+
+        # Check results
+        assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
 
 def suite():
@@ -69,9 +77,9 @@ def suite():
 
 
 if __name__ == "__main__":
-    #runner = unittest.TextTestRunner()
-    #runner.run(suite())
+    runner = unittest.TextTestRunner()
+    runner.run(suite())
 
-    a = AutoShardingBasicTest()
-    a.setUp()
-    a.test_gradient_accumulation()
+    #t = AutoShardingBasicTest()
+    #t.setUp()
+    #t.test_gradient_accumulation()

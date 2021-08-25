@@ -437,7 +437,6 @@ def slice_apply_gradient_by_invars(closed_jaxpr: ClosedJaxpr,
         for mesh in var_mesh[invar]:
             invars[mesh].append(invar)
         infered_global_invars[invar] = var_mesh[invar]
-        print(invar, var_mesh[invar])
     for outvar in closed_jaxpr.jaxpr.outvars:
         assert outvar in var_mesh
         for mesh in var_mesh[outvar]:
@@ -449,9 +448,9 @@ def slice_apply_gradient_by_invars(closed_jaxpr: ClosedJaxpr,
             consts[mesh].append(aval)
             constvars[mesh].append(var)
 
-    jaxprs = (ClosedJaxpr(
+    jaxprs = [ClosedJaxpr(
         Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]), consts[i])
-              for i in range(mesh_num))
+              for i in range(mesh_num)]
     return jaxprs, infered_global_invars
 
 

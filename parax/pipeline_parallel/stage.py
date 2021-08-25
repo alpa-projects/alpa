@@ -295,6 +295,13 @@ def slice_closed_jaxpr_by_pipeline_marks(
     current_stage = None
     current_stage_intermediate_vars = set()
 
+    first_eqn = closed_jaxpr.jaxpr.eqns[0]
+    assert (first_eqn.primitive is pipeline_p and first_eqn["mark_type"] == "start"), \
+        "First jaxpr equation must be a pipeline start mark."
+    last_eqn = closed_jaxpr.jaxpr.eqns[-1]
+    assert (last_eqn.primitive is pipeline_p and last_eqn["mark_type"] == "end"), \
+        "Last jaxpr equation must be a pipeline end mark."
+
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."

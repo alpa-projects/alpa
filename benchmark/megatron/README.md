@@ -11,6 +11,7 @@ pip3 install ninja
 # Install Megatron
 git clone https://github.com/NVIDIA/Megatron-LM.git
 cd Megatron-LM
+pip3 install -r requirements.txt
 pip3 install -e .
 echo 'export PYTHONPATH=$PYTHONPATH:~/efs/Megatron-LM' >> ~/.bashrc   # use your own path
 source ~/.bashrc

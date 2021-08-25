@@ -11,4 +11,6 @@ void pipelineMarker(cudaStream_t stream, void **buffers, const char *opaque, siz
         cudaMemcpy(output, input, sizes[i], cudaMemcpyDeviceToDevice);
     }
 }
+void identity(cudaStream_t stream, void **buffers, const char *opaque, size_t opaque_len) {
+}
 };  // end namespace kernel

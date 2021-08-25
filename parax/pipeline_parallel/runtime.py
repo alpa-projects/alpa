@@ -255,8 +255,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             else:
                 for ans in ancestors:
                     if key in self._stage_outputs[batch_idx][ans]:
-                        stage_inputs[key] = self._stage_outputs[batch_idx][
-                            ans][key]
+                        stage_inputs[key] = self._stage_outputs[batch_idx][ans][
+                            key]
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs. "
                                "`stage_inputs` got {}, but expect {}.".format(

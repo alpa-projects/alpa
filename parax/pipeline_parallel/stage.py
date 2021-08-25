@@ -259,7 +259,8 @@ class XlaShardedPipelineStage(PipelineStage):
 
 
 def slice_closed_jaxpr_by_manual_pipeline_marks(
-        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxManualPipelineStage]:  # noqa MC0001
+    closed_jaxpr: ClosedJaxpr
+) -> Sequence[JaxManualPipelineStage]:  # noqa MC0001
     """Slice a Jaxpr into multiple pipeline stages.
 
     We assume the closed_jaxpr includes pipeline start and end markers. Also,
@@ -346,13 +347,17 @@ def slice_closed_jaxpr_by_manual_pipeline_marks(
     return result_stages
 
 
-def mark_global_and_local_vars(stage: JaxManualPipelineStage, gensym_func) -> JaxPipelineStage:
+def mark_global_and_local_vars(stage: JaxManualPipelineStage,
+                               gensym_func) -> JaxPipelineStage:
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
         'mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
         'mark_type'] == 'end'
-    new_stage = JaxPipelineStage(stage.name, invars=stage.invars, outvars=stage.outvars, consts_dir=stage.consts_dir)
+    new_stage = JaxPipelineStage(stage.name,
+                                 invars=stage.invars,
+                                 outvars=stage.outvars,
+                                 consts_dir=stage.consts_dir)
     var_alias = {
         var: gensym_func(var.aval)
         for var in it.chain(stage.global_invars, stage.local_invars,

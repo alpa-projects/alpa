@@ -361,11 +361,17 @@ def slice_apply_gradient_by_invars(closed_jaxpr: ClosedJaxpr,
                                    grad_mesh: Dict['Var', int]):
     """Slice the apply gradient jaxpr based on mesh allocation information
 
-    Args: 
+    Args:
         closed_jaxpr(ClosedJaxpr): closed jaxpr of apply_gradient function. 
 
-        grad_mesh(Dict['Var', int]): dict indicating which mesh the variable is at. 
-        If not in the dict, the variable should be a global parameter. 
+        grad_mesh(Dict[Var, int]): dict indicating which mesh the variable is at. 
+        If not in the dict, the variable should be a global parameter.
+
+    Returns:
+        jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
+
+        infered_global_invars(Dict[Var, List[int]]): Indicating which clusters each
+        input variable of apply_gradient function should be sent to.
     """
 
     def add_allocation(cur: Set, add: Set):
@@ -447,9 +453,10 @@ def slice_apply_gradient_by_invars(closed_jaxpr: ClosedJaxpr,
             consts[mesh].append(aval)
             constvars[mesh].append(var)
 
-    jaxprs = [ClosedJaxpr(
-        Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]), consts[i])
-              for i in range(mesh_num)]
+    jaxprs = [
+        ClosedJaxpr(Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
+                    consts[i]) for i in range(mesh_num)
+    ]
     return jaxprs, infered_global_invars
 
 

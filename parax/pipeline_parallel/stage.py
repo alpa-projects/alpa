@@ -120,7 +120,9 @@ class XlaPipelineStage(PipelineStage):
             jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
         """
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
-        built = jaxpr_to_hlo_computation(jax_pipeline_stage.name, closed_jaxpr)
+        backend = xb.get_backend("gpu")
+        name = "pipeline_stage_{}".format(jax_pipeline_stage.name)
+        built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
         #print("=" * 80)
         #print("built", built.as_hlo_text())
 
@@ -440,14 +442,12 @@ def generate_sharded_xla_stages(name: str,
         eqns=eqns,
     )
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
-    backend_name = 'gpu'
-    backend = xb.get_backend(backend_name)
-    built_computation = jaxpr_to_hlo_computation(name,
-                                                 closed_jaxpr,
-                                                 backend_name=backend_name)
+    backend = xb.get_backend("gpu")
+    name = "pipeline_stage_{}".format(name)
+    built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
     stage_protos, strategy_config = compile_with_search(
         backend,
-        built_computation,
+        built,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,

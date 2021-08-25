@@ -1,11 +1,13 @@
 """Top-level user API."""
 from functools import wraps
+from typing import Callable, Optional, Sequence
 
-from jax import linear_util as lu
+from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
-from jax.api import _check_callable
 from jax.api_util import (argnums_partial, donation_vector,
-                          flatten_fun_nokwargs, rebase_donate_argnums)
+                          flatten_fun_nokwargs, rebase_donate_argnums,
+                          PyTreeDef)
+from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb
@@ -14,16 +16,20 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
+from parax.pipeline_parallel.primitive_def import mark_gradient
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
-from parax.shard_parallel.auto_sharding import shard_parallel_callable
+from parax.shard_parallel.shard_callable import shard_parallel_callable
 from parax.util import auto_donate_argnums, auto_static_argnums
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
+def parallelize(fun=None,
+                donate_argnums="auto",
+                static_argnums="auto",
+                batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
@@ -33,6 +39,10 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
           If is "auto", parax uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.
+        batch_argnums: The indices of arguments that are the data batch.
+          This information is used to split the original data batch into micro batches
+          to perform gradient accumulation or pipeline parallelism.
+          Parax assumes the first dimension of the tensor is the batch dimension.
     """
 
     def decorate_fun(fun):
@@ -82,15 +92,19 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
             else:
                 donated_invars = (False,) * len(args_flat)
 
+            # Deal with batch argnums
+            batch_tuple = rebase_donate_argnums(batch_argnums, static_argnums)
+            batch_invars = donation_vector(batch_argnums, dyn_args, kwargs)
+
             # JIT compile and call the compiled func
             abstract_args = unsafe_map(xla.abstractify, args_flat)
             devices = global_config.devices
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
-                f, in_tree, out_tree_hashable, donated_invars, devices,
-                global_config.strategy, global_config.memory_budget_per_device,
-                *abstract_args)
+                f, in_tree, out_tree_hashable, donated_invars, batch_invars,
+                devices, global_config.strategy,
+                global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
                 # Execute the compiled func and return results
@@ -129,20 +143,21 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
     if fun is None:
         return decorate_fun
     else:
-        _check_callable(fun)
+        api._check_callable(fun)
         return decorate_fun(fun)
 
 
 @lu.cache
 def parallelize_callable(
     fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    donated_invars,
+    in_tree: PyTreeDef,
+    out_tree_thunk: Callable[[], PyTreeDef],
+    donated_invars: Sequence[bool],
+    batch_invars: Sequence[bool],
     devices,
-    strategy,
-    memory_budget_per_device,
-    *avals,
+    strategy: str,
+    memory_budget_per_device: Optional[float],
+    *avals: Sequence[AbstractValue],
 ):
     """Auto parallel callable."""
     # Clean stores for the next call
@@ -153,7 +168,7 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       donated_invars, devices,
+                                       donated_invars, batch_invars, devices,
                                        memory_budget_per_device, *avals)
     elif strategy == "shard_data_parallel":
         return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,
@@ -176,3 +191,13 @@ def parallelize_callable(
 def clear_callable_cache():
     """Clear all cached auto_parallel_callable."""
     parallelize_callable.cache_clear()
+
+
+def grad(*args, **kwargs):
+    """The same as jax.grad, but inserts a gradient marker after the gradient computation."""
+
+    def ret(*call_args, **call_kwargs):
+        func = api.grad(*args, **kwargs)
+        return mark_gradient(func(*call_args, **call_kwargs))
+
+    return ret

@@ -9,14 +9,14 @@ from typing import Sequence, List, Set, Any, Dict
 import numpy as np
 from jax import jit
 from jax._src.util import partial, safe_map
-from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun)
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.pipeline_parallel.primitive_def import pipeline_p
-from parax.shard_parallel.auto_sharding import compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs
+from parax.pipeline_parallel.primitive_def import (pipeline_p, mark_pipeline_jaxpreqn)
+from parax.shard_parallel.auto_sharding import (compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs)
 from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
 # pylint: disable=redefined-builtin
@@ -47,6 +47,24 @@ class PipelineStage(ABC):
     def get_runnable(self, mesh=None):
         """Compile the stage and get the runnable."""
         raise NotImplementedError()
+
+
+@dataclass
+class StrVarPipelineStage:
+    """Stringified stage with all Set/Dict have string keys."""
+
+    name: str
+    invars: Sequence[str]
+    outvars: Sequence[str]
+
+    @classmethod
+    def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
+        """Construct a StrVarPipelineStage from a PipelineStage."""
+        return cls(
+            name=pipeline_stage.name,
+            invars=[repr(var) for var in pipeline_stage.invars],
+            outvars=[repr(var) for var in pipeline_stage.outvars],
+        )
 
 
 @dataclass
@@ -389,6 +407,93 @@ def mark_global_and_local_vars(stage: JaxManualPipelineStage, gensym_func) -> Ja
     return new_stage
 
 
+def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
+    sliced_eqns = []
+    current_stage_eqns = None
+
+    for eqn in closed_jaxpr.jaxpr.eqns:
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
+            assert current_stage_eqns is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
+            current_stage = []
+        elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
+            assert current_stage_eqns is not None, "Ending a pipeline stage before its start."
+            sliced_eqns.append(current_stage)
+            current_stage = None
+        else:
+            assert current_stage_eqns is not None
+            current_stage_eqns.append(eqn)
+    assert current_stage_eqns is None
+    return sliced_eqns
+
+
+def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
+    n_layers = len(sliced_eqns)
+    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_consts_dir = dict(
+        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    layer_pipeline_invars = [set() for _ in range(n_layers)]
+    layer_pipeline_outvars = [set() for _ in range(n_layers)]
+    var_layer_dict = {}
+    for i, eqns in enumerate(sliced_eqns):
+        for eqn in eqns:
+            for var in eqn.invars:
+                if (not isinstance(var, Literal) and
+                        var not in global_consts_dir and
+                        var not in global_invars and var_layer_dict[var] != i):
+                    layer_pipeline_invars[i].add(var)
+                    layer_pipeline_outvars[var_layer_dict[var]].add(var)
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar):
+                    var_layer_dict[var] = i
+    gensym_func = gensym([closed_jaxpr.jaxpr])
+    var_mapping = {}
+
+    def get_mapping(var):
+        if isinstance(var, Var):
+            return var_mapping.get(var, var)
+        else:
+            return var
+
+    new_eqns = []
+    for i, eqns in enumerate(sliced_eqns):
+        # pipeline start eqn
+        pipeline_start_invars = []
+        pipeline_start_outvars = []
+        for var in layer_pipeline_invars[i]:
+            new_var = gensym_func(var.aval)
+            pipeline_start_invars.append(get_mapping(var))
+            pipeline_start_outvars.append(new_var)
+            var_mapping[var] = new_var
+        new_eqns.append(
+            mark_pipeline_jaxpreqn(pipeline_start_invars,
+                                   pipeline_start_outvars, str(i), 'start'))
+        # all other eqns
+        for eqn in eqns:
+            new_invars = [get_mapping(var) for var in eqn.invars]
+            new_eqns.append(
+                new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
+                              eqn.params, eqn.source_info))
+        # pipeline end eqn
+        pipeline_end_invars = []
+        pipeline_end_outvars = []
+        for var in layer_pipeline_outvars[i]:
+            new_var = gensym_func(var.aval)
+            pipeline_end_invars.append(get_mapping(var))
+            pipeline_end_outvars.append(new_var)
+            var_mapping[var] = new_var
+        new_eqns.append(
+            mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
+                                   str(i), 'end'))
+    new_jaxpr = Jaxpr(
+        closed_jaxpr.jaxpr.constvars,
+        closed_jaxpr.jaxpr.invars,
+        [get_mapping(var) for var in closed_jaxpr.jaxpr.outvars],
+        new_eqns,
+    )
+    new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+    return new_closed_jaxpr
+
+
 def generate_sharded_xla_stages(name: str,
                                 jax_stages: Sequence[JaxPipelineStage],
                                 physical_mesh, logical_mesh_choices,
@@ -438,19 +543,3 @@ def generate_sharded_xla_stages(name: str,
     return stages
 
 
-@dataclass
-class StrVarPipelineStage:
-    """Stringified stage with all Set/Dict have string keys."""
-
-    name: str
-    invars: Sequence[str]
-    outvars: Sequence[str]
-
-    @classmethod
-    def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
-        """Construct a StrVarPipelineStage from a PipelineStage."""
-        return cls(
-            name=pipeline_stage.name,
-            invars=[repr(var) for var in pipeline_stage.invars],
-            outvars=[repr(var) for var in pipeline_stage.outvars],
-        )

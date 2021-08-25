@@ -8,11 +8,10 @@ from jax import tree_flatten
 from jax import lax
 from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun
+from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun
 from jax.interpreters import xla
 
-from parax import mark_pipeline_jaxpreqn
-
+from parax.pipeline_parallel.stage import add_pipeline_marks_for_sliced_eqns
 # TODO: different operations takes different time
 # e.g. add v.s. pow
 
@@ -144,74 +143,6 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
     return list(reversed(reversed_sliced_eqns))
 
 
-def add_pipeline_markers(closed_jaxpr: ClosedJaxpr, sliced_eqns):
-    n_layers = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_consts_dir = dict(
-        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    layer_pipeline_invars = [set() for _ in range(n_layers)]
-    layer_pipeline_outvars = [set() for _ in range(n_layers)]
-    var_layer_dict = {}
-    for i, eqns in enumerate(sliced_eqns):
-        for eqn in eqns:
-            for var in eqn.invars:
-                if (not isinstance(var, Literal) and
-                        var not in global_consts_dir and
-                        var not in global_invars and var_layer_dict[var] != i):
-                    layer_pipeline_invars[i].add(var)
-                    layer_pipeline_outvars[var_layer_dict[var]].add(var)
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    var_layer_dict[var] = i
-    gensym_func = gensym([closed_jaxpr.jaxpr])
-    var_mapping = {}
-
-    def get_mapping(var):
-        if isinstance(var, Var):
-            return var_mapping.get(var, var)
-        else:
-            return var
-
-    new_eqns = []
-    for i, eqns in enumerate(sliced_eqns):
-        # pipeline start eqn
-        pipeline_start_invars = []
-        pipeline_start_outvars = []
-        for var in layer_pipeline_invars[i]:
-            new_var = gensym_func(var.aval)
-            pipeline_start_invars.append(get_mapping(var))
-            pipeline_start_outvars.append(new_var)
-            var_mapping[var] = new_var
-        new_eqns.append(
-            mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), 'start'))
-        # all other eqns
-        for eqn in eqns:
-            new_invars = [get_mapping(var) for var in eqn.invars]
-            new_eqns.append(
-                new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
-                              eqn.params, eqn.source_info))
-        # pipeline end eqn
-        pipeline_end_invars = []
-        pipeline_end_outvars = []
-        for var in layer_pipeline_outvars[i]:
-            new_var = gensym_func(var.aval)
-            pipeline_end_invars.append(get_mapping(var))
-            pipeline_end_outvars.append(new_var)
-            var_mapping[var] = new_var
-        new_eqns.append(
-            mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), 'end'))
-    new_jaxpr = Jaxpr(
-        closed_jaxpr.jaxpr.constvars,
-        closed_jaxpr.jaxpr.invars,
-        [get_mapping(var) for var in closed_jaxpr.jaxpr.outvars],
-        new_eqns,
-    )
-    new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
-    return new_closed_jaxpr
-
-
 def forward(fn: Callable, layer_num: int, eps: float = 0.1, use_pipeline=False):
 
     @wraps(fn)
@@ -219,7 +150,7 @@ def forward(fn: Callable, layer_num: int, eps: float = 0.1, use_pipeline=False):
         if use_pipeline:
             origin_jaxpr = make_jaxpr(fn)(*args)
             solution = slice_jaxpr(origin_jaxpr, layer_num, eps)
-            new_jaxpr = add_pipeline_markers(origin_jaxpr, solution)
+            new_jaxpr = add_pipeline_marks_for_sliced_eqns(origin_jaxpr, solution)
             flatten_args, _ = tree_flatten(args)
             ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
             assert len(ans) == 1 and _check_scalar(

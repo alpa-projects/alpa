@@ -10,9 +10,7 @@ from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, 
 xc.register_custom_call_target(b'xla_pipeline_marker',
                                xla_pipeline_marker(),
                                platform='gpu')
-xc.register_custom_call_target(b'identity',
-                               identity(),
-                               platform='gpu')
+xc.register_custom_call_target(b'identity', identity(), platform='gpu')
 
 
 def flatten_shape_byte_sizes(shape):

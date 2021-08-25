@@ -60,13 +60,14 @@ def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
     from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                       wrap_name)
     from jax.lib import xla_client as xc
+
     def all_index(shape, cur):
         out = []
         if shape.is_tuple():
-          for i, subshape in enumerate(shape.tuple_shapes()):
-            out.extend(all_index(subshape, cur + [i]))
+            for i, subshape in enumerate(shape.tuple_shapes()):
+                out.extend(all_index(subshape, cur + [i]))
         elif shape.is_array():
-          out.append(xc.ShapeIndex(cur))
+            out.append(xc.ShapeIndex(cur))
         return out
 
     def id(c, *args):
@@ -116,29 +117,31 @@ def embed_setup(self):
 setattr(flax.linen.Embed, "setup", embed_setup)
 setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
 
+
 # Mondey patch nn.LayerNorm in flax to make sure all gradients are in fp16
 # when using mixed-precision.
 @compact
 def layer_norm_call(self, x):
-  x = jnp.asarray(x, jnp.float32)
-  features = x.shape[-1]
-  mean = jnp.mean(x, axis=-1, keepdims=True)
-  mean2 = jnp.mean(lax.square(x), axis=-1, keepdims=True)
-  var = mean2 - lax.square(mean)
-  mul = lax.rsqrt(var + self.epsilon)
-  mul = jnp.asarray(mul, self.dtype)
-  if self.use_scale:
-    mul = mul * jnp.asarray(
-        self.param('scale', self.scale_init, (features,)),
-        self.dtype)
-  y = (x - mean) * mul
-  y = jnp.asarray(y, self.dtype)
-  if self.use_bias:
-    y = y + jnp.asarray(
-        self.param('bias', self.bias_init, (features,)),
-        self.dtype)
-  return jnp.asarray(y, self.dtype)
+    x = jnp.asarray(x, jnp.float32)
+    features = x.shape[-1]
+    mean = jnp.mean(x, axis=-1, keepdims=True)
+    mean2 = jnp.mean(lax.square(x), axis=-1, keepdims=True)
+    var = mean2 - lax.square(mean)
+    mul = lax.rsqrt(var + self.epsilon)
+    mul = jnp.asarray(mul, self.dtype)
+    if self.use_scale:
+        mul = mul * jnp.asarray(
+            self.param('scale', self.scale_init, (features,)), self.dtype)
+    y = (x - mean) * mul
+    y = jnp.asarray(y, self.dtype)
+    if self.use_bias:
+        y = y + jnp.asarray(self.param('bias', self.bias_init,
+                                       (features,)), self.dtype)
+    return jnp.asarray(y, self.dtype)
+
+
 setattr(flax.linen.LayerNorm, "__call__", wrap_method_once(layer_norm_call))
+
 
 # Mondey patch a new method "init_dummy" to flax's Module.
 # This function initializes all weights with ones for testing/benchmark purposes.

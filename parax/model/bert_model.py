@@ -110,10 +110,13 @@ class FlaxBertEmbeddings(nn.Module):
                  token_type_ids,
                  position_ids,
                  attention_mask,
+                 dummy_mask,
                  deterministic: bool = True):
         # Embed
         inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
         position_embeds = self.position_embeddings(position_ids.astype("i4"))
+
+        position_embeds = position_embeds * dummy_mask
 
         if self.config.type_vocab_size > 0:
             token_type_embeddings = self.token_type_embeddings(
@@ -348,13 +351,14 @@ class FlaxBertLayerCollection(nn.Module):
         ]
 
         num_layers = self.config.num_hidden_layers
-        self.pipeline_mp_size = self.pipeline_mp_size
+        self.pipeline_mp_size = self.config.pipeline_mp_size
         self.pipeline_marker_positions = []
         if self.pipeline_mp_size > 1:
             num_layer_per_stage, remained = divmod(num_layers, self.pipeline_mp_size)
-            for i in range(1, self.pipeline_mp_size):
-                self.pipeline_marker_positions.append(num_layer_per_stage * i)
             assert remained == 0
+            self.pipeline_marker_positions = [num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)]
+            # for i in range(1, self.pipeline_mp_size):
+            #     self.pipeline_marker_positions = (self.pipeline_marker_positions, num_layer_per_stage * i, )
 
     def __call__(
         self,
@@ -368,17 +372,19 @@ class FlaxBertLayerCollection(nn.Module):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
+        # if self.pipeline_mp_size > 1:
+        #     id = 0
+        #     # this stage contains ops before transformer layers
+        #     hidden_states, = mark_pipeline(hidden_states, name=str(id - 1), mark_type="end")
+        #     hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="start")
         id = 0
-        if self.pipeline_mp_size > 1:
-            hidden_states = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
-
         for i, layer in enumerate(self.layers):
             if self.pipeline_mp_size > 1:
-                if i - 1  == self.pipeline_marker_positions[id]:
-                    hidden_states = mark_pipeline(hidden_states, name=str(id + 1), mark_type="end")
+                if id < len(self.pipeline_marker_positions) and \
+                        i == self.pipeline_marker_positions[id]:
+                    hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="end")
+                    hidden_states, = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
                     id = id + 1
-                    hidden_states = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
-
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -390,9 +396,11 @@ class FlaxBertLayerCollection(nn.Module):
 
             if output_attentions:
                 all_attentions += (layer_outputs[1],)
-        if self.pipeline_mp_size > 1:
-            assert id == self.pipeline_mp_size - 1
-            hidden_states = mark_pipeline(hidden_states, name=str(id + 1), mark_type="end")
+
+        # if self.pipeline_mp_size > 1 and False:
+        #     assert id == self.pipeline_mp_size
+        #     hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="end")
+        #     hidden_states, = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
 
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -555,6 +563,7 @@ class FlaxBertModule(nn.Module):
         attention_mask,
         token_type_ids,
         position_ids,
+        dummy_mask,
         deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
@@ -564,6 +573,7 @@ class FlaxBertModule(nn.Module):
                                         token_type_ids,
                                         position_ids,
                                         attention_mask,
+                                        dummy_mask,
                                         deterministic=deterministic)
         outputs = self.encoder(
             hidden_states,
@@ -667,6 +677,13 @@ class FlaxBertForMaskedLMModule(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ):
+        # pipeline marker
+        # if self.config.pipeline_mp_size > 1:
+        #     (input_ids, attention_mask, token_type_ids, position_ids, ) = \
+        #         mark_pipeline(input_ids, attention_mask, token_type_ids, position_ids,
+        #                       name="0",
+        #                       mark_type="start")
+
         # Model
         outputs = self.bert(
             input_ids,

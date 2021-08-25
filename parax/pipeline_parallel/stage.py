@@ -267,6 +267,15 @@ class XlaShardedPipelineStage(PipelineStage):
                                                   self.donated_invars)
 
 
+def log_jaxpr(closed_jaxpr, log_file="/tmp/jaxpr"):
+    """Logging a jaxpr for debugging."""
+    with open(log_file, "w") as f:
+        # for eqn in closed_jaxpr.jaxpr.eqns:
+        #     f.write(str(eqn))
+        #     f.write("\n")
+        f.write(repr(closed_jaxpr))
+
+
 def slice_closed_jaxpr_by_pipeline_marks(
         closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:  # noqa MC0001
     """Slice a Jaxpr into multiple pipeline stages.
@@ -282,6 +291,8 @@ def slice_closed_jaxpr_by_pipeline_marks(
     Returns:
         Sequence[JaxPipelineStage]: A list of sliced pipeline stages.
     """
+    log_jaxpr(closed_jaxpr)
+
     global_invars = set(closed_jaxpr.jaxpr.invars)
     global_outvars = set(
         var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
@@ -306,6 +317,125 @@ def slice_closed_jaxpr_by_pipeline_marks(
         for var in eqn.invars:
             if isinstance(
                     var, Literal) or (var in current_stage.pipeline_invars) or (
+                    var in current_stage_intermediate_vars):
+                continue
+            if var in global_consts_dir:
+                if var not in current_stage.consts_dir:
+                    current_stage.consts_dir[var] = global_consts_dir[var]
+            elif var in global_invars:
+                if var not in current_stage.global_invars:
+                    current_stage.global_invars.add(var)
+            else:
+                if var not in var2stage:
+                    raise ValueError("Unknown variable {}".format(var))
+                original_stage = var2stage[var]
+                if original_stage.name == current_stage.name:
+                    if var not in original_stage.local_outvars:
+                        original_stage.local_outvars.add(var)
+                    if var not in current_stage.local_invars:
+                        current_stage.local_invars.add(var)
+                else:
+                    raise ValueError(
+                        "Variable {} should be indicated as a pipeline stage input."
+                            .format(var))
+
+        for var in eqn.outvars:
+            if not isinstance(var, DropVar):
+                current_stage_intermediate_vars.add(var)
+                var2stage[var] = current_stage
+                if var in global_outvars:
+                    current_stage.global_outvars.add(var)
+
+        current_stage.eqns.append(eqn)
+
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
+            assert current_stage is not None, "Ending a pipeline stage before its start."
+            assert current_stage.name == eqn.params[
+                'name'], "Ending a pipeline stage different from its start."
+            current_stage.pipeline_outvars = set(
+                var for var in eqn.outvars if not isinstance(var, DropVar))
+            result_stages.append(current_stage)
+            current_stage = None
+
+    for stage in result_stages:
+        stage.invars = list(stage.pipeline_invars | stage.global_invars |
+                            stage.local_invars)
+        stage.outvars = list(stage.pipeline_outvars | stage.global_outvars |
+                             stage.local_outvars)
+
+    return result_stages
+
+
+def slice_closed_jaxpr_by_pipeline_marks_v2(
+        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:  # noqa MC0001
+    """Slice a Jaxpr into multiple pipeline stages.
+
+    We assume the closed_jaxpr includes pipeline start and end markers. Also,
+    the variables in the markers represents the variables being sent
+    through the network. While other input variables must be directly from
+    the invars.
+
+    Args:
+        closed_jaxpr (ClosedJaxpr): the input Jaxpr.
+
+    Returns:
+        Sequence[JaxPipelineStage]: A list of sliced pipeline stages.
+    """
+    log_jaxpr(closed_jaxpr)
+
+    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_outvars = set(
+        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+    global_consts_dir = dict(
+        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    var2stage = {}
+    result_stages = []
+
+    current_stage = None
+    current_stage_intermediate_vars = set()
+
+    is_first_start_marker = True
+    pass_last_end_marker = False
+    for eqn_index, eqn in enumerate(closed_jaxpr.jaxpr.eqns):
+        if eqn_index == 0 and eqn.primitive != pipeline_p:
+            # This case corresponds to that users do not annotate at the beginning of the model def.
+            assert current_stage is None, "At the start of the model jaxpr."
+            current_stage = JaxPipelineStage(name="-1")
+            current_stage_intermediate_vars = set()
+            for var in eqn.invars:
+                if not isinstance(var, Literal):
+                    current_stage.pipeline_invars.add(var)
+
+        if eqn.primitive != pipeline_p and eqn_index > 0 and current_stage == None:
+            # backward counterpart of the un-annotated jaxpr eqns.
+            pass_last_end_marker = True
+            current_stage = JaxPipelineStage(name="-1")
+            current_stage_intermediate_vars = set()
+            for var in eqn.invars:
+                if not isinstance(var, Literal):
+                    current_stage.pipeline_invars.add(var)
+
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
+            # there does exist a pipeline start marker.
+            if is_first_start_marker and current_stage != None:
+                # we should end the unmarked stage here using the first start
+                is_first_start_marker = False
+                assert current_stage.name == "-1", "The first unmarked stage should be named `-1`."
+                current_stage.pipeline_outvars = set(
+                    var for var in eqn.outvars if not isinstance(var, DropVar))
+                result_stages.append(current_stage)
+                current_stage = None
+            assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
+            current_stage = JaxPipelineStage(name=eqn.params['name'])
+            current_stage_intermediate_vars = set()
+            for var in eqn.invars:
+                if not isinstance(var, Literal):
+                    current_stage.pipeline_invars.add(var)
+
+        assert current_stage is not None
+
+        for var in eqn.invars:
+            if isinstance(var, Literal) or (var in current_stage.pipeline_invars) or (
                         var in current_stage_intermediate_vars):
                 continue
             if var in global_consts_dir:
@@ -341,6 +471,16 @@ def slice_closed_jaxpr_by_pipeline_marks(
             assert current_stage is not None, "Ending a pipeline stage before its start."
             assert current_stage.name == eqn.params[
                 'name'], "Ending a pipeline stage different from its start."
+            current_stage.pipeline_outvars = set(
+                var for var in eqn.outvars if not isinstance(var, DropVar))
+            result_stages.append(current_stage)
+            current_stage = None
+
+        # processing the last eqn in the unannotated backward graph.
+        if eqn.primitive != pipeline_p and pass_last_end_marker and \
+                eqn_index == len(closed_jaxpr.jaxpr.eqns)- 1:
+            assert current_stage is not None, "Ending an annotated stage."
+            assert current_stage.name == "-1"
             current_stage.pipeline_outvars = set(
                 var for var in eqn.outvars if not isinstance(var, DropVar))
             result_stages.append(current_stage)

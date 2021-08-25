@@ -13,6 +13,7 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 
+from parax import mark_pipeline
 from parax.model.bert_model import BertConfig, FlaxBertModule, FlaxMaskedLMOutput
 
 
@@ -41,17 +42,25 @@ class FlaxGPTForLMModule(nn.Module):
         attention_mask,
         token_type_ids,
         position_ids,
+        dummy_mask,
         deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ):
+        # pipeline marker
+        # if self.config.pipeline_mp_size > 1:
+        #     (input_ids, attention_mask, token_type_ids, position_ids, ) = \
+        #         mark_pipeline(input_ids, attention_mask, token_type_ids, position_ids,
+        #                       name="0",
+        #                       mark_type="start")
         # Model
         outputs = self.transformers(
             input_ids,
             attention_mask,
             token_type_ids,
             position_ids,
+            dummy_mask,
             deterministic=deterministic,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,

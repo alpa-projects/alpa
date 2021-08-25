@@ -299,7 +299,7 @@ def jax_buffer_set(src_buf, update, start_indices):
     return src_buf
 
 
-jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
+# jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
 
 
 def to_cupy(tensors):

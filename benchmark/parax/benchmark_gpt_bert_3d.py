@@ -12,7 +12,7 @@ import numpy as np
 import ray
 
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
+                   DeviceCluster, PhysicalDeviceMesh, mark_pipeline)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 
@@ -81,8 +81,8 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     vocab_size, mesh_dim1, mesh_dim2, pipeline_mp_size, num_micro_batches, \
     force_data_parallel = benchmark_case
 
+    is_pipeline_parallel = True if pipeline_mp_size > 1 else False
     dtype = jnp.float16
-
     if force_data_parallel:
         global_config.force_batch_dim_to_mesh_dim = 0
         global_config.allow_all_gather = False
@@ -119,34 +119,74 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     @parallelize
     def train_step(optimizer, batch, apply_func):
-        def loss_func(params):
+        def loss_func(params, input_ids, labels, attention_mask, token_type_ids, position_ids, dummy_mask):
             rngs = {"dropout": batch["rng"]}
+            # logits = apply_func(params,
+            #                     batch["input_ids"],
+            #                     batch["attention_mask"],
+            #                     batch["token_type_ids"],
+            #                     batch["position_ids"],
+            #                     deterministic=True,
+            #                     rngs=rngs)[0]
+            # rngs = {"dropout": rng}
+
+            if is_pipeline_parallel:
+                dummy_mask, = \
+                    mark_pipeline(dummy_mask,
+                                  name="0",
+                                  mark_type="start")
+                # input_ids, labels, = mark_pipeline(input_ids, labels, name="0", mark_type="start")
+
             logits = apply_func(params,
-                                batch["input_ids"],
-                                batch["attention_mask"],
-                                batch["token_type_ids"],
-                                batch["position_ids"],
+                                input_ids,
+                                attention_mask,
+                                token_type_ids,
+                                position_ids,
+                                dummy_mask,
                                 deterministic=True,
                                 rngs=rngs)[0]
-            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
-            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+            # label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
+            # labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+            label_mask = jnp.where(labels > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(labels, logits.shape[-1])
             loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
             # TODO(lmzheng): add dynamic scale for mixed-precision training
+
+            if is_pipeline_parallel:
+                loss, = mark_pipeline(loss, name=str(pipeline_mp_size - 1), mark_type="end")
+
             return loss
 
-        params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), optimizer.target)
-        grad = jax.grad(loss_func)(params)
-        new_optimizer = optimizer.apply_gradient(grad)
-        return new_optimizer
+        # # pipeline marker
+        # if pipeline_mp_size > 1:
+        #     mark_pipeline(optimizer.target, name="-2", mark_type="start")
+        # params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), optimizer.target)
+        # grad = jax.grad(loss_func)(params)
+        # new_optimizer = optimizer.apply_gradient(grad)
+        grad, f = jax.grad(loss_func, argnums=(0, 6))(optimizer.target,
+                                                      batch["input_ids"],
+                                                      batch["labels"],
+                                                      batch["attention_mask"],
+                                                      batch["token_type_ids"],
+                                                      batch["position_ids"],
+                                                      batch["dummy_mask"])
+        # grad, a, b, c, d = jax.grad(loss_func, argnums=(0, 1, 2, 3, 4))(optimizer.target,
+        #                                               batch["input_ids"],
+        #                                               batch["attention_mask"],
+        #                                               batch["token_type_ids"],
+        #                                               batch["position_ids"])
+        return grad
 
     # Prepare input batch
+    tmp_dtype = dtype
     batch = {
-        "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "input_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+        "position_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+        "labels": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+        "dummy_mask": jnp.ones((1, 1, 1), dtype=tmp_dtype),
         "rng": jax.random.PRNGKey(0),
     }
     log_time_stamp("Prepare input")
@@ -170,7 +210,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
         ), dtype=dtype)
-    elif model_type == "bert_annotated":
+    elif model_type == "bert_pipeline":
         model = FlaxBertForMaskedLMModule(BertConfig(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -180,7 +220,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size
         ), dtype=dtype)
-    elif model_type == "gpt_annotated":
+    elif model_type == "gpt_pipeline":
         model = FlaxGPTForLMModule(BertConfig(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -195,7 +235,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     rngkey = jax.random.PRNGKey(0)
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
-                              batch["token_type_ids"], batch["position_ids"])
+                              batch["token_type_ids"], batch["position_ids"], batch["dummy_mask"])
+    # params = model.init(rngkey, batch["input_ids"], batch["attention_mask"],
+    #                     batch["token_type_ids"], batch["position_ids"])
     optimizer = optim.Adam(1e-2).create(params)
     del (params, rngkey)
     log_time_stamp("Init model and optimizer")
@@ -299,8 +341,8 @@ benchmark_suite_1_gpu = [
 
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  1,  1,  False),
-    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  1,  1,  False),
+    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
+    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
 ]
 
 benchmark_suite_8_gpu = [

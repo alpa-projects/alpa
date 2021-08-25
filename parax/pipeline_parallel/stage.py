@@ -420,7 +420,6 @@ def slice_apply_gradient_by_invars(closed_jaxpr: ClosedJaxpr,
         else:
             # all inputs are infered, all outputs are not assigned
             sliced_eqns[0].append(eqn)
-            print(f"{eqn} is assigned arbitrarily")
             for invar in eqn.invars:
                 if isinstance(invar, Var):
                     if invar not in var_mesh:

@@ -512,6 +512,39 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     return new_closed_jaxpr
 
 
+def slice_closed_jaxpr_by_full_pipeline_marks(
+    closed_jaxpr: ClosedJaxpr
+) -> Sequence[JaxPipelineStage]:  # noqa MC0001
+    global_consts_dir = dict(
+        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+
+    result_stages = []
+    current_stage = None
+
+    for eqn in closed_jaxpr.jaxpr.eqns:
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
+            assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
+            current_stage = JaxPipelineStage(name=eqn.params['name'])
+            for var in eqn.invars:
+                if var in global_consts_dir:
+                    current_stage.consts_dir[var] = global_consts_dir[var]
+                else:
+                    current_stage.invars.append(var)
+
+        assert current_stage is not None
+        current_stage.eqns.append(eqn)
+
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
+            assert current_stage is not None, "Ending a pipeline stage before its start."
+            assert current_stage.name == eqn.params[
+                'name'], "Ending a pipeline stage different from its start."
+            for var in eqn.outvars:
+                current_stage.outvars.append(var)
+            current_stage = None
+
+    return result_stages
+
+
 def generate_sharded_xla_stages(name: str,
                                 jax_stages: Sequence[JaxPipelineStage],
                                 physical_mesh, logical_mesh_choices,

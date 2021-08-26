@@ -23,7 +23,7 @@ from parax.util import auto_donate_argnums, auto_static_argnums
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
+def parallelize(fun=None, donate_argnums="auto", static_argnums="auto", pipeline_marker_type="manual"):
     """
     Automatically parallelize a jax function.
 
@@ -90,6 +90,7 @@ def parallelize(fun=None, donate_argnums="auto", static_argnums="auto"):
             compiled_func = parallelize_callable(
                 f, in_tree, out_tree_hashable, donated_invars, devices,
                 global_config.strategy, global_config.memory_budget_per_device,
+                pipeline_marker_type,
                 *abstract_args)
 
             if return_value_mode == "normal":
@@ -142,6 +143,7 @@ def parallelize_callable(
     devices,
     strategy,
     memory_budget_per_device,
+    pipeline_marker_type,
     *avals,
 ):
     """Auto parallel callable."""

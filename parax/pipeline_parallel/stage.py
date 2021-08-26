@@ -419,11 +419,11 @@ def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage_eqns is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage = []
+            current_stage_eqns = []
         elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
             assert current_stage_eqns is not None, "Ending a pipeline stage before its start."
-            sliced_eqns.append(current_stage)
-            current_stage = None
+            sliced_eqns.append(current_stage_eqns)
+            current_stage_eqns = None
         else:
             assert current_stage_eqns is not None
             current_stage_eqns.append(eqn)

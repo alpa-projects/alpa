@@ -139,6 +139,7 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    print("closed_jaxpr", closed_jaxpr)
     if pipeline_marker_type == "manual":
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
             closed_jaxpr)
@@ -146,6 +147,7 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(closed_jaxpr)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
+    print("jax_pipeline_stages", jax_pipeline_stages)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     xla_pipeline_stages = [

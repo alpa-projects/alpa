@@ -542,6 +542,7 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
                 'name'], "Ending a pipeline stage different from its start."
             for var in eqn.outvars:
                 current_stage.outvars.append(var)
+            result_stages.append(current_stage)
             current_stage = None
 
     return result_stages

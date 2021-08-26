@@ -526,7 +526,9 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
             current_stage = JaxPipelineStage(name=eqn.params['name'])
             for var in eqn.invars:
-                if var in global_consts_dir:
+                if isinstance(var, Literal):
+                    pass
+                elif var in global_consts_dir:
                     current_stage.consts_dir[var] = global_consts_dir[var]
                 else:
                     current_stage.invars.append(var)

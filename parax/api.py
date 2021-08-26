@@ -164,13 +164,13 @@ def parallelize_callable(
         return pmap_data_parallel_callable(fun, in_tree, out_tree_thunk,
                                            donated_invars, devices, *avals)
     elif strategy == "local_pipeline_parallel":
-        return local_pipeline_parallel_callable(fun, devices, *avals)
+        return local_pipeline_parallel_callable(fun, devices, pipeline_marker_type, *avals)
     elif strategy == "3d_parallel":
         # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
         assert not global_config.search_logical_mesh_shape
         return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
                                          donated_invars, devices,
-                                         memory_budget_per_device, *avals)
+                                         memory_budget_per_device, pipeline_marker_type, *avals)
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)
 

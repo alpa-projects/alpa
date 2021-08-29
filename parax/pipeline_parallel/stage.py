@@ -9,6 +9,7 @@ from typing import Sequence, List, Set, Any, Dict
 import numpy as np
 from jax import jit
 from jax._src.util import partial, safe_map
+from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
@@ -695,3 +696,70 @@ def generate_sharded_xla_stages(name: str,
         for stage, proto in zip(jax_stages, stage_protos)
     ]
     return stages
+
+
+def is_pipeline(closed_jaxpr: ClosedJaxpr, not_gradient):
+    """If the closed_jaxpr is a pipeline stage, ignore the last equation(pipeline end marker)"""
+    from parax.pipeline_parallel.primitive_def import pipeline_p
+    last_eqn = closed_jaxpr.eqns[-1]
+    if last_eqn.primitive is not pipeline_p:
+        assert not not_gradient, "all outvars are assumed to be gradient without pipeline"
+        return False, closed_jaxpr.jaxpr.outvars, closed_jaxpr.eqns, not_gradient
+    new_not_gradient = set()
+    for i, outvar in enumerate(last_eqn.outvars):
+        if outvar in not_gradient:
+            new_not_gradient.add(last_eqn.invars[i])
+    return True, last_eqn.invars, closed_jaxpr.eqns[:-1], new_not_gradient
+
+
+def compute_grad_to_acc_grad(closed_jaxpr: ClosedJaxpr, donated_invars,
+                             not_gradient):
+    """
+    Translate compute_grad jaxpr to accumulate_grad jaxpr.
+    Args:
+        closed_jaxpr: the compute_grad jaxpr. It is supposed to be the one in a single pipeline-stage
+        donated_invars: donated invars of the input jaxpr
+        not_gradient: a set of vars not accumulated in outputs
+    """
+    from jax.lax import add_p
+    # FIXME(yonghao): add division of microbatch num
+    pipeline, old_outs, old_eqns, not_gradient = is_pipeline(
+        closed_jaxpr, not_gradient)
+    gensym_fn = gensym([
+        closed_jaxpr.jaxpr,
+    ])
+    # add input:
+    grad_invars = {
+        outvar: gensym_fn(outvar.aval)
+        for outvar in old_outs
+        if outvar not in not_gradient
+    }
+    new_invars = closed_jaxpr.jaxpr.invars + list(grad_invars.values())
+    # modify output
+    new_outvars = [
+        outvar if not isinstance(outvar, Var) or outvar in not_gradient else
+        gensym_fn(outvar.aval) for outvar in old_outs
+    ]
+    # add grad acc eqns
+    acc_grad_eqns = []
+    for i, outvar in enumerate(old_outs):
+        if outvar not in not_gradient:
+            acc_grad_eqns.append(
+                new_jaxpr_eqn([outvar, grad_invars[outvar]], [new_outvars[i]],
+                              add_p, {}))
+    new_eqns = old_eqns + acc_grad_eqns
+    if pipeline:
+        # replace the input of old pipeline-end marker
+        old_pipeline_eqn = closed_jaxpr.eqns[-1]
+        new_eqns.append(
+            new_jaxpr_eqn(new_outvars, old_pipeline_eqn.outvars,
+                          old_pipeline_eqn.primitive, old_pipeline_eqn.params,
+                          old_pipeline_eqn.source_info))
+        new_outvars = old_pipeline_eqn.outvars
+    # construct jaxpr
+    jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_invars, new_outvars,
+                  new_eqns)
+    # add donate invars
+    donated_invars = tuple(donated_invars) + (True,) * len(grad_invars)
+    # return closed_jaxpr and new donate_invars
+    return ClosedJaxpr(jaxpr, closed_jaxpr.consts), donated_invars

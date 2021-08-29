@@ -15,9 +15,6 @@ from jax.interpreters import xla
 
 from .primitive_def import mark_pipeline
 
-# TODO: different operations takes different time
-# e.g. add v.s. pow
-
 gpu_backend = xc.get_local_backend("gpu")
 
 

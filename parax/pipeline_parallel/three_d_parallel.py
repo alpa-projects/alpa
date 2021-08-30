@@ -28,7 +28,7 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
             split_eqn = eqn
             split_idx = idx
-    assert split_eqn is not None, 'the input should have a barrier between compute and apply'
+    assert split_eqn is not None, 'missing barrier between compute and apply'
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], closed_jaxpr.eqns[split_idx + 1:]
     ]
@@ -41,7 +41,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               memory_budget_per_device, pipeline_marker_type,
                               *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
-    if not isinstance(devices, VirtualMesh):
+    if not (isinstance(devices, VirtualMesh) or
+            global_config.search_logical_mesh_shape):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
                            "expected type: {}.".format(type(devices),
                                                        "VirtualMesh"))
@@ -55,6 +56,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     compute_grad_jaxpr, apply_grad_jaxpr = split_compute_and_apply(closed_jaxpr)
+    # TODO(yonghao): split donate invar
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     if pipeline_marker_type == "manual":
@@ -72,6 +74,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             jax_pipeline_stages, global_invars, global_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
+    # TODO(yonghao): add sliced apply-grad stages
 
     # Generate schedule and placement
     num_batch = 1

@@ -10,7 +10,8 @@ from jax.interpreters import partial_eval as pe
 from parax.pipeline_parallel.primitive_def import pipeline_p
 from parax.pipeline_parallel.stage import (PipelineStage, XlaPipelineStage,
                                            slice_closed_jaxpr_by_manual_pipeline_marks,
-                                           slice_closed_jaxpr_by_full_pipeline_marks)
+                                           slice_closed_jaxpr_by_full_pipeline_marks,
+                                           mark_missing_vars_in_pipeline_marks)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -139,17 +140,18 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    global_invars = closed_jaxpr.jaxpr.invars
+    global_outvars = closed_jaxpr.jaxpr.outvars
     print("closed_jaxpr", closed_jaxpr)
     if pipeline_marker_type == "manual":
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
             closed_jaxpr)
     elif pipeline_marker_type == "full":
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(closed_jaxpr)
+        jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(jax_pipeline_stages, global_invars, global_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
     print("jax_pipeline_stages", jax_pipeline_stages)
-    global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
     xla_pipeline_stages = [
         XlaPipelineStage.from_jax_pipeline_stage(stage)
         for stage in jax_pipeline_stages

@@ -593,7 +593,7 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
         for var in stage_additional_outvars[i]:
             pipeline_end_invars.append(stage_var_mapping[var])
             pipeline_end_outvars.append(var)
-        new_stage.outvars = list(pipeline_end_outvars)
+        new_stage.outvars = [var for var in pipeline_end_outvars if not isinstance(var, DropVar)]
         new_stage.eqns.append(stage.eqns[-1]._replace(invars=pipeline_end_invars, outvars=pipeline_end_outvars))
         new_stages.append(new_stage)
 

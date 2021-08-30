@@ -228,16 +228,11 @@ def shard_parallel_internal_gradient_accumulation(
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
 
-    closed_jaxpr, accumulate_grad_invar_ids, apply_grad_invar_ids, num_grads =\
+    closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads =\
         add_gradient_accumulation(closed_jaxpr, num_micro_batches)
-    global_in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars]
+    global_in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[:-num_grads]]
     global_out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
-    grad_avals = global_in_avals[-num_grads:]
-    accumulate_grad_in_avals = [
-        global_in_avals[i] for i in accumulate_grad_invar_ids
-    ]
-    apply_grad_in_avals = [global_in_avals[i] for i in apply_grad_invar_ids
-                          ] + grad_avals
+    grad_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[-num_grads:]]
 
     # Run auto-sharding and slice the combined HLO into two HLO: accumulate_grad and apply_grad
     backend = xb.get_backend("gpu")
@@ -256,7 +251,7 @@ def shard_parallel_internal_gradient_accumulation(
                                                       multiple_stages=True)
     assert len(hlo_protos) == 2
 
-    # Compile these two HLOs separately to get two executable
+    # Compile these two HLOs separately to get two executables
     accumulate_grad = xc.XlaComputation(hlo_protos[0])
     apply_grad = xc.XlaComputation(hlo_protos[1])
     logical_mesh_shape = strategy_config.logical_mesh_shape
@@ -272,6 +267,12 @@ def shard_parallel_internal_gradient_accumulation(
     assert not physical_mesh.is_distributed
 
     # Read sharding specs
+    accumulate_grad_in_avals = [
+        global_in_avals[i] for i in accumulate_grad_invar_indices
+    ] + grad_avals
+    apply_grad_in_avals = [
+        global_in_avals[i] for i in apply_grad_invar_indices
+    ] + grad_avals
     accumulate_grad_input_sharding_specs, grad_sharding_specs =\
         get_input_output_sharding_specs(
         accumulate_grad.hlo_modules()[0], physical_mesh.total_devices,
@@ -282,74 +283,78 @@ def shard_parallel_internal_gradient_accumulation(
         apply_grad_in_avals, global_out_avals, logical_mesh_shape)
 
     input_sharding_specs = [None] * len(global_in_avals)
-    for i, idx in enumerate(accumulate_grad_invar_ids):
+    for i, idx in enumerate(accumulate_grad_invar_indices):
         input_sharding_specs[idx] = accumulate_grad_input_sharding_specs[i]
-    for i, idx in enumerate(apply_grad_invar_ids):
-        input_sharding_specs[idx] = apply_grad_input_sharding_specs[i]
-    assert input_sharding_specs[-num_grads:] == grad_sharding_specs
+    for i, idx in enumerate(apply_grad_invar_indices):
+        if input_sharding_specs[idx] is None:
+            input_sharding_specs[idx] = apply_grad_input_sharding_specs[i]
+        else:
+            assert input_sharding_specs[idx] == apply_grad_input_sharding_specs[
+                i]
+    assert accumulate_grad_input_sharding_specs[
+        -num_grads:] == grad_sharding_specs
 
     # Cache indices for the final callable
-    global_in_indices = [
+    global_in_shard_indices = [
         pxla.spec_to_indices(aval.shape, spec)
         for aval, spec in zip(global_in_avals, input_sharding_specs)
     ]
-    global_is_batch_arg = batch_invars + (False,) * num_grads
+    grad_shard_indices = [
+        pxla.spec_to_indices(aval.shape, spec)
+        for aval, spec in zip(grad_avals, grad_sharding_specs)
+    ]
+    input_buffer_batch_arg_indices = []
+    for input_idx, global_idx in enumerate(accumulate_grad_invar_indices):
+        if batch_invars[global_idx]:
+            input_buffer_batch_arg_indices.append((input_idx, global_idx))
     devices = physical_mesh.devices
     outs_handler = pxla.avals_to_results_handler(1, len(devices),
                                                  output_sharding_specs,
                                                  global_out_avals)
 
-    def final_callable(*args):
-        global_args = list(args)
-
-        # Prepare gradient buffers
-        for i in range(num_grads):
-            global_args.append(
-                jnp.zeros(grad_avals[i].shape, grad_avals[i].dtype))
-
-        # Shard args
+    def final_callable(*global_args):
+        # Shard global input arguments
         global_buffers = []
         for i, arg in enumerate(global_args):
-            if global_is_batch_arg[i]:
+            if batch_invars[i]:
                 new_shape = (num_micro_batches,
                              arg.shape[0] // num_micro_batches) + arg.shape[1:]
                 reshaped = arg.reshape(new_shape)
                 micro_batches = jnp.split(reshaped, num_micro_batches)
                 micro_batches = [x.squeeze(0) for x in micro_batches]
                 micro_batches = pxla.shard_args(
-                    devices, (global_in_indices[i],) * len(micro_batches),
+                    devices, (global_in_shard_indices[i],) * len(micro_batches),
                     micro_batches)
                 global_buffers.append(micro_batches)
             else:
                 global_buffers.append(
-                    pxla.shard_args(devices, [global_in_indices[i]], [arg])[0])
+                    pxla.shard_args(devices, [global_in_shard_indices[i]],
+                                    [arg])[0])
+
+        # Prepare gradient buffers
+        grad_buffers = pxla.shard_args(devices, grad_shard_indices, [
+            jnp.zeros(grad_avals[i].shape, grad_avals[i].dtype)
+            for i in range(num_grads)
+        ])
 
         # Call accumulate_grad multiple times
+        input_buffers = [global_buffers[i] for i in accumulate_grad_invar_indices] +\
+                        grad_buffers
         for j in range(num_micro_batches):
-            input_buffers = []
-            for i in accumulate_grad_invar_ids:
-                if global_is_batch_arg[i]:
-                    input_buffers.append(global_buffers[i][j])
-                else:
-                    input_buffers.append(global_buffers[i])
-
-            output_bufs = accumulate_grad.execute_sharded_on_local_devices(
+            for input_idx, global_idx in input_buffer_batch_arg_indices:
+                input_buffers[input_idx] = global_buffers[global_idx][j]
+            input_buffers[-num_grads:] = grad_buffers
+            grad_buffers = accumulate_grad.execute_sharded_on_local_devices(
                 input_buffers)
-            global_buffers[-num_grads:] = output_bufs
 
         # Call apply_grad
-        input_buffers = []
-        for i in apply_grad_invar_ids:
-            if global_is_batch_arg[i]:
-                assert False, "cannot use batch data in apply_grad"
-            else:
-                input_buffers.append(global_buffers[i])
-        input_buffers.extend(global_buffers[-num_grads:])
-        output_bufs = apply_grad.execute_sharded_on_local_devices(input_buffers)
+        input_buffers = [global_buffers[i] for i in apply_grad_invar_indices] +\
+                        grad_buffers
+        output_buffers = apply_grad.execute_sharded_on_local_devices(
+            input_buffers)
 
-        # Wrap output buffers as ShardedArray
-        output = outs_handler(output_bufs)
-        return output
+        # Wrap global output buffers as ShardedArray
+        return outs_handler(output_buffers)
 
     return final_callable
 
@@ -365,7 +370,7 @@ def filter_used_vars(all_vars, eqns):
 
 
 def clone_vars(var_list, gensym_func):
-    """Clone variables"""
+    """Clone variables."""
     return [gensym_func(x.aval) for x in var_list]
 
 
@@ -506,12 +511,14 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         ], new_outvars, combined_eqns), raw_jaxpr.consts)
 
     # The indices of the arguments in global arguments.
-    accumulate_grad_invar_ids = [
-        combined_jaxpr.jaxpr.invars.index(var) for var in accumulate_grad_invars
+    # TODO(lmzheng): this step is O(n^2)
+    accumulate_grad_invar_indices = [
+        combined_jaxpr.jaxpr.invars.index(var)
+        for var in accumulate_grad_invars[:-num_grads]
     ]
-    apply_grad_invar_ids = [
+    apply_grad_invar_indices = [
         combined_jaxpr.jaxpr.invars.index(var)
         for var in apply_grad_invars[:-num_grads]
     ]
-    return (combined_jaxpr, accumulate_grad_invar_ids, apply_grad_invar_ids,
-            num_grads)
+    return (combined_jaxpr, accumulate_grad_invar_indices,
+            apply_grad_invar_indices, num_grads)

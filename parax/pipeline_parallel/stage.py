@@ -575,7 +575,7 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
 
         stage_var_mapping = {var: gensym_func(var.aval) for var in stage_additional_invars[i] | stage_additional_outvars[i]}
         pipeline_start_invars = list(stage.eqns[0].invars)
-        pipeline_start_outvars = list(stage.eqns[0].outvars)
+        pipeline_start_outvars = [get_var_mapping(stage_var_mapping, var) for var in stage.eqns[0].outvars]
         for var in stage_additional_invars[i]:
             pipeline_start_invars.append(var)
             pipeline_start_outvars.append(stage_var_mapping[var])
@@ -586,7 +586,7 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
             new_stage.eqns.append(eqn._replace(invars=[get_var_mapping(stage_var_mapping, var) for var in eqn.invars],
                                                outvars=[get_var_mapping(stage_var_mapping, var) for var in eqn.outvars]))
 
-        pipeline_end_invars = list(stage.eqns[-1].invars)
+        pipeline_end_invars = [get_var_mapping(stage_var_mapping, var) for var in stage.eqns[-1].invars]
         pipeline_end_outvars = list(stage.eqns[-1].outvars)
         for var in stage_additional_outvars[i]:
             pipeline_end_invars.append(stage_var_mapping[var])

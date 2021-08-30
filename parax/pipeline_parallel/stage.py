@@ -364,6 +364,109 @@ def slice_closed_jaxpr_by_pipeline_marks(
     return result_stages
 
 
+def slice_apply_gradient_by_invars(closed_jaxpr: ClosedJaxpr,
+                                   grad_mesh: Dict['Var', int]):
+    """Slice the apply gradient jaxpr based on mesh allocation information
+
+    Args:
+        closed_jaxpr(ClosedJaxpr): closed jaxpr of apply_gradient function. 
+
+        grad_mesh(Dict[Var, int]): dict indicating which mesh the variable is at. 
+        If not in the dict, the variable should be a global parameter.
+
+    Returns:
+        jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
+
+        infered_global_invars(Dict[Var, List[int]]): Indicating which clusters each
+        input variable of apply_gradient function should be sent to.
+    """
+
+    def add_allocation(cur: Set, add: Set):
+        if cur is None:
+            return add
+        else:
+            return cur.union(add)
+
+    global_invars = closed_jaxpr.jaxpr.invars
+    mesh_num = max(set(grad_mesh.values())) + 1  # + 1 for 0-base
+    eqn_mesh = dict()
+    var_mesh = {var: set([mesh]) for var, mesh in grad_mesh.items()}
+    infered_global_invars = dict()
+    constvars = [list() for _ in range(mesh_num)]
+    consts = [list() for _ in range(mesh_num)]
+    sliced_eqns = [list() for _ in range(mesh_num)]
+    invars = [list() for _ in range(mesh_num)]
+    outvars = [list() for _ in range(mesh_num)]
+    # propagate mesh assignments from input
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        at_mesh = None
+        for invar in eqn.invars:
+            if isinstance(invar, Var) and invar in var_mesh:
+                at_mesh = add_allocation(at_mesh, var_mesh[invar])
+        if at_mesh is not None:
+            for invar in eqn.invars:
+                if isinstance(invar, Var):
+                    cur_mesh = var_mesh[invar] if invar in var_mesh else None
+                    var_mesh[invar] = add_allocation(cur_mesh, at_mesh)
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar):
+                    var_mesh[outvar] = at_mesh
+            eqn_mesh[eqn_idx] = at_mesh
+    # propagate back
+    for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
+        eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
+        if eqn_idx not in eqn_mesh:
+            at_mesh = None
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar) and outvar in var_mesh:
+                    at_mesh = add_allocation(at_mesh, var_mesh[outvar])
+            if at_mesh is not None:
+                eqn_mesh[eqn_idx] = at_mesh
+                for invar in eqn.invars:
+                    if isinstance(invar, Var):
+                        cur_mesh = var_mesh[invar] if invar in var_mesh else None
+                        var_mesh[invar] = add_allocation(cur_mesh, at_mesh)
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        if eqn_idx in eqn_mesh:
+            for mesh in eqn_mesh[eqn_idx]:
+                sliced_eqns[mesh].append(eqn)
+        else:
+            # all inputs are infered, all outputs are not assigned
+            sliced_eqns[0].append(eqn)
+            for invar in eqn.invars:
+                if isinstance(invar, Var):
+                    if invar not in var_mesh:
+                        var_mesh[invar] = [0]
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar):
+                    assert (outvar not in var_mesh or
+                            (len(var_mesh[outvar]) == 1 and
+                             var_mesh[outvar][0] == 0))
+                    var_mesh[outvar] = [0]
+    # grouping invars and outvars
+    for invar in global_invars:
+        assert invar in var_mesh
+        for mesh in var_mesh[invar]:
+            invars[mesh].append(invar)
+        infered_global_invars[invar] = var_mesh[invar]
+    for outvar in closed_jaxpr.jaxpr.outvars:
+        assert outvar in var_mesh
+        for mesh in var_mesh[outvar]:
+            outvars[mesh].append(outvar)
+    # grouping consts and constvars
+    for aval, var in zip(closed_jaxpr.consts, closed_jaxpr.jaxpr.constvars):
+        assert var in var_mesh
+        for mesh in var_mesh[var]:
+            consts[mesh].append(aval)
+            constvars[mesh].append(var)
+
+    jaxprs = [
+        ClosedJaxpr(Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
+                    consts[i]) for i in range(mesh_num)
+    ]
+    return jaxprs, infered_global_invars
+
+
 def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[

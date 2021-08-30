@@ -12,7 +12,8 @@ from parax.pipeline_parallel.runtime import (GpipeSchedule, Jax3DPipeline,
 from parax.pipeline_parallel.stage import (
     generate_sharded_xla_stages, mark_global_and_local_vars,
     slice_closed_jaxpr_by_manual_pipeline_marks,
-    slice_closed_jaxpr_by_full_pipeline_marks)
+    slice_closed_jaxpr_by_full_pipeline_marks,
+    mark_missing_vars_in_pipeline_marks)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -33,6 +34,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    global_invars = closed_jaxpr.jaxpr.invars
+    global_outvars = closed_jaxpr.jaxpr.outvars
     if pipeline_marker_type == "manual":
         gensym_func = gensym([closed_jaxpr.jaxpr])
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
@@ -43,6 +46,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         ]
     elif pipeline_marker_type == "full":
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(closed_jaxpr)
+        jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(jax_pipeline_stages, global_invars, global_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
 
@@ -61,8 +65,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         logger.debug("Launch the {}th mesh...".format(i))
         physical_meshes.append(mesh.get_physical_mesh())
 
-    global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
     stage_dict = [[] for _ in range(n_meshes)]
     stage_id_dict = [[] for _ in range(n_meshes)]
     for i, stage in enumerate(jax_pipeline_stages):

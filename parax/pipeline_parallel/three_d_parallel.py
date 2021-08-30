@@ -7,6 +7,7 @@ from jax.core import ClosedJaxpr, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
+from parax.global_env import global_config
 from parax.pipeline_parallel.runtime import (GpipeSchedule, Jax3DPipeline,
                                              gen_linear_pipeline_dependency)
 from parax.pipeline_parallel.stage import (
@@ -14,15 +15,31 @@ from parax.pipeline_parallel.stage import (
     slice_closed_jaxpr_by_manual_pipeline_marks,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
+from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
+    from parax.pipeline_parallel.primitive_def import pipeline_p
+    split_eqn = None
+    for idx, eqn in enumerate(closed_jaxpr.jaxpr.eqns):
+        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
+            split_eqn = eqn
+            split_idx = idx
+    assert split_eqn is not None, 'the input should have a barrier between compute and apply'
+    sliced_eqns = [
+        closed_jaxpr.eqns[:split_idx], closed_jaxpr.eqns[split_idx + 1:]
+    ]
+    return slices_to_jaxpr(closed_jaxpr, sliced_eqns)
+
+
 @lu.cache
 def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                              donated_invars, devices, memory_budget_per_device,
-                              pipeline_marker_type, *avals):
+                              donated_invars, batch_invars, devices,
+                              memory_budget_per_device, pipeline_marker_type,
+                              *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
     if not isinstance(devices, VirtualMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
@@ -31,22 +48,26 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Slice the jaxpr into pipeline stages
     virtual_mesh = devices
+    num_micro_batches = global_config.num_micro_batches
+    assert num_micro_batches
+    microbatch_avals = get_micro_batch(batch_invars, num_micro_batches, *avals)
     with jax.disable_jit():
-        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
+        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    compute_grad_jaxpr, apply_grad_jaxpr = split_compute_and_apply(closed_jaxpr)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     if pipeline_marker_type == "manual":
         gensym_func = gensym([closed_jaxpr.jaxpr])
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
-            closed_jaxpr)
+            compute_grad_jaxpr)
         jax_pipeline_stages = [
             mark_global_and_local_vars(stage, gensym_func)
             for stage in jax_pipeline_stages
         ]
     elif pipeline_marker_type == "full":
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
-            closed_jaxpr)
+            compute_grad_jaxpr)
         jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
             jax_pipeline_stages, global_invars, global_outvars)
     else:

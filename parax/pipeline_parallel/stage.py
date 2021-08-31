@@ -676,9 +676,7 @@ def generate_sharded_xla_stages(name: str,
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
-    built_computation = jaxpr_to_hlo_computation(name,
-                                                 closed_jaxpr,
-                                                 backend_name=backend_name)
+    built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
     stage_protos, strategy_config = compile_with_search(
         backend,
         built,

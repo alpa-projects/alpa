@@ -166,7 +166,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
             # submit work in parallel
-            logger.info(">>> At clock {}, working on tasks {}.".format(
+            logger.debug(">>> At clock {}, working on tasks {}.".format(
                 clock, sched))
             for _, task in enumerate(sched):
                 # i is micro-batch idx
@@ -187,7 +187,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     if key in self.global_outvars_repr_set:
                         # FIXME: This is wrong!! We should accumulate the gradient
                         global_outputs[key] = val
-            logger.info(
+            logger.debug(
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
 
         global_outvals_list = []
@@ -199,7 +199,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 assert key in global_outputs
                 val = global_outputs[key]
                 global_outvals_list.append(val._value)
-        logger.info(">>> All pipeline jobs done.")
+        logger.debug(">>> All pipeline jobs done.")
         return global_outvals_list
 
     def _init_stage_outputs(self):

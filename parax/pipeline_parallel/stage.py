@@ -157,7 +157,9 @@ class XlaPipelineStage(PipelineStage):
             jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
         """
         closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
-        built = jaxpr_to_hlo_computation(jax_pipeline_stage.name, closed_jaxpr)
+        backend = xb.get_backend("gpu")
+        name = "pipeline_stage_{}".format(jax_pipeline_stage.name)
+        built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
 
         return cls(
             name=jax_pipeline_stage.name,
@@ -289,6 +291,13 @@ def slice_closed_jaxpr_by_manual_pipeline_marks(
     current_stage = None
     current_stage_intermediate_vars = set()
 
+    first_eqn = closed_jaxpr.jaxpr.eqns[0]
+    assert (first_eqn.primitive is pipeline_p and first_eqn["mark_type"] == "start"), \
+        "First jaxpr equation must be a pipeline start mark."
+    last_eqn = closed_jaxpr.jaxpr.eqns[-1]
+    assert (last_eqn.primitive is pipeline_p and last_eqn["mark_type"] == "end"), \
+        "Last jaxpr equation must be a pipeline end mark."
+
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
@@ -351,15 +360,7 @@ def slice_closed_jaxpr_by_manual_pipeline_marks(
     return result_stages
 
 
-def get_var_mapping(mapping, var):
-    if isinstance(var, Var) and var in mapping:
-        return mapping[var]
-    else:
-        return var
-
-
-def mark_global_and_local_vars(stage: JaxManualPipelineStage,
-                               gensym_func) -> JaxPipelineStage:
+def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
         'mark_type'] == 'start'
@@ -664,7 +665,7 @@ def generate_sharded_xla_stages(name: str,
         outvars=list(outvars),
         eqns=eqns,
     )
-    closed_jaxpr = ClosedJaxpr(jaxpr, list(consts_dir.values()))
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
     built_computation = jaxpr_to_hlo_computation(name,
@@ -672,7 +673,7 @@ def generate_sharded_xla_stages(name: str,
                                                  backend_name=backend_name)
     stage_protos, strategy_config = compile_with_search(
         backend,
-        built_computation,
+        built,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,

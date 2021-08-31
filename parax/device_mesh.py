@@ -83,9 +83,10 @@ class LogicalDeviceMesh:
 
     def all_to_all_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
+        penalty_factor = 1.5
         return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices / num_devices * num_bytes +
-                0.001)
+                (num_devices - 1) / num_devices / num_devices * num_bytes *
+                penalty_factor + 0.001)
 
     def get_tensor_dim_to_mesh_dim(self, tensor_rank,
                                    tile_assignment_dimensions,

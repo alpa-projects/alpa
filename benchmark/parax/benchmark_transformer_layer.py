@@ -13,7 +13,6 @@ import ray
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
-from parax.testing import assert_only_has_allreduce
 from parax.util import run_cmd, write_tsv, benchmark_func, list_gpu_info
 
 import timeit

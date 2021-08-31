@@ -14,6 +14,8 @@ class GlobalConfig:
         self.devices = None
         self.strategy = "shard_parallel"
         self.memory_budget_per_device = None
+        self.num_micro_batches = None  # If is not None, gradient accumulation will
+        # be enable.
 
         # logical mesh shape related options
         self.search_logical_mesh_shape = False

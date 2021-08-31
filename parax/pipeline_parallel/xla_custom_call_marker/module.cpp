@@ -12,4 +12,10 @@ PYBIND11_MODULE(xla_pipeline_marker, m) {
             return py::capsule((void *) &kernel::pipelineMarker, name);
         }, "return a capsule"
     );
+    m.def(
+        "identity", [](){
+            const char *name = "xla._CUSTOM_CALL_TARGET";
+            return py::capsule((void *) &kernel::identity, name);
+        }, "return a capsule"
+    );
 }

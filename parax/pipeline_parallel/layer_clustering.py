@@ -10,10 +10,9 @@ from jax import tree_flatten
 from jax import lax
 from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun
+from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, jaxpr_as_fun
 from jax.interpreters import xla
 
-from parax import mark_pipeline_jaxpreqn
 from .primitive_def import mark_pipeline
 
 # TODO: different operations takes different time
@@ -145,74 +144,6 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
         r = k
     assert r == 0, 'no solution for layer clustering' if r == -1 else 'unknown error'
     return list(reversed(reversed_sliced_eqns))
-
-
-def add_pipeline_markers(closed_jaxpr: ClosedJaxpr, sliced_eqns):
-    n_layers = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_consts_dir = dict(
-        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    layer_pipeline_invars = [set() for _ in range(n_layers)]
-    layer_pipeline_outvars = [set() for _ in range(n_layers)]
-    var_layer_dict = {}
-    for i, eqns in enumerate(sliced_eqns):
-        for eqn in eqns:
-            for var in eqn.invars:
-                if (not isinstance(var, Literal) and
-                        var not in global_consts_dir and
-                        var not in global_invars and var_layer_dict[var] != i):
-                    layer_pipeline_invars[i].add(var)
-                    layer_pipeline_outvars[var_layer_dict[var]].add(var)
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    var_layer_dict[var] = i
-    gensym_func = gensym([closed_jaxpr.jaxpr])
-    var_mapping = {}
-
-    def get_mapping(var):
-        if isinstance(var, Var):
-            return var_mapping.get(var, var)
-        else:
-            return var
-
-    new_eqns = []
-    for i, eqns in enumerate(sliced_eqns):
-        # pipeline start eqn
-        pipeline_start_invars = []
-        pipeline_start_outvars = []
-        for var in layer_pipeline_invars[i]:
-            new_var = gensym_func(var.aval)
-            pipeline_start_invars.append(get_mapping(var))
-            pipeline_start_outvars.append(new_var)
-            var_mapping[var] = new_var
-        new_eqns.append(
-            mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), 'start'))
-        # all other eqns
-        for eqn in eqns:
-            new_invars = [get_mapping(var) for var in eqn.invars]
-            new_eqns.append(
-                new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
-                              eqn.params, eqn.source_info))
-        # pipeline end eqn
-        pipeline_end_invars = []
-        pipeline_end_outvars = []
-        for var in layer_pipeline_outvars[i]:
-            new_var = gensym_func(var.aval)
-            pipeline_end_invars.append(get_mapping(var))
-            pipeline_end_outvars.append(new_var)
-            var_mapping[var] = new_var
-        new_eqns.append(
-            mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), 'end'))
-    new_jaxpr = Jaxpr(
-        closed_jaxpr.jaxpr.constvars,
-        closed_jaxpr.jaxpr.invars,
-        [get_mapping(var) for var in closed_jaxpr.jaxpr.outvars],
-        new_eqns,
-    )
-    new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
-    return new_closed_jaxpr
 
 
 def reconstruct_by_solution(closed_jaxpr: ClosedJaxpr,

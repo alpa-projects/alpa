@@ -360,7 +360,15 @@ def slice_closed_jaxpr_by_manual_pipeline_marks(
     return result_stages
 
 
-def mark_global_and_local_vars(stage: JaxPipelineStage, gensym_func):
+def get_var_mapping(mapping, var):
+    if isinstance(var, Var) and var in mapping:
+        return mapping[var]
+    else:
+        return var
+
+
+def mark_global_and_local_vars(stage: JaxManualPipelineStage,
+                               gensym_func) -> JaxPipelineStage:
     """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
     assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
         'mark_type'] == 'start'

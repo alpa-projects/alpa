@@ -583,7 +583,9 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
         pipeline_start_invars_without_literal = []
         pipeline_start_outvars_without_literal = []
         for invar, outvar in zip(pipeline_start_invars, pipeline_start_outvars):
-            if not isinstance(invar, Literal):
+            if isinstance(invar, Literal):
+                stage_var_mapping[outvar] = invar
+            else:
                 pipeline_start_invars_without_literal.append(invar)
                 pipeline_start_outvars_without_literal.append(outvar)
         new_stage.invars = list(pipeline_start_invars_without_literal)

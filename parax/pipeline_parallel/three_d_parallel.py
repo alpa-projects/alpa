@@ -45,11 +45,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             for stage in jax_pipeline_stages
         ]
     elif pipeline_marker_type == "full":
-        jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(closed_jaxpr)
-        jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(jax_pipeline_stages, global_invars, global_outvars)
+        jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
+            closed_jaxpr)
+        jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
+            jax_pipeline_stages, global_invars, global_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
-
 
     # Generate schedule and placement
     num_batch = 1

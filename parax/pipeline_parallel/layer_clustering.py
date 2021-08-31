@@ -150,7 +150,8 @@ def forward(fn: Callable, layer_num: int, eps: float = 0.1, use_pipeline=False):
         if use_pipeline:
             origin_jaxpr = make_jaxpr(fn)(*args)
             solution = slice_jaxpr(origin_jaxpr, layer_num, eps)
-            new_jaxpr = add_pipeline_marks_for_sliced_eqns(origin_jaxpr, solution)
+            new_jaxpr = add_pipeline_marks_for_sliced_eqns(
+                origin_jaxpr, solution)
             flatten_args, _ = tree_flatten(args)
             ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
             assert len(ans) == 1 and _check_scalar(

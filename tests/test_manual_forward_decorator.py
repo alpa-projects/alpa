@@ -8,7 +8,8 @@ import jax.numpy as jnp
 from jax.experimental.maps import FrozenDict
 import ray
 
-from parax import (parallelize, set_parallelize_options, mark_pipeline, DeviceCluster, manual_pipeline)
+from parax import (parallelize, set_parallelize_options, mark_pipeline,
+                   DeviceCluster, manual_pipeline)
 from parax.testing import assert_allclose
 
 MB = 1024**2
@@ -58,9 +59,10 @@ class PipelineMLPTest(unittest.TestCase):
             if use_manual_pipeline:
                 loss_func = manual_pipeline(loss_func)
             grad_param, grad_x, grad_y = jax.grad(loss_func,
-                                          argnums=(0, 1, 2))(optimizer.target,
-                                                          batch['x'],
-                                                          batch['y'])
+                                                  argnums=(0, 1,
+                                                           2))(optimizer.target,
+                                                               batch['x'],
+                                                               batch['y'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
@@ -78,8 +80,10 @@ class PipelineMLPTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        pipelined_train_step = parallelize(donate_argnums=(), pipeline_marker_type="full")(
-            lambda optimizer, batch, apply_fn: train_step(optimizer, batch, apply_fn, use_manual_pipeline=True))
+        pipelined_train_step = parallelize(
+            donate_argnums=(), pipeline_marker_type="full")(
+                lambda optimizer, batch, apply_fn: train_step(
+                    optimizer, batch, apply_fn, use_manual_pipeline=True))
         gradients_with_pipeline = pipelined_train_step(optimizer, {
             "x": x,
             "y": y

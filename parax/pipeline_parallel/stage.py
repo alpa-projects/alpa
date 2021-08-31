@@ -11,12 +11,16 @@ from jax import jit
 from jax._src.util import partial, safe_map
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
-from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, gensym, new_jaxpr_eqn, jaxpr_as_fun)
+from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
+                      gensym, new_jaxpr_eqn, jaxpr_as_fun)
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.pipeline_parallel.primitive_def import (pipeline_p, mark_pipeline_jaxpreqn)
-from parax.shard_parallel.auto_sharding import (compile_with_search, compile_with_given_strategy, get_input_output_sharding_specs)
+from parax.pipeline_parallel.primitive_def import (pipeline_p,
+                                                   mark_pipeline_jaxpreqn)
+from parax.shard_parallel.auto_sharding import (compile_with_search,
+                                                compile_with_given_strategy,
+                                                get_input_output_sharding_specs)
 from parax.util import get_compile_options, jaxpr_to_hlo_computation
 
 # pylint: disable=redefined-builtin
@@ -361,8 +365,7 @@ def mark_global_and_local_vars(stage: JaxManualPipelineStage,
         'mark_type'] == 'start'
     assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
         'mark_type'] == 'end'
-    new_stage = JaxPipelineStage(stage.name,
-                                 consts_dir=stage.consts_dir)
+    new_stage = JaxPipelineStage(stage.name, consts_dir=stage.consts_dir)
     var_alias = {
         var: gensym_func(var.aval)
         for var in it.chain(stage.global_invars, stage.local_invars,
@@ -474,7 +477,9 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                                    pipeline_start_outvars, str(i), 'start'))
         # all other eqns
         for eqn in eqns:
-            new_invars = [get_var_mapping(stage_var_mapping, var) for var in eqn.invars]
+            new_invars = [
+                get_var_mapping(stage_var_mapping, var) for var in eqn.invars
+            ]
             new_eqns.append(
                 new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
                               eqn.params, eqn.source_info))
@@ -492,7 +497,10 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     new_jaxpr = Jaxpr(
         closed_jaxpr.jaxpr.constvars,
         closed_jaxpr.jaxpr.invars,
-        [get_var_mapping(var_mapping, var) for var in closed_jaxpr.jaxpr.outvars],
+        [
+            get_var_mapping(var_mapping, var)
+            for var in closed_jaxpr.jaxpr.outvars
+        ],
         new_eqns,
     )
     new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
@@ -500,8 +508,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
-    closed_jaxpr: ClosedJaxpr
-) -> Sequence[JaxPipelineStage]:  # noqa MC0001
+        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:  # noqa MC0001
     global_consts_dir = dict(
         zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
 
@@ -535,7 +542,8 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     return result_stages
 
 
-def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], global_invars, global_outvars):
+def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
+                                        global_invars, global_outvars):
     gensym_func = gensym([stage.closed_jaxpr().jaxpr for stage in stages])
     var_stage_id = {}
     for var in global_invars:
@@ -547,12 +555,13 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
     for i, stage in enumerate(stages):
         for eqn in stage.eqns:
             for var in eqn.invars:
-                if (not isinstance(var, Literal) and var not in stage.consts_dir
-                        and var not in stage.invars):
+                if (not isinstance(var, Literal) and
+                        var not in stage.consts_dir and
+                        var not in stage.invars):
                     source_stage_id = var_stage_id[var]
                     if source_stage_id != i:
-                        if (source_stage_id != -1
-                                and var not in stages[source_stage_id].outvars):
+                        if (source_stage_id != -1 and
+                                var not in stages[source_stage_id].outvars):
                             stage_additional_outvars[source_stage_id].add(var)
                         stage_additional_invars[i].add(var)
             for var in eqn.outvars:
@@ -570,12 +579,17 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
             'mark_type'] == 'start'
         assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
             'mark_type'] == 'end'
-        new_stage = JaxPipelineStage(stage.name,
-                                     consts_dir=stage.consts_dir)
+        new_stage = JaxPipelineStage(stage.name, consts_dir=stage.consts_dir)
 
-        stage_var_mapping = {var: gensym_func(var.aval) for var in stage_additional_invars[i] | stage_additional_outvars[i]}
+        stage_var_mapping = {
+            var: gensym_func(var.aval)
+            for var in stage_additional_invars[i] | stage_additional_outvars[i]
+        }
         pipeline_start_invars = list(stage.eqns[0].invars)
-        pipeline_start_outvars = [get_var_mapping(stage_var_mapping, var) for var in stage.eqns[0].outvars]
+        pipeline_start_outvars = [
+            get_var_mapping(stage_var_mapping, var)
+            for var in stage.eqns[0].outvars
+        ]
         new_stage.invars = list(stage.invars)
         for var in stage_additional_invars[i]:
             pipeline_start_invars.append(var)
@@ -589,13 +603,25 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
                 pipeline_start_invars_without_literal.append(invar)
                 pipeline_start_outvars_without_literal.append(outvar)
         new_stage.invars = list(pipeline_start_invars_without_literal)
-        new_stage.eqns.append(stage.eqns[0]._replace(invars=pipeline_start_invars_without_literal, outvars=pipeline_start_outvars_without_literal))
+        new_stage.eqns.append(stage.eqns[0]._replace(
+            invars=pipeline_start_invars_without_literal,
+            outvars=pipeline_start_outvars_without_literal))
 
         for eqn in stage.eqns[1:-1]:
-            new_stage.eqns.append(eqn._replace(invars=[get_var_mapping(stage_var_mapping, var) for var in eqn.invars],
-                                               outvars=[get_var_mapping(stage_var_mapping, var) for var in eqn.outvars]))
+            new_stage.eqns.append(
+                eqn._replace(invars=[
+                    get_var_mapping(stage_var_mapping, var)
+                    for var in eqn.invars
+                ],
+                             outvars=[
+                                 get_var_mapping(stage_var_mapping, var)
+                                 for var in eqn.outvars
+                             ]))
 
-        pipeline_end_invars = [get_var_mapping(stage_var_mapping, var) for var in stage.eqns[-1].invars]
+        pipeline_end_invars = [
+            get_var_mapping(stage_var_mapping, var)
+            for var in stage.eqns[-1].invars
+        ]
         pipeline_end_outvars = list(stage.eqns[-1].outvars)
         for var in stage_additional_outvars[i]:
             pipeline_end_invars.append(stage_var_mapping[var])
@@ -607,7 +633,9 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage], glob
                 pipeline_end_invars_without_dropvar.append(invar)
                 pipeline_end_outvars_without_dropvar.append(outvar)
         new_stage.outvars = list(pipeline_end_outvars_without_dropvar)
-        new_stage.eqns.append(stage.eqns[-1]._replace(invars=pipeline_end_invars_without_dropvar, outvars=pipeline_end_outvars_without_dropvar))
+        new_stage.eqns.append(stage.eqns[-1]._replace(
+            invars=pipeline_end_invars_without_dropvar,
+            outvars=pipeline_end_outvars_without_dropvar))
         new_stages.append(new_stage)
 
     return new_stages
@@ -660,5 +688,3 @@ def generate_sharded_xla_stages(name: str,
         for stage, proto in zip(jax_stages, stage_protos)
     ]
     return stages
-
-

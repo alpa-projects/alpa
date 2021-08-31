@@ -103,8 +103,9 @@ def parallelize(fun=None,
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
-                f, in_tree, out_tree_hashable, donated_invars, batch_invars, devices,
-                global_config.strategy, global_config.memory_budget_per_device, pipeline_marker_type,
+                f, in_tree, out_tree_hashable, donated_invars, batch_invars,
+                devices, global_config.strategy,
+                global_config.memory_budget_per_device, pipeline_marker_type,
                 *abstract_args)
 
             if return_value_mode == "normal":

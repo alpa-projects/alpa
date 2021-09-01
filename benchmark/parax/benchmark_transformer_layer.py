@@ -13,7 +13,6 @@ import ray
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
-from parax.testing import assert_only_has_allreduce
 from parax.util import run_cmd, write_tsv, benchmark_func, list_gpu_info
 
 import timeit
@@ -164,11 +163,14 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     D1, D2
-    (32,  1024, 1536, 3,  1536//96,  4,  1),
-    (32,  1024, 1536, 3,  1536//96,  2,  2),
-
-    (32,  128,  5120, 2,  5120//128, 4,  1),
-    (32,  128,  5120, 2,  5120//128, 2,  2),
+    # (32,  1024, 1536, 3,  1536//96,  4,  1),
+    # (32,  1024, 1536, 3,  1536//96,  2,  2),
+    #
+    # (32,  128,  5120, 2,  5120//128, 4,  1),
+    # (32,  128,  5120, 2,  5120//128, 2,  2),
+    (32,  1024, 1536, 2,  1536//96,  4,  1),
+    (32,  1024, 1536, 2,  1536//96,  2,  2),
+    (32,  1024, 1536, 2,  1536//96,  1,  4),
 ]
 
 benchmark_suite_8_gpu = [

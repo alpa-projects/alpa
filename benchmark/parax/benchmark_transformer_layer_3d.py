@@ -62,6 +62,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     else:
         device_cluster = DeviceCluster()
         virtual_mesh = device_cluster.get_virtual_mesh()
+        # virtual_mesh = virtual_mesh.slice(1, [[0, 1, 2, 3]])
     #     physical_mesh = device_cluster.get_physical_mesh()
     # logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size],
     #                                               mesh_topology="tree",
@@ -183,21 +184,27 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 # #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
 
 benchmark_suite_4_gpu = [
-    # B,  S,    H,    L,  #head,     D1, D2, PP, NB, FD
-    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False),
-    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
-
-    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 1, False),
-    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 1, False),
+    # # B,  S,    H,    L,  #head,     D1, D2, PP, NB, FD
+    # (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False),
+    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    #
+    # (32,  128,  5120, 2,  5120//128, 1,  2, 2, 1, False),
+    # (32,  128,  5120, 2,  5120//128, 2,  1, 2, 1, False),
+    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False,
+    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    # (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False),
+    # (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
+     (24,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False),
+     (24,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
 ]
 
 benchmark_suite_8_gpu = [
     # B,  S,    H,    L,  #head,     D1, D2, PP, NB, FD
-    (32,  1024, 1536, 2,  1536//96,  1,  4, 2, 1, False),
-    (32,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, False),
-
-    (32,  128,  5120, 2,  5120//128, 1,  4, 2, 1, False),
-    (32,  128,  5120, 2,  5120//128, 4,  1, 2, 1, False),
+    # (32,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, False),
+    (16,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, False),
+    #
+    # (32,  128,  5120, 2,  5120//128, 1,  4, 2, 1, False),
+    # (32,  128,  5120, 2,  5120//128, 4,  1, 2, 1, False),
 ]
 
 
@@ -219,7 +226,7 @@ def benchmark_all(use_profiling):
         num_gpus = int(ray.cluster_resources()["GPU"])
 
     benchmark_suites = {
-        # 4: benchmark_suite_4_gpu,
+        4: benchmark_suite_4_gpu,
         8: benchmark_suite_8_gpu,
     }
 

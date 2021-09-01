@@ -368,7 +368,6 @@ def config_to_logical_meshes(raw_mesh: VirtualMesh, config: np.ndarray):
     meshes = (None for _ in range(max_num))
     for info in mesh_info:
         id, start, end = info
-        # TODO(yonghao): slice column implements correctly?
         meshes[id] = raw_mesh.slice(0, range(start[0], end[0] + 1)).slice(
             1, range(start[1], end[1] + 1))
     return meshes

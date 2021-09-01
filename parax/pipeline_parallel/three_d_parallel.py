@@ -99,6 +99,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
     # the sliced_meshes is set when tracing into forward decorator
+    sliced_meshes = global_config.sliced_meshes
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     gensym_func = gensym([closed_jaxpr.jaxpr])
     compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
@@ -176,8 +177,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     num_batch = num_micro_batches
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
-                             num_pipeline_worker=mesh_num,
-                             apply_grad_schedule=apply_grad_schedule,
+                             meshes=sliced_meshes,
                              num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)

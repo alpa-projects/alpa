@@ -20,6 +20,7 @@ class GlobalConfig:
 
         # logical mesh shape related options
         self.search_logical_mesh_shape = False
+        self.sliced_meshes = None
         self.mesh_shape_search_mode = "cost_model"
         self.mesh_shape_search_log_file = None
         self.profile_communication = False

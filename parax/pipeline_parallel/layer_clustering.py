@@ -14,6 +14,7 @@ from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun
 from jax.interpreters import xla
 
 from ..util import slices_to_jaxpr
+from .mesh_slicing import slice_mesh
 from .primitive_def import mark_pipeline
 from .manual_pipeline import manual_pipeline
 
@@ -161,6 +162,8 @@ def forward(fn: Callable,
             global_invars = origin_jaxpr.jaxpr.invars
 
             sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, solution)
+            layer_allocation_solution = slice_mesh(
+                sliced_jaxprs) if use_pipeline else None
             sliced_callables = [
                 jax.remat(jaxpr_as_fun(layer))
                 if use_remat else jaxpr_as_fun(layer) for layer in sliced_jaxprs
@@ -168,7 +171,8 @@ def forward(fn: Callable,
 
             flatten_inputs, _ = tree_flatten(args)
             glob_vars = dict(zip(global_invars, flatten_inputs))
-            cnt = 0
+            stage_cnt = -1
+            layer_cnt = 0
             for (closed_jaxpr, runnable) in zip(sliced_jaxprs,
                                                 sliced_callables):
                 args = []
@@ -177,11 +181,11 @@ def forward(fn: Callable,
                 if use_pipeline:
                     mark_pipeline(name=str(cnt), mark_type='start')
                 ans = runnable(*args)
+                layer_cnt += 1
                 if use_pipeline:
                     mark_pipeline(name=str(cnt), mark_type='end')
                 for i, outvar in enumerate(closed_jaxpr.jaxpr.outvars):
                     glob_vars[outvar] = ans[i]
-                cnt += 1
             assert len(ans) == 1
             _check_scalar(ans[0])
             return ans[0]

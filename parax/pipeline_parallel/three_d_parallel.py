@@ -59,8 +59,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     compute_grad_jaxpr, apply_grad_jaxpr = split_compute_and_apply(closed_jaxpr)
     # TODO(yonghao): split donate invar
-    global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
+    global_invars = compute_grad_jaxpr.jaxpr.invars
+    global_outvars = compute_grad_jaxpr.jaxpr.outvars
     if pipeline_marker_type == "manual":
         gensym_func = gensym([closed_jaxpr.jaxpr])
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(

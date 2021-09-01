@@ -715,7 +715,7 @@ def is_pipeline(closed_jaxpr: ClosedJaxpr, not_gradient):
 def compute_grad_to_acc_grad(closed_jaxpr: ClosedJaxpr, donated_invars,
                              not_gradient):
     """
-    Translate compute_grad jaxpr to accumulate_grad jaxpr.
+    Transform compute_grad jaxpr to accumulate_grad jaxpr.
     Args:
         closed_jaxpr: the compute_grad jaxpr. It is supposed to be the one in a single pipeline-stage
         donated_invars: donated invars of the input jaxpr

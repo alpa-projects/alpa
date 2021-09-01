@@ -228,7 +228,7 @@ class XlaPassContext:
 
 
 def profile_xla_executable(compiled, backend, local_devices):
-    """Measure the time costs of a xla executable."""
+    """Measure the time costs of a xla executable with dummy inputs."""
     hlo_module = compiled.hlo_modules()[0]
 
     # Allocate dummy buffers

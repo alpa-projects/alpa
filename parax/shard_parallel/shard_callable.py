@@ -15,7 +15,7 @@ import jax.numpy as jnp
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
-from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshExecutable
+from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 get_input_output_sharding_specs,
@@ -187,7 +187,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
-    # Compile a Mesh executable
+    # Compile a mesh executable
     compiled = NormalMeshDriverExecutable(physical_mesh, compiled, strategy_config,
                                           avals, out_avals, donated_invars)
     return compiled.get_driver_callable()
@@ -238,10 +238,9 @@ def shard_parallel_internal_gradient_accumulation(
                                                       multiple_stages=True)
     assert len(hlo_protos) == 2
 
-    # Compile these two HLOs separately to get two executables
+    # Compile these two HLOs separately to get two XLA executables
     accumulate_grad = xc.XlaComputation(hlo_protos[0])
     apply_grad = xc.XlaComputation(hlo_protos[1])
-    logical_mesh_shape = strategy_config.logical_mesh_shape
 
     accumulate_grad = compile_with_given_strategy(
         backend, accumulate_grad, strategy_config, physical_mesh.total_devices,
@@ -251,99 +250,12 @@ def shard_parallel_internal_gradient_accumulation(
                                              physical_mesh.total_devices, False,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
-    assert not physical_mesh.is_distributed
-
-    # Read sharding specs
-    accumulate_grad_in_avals = [
-        global_in_avals[i] for i in accumulate_grad_invar_indices
-    ] + grad_avals
-    apply_grad_in_avals = [
-        global_in_avals[i] for i in apply_grad_invar_indices
-    ] + grad_avals
-    accumulate_grad_input_sharding_specs, grad_sharding_specs =\
-        get_input_output_sharding_specs(
-        accumulate_grad.hlo_modules()[0], physical_mesh.total_devices,
-        accumulate_grad_in_avals, grad_avals, logical_mesh_shape)
-    apply_grad_input_sharding_specs, output_sharding_specs =\
-        get_input_output_sharding_specs(
-        apply_grad.hlo_modules()[0], physical_mesh.total_devices,
-        apply_grad_in_avals, global_out_avals, logical_mesh_shape)
-
-    input_sharding_specs = [None] * len(global_in_avals)
-    for i, idx in enumerate(accumulate_grad_invar_indices):
-        input_sharding_specs[idx] = accumulate_grad_input_sharding_specs[i]
-    for i, idx in enumerate(apply_grad_invar_indices):
-        if input_sharding_specs[idx] is None:
-            input_sharding_specs[idx] = apply_grad_input_sharding_specs[i]
-        else:
-            assert input_sharding_specs[idx] == apply_grad_input_sharding_specs[
-                i]
-    assert accumulate_grad_input_sharding_specs[
-        -num_grads:] == grad_sharding_specs
-
-    # Cache indices for the final callable
-    global_in_shard_indices = [
-        pxla.spec_to_indices(aval.shape, spec)
-        for aval, spec in zip(global_in_avals, input_sharding_specs)
-    ]
-    grad_shard_indices = [
-        pxla.spec_to_indices(aval.shape, spec)
-        for aval, spec in zip(grad_avals, grad_sharding_specs)
-    ]
-    input_buffer_batch_arg_indices = []
-    for input_idx, global_idx in enumerate(accumulate_grad_invar_indices):
-        if batch_invars[global_idx]:
-            input_buffer_batch_arg_indices.append((input_idx, global_idx))
-    devices = physical_mesh.devices
-    outs_handler = pxla.avals_to_results_handler(1, len(devices),
-                                                 output_sharding_specs,
-                                                 global_out_avals)
-
-    def final_callable(*global_args):
-        # Shard global input arguments
-        global_buffers = []
-        for i, arg in enumerate(global_args):
-            if batch_invars[i]:
-                new_shape = (num_micro_batches,
-                             arg.shape[0] // num_micro_batches) + arg.shape[1:]
-                reshaped = arg.reshape(new_shape)
-                micro_batches = jnp.split(reshaped, num_micro_batches)
-                micro_batches = [x.squeeze(0) for x in micro_batches]
-                micro_batches = pxla.shard_args(
-                    devices, (global_in_shard_indices[i],) * len(micro_batches),
-                    micro_batches)
-                global_buffers.append(micro_batches)
-            else:
-                global_buffers.append(
-                    pxla.shard_args(devices, [global_in_shard_indices[i]],
-                                    [arg])[0])
-
-        # Prepare gradient buffers
-        grad_buffers = pxla.shard_args(devices, grad_shard_indices, [
-            jnp.zeros(grad_avals[i].shape, grad_avals[i].dtype)
-            for i in range(num_grads)
-        ])
-
-        # Call accumulate_grad multiple times
-        input_buffers = [global_buffers[i] for i in accumulate_grad_invar_indices] +\
-                        grad_buffers
-        for j in range(num_micro_batches):
-            for input_idx, global_idx in input_buffer_batch_arg_indices:
-                input_buffers[input_idx] = global_buffers[global_idx][j]
-            input_buffers[-num_grads:] = grad_buffers
-            grad_buffers = accumulate_grad.execute_sharded_on_local_devices(
-                input_buffers)
-
-        # Call apply_grad
-        input_buffers = [global_buffers[i] for i in apply_grad_invar_indices] +\
-                        grad_buffers
-        output_buffers = apply_grad.execute_sharded_on_local_devices(
-            input_buffers)
-
-        # Wrap global output buffers as ShardedArray
-        return outs_handler(output_buffers)
-
-    return final_callable
+    # Compile them to mesh executables
+    mesh_executable = GradAccMeshDriverExecutable(physical_mesh, accumulate_grad,
+        apply_grad, strategy_config, global_in_avals, global_out_avals, grad_avals,
+        donated_invars, batch_invars, accumulate_grad_invar_indices, apply_grad_invar_indices,
+        num_micro_batches)
+    return mesh_executable.get_driver_callable()
 
 
 def filter_used_vars(all_vars, eqns):

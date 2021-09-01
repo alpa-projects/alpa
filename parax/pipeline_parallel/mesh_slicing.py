@@ -1,6 +1,7 @@
 import copy
 import numba
 import numpy as np
+from typing import List, Tuple
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
@@ -107,7 +108,7 @@ def generate_initial(M, N):
     return h_w_list, configs, known
 
 
-def get_costs(config, layers):
+def get_costs(config, grid, layers):
     """
     Get the cost of both communication and computation
     
@@ -134,7 +135,7 @@ def pipeline_dp(cost_e, cost_c, k, B):
         B(int): number of micro batches
     Returns:
         cost(float): the minimal computation and communication cost
-        plan(Sequence[int]): plan[i] is the number of layers at mesh[i]
+        plan(List[int]): plan[i] is the number of layers at mesh[i]
     """
     possible = set()
     L = len(cost_e)
@@ -159,6 +160,9 @@ def pipeline_dp(cost_e, cost_c, k, B):
             elif j == 0:
                 e_sum = presum[i + 1]
                 for m in range(M):
+                    # TODO: shall we consider this?
+                    # B is a factor to augement cost_e compared with cost_c,
+                    # but we communicate in each microbatch also instead of once per batch
                     costs[i][j][m] = (B - 1) * max(0, e_sum - possible[m])
                     last_cut[i][j][m] = -1
             else:
@@ -232,7 +236,6 @@ def neighbor(cur, known, M, N, maximum_try=10):
 
             if len(valid) == 0:
                 continue
-                #return
 
             new_h = np.random.choice(valid, size=1)[0]
 
@@ -264,13 +267,13 @@ def neighbor(cur, known, M, N, maximum_try=10):
     return None
 
 
-def predict(configs, layers, B):
+def predict(configs, grid, layers, B) -> Tuple[np.ndarray, List[List[int]]]:
     costs = []
     solutions = []
     for i in range(len(configs)):
         config = configs[i]
         config = np.asarray(config)
-        cost_e, cost_c = get_costs(config, layers)
+        cost_e, cost_c = get_costs(config, grid, layers)
         k = int(np.max(config))
 
         # refer to pipeling slicing
@@ -280,7 +283,12 @@ def predict(configs, layers, B):
     return np.asarray(costs), solutions
 
 
-def get_mesh_slicing(grid, layers, B, num_iter=500, init_t=1):
+def get_mesh_slicing_configs(
+        grid: VirtualMesh,
+        layers,
+        B,
+        num_iter=500,
+        init_t=1) -> Tuple[List[np.ndarray], np.ndarray, List[List[int]]]:
     """
     Simulated annealing to get a set of mesh slicing algorithm.
     Return multiple plans for auto-tuner
@@ -295,10 +303,11 @@ def get_mesh_slicing(grid, layers, B, num_iter=500, init_t=1):
         costs: the estimated cost for each plan
         solutions: the solution of layer-mesh map for each plan
     """
-    M, N = grid.shape[0], grid.shape[1]
+    assert isinstance(grid, VirtualMesh)
+    M, N = len(grid.host_ids), grid.num_devices_per_host
 
     h_w, configs, known = generate_initial(M, N)
-    costs, solutions = predict(configs, layers, B)
+    costs, solutions = predict(configs, grid, layers, B)
 
     for i in range(num_iter):
         cur_t = cool_down(i, num_iter, init_t)
@@ -315,7 +324,7 @@ def get_mesh_slicing(grid, layers, B, num_iter=500, init_t=1):
             new_h_w.append((new_h, new_w))
             new_configs.append(new_config)
 
-        new_costs, new_solutions = predict(new_configs, layers, B)
+        new_costs, new_solutions = predict(new_configs, grid, layers, B)
         acc_prob = np.exp(np.minimum((costs - new_costs) / (cur_t + 1e-5), 0))
         acc_index = (np.random.random(len(acc_prob)) < acc_prob)
 
@@ -363,3 +372,15 @@ def config_to_logical_meshes(raw_mesh: VirtualMesh, config: np.ndarray):
         meshes[id] = raw_mesh.slice(0, range(start[0], end[0] + 1)).slice(
             1, range(start[1], end[1] + 1))
     return meshes
+
+
+def slice_mesh(layers, **kwargs):
+    raw_mesh = global_config.devices
+    B = global_config.num_micro_batches
+    configs, costs, solutions = get_mesh_slicing_configs(raw_mesh, layers, B)
+    best_idx = costs.argmax()[0]
+    best_config = configs[best_idx]
+    best_solution = solutions[best_idx]
+    sliced_meshes = config_to_logical_meshes(raw_mesh, best_config)
+    global_config.sliced_meshes = sliced_meshes
+    return best_solution

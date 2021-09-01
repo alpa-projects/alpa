@@ -54,6 +54,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     microbatch_avals = get_micro_batch(batch_invars, num_micro_batches, *avals)
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
+    # the sliced_meshes is set when tracing into forward decorator
+    sliced_meshes = global_config.sliced_meshes
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     compute_grad_jaxpr, apply_grad_jaxpr = split_compute_and_apply(closed_jaxpr)
     # TODO(yonghao): split donate invar
@@ -82,6 +84,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     dependency = gen_linear_pipeline_dependency(n_stages)
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
+                             meshes=sliced_meshes,
                              num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)

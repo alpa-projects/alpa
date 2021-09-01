@@ -26,7 +26,7 @@ from parax.measure_record import StrategyConfig
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.util import (get_dim_last_value, list_gpu_info,
-                        profile_xla_executable, GB, to_cupy, to_jax_tensor,
+                        GB, to_cupy, to_jax_tensor,
                         jax_buffer_set, xla_buffer_to_jax_buffer,
                         jax_buffer_to_xla_buffer)
 
@@ -254,15 +254,6 @@ xla.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
 xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
 
 
-def get_uuid_np_array(array):
-    """Convert a np array of RemoteBufferRef to a np array of UUID (int64)."""
-    ret = np.empty(array.shape, dtype=np.int64)
-    for i in range(array.shape[0]):
-        for j in range(array.shape[1]):
-            ret[i][j] = array[i][j].uuid
-    return ret
-
-
 class MeshHostWorker:
     """A ray actor to manage the xla computation on a single host."""
 
@@ -282,13 +273,9 @@ class MeshHostWorker:
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
+        assert uuid not in self.local_buffers
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
-
-    def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype):
-        self.local_buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.empty(shape, dtype),
-                                           self.local_devices[device_id])
 
     def put_empty_buffer(self,
                          uuid: int,
@@ -296,12 +283,10 @@ class MeshHostWorker:
                          shape,
                          dtype=np.float32):
         """Put an all-zero buffer on the worker indexed by UUID."""
-        if uuid in self.local_buffers:
-            raise RuntimeError()
+        assert uuid not in self.local_buffers
         self.local_buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
-        return True
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
@@ -323,53 +308,14 @@ class MeshHostWorker:
             self.local_buffers[uuids].block_until_ready()
 
     ##### Executable Related Functions #####
+    def put_executable(self, uuid: int, executable_class, *args):
+        self.executables[uuid] = executable_class(self.backend, *args)
+
     def delete_executable(self, uuid: int):
-        self.executables[uuid].delete()
-        del self.executables[uuid]
+        del self.executable[uuid]
 
-    def compile_executable(self, uuid: int, hlo_proto: bytes,
-                           strategy_config: StrategyConfig,
-                           hlo_proto_status: "HloProtoStatus"):
-        # pylint: disable=import-outside-toplevel
-        from parax.shard_parallel.auto_sharding import compile_with_given_strategy
-
-        xla_computation = xla_client.XlaComputation(hlo_proto)
-        num_devices = np.prod(strategy_config.logical_mesh_shape)
-        assert num_devices == len(self.backend.devices())
-
-        compiled = compile_with_given_strategy(self.backend, xla_computation,
-                                               strategy_config, num_devices,
-                                               False, hlo_proto_status)
-        self.executables[uuid] = compiled
-
-    def execute(self, executable_uuid: int, input_uuids: List[List[int]],
-                output_uuids: List[List[int]]):
-        # Map uuids to input buffers
-        device_inputs = [[None
-                          for _ in range(input_uuids.shape[1])]
-                         for _ in range(input_uuids.shape[0])]
-        for i in range(input_uuids.shape[0]):
-            for j in range(input_uuids.shape[1]):
-                device_inputs[i][j] = self.local_buffers[input_uuids[i][j]]
-
-        # Execute the executable
-        device_outs = self.executables[executable_uuid]. \
-            execute_sharded_on_local_devices(device_inputs)
-
-        # Store output buffers
-        for i in range(output_uuids.shape[0]):
-            for j in range(output_uuids.shape[1]):
-                self.local_buffers[output_uuids[i][j]] = device_outs[i][j]
-
-        # Delete donated input buffers
-        for i in range(input_uuids.shape[0]):
-            for j in range(input_uuids.shape[1]):
-                if device_inputs[i][j].is_deleted():
-                    del self.local_buffers[input_uuids[i][j]]
-
-    def get_total_allocation_size(self, uuid):
-        """Get the total allocation size in bytes to run this executable."""
-        return self.executables[uuid].total_allocation_size()
+    def run_executable(self, uuid: int, *args):
+        self.executables[uuid].execute_on_worker(self.local_buffers, *args)
 
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
@@ -470,9 +416,8 @@ class MeshHostWorker:
             return prof_result
         return None
 
-    def profile_executable(self, executable_uuid: int):
-        return profile_xla_executable(self.executables[executable_uuid],
-                                      self.backend, self.local_devices)
+    def profile_executable_with_dummy_inputs(self, uuid: int):
+        return self.executables[uuid].profile_with_dummy_inputs(self.backend, self.local_devices)
 
     ##### Other Functions #####
     def sync(self):
@@ -782,111 +727,7 @@ class PhysicalDeviceMesh:
         ray.get(tasks)
 
     ##### Executable Related Functions #####
-    def compile_remote_executable(self, hlo_proto: bytes,
-                                  strategy_config: StrategyConfig,
-                                  hlo_proto_status: "HloProtoStatus"):
-        """Compile the remote executable."""
-        executable = RemoteExecutableRef(self)
-        for w in self.workers:
-            w.compile_executable.remote(executable.uuid, hlo_proto,
-                                        strategy_config, hlo_proto_status)
-        return executable
-
-    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
-        if self.workers is None or not ray.is_initialized():
-            return
-
-        for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(exe_ref.uuid)
-
-    def get_callable_with_arg_handler(self, compiled_executable, avals,
-                                      out_avals, input_sharding_specs,
-                                      output_sharding_specs, donated_invars):
-        # pylint: disable=too-many-arguments
-        """Get a callable after sharding optimization."""
-        input_indices = [
-            pxla.spec_to_indices(aval.shape, spec)
-            for aval, spec in zip(avals, input_sharding_specs)
-        ]
-
-        args_handler = partial(self._shard_args, input_indices, donated_invars)
-        if not self.is_distributed:
-            outs_handler = pxla.avals_to_results_handler(
-                1, len(self.devices), output_sharding_specs, out_avals)
-        else:
-            output_indices = [
-                pxla.spec_to_indices(aval.shape, spec)
-                for aval, spec in zip(out_avals, output_sharding_specs)
-            ]
-            outs_handler = partial(self._gather_outs, out_avals,
-                                   output_sharding_specs, output_indices)
-        ret = partial(self._execute_with_handler,
-                      compiled_executable, args_handler, outs_handler,
-                      len(out_avals), donated_invars)
-        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
-                                      input_sharding_specs, input_indices)
-        return ret
-
-    def _execute_with_handler(self, executable, args_handler, outs_handler,
-                              num_outs, donated_invars, *args):
-        # pylint: disable=too-many-arguments,too-many-locals
-        input_bufs = args_handler(args)
-        if not self.is_distributed:
-            output_bufs = executable.execute_sharded_on_local_devices(
-                input_bufs)
-        else:
-            # TODO(lmzheng): reduce the overhead of meta information maintainance
-            # by overlapping GPU computation and python code.
-
-            # Donate input buffers
-            for bufs, is_donated in zip(input_bufs, donated_invars):
-                if is_donated:
-                    for buf in bufs:
-                        buf.donate()
-
-            # Shape: (num_hosts, num_args, num_devices_per_host)
-            input_bufs = np.array(input_bufs) \
-                .reshape(len(args), self.num_hosts, self.num_devices_per_host) \
-                .transpose([1, 0, 2])
-
-            # Allocate output buffer references
-            # Shape: (num_hosts, num_outs, num_devices_per_host)
-            output_bufs = np.empty(
-                (self.num_hosts, num_outs, self.num_devices_per_host),
-                dtype=object)
-            for i in range(self.num_hosts):
-                for j in range(num_outs):
-                    for k in range(self.num_devices_per_host):
-                        output_bufs[i][j][k] = RemoteBufferRef(self, i, k)
-
-            # Execute SPMD binary
-            for i in range(self.num_hosts):
-                host_inputs = get_uuid_np_array(input_bufs[i])
-                host_outputs = get_uuid_np_array(output_bufs[i])
-                self.workers[i].execute.remote(executable.uuid, host_inputs,
-                                               host_outputs)
-
-            # Gather outputs
-            # Shape: (num_outs, total_devices)
-            output_bufs = output_bufs.transpose([1, 0, 2]).reshape(
-                (num_outs, self.total_devices))
-        return outs_handler(output_bufs)
-
-    def preshard_args(self, handler, avals, sharding_specs, indices, *args):
-        """Pre-shard the input arguments."""
-        input_bufs = handler(args)
-        sharded_args = []
-        for i in range(len(args)):
-            if self.is_distributed:
-                array = DistributedArray(self, avals[i], sharding_specs[i],
-                                         input_bufs[i], indices[i])
-            else:
-                array = ShardedDeviceArray(avals[i], sharding_specs[i],
-                                           input_bufs[i], indices[i])
-            sharded_args.append(array)
-        return sharded_args
-
-    def _shard_args(self, arg_indices, donated_invars, args):
+    def shard_args(self, arg_indices, donated_invars, args):
         if not self.is_distributed:
             # single host w/o Ray
             return pxla.shard_args(self.devices, arg_indices, args)
@@ -906,27 +747,29 @@ class PhysicalDeviceMesh:
 
             return input_bufs
 
-    def _gather_outs(self, avals, sharding_specs, indices, bufs):
-        ret = []
-        for i, _ in enumerate(avals):
-            dis_array = DistributedArray(device_mesh=self,
-                                         aval=avals[i],
-                                         sharding_spec=sharding_specs[i],
-                                         remote_buffers=bufs[i],
-                                         indices=indices[i])
-            ret.append(dis_array)
-
-        return ret
-
-    def get_total_allocation_size(self, executable):
-        """Get the total allocation size in bytes to run this executable."""
+    def get_outputs_handler(self, avals, sharding_specs):
         if self.is_distributed:
-            return ray.get(self.workers[0].get_total_allocation_size.remote(
-                executable.uuid))
-        else:
-            return executable.total_allocation_size()
+            indices = [
+                pxla.spec_to_indices(aval.shape, spec)
+                for aval, spec in zip(avals, sharding_specs)
+            ]
 
-    ##### Profling related Functions #####
+            def outs_handler(bufs):
+                ret = []
+                for i, _ in enumerate(avals):
+                    dis_array = DistributedArray(device_mesh=self,
+                                                 aval=avals[i],
+                                                 sharding_spec=sharding_specs[i],
+                                                 remote_buffers=bufs[i],
+                                                 indices=indices[i])
+                    ret.append(dis_array)
+                return ret
+        else:
+            outs_handler = pxla.avals_to_results_handler(
+                1, len(self.devices), sharding_specs, avals)
+        return outs_handler
+
+    ##### Profiling related Functions #####
     def profile_collective(self,
                            primitive_name,
                            size_range=None,
@@ -947,22 +790,6 @@ class PhysicalDeviceMesh:
             self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
-
-    def profile_executable(self, compiled):
-        """Profile the time cost of an xla executable."""
-        from parax.shard_parallel.auto_sharding import HloProtoStatus
-
-        if self.is_distributed:
-            tasks = []
-            for worker in self.workers:
-                tasks.append(worker.profile_executable.remote(compiled.uuid))
-            costs = ray.get(tasks)[0]
-        else:
-            costs = profile_xla_executable(compiled,
-                                           xla_bridge.get_backend("gpu"),
-                                           self.devices)
-
-        return costs
 
     def load_profiling_result(self, filename):
         """Load profiling results from a file."""

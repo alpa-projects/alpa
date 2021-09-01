@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
+from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshExecutable
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 get_input_output_sharding_specs,
@@ -165,7 +166,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                      donated_invars, backend)
     #print(built.as_hlo_text())
 
-    # Compile an executable
+    # Compile a XLA executable
     if strategy_config is None:
         compiled, strategy_config = compile_with_search(
             backend,
@@ -182,28 +183,14 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                physical_mesh.total_devices,
                                                physical_mesh.is_distributed,
                                                HloProtoStatus.UNOPTIMIZED)
-    hlo_module = compiled.hlo_modules()[0]
-    logical_mesh_shape = strategy_config.logical_mesh_shape
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
-    # Send the code and strategy to remote workers
-    if physical_mesh.is_distributed:
-        compiled = physical_mesh.compile_remote_executable(
-            hlo_module.as_serialized_hlo_module_proto(), strategy_config,
-            HloProtoStatus.FULLY_OPTIMIZED)
-
-    # Read HloSharding from HloModule and convert them to ShardingSpec
-    # Return the final callable
-    input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-        hlo_module, physical_mesh.total_devices, avals, out_avals,
-        logical_mesh_shape)
-    return physical_mesh.get_callable_with_arg_handler(compiled, avals,
-                                                       out_avals,
-                                                       input_sharding_specs,
-                                                       output_sharding_specs,
-                                                       donated_invars)
+    # Compile a Mesh executable
+    compiled = NormalMeshDriverExecutable(physical_mesh, compiled, strategy_config,
+                                          avals, out_avals, donated_invars)
+    return compiled.get_driver_callable()
 
 
 def shard_parallel_internal_gradient_accumulation(

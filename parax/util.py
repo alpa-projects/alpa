@@ -5,13 +5,12 @@ import itertools as it
 import os
 import subprocess
 import time
-from warnings import warn
 
 import cupy as cp
 import flax
 import jax
+import numpy as np
 from jax._src.dlpack import from_dlpack
-from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
 from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
@@ -19,7 +18,14 @@ from jax.interpreters import xla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
-import numpy as np
+from warnings import warn
+
+
+# Note: use Python jit instead of CPP jit,
+# because CPP jit has bugs on _DeviceArray.
+from jax._src.api import FLAGS
+FLAGS.experimental_cpp_jit = False
+
 
 ########################################
 ##### Parax API Utilities

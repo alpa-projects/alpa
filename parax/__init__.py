@@ -8,9 +8,10 @@ from . import shard_parallel
 from . import util
 
 # Shortcut
-from parax.api import clear_callable_cache, parallelize
+from parax.api import clear_callable_cache, grad, parallelize
 from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config, set_parallelize_options
 from parax.pipeline_parallel.primitive_def import mark_pipeline, mark_pipeline_jaxpreqn
 from parax.pipeline_parallel.layer_clustering import forward
+from parax.pipeline_parallel.manual_pipeline import manual_pipeline
 from parax.util import XlaPassContext

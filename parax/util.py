@@ -1,15 +1,16 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
-import os
+from collections import OrderedDict
 import itertools as it
+import os
 import subprocess
 import time
 
 import cupy as cp
 import flax
 import jax
+import numpy as np
 from jax._src.dlpack import from_dlpack
-from jax._src.util import extend_name_stack, wrap_name
 from jax.api_util import shaped_abstractify
 from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
@@ -17,7 +18,14 @@ from jax.interpreters import xla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
-import numpy as np
+from warnings import warn
+
+
+# Note: use Python jit instead of CPP jit,
+# because CPP jit has bugs on _DeviceArray.
+from jax._src.api import FLAGS
+FLAGS.experimental_cpp_jit = False
+
 
 ########################################
 ##### Parax API Utilities
@@ -110,6 +118,24 @@ class FastLookupList:
         self.elements_set.add(element)
 
 
+class OrderedSet:
+
+    def __init__(self):
+        self.dict = OrderedDict()
+
+    def add(self, *args):
+        for x in args:
+            self.dict[x] = None
+
+    def update(self, container):
+        for x in container:
+            self.dict[x] = None
+
+    def __iter__(self):
+        for x in self.dict:
+            yield x
+
+
 ########################################
 ##### XLA API Utilities
 ########################################
@@ -130,28 +156,39 @@ def get_compile_options(num_replicas, num_partitions, device_assignment,
     return compile_options
 
 
-def jaxpr_to_hlo_computation(name, closed_jaxpr, backend_name='gpu'):
+def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
     """Convert a jaxpr to a XLA HLO computation."""
+    backend_name = backend.platform
     in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
     consts = closed_jaxpr.consts
     map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
 
-    # tuple_args = len(in_avals) > 100  # pass long arg lists as tuple for TPU
+    # Convert jaxpr to XLA HLO
     tuple_args = False
-
-    c = xb.make_computation_builder("pipeline_stage_{}".format(name))
+    c = xb.make_computation_builder(name)
     xla_consts = xla._xla_consts(c, consts)
-    xla_args, _ = xla._xla_callable_args(c,
-                                         in_avals,
-                                         tuple_args,
-                                         donated_invars=None)
+    xla_args, donated_invars = xla._xla_callable_args(
+        c, in_avals, tuple_args, donated_invars=donated_invars)
     axis_env = xla.AxisEnv(nreps=1, names=(),
                            sizes=())  # All named axes have been vmapped
     out_nodes = xla.jaxpr_subcomp(c, closed_jaxpr.jaxpr, backend_name, axis_env,
-                                  xla_consts,
-                                  extend_name_stack(wrap_name(name, 'stage')),
-                                  *xla_args)
+                                  xla_consts, name, *xla_args)
     out_tuple = xc.ops.Tuple(c, out_nodes)
+
+    # Set up aliases (donating invars)
+    if donated_invars:
+        if backend.platform in ("gpu", "tpu"):
+            donation_results = xla.set_up_aliases(c, xla_args, out_tuple,
+                                                  donated_invars, tuple_args)
+        if any(donation_results):
+            unused_donations = [
+                str(c.GetShape(a))
+                for a, d in zip(xla_args, donation_results)
+                if d
+            ]
+            warn("Some donated buffers were not usable: {}".format(
+                ", ".join(unused_donations)))
+
     built = c.build(out_tuple)
     return built
 
@@ -299,7 +336,7 @@ def jax_buffer_set(src_buf, update, start_indices):
     return src_buf
 
 
-# jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
+jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
 
 
 def to_cupy(tensors):

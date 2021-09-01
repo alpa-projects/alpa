@@ -58,7 +58,7 @@ class DeviceMeshTest(unittest.TestCase):
         physical_mesh = device_cluster.get_physical_mesh()
         set_parallelize_options(devices=physical_mesh)
 
-        batch_size = 32
+        batch_size = 16
         input_dim = hidden_dim = output_dim = 32
 
         class Model(nn.Module):

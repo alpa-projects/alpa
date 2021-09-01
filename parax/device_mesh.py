@@ -767,6 +767,8 @@ class PhysicalDeviceMesh:
         return ray.get(obj_refs)
 
     def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        if not ray:
+            return
         if self.workers is None or not ray.is_initialized():
             return
 

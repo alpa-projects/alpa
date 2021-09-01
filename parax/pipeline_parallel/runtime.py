@@ -245,7 +245,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 key = repr(var)
                 assert key in global_outputs
                 val = global_outputs[key]
-                global_outvals_list.append(val._value)
+                # global_outvals_list.append(val._value)
+                global_outvals_list.append(val)
         logger.debug(">>> All pipeline jobs done.")
 
         if self._profile:

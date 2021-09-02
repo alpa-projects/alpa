@@ -10,13 +10,11 @@ from jax import tree_flatten
 from jax import lax
 from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar, jaxpr_as_fun
+from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun
 from jax.interpreters import xla
 
+from ..util import slices_to_jaxpr
 from .primitive_def import mark_pipeline
-
-# TODO: different operations takes different time
-# e.g. add v.s. pow
 
 gpu_backend = xc.get_local_backend("gpu")
 
@@ -146,46 +144,6 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
     return list(reversed(reversed_sliced_eqns))
 
 
-def reconstruct_by_solution(closed_jaxpr: ClosedJaxpr,
-                            sliced_eqns) -> List[ClosedJaxpr]:
-    N = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    global_outvars = set(
-        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    result = []
-    layer_invars = [set() for _ in range(N)]
-    layer_outvars = [set() for _ in range(N)]
-    layer_consts = [dict() for _ in range(N)]
-    var_layer_dict = {}
-    for i, eqns in enumerate(sliced_eqns):
-        for eqn in eqns:
-            for var in eqn.invars:
-                if isinstance(var, Literal):
-                    continue
-                if var in global_consts:
-                    layer_consts[i][var] = global_consts[var]
-                elif var in global_invars:
-                    layer_invars[i].add(var)
-                elif var_layer_dict[var] != i:
-                    layer_invars[i].add(var)
-                    layer_outvars[var_layer_dict[var]].add(var)
-                else:
-                    assert var_layer_dict[var] == i
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    var_layer_dict[var] = i
-                if var in global_outvars:
-                    layer_outvars[i].add(var)
-    for i, eqns in enumerate(sliced_eqns):
-        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
-                          list(layer_outvars[i]), eqns)
-        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
-                                       list(layer_consts[i].values()))
-        result.append(new_closed_jaxpr)
-    return result
-
-
 def forward(fn: Callable,
             layer_num: int,
             eps: float = 0,
@@ -200,7 +158,7 @@ def forward(fn: Callable,
             solution = slice_jaxpr(origin_jaxpr, layer_num, eps)
             global_invars = origin_jaxpr.jaxpr.invars
 
-            sliced_jaxprs = reconstruct_by_solution(origin_jaxpr, solution)
+            sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, solution)
             sliced_callables = [
                 jax.remat(jaxpr_as_fun(layer))
                 if use_remat else jaxpr_as_fun(layer) for layer in sliced_jaxprs

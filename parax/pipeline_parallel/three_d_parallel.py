@@ -12,10 +12,11 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.runtime import (GpipeSchedule, Jax3DPipeline,
                                              gen_linear_pipeline_dependency)
 from parax.pipeline_parallel.stage import (
-    generate_sharded_xla_stages, mark_global_and_local_vars,
+    compute_to_acc_pipe, generate_sharded_xla_stages, mark_global_and_local_vars,
     slice_closed_jaxpr_by_manual_pipeline_marks,
     slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks)
+    mark_missing_vars_in_pipeline_marks, compute_to_acc, slice_apply_gradient,
+    mark_grad_mesh, rewrite_apply_grad)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], closed_jaxpr.eqns[split_idx + 1:]
     ]
-    return slices_to_jaxpr(closed_jaxpr, sliced_eqns)
+    return *slices_to_jaxpr(closed_jaxpr, sliced_eqns), split_eqn
 
 
 def split_donate_invars(donated_invars: Sequence[bool], global_invars,
@@ -91,27 +92,35 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
     # the sliced_meshes is set when tracing into forward decorator
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    compute_grad_jaxpr, apply_grad_jaxpr = split_compute_and_apply(closed_jaxpr)
-    # TODO(yonghao): split donate invar
-    global_invars = compute_grad_jaxpr.jaxpr.invars
-    global_outvars = compute_grad_jaxpr.jaxpr.outvars
+    compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(closed_jaxpr)
+    # compute grad to accumulate grad
+    acc_grad_jaxpr, acc_grad_dict = compute_to_acc_pipe(compute_grad_jaxpr)
+    # change invars of apply grad to output of accumulate grad
+    apply_grad_jaxpr = rewrite_apply_grad(apply_grad_jaxpr, acc_grad_dict, barrier)
+    # slice accumulate grad
+    global_invars = acc_grad_jaxpr.jaxpr.invars
+    global_outvars = acc_grad_jaxpr.jaxpr.outvars
     if pipeline_marker_type == "manual":
         gensym_func = gensym([closed_jaxpr.jaxpr])
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
-            compute_grad_jaxpr)
+            acc_grad_jaxpr)
         jax_pipeline_stages = [
             mark_global_and_local_vars(stage, gensym_func)
             for stage in jax_pipeline_stages
         ]
     elif pipeline_marker_type == "full":
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
-            compute_grad_jaxpr)
+            acc_grad_jaxpr)
         jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
             jax_pipeline_stages, global_invars, global_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
-    # TODO(yonghao): compute grad to accumulate grad
-    # TODO(yonghao): add sliced apply-grad stages
+    # slice apply-grad stages
+    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars, jax_pipeline_stages)
+    sliced_apply_grad = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
+    # TODO(yonghao): move auto mesh slicing until here
+
+    # TODO(yonghao): split donate invar with mesh info
 
     # Generate schedule and placement
     num_batch = 1

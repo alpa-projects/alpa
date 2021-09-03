@@ -22,12 +22,11 @@ from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
 from warnings import warn
 
-
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
 from jax._src.api import FLAGS
-FLAGS.experimental_cpp_jit = False
 
+FLAGS.experimental_cpp_jit = False
 
 ########################################
 ##### Parax API Utilities
@@ -436,7 +435,7 @@ def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
 
 
 def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                            sliced_eqns) -> List[ClosedJaxpr]:
+                    sliced_eqns) -> List[ClosedJaxpr]:
     N = len(sliced_eqns)
     global_invars = set(closed_jaxpr.jaxpr.invars)
     global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))

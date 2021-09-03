@@ -148,36 +148,28 @@ class LogicalDeviceMesh:
                (other.flatten_ids, other.id_mesh.shape,
                 other.mesh_alpha, other.mesh_beta)
 
+remote_buffer_counter = 0
 
-class RemoteExecutableRef:
-    """A reference to a remote compiled XLA executable binary."""
-
-    ct = 0
-
-    def __init__(self, device_mesh):
-        self.device_mesh = device_mesh
-        self.uuid = RemoteExecutableRef.ct
-        RemoteExecutableRef.ct = (RemoteExecutableRef.ct + 1) % (1 << 60)
-
-    def __repr__(self):
-        return f"RemoteExecutableRef(uuid = {self.uuid})"
-
-    def __del__(self):
-        self.device_mesh.delete_remote_executable(self)
+def next_remote_buffer_uuid(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    if number == 1:
+        ret = remote_buffer_counter
+    else:
+        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
 
 
 class RemoteBufferRef:
     """A reference to a remote device buffer."""
 
-    ct = 0
-
-    def __init__(self, device_mesh, host_id, device_id):
+    def __init__(self, device_mesh, host_id, device_id, uuid=None):
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
-        self.uuid = RemoteBufferRef.ct
+        self.uuid = uuid or next_remote_buffer_uuid()
         self.is_donated = False
-        RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
                 self.uuid, self.device_mesh.device_strs))
@@ -309,13 +301,13 @@ class MeshHostWorker:
 
     ##### Executable Related Functions #####
     def put_executable(self, uuid: int, executable_class, *args):
-        self.executables[uuid] = executable_class(self.backend, *args)
+        self.executables[uuid] = executable_class(self, *args)
 
     def delete_executable(self, uuid: int):
         del self.executable[uuid]
 
     def run_executable(self, uuid: int, *args):
-        self.executables[uuid].execute_on_worker(self.local_buffers, *args)
+        self.executables[uuid].execute_on_worker(*args)
 
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
@@ -728,10 +720,7 @@ class PhysicalDeviceMesh:
 
     ##### Executable Related Functions #####
     def shard_args(self, arg_indices, donated_invars, args):
-        if not self.is_distributed:
-            # single host w/o Ray
-            return pxla.shard_args(self.devices, arg_indices, args)
-        else:
+        if self.is_distributed:
             input_bufs = []
             for arg, indices, donated in zip(args, arg_indices, donated_invars):
                 # Fast path for DistributedArray
@@ -746,6 +735,9 @@ class PhysicalDeviceMesh:
                         arg.delete()
 
             return input_bufs
+        else:
+            # single host w/o Ray
+            return pxla.shard_args(self.devices, arg_indices, args)
 
     def get_outputs_handler(self, avals, sharding_specs):
         if self.is_distributed:

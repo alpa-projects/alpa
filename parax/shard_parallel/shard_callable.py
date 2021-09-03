@@ -18,7 +18,6 @@ from parax.measure_record import SearchTask, load_best_record
 from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
-                                                get_input_output_sharding_specs,
                                                 HloProtoStatus)
 from parax.util import jaxpr_to_hlo_computation
 
@@ -217,8 +216,8 @@ def shard_parallel_internal_gradient_accumulation(
 
     closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads =\
         add_gradient_accumulation(closed_jaxpr, num_micro_batches)
-    global_in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[:-num_grads]]
-    global_out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
+    in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[:-num_grads]]
+    out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
     grad_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[-num_grads:]]
 
     # Run auto-sharding and slice the combined HLO into two HLO: accumulate_grad and apply_grad
@@ -252,7 +251,7 @@ def shard_parallel_internal_gradient_accumulation(
 
     # Compile them to mesh executables
     mesh_executable = GradAccMeshDriverExecutable(physical_mesh, accumulate_grad,
-        apply_grad, strategy_config, global_in_avals, global_out_avals, grad_avals,
+        apply_grad, strategy_config, in_avals, out_avals, grad_avals,
         donated_invars, batch_invars, accumulate_grad_invar_indices, apply_grad_invar_indices,
         num_micro_batches)
     return mesh_executable.get_driver_callable()

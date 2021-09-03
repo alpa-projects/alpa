@@ -14,7 +14,7 @@ from jax._src.dlpack import from_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
-from jax.interpreters import xla
+from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
@@ -202,6 +202,43 @@ def count_communication_primitives(hlo_ir):
         "reduce-scatter-start(")
     all_to_all = hlo_ir.count("all-to-all(") + hlo_ir.count("all-to-all-start(")
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
+
+
+def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
+    """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
+    c = xc.XlaBuilder("allocate_zero_buffers")
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
+    ret = []
+    for shape, dtype in zip(shapes, dtypes):
+        zero = xc.ops.Constant(c, np.array(0, dtype=dtype))
+        zero = xc.ops.Broadcast(zero, shape)
+        ret.append(zero)
+    c.clear_sharding()
+    c = c.build(xc.ops.Tuple(c, ret))
+
+    compile_options = xb.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    compiled = backend.compile(c, compile_options)
+    return compiled
+
+
+def get_shard_shape(aval, sharding_spec):
+    """Return the shape of a shard."""
+    shape = []
+    for dim, spec_dim in zip(aval.shape, sharding_spec.sharding):
+        if isinstance(spec_dim, pxla.NoSharding):
+            shape.append(dim)
+        elif isinstance(spec_dim, pxla.Chunked):
+            shape.append(dim // np.prod(spec_dim.chunks))
+        elif isinstance(spec_dim, pxla.Unstacked):
+            shape.append(spec_dim.size)
+    return tuple(shape)
 
 
 class XlaPassContext:

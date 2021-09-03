@@ -115,11 +115,16 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             jax_pipeline_stages, global_invars, global_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
+    # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
+    # delete the two lines below in auto mesh version
+    stage_num = len(jax_pipeline_stages)
+    stage_to_mesh = {
+        stage: (i if i < stage_num / 2 else stage_num - i - 1) 
+        for i, stage in enumerate(jax_pipeline_stages)
+    }
     # slice apply-grad stages
-    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars, jax_pipeline_stages)
+    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars, jax_pipeline_stages, stage_to_mesh)
     sliced_apply_grad = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
-    # TODO(yonghao): move auto mesh slicing until here
-
     # TODO(yonghao): split donate invar with mesh info
 
     # Generate schedule and placement

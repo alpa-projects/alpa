@@ -120,12 +120,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # delete the two lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
     stage_to_mesh = {
-        stage: (i if i < stage_num / 2 else stage_num - i - 1) 
-        for i, stage in enumerate(jax_pipeline_stages)
+        i: (i if i < stage_num / 2 else stage_num - i - 1) 
+        for i, _ in enumerate(jax_pipeline_stages)
     }
     # slice apply-grad stages
     grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars, jax_pipeline_stages, stage_to_mesh)
-    sliced_apply_grad = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
+    sliced_apply_grad, invars_alloc = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
     # TODO(yonghao): split donate invar with mesh info
 
     # Generate schedule and placement

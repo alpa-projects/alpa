@@ -94,6 +94,13 @@ def record_values(vars, avals, env):
         env[var] = aval
 
 
+def get_and_set(closed_jaxpr, env):
+    outs = jaxpr_as_fun(closed_jaxpr)(
+        *get_invals_from_env(closed_jaxpr, env)
+    )
+    record_values(closed_jaxpr.jaxpr.outvars, outs, env)
+
+
 def test_compute_and_apply():
     def train_step(optimizer, batch):
         grad_param, _x, _y = parax.grad(loss_func,
@@ -141,17 +148,11 @@ def test_compute_and_apply():
     # Test 1: split compute and apply
     from copy import copy
     env_1 = copy(env)
-    outs = jaxpr_as_fun(compute_grad_jaxpr)(
-        *get_invals_from_env(compute_grad_jaxpr, env_1)
-    )
-    record_values(compute_grad_jaxpr.jaxpr.outvars, outs, env_1)
+    get_and_set(compute_grad_jaxpr, env_1)
     for inv, outv in zip(barrier.invars, barrier.outvars):
         if not isinstance(outv, DropVar) and inv in env_1:
             env_1[outv] = env_1[inv]
-    outs = jaxpr_as_fun(old_apply_grad_jaxpr)(
-        *get_invals_from_env(old_apply_grad_jaxpr, env_1)
-    )
-    record_values(old_apply_grad_jaxpr.jaxpr.outvars, outs, env_1)
+    get_and_set(old_apply_grad_jaxpr, env_1)
     outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_1)
     for t, c in zip(outs, correct):
         assert jnp.allclose(t, c)
@@ -163,14 +164,8 @@ def test_compute_and_apply():
         if inv not in env_2:
             assert inv in grad_invars
             env_2[inv] = jnp.zeros_like(inv.aval)
-    outs = jaxpr_as_fun(acc_grad_jaxpr)(
-        *get_invals_from_env(acc_grad_jaxpr, env_2)
-    )
-    record_values(acc_grad_jaxpr.jaxpr.outvars, outs, env_2)
-    outs = jaxpr_as_fun(apply_grad_jaxpr)(
-        *get_invals_from_env(apply_grad_jaxpr, env_2)
-    )
-    record_values(apply_grad_jaxpr.jaxpr.outvars, outs, env_2)
+    get_and_set(acc_grad_jaxpr, env_2)
+    get_and_set(apply_grad_jaxpr, env_2)
     outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_2)
     for t, c in zip(outs, correct):
         assert jnp.allclose(t, c)

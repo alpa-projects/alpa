@@ -34,7 +34,8 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn], closed_jaxpr.eqns[split_idx + 1:]
     ]
-    return *slices_to_jaxpr(closed_jaxpr, sliced_eqns), split_eqn
+    compute, _, apply = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
+    return compute, apply, split_eqn
 
 
 def split_donate_invars(donated_invars: Sequence[bool], global_invars,

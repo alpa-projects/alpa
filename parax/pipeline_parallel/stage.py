@@ -698,13 +698,14 @@ def generate_sharded_xla_stages(name: str,
     return stages
 
 
-def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage], stage_to_mesh):
+def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
+                   stage_to_mesh):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
-    for stage in stages:
+    for i, stage in enumerate(stages):
         for var in stage.outvars:
             if isinstance(var, Var):
-                outvar2mesh[var] = stage_to_mesh[stages]
+                outvar2mesh[var] = stage_to_mesh[i]
     return {
         invar: outvar2mesh[invar] for invar in invars if invar in outvar2mesh
     }
@@ -898,7 +899,7 @@ def compute_to_acc(raw_jaxpr, slices, donated_invars_set):
     return new_slices
 
 
-def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr) -> ClosedJaxpr:
+def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
     from jax.lax import add_p
     # Assume that no grad is literal
     raw_gradients = set([
@@ -923,11 +924,13 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr) -> ClosedJaxpr:
     # modify output, here all grads are acc_grad
     new_glob_outvars = []
     new_glob_invars = compute_jaxpr.jaxpr.invars + []
+    old_outs_to_new = dict()
     for outvar in compute_jaxpr.jaxpr.outvars:
         if isinstance(outvar, Var):
             assert outvar in gradients
             new_glob_outvars.append(grad_outs[gradients[outvar]])
             new_glob_invars.append(grad_invars[gradients[outvar]])
+            old_outs_to_new[outvar] = grad_outs[gradients[outvar]]
         else:
             raise NotImplemented('gradients cannot be Literal')
     gradients = set(grad_values)
@@ -983,7 +986,7 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr) -> ClosedJaxpr:
                       new_glob_outvars, new_eqns)
     # We do not modify donate_invars here, as it is only to append Trues
     # Instead return grad outs to help modify apply_grad
-    return ClosedJaxpr(new_jaxpr, compute_jaxpr.consts), grad_outs
+    return ClosedJaxpr(new_jaxpr, compute_jaxpr.consts), old_outs_to_new
 
 
 def rewrite_apply_grad(closed_jaxpr: ClosedJaxpr, in_dict, barrier: JaxprEqn):
@@ -991,6 +994,8 @@ def rewrite_apply_grad(closed_jaxpr: ClosedJaxpr, in_dict, barrier: JaxprEqn):
     mapping = {
         barrier_out: in_dict[barrier_in]
         for barrier_in, barrier_out in zip(barrier.invars, barrier.outvars)
+        if (not isinstance(barrier_out, DropVar) and
+            barrier_out in closed_jaxpr.jaxpr.invars)
     }
 
     def map_var(var):
@@ -998,7 +1003,7 @@ def rewrite_apply_grad(closed_jaxpr: ClosedJaxpr, in_dict, barrier: JaxprEqn):
             return mapping[var]
         return var
 
-    new_glob_invars = [mapping[var] for var in closed_jaxpr.jaxpr.invars]
+    new_glob_invars = [map_var(var) for var in closed_jaxpr.jaxpr.invars]
     new_eqns = []
     for eqn in closed_jaxpr.eqns:
         new_invars = [map_var(var) for var in eqn.invars]

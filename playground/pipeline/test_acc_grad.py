@@ -22,9 +22,6 @@ class MLP_Model(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        # FIXME (zhuohan): if don't require the gradient of x here, the
-        #                  backward pass of the pipeline start will not
-        #                  be generated.
         mark_pipeline(name='1', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
         x = nn.relu(x)
@@ -121,11 +118,11 @@ def test_compute_and_apply():
                                           barrier)
     # slice accumulate grad
     gensym_func = gensym([closed_jaxpr.jaxpr])
-    jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
+    old_jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
         acc_grad_jaxpr)
     jax_pipeline_stages = [
         mark_global_and_local_vars(stage, gensym_func)
-        for stage in jax_pipeline_stages
+        for stage in old_jax_pipeline_stages
     ]
     # delete the two lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
@@ -156,6 +153,7 @@ def test_compute_and_apply():
     outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_1)
     for t, c in zip(outs, correct):
         assert jnp.allclose(t, c)
+    del env_1
     # Test 2: accumulate and apply
     env_2 = copy(env)
     grad_num = len(acc_grad_jaxpr.out_avals)
@@ -169,7 +167,25 @@ def test_compute_and_apply():
     outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_2)
     for t, c in zip(outs, correct):
         assert jnp.allclose(t, c)
-    return
+    del env_2
+    # Test 3: slices
+    # slices:
+    env_3 = copy(env)
+    grad_num = len(acc_grad_jaxpr.out_avals)
+    grad_invars = set(acc_grad_jaxpr.jaxpr.invars[-1 * grad_num:])
+    for invar in acc_grad_jaxpr.jaxpr.invars:
+        if invar not in env_3:
+            assert inv in grad_invars
+            env_3[invar] = jnp.zeros_like(invar.aval)
+
+    for stage in old_jax_pipeline_stages:
+        get_and_set(stage.closed_jaxpr(), env_3)
+    for slice in sliced_apply_grad:
+        get_and_set(slice, env_3)
+    outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_3)
+    for t, c in zip(outs, correct):
+        assert jnp.allclose(t, c)
+
 
 test_compute_to_accumulate()
 test_compute_and_apply()

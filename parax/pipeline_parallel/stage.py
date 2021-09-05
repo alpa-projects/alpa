@@ -824,81 +824,6 @@ def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
     return is_gradients
 
 
-def is_pipeline(closed_jaxpr: ClosedJaxpr, is_gradient):
-    """If the closed_jaxpr is a pipeline stage, ignore the last equation(pipeline end marker)"""
-    from parax.pipeline_parallel.primitive_def import pipeline_p
-    last_eqn = closed_jaxpr.eqns[-1]
-    if last_eqn.primitive is not pipeline_p:
-        return False, closed_jaxpr.jaxpr.outvars, closed_jaxpr.eqns, is_gradient
-    new_is_gradient = set()
-    for i, outvar in enumerate(last_eqn.outvars):
-        if outvar in is_gradient:
-            new_is_gradient.add(last_eqn.invars[i])
-    return True, last_eqn.invars, closed_jaxpr.eqns[:-1], new_is_gradient
-
-
-def _compute_to_acc(closed_jaxpr: ClosedJaxpr, donated_invars, is_gradient):
-    """
-    Transform compute_grad jaxpr to accumulate_grad jaxpr.
-    Args:
-        closed_jaxpr: the compute_grad jaxpr. It is supposed to be the one in a single pipeline-stage
-        donated_invars: donated invars of the input jaxpr
-        is_gradient: a set of vars accumulated in outputs
-    """
-    from jax.lax import add_p
-    # FIXME(yonghao): add division of microbatch num
-    pipeline, old_outs, old_eqns, is_gradient = is_pipeline(
-        closed_jaxpr, is_gradient)
-    gensym_fn = gensym([
-        closed_jaxpr.jaxpr,
-    ])
-    # add input:
-    grad_invars = {
-        outvar: gensym_fn(outvar.aval)
-        for outvar in old_outs
-        if isinstance(outvar) and outvar in is_gradient
-    }
-    new_invars = closed_jaxpr.jaxpr.invars + list(grad_invars.values())
-    # modify output
-    new_outvars = [
-        outvar if not isinstance(outvar, Var) or outvar not in is_gradient else
-        gensym_fn(outvar.aval) for outvar in old_outs
-    ]
-    # add grad acc eqns
-    acc_grad_eqns = []
-    for i, outvar in enumerate(old_outs):
-        if outvar in is_gradient:
-            acc_grad_eqns.append(
-                new_jaxpr_eqn([outvar, grad_invars[outvar]], [new_outvars[i]],
-                              add_p, {}))
-    new_eqns = old_eqns + acc_grad_eqns
-    if pipeline:
-        # replace the input of old pipeline-end marker
-        old_pipeline_eqn = closed_jaxpr.eqns[-1]
-        new_eqns.append(
-            new_jaxpr_eqn(new_outvars, old_pipeline_eqn.outvars,
-                          old_pipeline_eqn.primitive, old_pipeline_eqn.params,
-                          old_pipeline_eqn.source_info))
-        new_outvars = old_pipeline_eqn.outvars
-    # construct jaxpr
-    jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_invars, new_outvars,
-                  new_eqns)
-    # add donate invars
-    donated_invars = tuple(donated_invars) + (True,) * len(grad_invars)
-    # return closed_jaxpr and new donate_invars
-    return ClosedJaxpr(jaxpr, closed_jaxpr.consts), donated_invars
-
-
-def compute_to_acc(raw_jaxpr, slices, donated_invars_set):
-    is_gradient_sets = get_gradient(raw_jaxpr, slices)
-    new_slices = [
-        _compute_to_acc(slice, donated_invars, is_gradient)
-        for slice, donated_invars, is_gradient in zip(
-            slices, donated_invars_set, is_gradient_sets)
-    ]
-    return new_slices
-
-
 def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
     from jax.lax import add_p
     # Assume that no grad is literal
@@ -990,6 +915,7 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
 
 
 def rewrite_apply_grad(closed_jaxpr: ClosedJaxpr, in_dict, barrier: JaxprEqn):
+    # FIXME(yonghao): add division of microbatch num
     # rewrite the apply_gradients by replacing all inputs with info from in_dict
     mapping = {
         barrier_out: in_dict[barrier_in]

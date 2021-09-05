@@ -9,14 +9,14 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
-from parax.pipeline_parallel.runtime import (GpipeSchedule, Jax3DPipeline,
-                                             gen_linear_pipeline_dependency)
+from parax.pipeline_parallel.runtime import (
+    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
-    compute_to_acc_pipe, generate_sharded_xla_stages, mark_global_and_local_vars,
-    slice_closed_jaxpr_by_manual_pipeline_marks,
+    compute_to_acc_pipe, generate_sharded_xla_stages,
+    mark_global_and_local_vars, slice_closed_jaxpr_by_manual_pipeline_marks,
     slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks, compute_to_acc, slice_apply_gradient,
-    mark_grad_mesh, rewrite_apply_grad)
+    mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
+    rewrite_apply_grad)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,8 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
             split_idx = idx
     assert split_eqn is not None, 'missing barrier between compute and apply'
     sliced_eqns = [
-        closed_jaxpr.eqns[:split_idx], [split_eqn], closed_jaxpr.eqns[split_idx + 1:]
+        closed_jaxpr.eqns[:split_idx], [split_eqn],
+        closed_jaxpr.eqns[split_idx + 1:]
     ]
     compute, _, apply = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
     return compute, apply, split_eqn
@@ -93,11 +94,13 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
     # the sliced_meshes is set when tracing into forward decorator
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(closed_jaxpr)
+    compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
+        closed_jaxpr)
     # compute grad to accumulate grad
     acc_grad_jaxpr, acc_grad_dict = compute_to_acc_pipe(compute_grad_jaxpr)
     # change invars of apply grad to output of accumulate grad
-    apply_grad_jaxpr = rewrite_apply_grad(apply_grad_jaxpr, acc_grad_dict, barrier)
+    apply_grad_jaxpr = rewrite_apply_grad(apply_grad_jaxpr, acc_grad_dict,
+                                          barrier)
     # slice accumulate grad
     global_invars = acc_grad_jaxpr.jaxpr.invars
     global_outvars = acc_grad_jaxpr.jaxpr.outvars
@@ -120,18 +123,21 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # delete the two lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
     stage_to_mesh = {
-        i: (i if i < stage_num / 2 else stage_num - i - 1) 
+        i: (i if i < stage_num / 2 else stage_num - i - 1)
         for i, _ in enumerate(jax_pipeline_stages)
     }
     # slice apply-grad stages
-    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars, jax_pipeline_stages, stage_to_mesh)
-    sliced_apply_grad, invars_alloc = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
+    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
+                               jax_pipeline_stages, stage_to_mesh)
+    sliced_apply_grad, invars_alloc = slice_apply_gradient(
+        apply_grad_jaxpr, grad_mesh)
     # TODO(yonghao): split donate invar with mesh info
 
     # Generate schedule and placement
     num_batch = 1
-    n_stages = len(jax_pipeline_stages)
-    dependency = gen_linear_pipeline_dependency(n_stages)
+    n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
+    assert len(jax_pipeline_stages) == len(sliced_apply_grad) * 2
+    dependency = gen_linear_pipeline_dependency_with_apply(n_stages)
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
                              num_batch=num_batch)

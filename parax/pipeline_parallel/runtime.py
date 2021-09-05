@@ -162,6 +162,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
         self._microbatches = self._make_microbatches(*args)
+        # TODO(yonghao): prepare gradients
 
         global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
@@ -317,6 +318,21 @@ def gen_linear_pipeline_dependency(num_stage):
     return d
 
 
+def gen_linear_pipeline_dependency_with_apply(num_stage):
+    """
+    Generate dependency matrix marks compute grad and apply grad
+    """
+    assert num_stage % 3 == 0
+    d = np.zeros([num_stage, num_stage], dtype=np.int)
+    layer_num = num_stage // 3
+    for i in range(layer_num * 2 - 1):
+        d[i + 1][i] = 1
+    for i in range(layer_num):
+        d[layer_num * 2 - 1 - i][i] = 1
+        d[layer_num * 2 + i][i] = 1
+    return d
+
+
 class GpipeSchedule:
     """
     Construct a Gpipe-like schedule.
@@ -342,12 +358,12 @@ class GpipeSchedule:
         self.meshes = sliced_meshes
         self.num_batch = num_batch
         self.costs = costs
+        if dependency.shape[0] % 3 != 0:
+            raise RuntimeError(
+                "GPipe schedule require a triple number of stages") 
         self.num_stage = dependency.shape[0]
 
-        if self.num_stage % 2 != 0:
-            raise RuntimeError(
-                "Gpipe schedule require an even number of stages.")
-        self.num_pipeline_worker = self.num_stage // 2
+        self.num_pipeline_worker = self.num_stage // 3
         # TODO (zhuohan): Seperate device placement and runtime scheduling
         if not self.meshes:
             # These are virtual meshes
@@ -399,6 +415,9 @@ class GpipeSchedule:
         for k in range(num_clock):
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
+        # apply grad schedules
+        scheds = [(m - 1, i + 2 * n) for i in range(n)]
+        schedules.append(scheds)
         return schedules
 
     def pprint_schedule(self):

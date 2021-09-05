@@ -17,6 +17,7 @@ from parax.testing import assert_allclose
 
 
 class GradAccumulationTest(unittest.TestCase):
+
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
@@ -88,7 +89,8 @@ class GradAccumulationTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(GradAccumulationTest("test_gradient_accumulation_single_host"))
+    suite.addTest(
+        GradAccumulationTest("test_gradient_accumulation_single_host"))
     suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
     return suite
 

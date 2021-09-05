@@ -14,6 +14,7 @@ from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file)
+from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from parax.util import get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
@@ -27,15 +28,18 @@ class HloProtoStatus(enum.IntEnum):
     # the SPMD partitioner.
 
 
-def compile_with_search(backend, xla_computation, physical_mesh,
-                        logical_mesh_choices, logical_mesh_search_mode,
-                        memory_budget_per_device, search_task, record_file,
-                        multiple_stages):
+def compile_with_search(backend, xla_computation, avals, out_avals,
+                        donated_invars, physical_mesh, logical_mesh_choices,
+                        logical_mesh_search_mode, memory_budget_per_device,
+                        search_task, record_file, multiple_stages):
     """
     Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
       backend (xla_extension.Client): The XLA backend client.
+      avals (Sequence[ShapedArray]): The abstract values of input arguments.
+      out_avals (Sequence[ShapedArray]): The abstract values of outputs.
+      donated_invars (Sequence[bool]): Whether the arguments are donated.
       xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
         got by tracing the jax function.
       physical_mesh (PhysicalDeviceMesh): The physical device mesh.
@@ -130,28 +134,22 @@ def compile_with_search(backend, xla_computation, physical_mesh,
         if multiple_stages:
             hlo_stages = get_auto_sharded_hlo_stages()
     else:  # Search for the best logical mesh
+        assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
         best_hlo_stages = None
         best_time_cost = float("inf")
         for logical_mesh in logical_mesh_choices:
             compiled, solution_vector, objective = _invoke_compilation(
                 logical_mesh)
-            if multiple_stages:
-                hlo_stages = get_auto_sharded_hlo_stages()
             strategy_config = StrategyConfig(build_random_seed,
                                              logical_mesh.id_mesh.shape,
                                              solution_vector)
 
             if logical_mesh_search_mode == "measurement":
-                # Send the code and strategy to remote workers
-                if physical_mesh.is_distributed:
-                    executable = physical_mesh.compile_remote_executable(
-                        compiled.hlo_modules()
-                        [0].as_serialized_hlo_module_proto(), strategy_config,
-                        HloProtoStatus.FULLY_OPTIMIZED)
-                else:
-                    executable = compiled
-                time_costs = tuple(physical_mesh.profile_executable(executable))
+                mesh_exe = NormalMeshDriverExecutable(physical_mesh, compiled,
+                                                      strategy_config, avals,
+                                                      out_avals, donated_invars)
+                time_costs = tuple(mesh_exe.profile_with_dummy_inputs())
             else:
                 assert logical_mesh_search_mode == "cost_model"
                 time_costs = (objective,)
@@ -173,8 +171,6 @@ def compile_with_search(backend, xla_computation, physical_mesh,
 
         logical_mesh, compiled, solution_vector, objective = \
             best_logical_mesh, best_compiled, best_solution_vector, best_objective
-        if multiple_stages:
-            hlo_stages = best_hlo_stages
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective

@@ -223,10 +223,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return self.total_allocation_size
 
     def __del__(self):
-        if self.physical_mesh.is_distributed:
-            self.physical_mesh.delete_remote_executable(self)
-        else:
-            self.compiled.delete()
+        self.physical_mesh.delete_remote_executable(self)
 
 
 def get_buffers(buffer_dict, uuids):
@@ -526,12 +523,7 @@ class GradAccMeshDriverExecutable:
         raise NotImplementedError
 
     def __del__(self):
-        if self.physical_mesh.is_distributed:
-            self.physical_mesh.delete_remote_executable(self)
-        else:
-            self.accumulate_grad.delete()
-            self.apply_grad.delete()
-            self.allocate_zero_buffers.delete()
+        self.physical_mesh.delete_remote_executable(self)
 
 
 class GradAccMeshWorkerExecutable:

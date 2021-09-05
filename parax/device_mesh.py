@@ -105,7 +105,7 @@ class MeshHostWorker:
         self.executables[uuid] = executable_class(self, *args)
 
     def delete_executable(self, uuid: int):
-        del self.executable[uuid]
+        del self.executables[uuid]
 
     def run_executable(self, uuid: int, *args):
         self.executables[uuid].execute_on_worker(*args)
@@ -577,7 +577,7 @@ class PhysicalDeviceMesh:
 
     def delete_remote_executable(self, executable: MeshDriverExecutable):
         """Delete remote worker executables of a driver executable."""
-        if self.workers is None:
+        if self.workers is None or not ray.is_initialized():
             return
 
         for i in range(self.num_hosts):

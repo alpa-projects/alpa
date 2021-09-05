@@ -669,6 +669,7 @@ def generate_sharded_xla_stages(name: str,
         outvars=list(outvars),
         eqns=eqns,
     )
+    donated_invars = (False,) * len(invars)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
@@ -676,6 +677,9 @@ def generate_sharded_xla_stages(name: str,
     stage_protos, strategy_config = compile_with_search(
         backend,
         built,
+        invars,
+        outvars,
+        donated_invars,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,

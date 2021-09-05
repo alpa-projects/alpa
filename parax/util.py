@@ -20,12 +20,11 @@ from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
 from warnings import warn
 
-
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
 from jax._src.api import FLAGS
-FLAGS.experimental_cpp_jit = False
 
+FLAGS.experimental_cpp_jit = False
 
 ########################################
 ##### Parax API Utilities

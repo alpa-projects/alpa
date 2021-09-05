@@ -187,8 +187,9 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
     # Compile a mesh executable
-    compiled = NormalMeshDriverExecutable(physical_mesh, compiled, strategy_config,
-                                          avals, out_avals, donated_invars)
+    compiled = NormalMeshDriverExecutable(physical_mesh, compiled,
+                                          strategy_config, avals, out_avals,
+                                          donated_invars)
     return compiled.get_driver_callable()
 
 
@@ -249,10 +250,11 @@ def shard_parallel_internal_gradient_accumulation(
                                              physical_mesh.total_devices, False,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
-    # Compile them to mesh executables
-    mesh_executable = GradAccMeshDriverExecutable(physical_mesh, accumulate_grad,
-        apply_grad, strategy_config, in_avals, out_avals, grad_avals,
-        donated_invars, batch_invars, accumulate_grad_invar_indices, apply_grad_invar_indices,
+    # Compile them to a single mesh executable
+    mesh_executable = GradAccMeshDriverExecutable(
+        physical_mesh, accumulate_grad, apply_grad, strategy_config, in_avals,
+        out_avals, grad_avals, donated_invars, batch_invars,
+        accumulate_grad_invar_indices, apply_grad_invar_indices,
         num_micro_batches)
     return mesh_executable.get_driver_callable()
 

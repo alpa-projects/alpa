@@ -248,8 +248,10 @@ class XlaShardedPipelineStage(PipelineStage):
         # Return the final callable
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        mesh_executable = NormalMeshDriverExecutable(mesh, compiled, self.strategy_config,
-                avals, out_avals, self.donated_invars)
+        mesh_executable = NormalMeshDriverExecutable(mesh, compiled,
+                                                     self.strategy_config,
+                                                     avals, out_avals,
+                                                     self.donated_invars)
 
         # TODO(Hao): make this better
         self.input_sharding_specs = mesh_executable.input_sharding_specs

@@ -203,11 +203,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         log_time_stamp("Benchmark")
     else:
         del (optimizer, batch)
-        costs = physical_mesh.profile_executable(executable)
+        costs = executable.profile_with_dummy_inputs()
         log_time_stamp("Benchmark")
 
     # Check sharding strategy
-    real_mem = physical_mesh.get_total_allocation_size(executable)
+    real_mem = executable.get_total_allocation_size()
     objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_module = testing.last_compiled_executable.hlo_modules()[0]
     hlo_ir = hlo_module.to_string()

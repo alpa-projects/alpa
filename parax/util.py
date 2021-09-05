@@ -5,6 +5,7 @@ import itertools as it
 import os
 import subprocess
 import time
+from warnings import warn
 
 import cupy as cp
 import flax
@@ -14,18 +15,16 @@ from jax._src.dlpack import from_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict
-from jax.interpreters import xla
+from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
-from warnings import warn
-
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
 from jax._src.api import FLAGS
-FLAGS.experimental_cpp_jit = False
 
+FLAGS.experimental_cpp_jit = False
 
 ########################################
 ##### Parax API Utilities
@@ -204,6 +203,43 @@ def count_communication_primitives(hlo_ir):
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 
+def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
+    """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
+    c = xc.XlaBuilder("allocate_zero_buffers")
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
+    ret = []
+    for shape, dtype in zip(shapes, dtypes):
+        zero = xc.ops.Constant(c, np.array(0, dtype=dtype))
+        zero = xc.ops.Broadcast(zero, shape)
+        ret.append(zero)
+    c.clear_sharding()
+    c = c.build(xc.ops.Tuple(c, ret))
+
+    compile_options = xb.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    compiled = backend.compile(c, compile_options)
+    return compiled
+
+
+def get_shard_shape(aval, sharding_spec):
+    """Return the shape of a shard."""
+    shape = []
+    for dim, spec_dim in zip(aval.shape, sharding_spec.sharding):
+        if isinstance(spec_dim, pxla.NoSharding):
+            shape.append(dim)
+        elif isinstance(spec_dim, pxla.Chunked):
+            shape.append(dim // np.prod(spec_dim.chunks))
+        elif isinstance(spec_dim, pxla.Unstacked):
+            shape.append(spec_dim.size)
+    return tuple(shape)
+
+
 class XlaPassContext:
     """A global context for passing arguments from python to XLA c++ passes."""
 
@@ -228,7 +264,7 @@ class XlaPassContext:
 
 
 def profile_xla_executable(compiled, backend, local_devices):
-    """Measure the time costs of a xla executable."""
+    """Measure the time costs of a xla executable with dummy inputs."""
     hlo_module = compiled.hlo_modules()[0]
 
     # Allocate dummy buffers
@@ -264,7 +300,8 @@ def benchmark_func(run_func,
                    repeat=3,
                    number=5,
                    min_repeat_second=None):
-    """Benchmark the execution time of a function.
+    """
+    Benchmark the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
     The return value is a list of `repeat` elements and each elements is
@@ -276,7 +313,7 @@ def benchmark_func(run_func,
     costs = []
 
     # Warmup
-    for i in range(warmup):
+    for _ in range(warmup):
         run_func()
 
     # Choose a "number" according to "min_repeat_second"
@@ -290,10 +327,10 @@ def benchmark_func(run_func,
         number = max(int(min_repeat_second / cost), 1)
 
     # Benchmark
-    for i in range(repeat):
+    for _ in range(repeat):
         sync_func()
         tic = time.time()
-        for j in range(number):
+        for __ in range(number):
             run_func()
         sync_func()
         costs.append(time.time() - tic)

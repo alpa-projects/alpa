@@ -1,11 +1,11 @@
-"""Cluster related configurations (e.g., topology)."""
-import logging
+"""The device mesh runtime that manages buffers and runs computation distributedly."""
 from collections.abc import Iterable
 from collections import defaultdict
+import logging
+from operator import attrgetter
 import pickle
 import time
-from typing import Union, List
-from operator import attrgetter
+from typing import List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
@@ -13,21 +13,21 @@ import ray.util.collective as col
 
 import jax.numpy
 from jax import core, xla, eval_shape
-from jax._src.util import (partial, unzip3)
+from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
+from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
-                                   _hashable_index, ShardedDeviceArray)
-from jax.lib import xla_client, xla_bridge
+                                   _hashable_index, ShardedDeviceArray, Index)
+from jax.lib import xla_client
 
 from parax.global_env import global_config
-from parax.measure_record import StrategyConfig
+from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
-from parax.util import (get_dim_last_value, list_gpu_info,
-                        profile_xla_executable, GB, to_cupy, to_jax_tensor,
-                        jax_buffer_set, xla_buffer_to_jax_buffer,
+from parax.util import (get_dim_last_value, list_gpu_info, GB, to_cupy,
+                        to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
                         jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
@@ -44,227 +44,8 @@ def device_str_to_id(device_str):
     return int(device_str.split(":")[-1])
 
 
-class LogicalDeviceMesh:
-    """
-    A logical multi-dimensional device mesh.
-
-    Each mesh dimension has its own latency and bandwidth.
-    We use alpha-beta model to model the communication cost.
-    """
-
-    def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
-        self.physical_mesh = physical_mesh
-        self.id_mesh = np.array(id_mesh)
-        self.flatten_ids = tuple(int(x) for x in self.id_mesh.flatten())
-        self.is_multi_host = False
-
-        # coefficient for alpha-beta communication model
-        if mesh_alpha is None:
-            mesh_alpha = [1] * len(self.id_mesh.shape)
-        if mesh_beta is None:
-            mesh_beta = [1] * len(self.id_mesh.shape)
-        self.mesh_alpha = tuple(mesh_alpha)
-        self.mesh_beta = tuple(mesh_beta)
-
-    def all_gather_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices * num_bytes + 0.1)
-
-    def all_reduce_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] * 2 *
-                (num_devices - 1) / num_devices * num_bytes + 0.01)
-
-    def reduce_scatter_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices * num_bytes + 0.001)
-
-    def all_to_all_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        penalty_factor = 1.5
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices / num_devices * num_bytes *
-                penalty_factor + 0.001)
-
-    def get_tensor_dim_to_mesh_dim(self, tensor_rank,
-                                   tile_assignment_dimensions,
-                                   tile_assignment_devices):
-        tile_assignment = np.array(tile_assignment_devices).reshape(
-            tile_assignment_dimensions)
-
-        tensor_dim_vals = tuple(
-            get_dim_last_value(tile_assignment, i) for i in range(tensor_rank))
-
-        mesh_dim_vals = tuple(
-            get_dim_last_value(self.id_mesh, j)
-            for j in range(len(self.id_mesh.shape)))
-
-        ret = [-1] * tensor_rank
-        for i in range(tensor_rank):
-            if tile_assignment_dimensions[i] != 1:
-                found = False
-                for j in range(len(self.id_mesh.shape)):
-                    if tensor_dim_vals[i] == mesh_dim_vals[j]:
-                        ret[i] = j
-                        found = True
-                if not found:
-                    return None
-
-        return ret
-
-    def make_replicated_spec(self, array):
-        sharding = (NoSharding(),) * len(array.shape)
-        mesh_mapping = (Replicated(len(self.flatten_ids)),)
-        return ShardingSpec(sharding, mesh_mapping)
-
-    def make_tile_spec(self, array, tensor_dims, mesh_dims):
-        shape = array.shape
-        sharding = [
-            NoSharding(),
-        ] * len(shape)
-        mesh_mapping = [
-            None,
-        ] * len(self.id_mesh.shape)
-
-        for i, (tensor_dim, mesh_dim) in enumerate(zip(tensor_dims, mesh_dims)):
-            sharding[tensor_dim] = Chunked([self.id_mesh.shape[mesh_dim]],)
-            mesh_mapping[mesh_dim] = ShardedAxis(i)
-
-        for i, _ in enumerate(mesh_mapping):
-            if mesh_mapping[i] is None:
-                mesh_mapping[i] = Replicated(self.id_mesh.shape[i])
-
-        return ShardingSpec(sharding, mesh_mapping)
-
-    def __hash__(self):
-        return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
-                     self.mesh_beta))
-
-    def __eq__(self, other):
-        return (self.flatten_ids, self.id_mesh.shape,
-                self.mesh_alpha, self.mesh_beta) == \
-               (other.flatten_ids, other.id_mesh.shape,
-                other.mesh_alpha, other.mesh_beta)
-
-
-class RemoteExecutableRef:
-    """A reference to a remote compiled XLA executable binary."""
-
-    ct = 0
-
-    def __init__(self, device_mesh):
-        self.device_mesh = device_mesh
-        self.uuid = RemoteExecutableRef.ct
-        RemoteExecutableRef.ct = (RemoteExecutableRef.ct + 1) % (1 << 60)
-
-    def __repr__(self):
-        return f"RemoteExecutableRef(uuid = {self.uuid})"
-
-    def __del__(self):
-        self.device_mesh.delete_remote_executable(self)
-
-
-class RemoteBufferRef:
-    """A reference to a remote device buffer."""
-
-    ct = 0
-
-    def __init__(self, device_mesh, host_id, device_id):
-        self.device_mesh = device_mesh
-        self.host_id = host_id
-        self.device_id = device_id
-        self.uuid = RemoteBufferRef.ct
-        self.is_donated = False
-        RemoteBufferRef.ct = (RemoteBufferRef.ct + 1) % (1 << 60)
-        logger.debug(
-            "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
-                self.uuid, self.device_mesh.device_strs))
-
-    def donate(self):
-        """
-        Set the buffer as donated.
-
-        If the buffer is donated, we do not need to explicitly call the actor to
-        delete it. Its memory will be deleted by xla runtime.
-        """
-        self.is_donated = True
-
-    def __repr__(self):
-        return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
-
-    def __del__(self):
-        if not self.is_donated:
-            self.device_mesh.delete_remote_buffers((self,))
-
-
-class DistributedArray:
-    """A distributed array on a PhysicalDeviceMesh."""
-
-    def __init__(self, device_mesh, aval, sharding_spec, remote_buffers,
-                 indices):
-        self.device_mesh = device_mesh
-        self.aval = aval
-        self.sharding_spec = sharding_spec
-        self.remote_buffers = remote_buffers
-        self.indices = indices
-
-        self._npy_value = None
-        self._one_replica_buffer_indices = None
-
-    def block_until_ready(self):
-        self.device_mesh.block_until_ready_remote_buffers(self.remote_buffers)
-
-    @property
-    def one_replica_buffer_indices(self):
-        """Indices of buffers containing one complete copy of the array data."""
-        if self._one_replica_buffer_indices is None:
-            one_replica_indices = []
-            seen_index_hashes = set()
-            for i, index in enumerate(self.indices):
-                hashed_index = _hashable_index(index)
-                if hashed_index not in seen_index_hashes:
-                    one_replica_indices.append(i)
-                    seen_index_hashes.add(hashed_index)
-            self._one_replica_buffer_indices = one_replica_indices
-        return self._one_replica_buffer_indices
-
-    @property
-    def _value(self):
-        if self._npy_value is None:
-            npy_value = np.empty(self.aval.shape, self.aval.dtype)
-            fetched_np_buffers = self.device_mesh.get_remote_buffers([
-                self.remote_buffers[i] for i in self.one_replica_buffer_indices
-            ])
-            for ct, i in enumerate(self.one_replica_buffer_indices):
-                npy_value[self.indices[i]] = fetched_np_buffers[ct]
-            self._npy_value = npy_value
-        return self._npy_value
-
-    def __array__(self, dtype=None, context=None):
-        return np.asarray(self._value, dtype=dtype)
-
-    def __str__(self):
-        return str(self._value)
-
-
-core.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
-xla.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
-xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
-
-
-def get_uuid_np_array(array):
-    """Convert a np array of RemoteBufferRef to a np array of UUID (int64)."""
-    ret = np.empty(array.shape, dtype=np.int64)
-    for i in range(array.shape[0]):
-        for j in range(array.shape[1]):
-            ret[i][j] = array[i][j].uuid
-    return ret
-
-
 class MeshHostWorker:
-    """A ray actor to manage the xla computation on a single host."""
+    """A ray actor that manages the xla computation on a single host."""
 
     def __init__(self, server_address, num_hosts, host_id):
         self.num_hosts = num_hosts
@@ -276,100 +57,55 @@ class MeshHostWorker:
                                                   node_id=host_id)
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
-        self.local_buffers = {}  # Dict[uuid -> DeviceArray]
-        self.executables = {}  # Dict[uuid -> Executable]
+        self.buffers = {}  # Dict[uuid -> DeviceArray]
+        self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
         set_override_backend(self.backend)
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
-        self.local_buffers[uuid] = \
+        assert uuid not in self.buffers
+        self.buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
-
-    def put_empty_buffer(self, uuid: int, device_id: int, shape, dtype):
-        self.local_buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.empty(shape, dtype),
-                                           self.local_devices[device_id])
 
     def put_empty_buffer(self,
                          uuid: int,
                          device_id: int,
-                         shape,
+                         shape: Tuple[int, ...],
                          dtype=np.float32):
-        """Put an all-zero buffer on the worker indexed by UUID."""
-        if uuid in self.local_buffers:
-            raise RuntimeError()
-        self.local_buffers[uuid] = \
+        assert uuid not in self.buffers
+        self.buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
-        return True
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
-            return [self.local_buffers[uuid] for uuid in uuids]
-        return self.local_buffers[uuids]
+            return [self.buffers[uuid] for uuid in uuids]
+        return self.buffers[uuids]
 
     def delete_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
             for uuid in uuids:
-                del self.local_buffers[uuid]
+                del self.buffers[uuid]
         else:
-            del self.local_buffers[uuids]
+            del self.buffers[uuids]
 
     def block_until_ready_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
             for uuid in uuids:
-                self.local_buffers[uuid].block_until_ready()
+                self.buffers[uuid].block_until_ready()
         else:
-            self.local_buffers[uuids].block_until_ready()
+            self.buffers[uuids].block_until_ready()
 
     ##### Executable Related Functions #####
+    def put_executable(self, uuid: int, executable_class: MeshWorkerExecutable,
+                       *args):
+        self.executables[uuid] = executable_class(self, *args)
+
     def delete_executable(self, uuid: int):
-        self.executables[uuid].delete()
         del self.executables[uuid]
 
-    def compile_executable(self, uuid: int, hlo_proto: bytes,
-                           strategy_config: StrategyConfig,
-                           hlo_proto_status: "HloProtoStatus"):
-        # pylint: disable=import-outside-toplevel
-        from parax.shard_parallel.auto_sharding import compile_with_given_strategy
-
-        xla_computation = xla_client.XlaComputation(hlo_proto)
-        num_devices = np.prod(strategy_config.logical_mesh_shape)
-        assert num_devices == len(self.backend.devices())
-
-        compiled = compile_with_given_strategy(self.backend, xla_computation,
-                                               strategy_config, num_devices,
-                                               False, hlo_proto_status)
-        self.executables[uuid] = compiled
-
-    def execute(self, executable_uuid: int, input_uuids: List[List[int]],
-                output_uuids: List[List[int]]):
-        # Map uuids to input buffers
-        device_inputs = [[None
-                          for _ in range(input_uuids.shape[1])]
-                         for _ in range(input_uuids.shape[0])]
-        for i in range(input_uuids.shape[0]):
-            for j in range(input_uuids.shape[1]):
-                device_inputs[i][j] = self.local_buffers[input_uuids[i][j]]
-
-        # Execute the executable
-        device_outs = self.executables[executable_uuid]. \
-            execute_sharded_on_local_devices(device_inputs)
-
-        # Store output buffers
-        for i in range(output_uuids.shape[0]):
-            for j in range(output_uuids.shape[1]):
-                self.local_buffers[output_uuids[i][j]] = device_outs[i][j]
-
-        # Delete donated input buffers
-        for i in range(input_uuids.shape[0]):
-            for j in range(input_uuids.shape[1]):
-                if device_inputs[i][j].is_deleted():
-                    del self.local_buffers[input_uuids[i][j]]
-
-    def get_total_allocation_size(self, uuid):
-        """Get the total allocation size in bytes to run this executable."""
-        return self.executables[uuid].total_allocation_size()
+    def run_executable(self, uuid: int, *args):
+        self.executables[uuid].execute_on_worker(*args)
 
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
@@ -470,9 +206,9 @@ class MeshHostWorker:
             return prof_result
         return None
 
-    def profile_executable(self, executable_uuid: int):
-        return profile_xla_executable(self.executables[executable_uuid],
-                                      self.backend, self.local_devices)
+    def profile_executable_with_dummy_inputs(self, uuid: int):
+        return self.executables[uuid].profile_with_dummy_inputs(
+            self.backend, self.local_devices)
 
     ##### Other Functions #####
     def sync(self):
@@ -481,7 +217,7 @@ class MeshHostWorker:
 
     def shutdown(self):
         self.sync()
-        del self.local_buffers
+        del self.buffers
         del self.executables
         self.distributed_client.shutdown()
 
@@ -491,7 +227,7 @@ class MeshHostWorker:
     # (3) cupy array, which is an intermediate format for ray collective
     def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
         """Send a slice of a source buffer to a target GPU."""
-        src_buffer = xla_buffer_to_jax_buffer(self.local_buffers[uuid])
+        src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
         to_send = to_cupy(src_buffer[tuple(offset)])
         logger.debug(
             "Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}.".
@@ -502,12 +238,11 @@ class MeshHostWorker:
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
                   src_gpu_idx, group_name):
         """Recv a slice from a source GPU and in-place write it on the target buffer."""
-        if uuid not in self.local_buffers:
+        if uuid not in self.buffers:
             raise RuntimeError()
         tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
         tmp_buffer = jax.device_put(
-            jax.numpy.zeros(tileslice_shape,
-                            dtype=self.local_buffers[uuid].dtype),
+            jax.numpy.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
             self.local_devices[device_id])
         to_recv = to_cupy(tmp_buffer)
         logger.debug(
@@ -518,16 +253,21 @@ class MeshHostWorker:
 
         # 0-copy version
         start_indices = tuple(
-            [ind_in_dst.start for ind_in_dst in indices_in_dst_tile])
+            ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
         new_buffer = jax_buffer_set(
-            xla_buffer_to_jax_buffer(self.local_buffers[uuid]), recv_tensor,
+            xla_buffer_to_jax_buffer(self.buffers[uuid]), recv_tensor,
             start_indices)
-        self.local_buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
+        self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
         return True
 
 
 class PhysicalDeviceMesh:
-    """Class for either single-host or multi-host physical device mesh."""
+    """
+    A physical device mesh to run computation distributedly.
+
+    This can be either a single-host device mesh (by using the native XLA runtime) or 
+    a multi-host device mesh (by using ray actors and the distributed XLA runtime).
+    """
 
     def __init__(self,
                  devices=None,
@@ -759,6 +499,7 @@ class PhysicalDeviceMesh:
 
     ##### Buffer Related Functions #####
     def get_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        """Get values of remote buffers."""
         obj_refs = []
         for buf_ref in buf_refs:
             obj_refs.append(self.workers[buf_ref.host_id].get_buffers.remote(
@@ -767,6 +508,7 @@ class PhysicalDeviceMesh:
         return ray.get(obj_refs)
 
     def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        """Delete remote buffers."""
         if self.workers is None or not ray.is_initialized():
             return
 
@@ -774,6 +516,7 @@ class PhysicalDeviceMesh:
             self.workers[buf_ref.host_id].delete_buffers.remote(buf_ref.uuid)
 
     def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+        """Block until the remote buffers are ready."""
         tasks = []
         for buf_ref in buf_refs:
             tasks.append(
@@ -782,115 +525,10 @@ class PhysicalDeviceMesh:
         ray.get(tasks)
 
     ##### Executable Related Functions #####
-    def compile_remote_executable(self, hlo_proto: bytes,
-                                  strategy_config: StrategyConfig,
-                                  hlo_proto_status: "HloProtoStatus"):
-        """Compile the remote executable."""
-        executable = RemoteExecutableRef(self)
-        for w in self.workers:
-            w.compile_executable.remote(executable.uuid, hlo_proto,
-                                        strategy_config, hlo_proto_status)
-        return executable
-
-    def delete_remote_executable(self, exe_ref: RemoteExecutableRef):
-        if self.workers is None or not ray.is_initialized():
-            return
-
-        for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(exe_ref.uuid)
-
-    def get_callable_with_arg_handler(self, compiled_executable, avals,
-                                      out_avals, input_sharding_specs,
-                                      output_sharding_specs, donated_invars):
-        # pylint: disable=too-many-arguments
-        """Get a callable after sharding optimization."""
-        input_indices = [
-            pxla.spec_to_indices(aval.shape, spec)
-            for aval, spec in zip(avals, input_sharding_specs)
-        ]
-
-        args_handler = partial(self._shard_args, input_indices, donated_invars)
-        if not self.is_distributed:
-            outs_handler = pxla.avals_to_results_handler(
-                1, len(self.devices), output_sharding_specs, out_avals)
-        else:
-            output_indices = [
-                pxla.spec_to_indices(aval.shape, spec)
-                for aval, spec in zip(out_avals, output_sharding_specs)
-            ]
-            outs_handler = partial(self._gather_outs, out_avals,
-                                   output_sharding_specs, output_indices)
-        ret = partial(self._execute_with_handler,
-                      compiled_executable, args_handler, outs_handler,
-                      len(out_avals), donated_invars)
-        ret.shard_args_only = partial(self.preshard_args, args_handler, avals,
-                                      input_sharding_specs, input_indices)
-        return ret
-
-    def _execute_with_handler(self, executable, args_handler, outs_handler,
-                              num_outs, donated_invars, *args):
-        # pylint: disable=too-many-arguments,too-many-locals
-        input_bufs = args_handler(args)
-        if not self.is_distributed:
-            output_bufs = executable.execute_sharded_on_local_devices(
-                input_bufs)
-        else:
-            # TODO(lmzheng): reduce the overhead of meta information maintainance
-            # by overlapping GPU computation and python code.
-
-            # Donate input buffers
-            for bufs, is_donated in zip(input_bufs, donated_invars):
-                if is_donated:
-                    for buf in bufs:
-                        buf.donate()
-
-            # Shape: (num_hosts, num_args, num_devices_per_host)
-            input_bufs = np.array(input_bufs) \
-                .reshape(len(args), self.num_hosts, self.num_devices_per_host) \
-                .transpose([1, 0, 2])
-
-            # Allocate output buffer references
-            # Shape: (num_hosts, num_outs, num_devices_per_host)
-            output_bufs = np.empty(
-                (self.num_hosts, num_outs, self.num_devices_per_host),
-                dtype=object)
-            for i in range(self.num_hosts):
-                for j in range(num_outs):
-                    for k in range(self.num_devices_per_host):
-                        output_bufs[i][j][k] = RemoteBufferRef(self, i, k)
-
-            # Execute SPMD binary
-            for i in range(self.num_hosts):
-                host_inputs = get_uuid_np_array(input_bufs[i])
-                host_outputs = get_uuid_np_array(output_bufs[i])
-                self.workers[i].execute.remote(executable.uuid, host_inputs,
-                                               host_outputs)
-
-            # Gather outputs
-            # Shape: (num_outs, total_devices)
-            output_bufs = output_bufs.transpose([1, 0, 2]).reshape(
-                (num_outs, self.total_devices))
-        return outs_handler(output_bufs)
-
-    def preshard_args(self, handler, avals, sharding_specs, indices, *args):
-        """Pre-shard the input arguments."""
-        input_bufs = handler(args)
-        sharded_args = []
-        for i in range(len(args)):
-            if self.is_distributed:
-                array = DistributedArray(self, avals[i], sharding_specs[i],
-                                         input_bufs[i], indices[i])
-            else:
-                array = ShardedDeviceArray(avals[i], sharding_specs[i],
-                                           input_bufs[i], indices[i])
-            sharded_args.append(array)
-        return sharded_args
-
-    def _shard_args(self, arg_indices, donated_invars, args):
-        if not self.is_distributed:
-            # single host w/o Ray
-            return pxla.shard_args(self.devices, arg_indices, args)
-        else:
+    def shard_args(self, arg_indices: Sequence[Sequence[Index]],
+                   donated_invars: Sequence[bool], args):
+        """Shard the high-level arguments into low-level buffers."""
+        if self.is_distributed:
             input_bufs = []
             for arg, indices, donated in zip(args, arg_indices, donated_invars):
                 # Fast path for DistributedArray
@@ -905,28 +543,44 @@ class PhysicalDeviceMesh:
                         arg.delete()
 
             return input_bufs
-
-    def _gather_outs(self, avals, sharding_specs, indices, bufs):
-        ret = []
-        for i, _ in enumerate(avals):
-            dis_array = DistributedArray(device_mesh=self,
-                                         aval=avals[i],
-                                         sharding_spec=sharding_specs[i],
-                                         remote_buffers=bufs[i],
-                                         indices=indices[i])
-            ret.append(dis_array)
-
-        return ret
-
-    def get_total_allocation_size(self, executable):
-        """Get the total allocation size in bytes to run this executable."""
-        if self.is_distributed:
-            return ray.get(self.workers[0].get_total_allocation_size.remote(
-                executable.uuid))
         else:
-            return executable.total_allocation_size()
+            # single host w/o Ray
+            return pxla.shard_args(self.devices, arg_indices, args)
 
-    ##### Profling related Functions #####
+    def get_outputs_handler(self, avals: Sequence[ShapedArray],
+                            sharding_specs: Sequence[ShardingSpec]):
+        """Get a function that wraps low-level buffers to high-level output arrays."""
+        if self.is_distributed:
+            indices = [
+                pxla.spec_to_indices(aval.shape, spec)
+                for aval, spec in zip(avals, sharding_specs)
+            ]
+
+            def outs_handler(bufs):
+                ret = []
+                for i, _ in enumerate(avals):
+                    dis_array = DistributedArray(
+                        device_mesh=self,
+                        aval=avals[i],
+                        sharding_spec=sharding_specs[i],
+                        remote_buffers=bufs[i],
+                        indices=indices[i])
+                    ret.append(dis_array)
+                return ret
+        else:
+            outs_handler = pxla.avals_to_results_handler(
+                1, len(self.devices), sharding_specs, avals)
+        return outs_handler
+
+    def delete_remote_executable(self, executable: MeshDriverExecutable):
+        """Delete remote worker executables of a driver executable."""
+        if self.workers is None or not ray.is_initialized():
+            return
+
+        for i in range(self.num_hosts):
+            self.workers[i].delete_executable.remote(executable.remote_uuid)
+
+    ##### Profiling related Functions #####
     def profile_collective(self,
                            primitive_name,
                            size_range=None,
@@ -948,27 +602,11 @@ class PhysicalDeviceMesh:
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
-    def profile_executable(self, compiled):
-        """Profile the time cost of an xla executable."""
-        from parax.shard_parallel.auto_sharding import HloProtoStatus
-
-        if self.is_distributed:
-            tasks = []
-            for worker in self.workers:
-                tasks.append(worker.profile_executable.remote(compiled.uuid))
-            costs = ray.get(tasks)[0]
-        else:
-            costs = profile_xla_executable(compiled,
-                                           xla_bridge.get_backend("gpu"),
-                                           self.devices)
-
-        return costs
-
-    def load_profiling_result(self, filename):
+    def load_profiling_result(self, filename: str):
         """Load profiling results from a file."""
         self.prof_result = pickle.load(open(filename, "rb"))
 
-    def save_profiling_result(self, filename):
+    def save_profiling_result(self, filename: str):
         """Save profiling results to a file."""
         pickle.dump(self.prof_result, open(filename, "wb"))
 
@@ -990,6 +628,170 @@ class PhysicalDeviceMesh:
             self.workers = None
         else:
             self.sync_workers()
+
+
+class LogicalDeviceMesh:
+    """
+    A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
+
+    A physical mesh can have multiple logical views. (e.g., a 2x8 phyiscal mesh can be viewed
+    as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
+    We use alpha-beta model to model the communication cost.
+    """
+
+    def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
+        self.physical_mesh = physical_mesh
+        self.id_mesh = np.array(id_mesh)
+        self.flatten_ids = tuple(int(x) for x in self.id_mesh.flatten())
+        self.is_multi_host = False
+
+        # coefficient for alpha-beta communication model
+        if mesh_alpha is None:
+            mesh_alpha = [1] * len(self.id_mesh.shape)
+        if mesh_beta is None:
+            mesh_beta = [1] * len(self.id_mesh.shape)
+        self.mesh_alpha = tuple(mesh_alpha)
+        self.mesh_beta = tuple(mesh_beta)
+
+    def all_gather_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices * num_bytes + 0.1)
+
+    def all_reduce_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] * 2 *
+                (num_devices - 1) / num_devices * num_bytes + 0.01)
+
+    def reduce_scatter_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices * num_bytes + 0.001)
+
+    def all_to_all_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        penalty_factor = 1.5
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices / num_devices * num_bytes *
+                penalty_factor + 0.001)
+
+    def get_tensor_dim_to_mesh_dim(self, tensor_rank,
+                                   tile_assignment_dimensions,
+                                   tile_assignment_devices):
+        tile_assignment = np.array(tile_assignment_devices).reshape(
+            tile_assignment_dimensions)
+
+        tensor_dim_vals = tuple(
+            get_dim_last_value(tile_assignment, i) for i in range(tensor_rank))
+
+        mesh_dim_vals = tuple(
+            get_dim_last_value(self.id_mesh, j)
+            for j in range(len(self.id_mesh.shape)))
+
+        ret = [-1] * tensor_rank
+        for i in range(tensor_rank):
+            if tile_assignment_dimensions[i] != 1:
+                found = False
+                for j in range(len(self.id_mesh.shape)):
+                    if tensor_dim_vals[i] == mesh_dim_vals[j]:
+                        ret[i] = j
+                        found = True
+                if not found:
+                    return None
+
+        return ret
+
+    def make_replicated_spec(self, array):
+        sharding = (NoSharding(),) * len(array.shape)
+        mesh_mapping = (Replicated(len(self.flatten_ids)),)
+        return ShardingSpec(sharding, mesh_mapping)
+
+    def make_tile_spec(self, array, tensor_dims, mesh_dims):
+        shape = array.shape
+        sharding = [
+            NoSharding(),
+        ] * len(shape)
+        mesh_mapping = [
+            None,
+        ] * len(self.id_mesh.shape)
+
+        for i, (tensor_dim, mesh_dim) in enumerate(zip(tensor_dims, mesh_dims)):
+            sharding[tensor_dim] = Chunked([self.id_mesh.shape[mesh_dim]],)
+            mesh_mapping[mesh_dim] = ShardedAxis(i)
+
+        for i, _ in enumerate(mesh_mapping):
+            if mesh_mapping[i] is None:
+                mesh_mapping[i] = Replicated(self.id_mesh.shape[i])
+
+        return ShardingSpec(sharding, mesh_mapping)
+
+    def __hash__(self):
+        return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
+                     self.mesh_beta))
+
+    def __eq__(self, other):
+        return (self.flatten_ids, self.id_mesh.shape,
+                self.mesh_alpha, self.mesh_beta) == \
+               (other.flatten_ids, other.id_mesh.shape,
+                other.mesh_alpha, other.mesh_beta)
+
+
+class DistributedArray:
+    """A distributed array on a PhysicalDeviceMesh."""
+
+    def __init__(self, device_mesh: "PhysicalDeviceMesh", aval: ShapedArray,
+                 sharding_spec: ShardingSpec,
+                 remote_buffers: Sequence[RemoteBufferRef],
+                 indices: Tuple[Index, ...]):
+        self.device_mesh = device_mesh
+        self.aval = aval
+        self.sharding_spec = sharding_spec
+        self.remote_buffers = remote_buffers
+        self.indices = indices
+
+        self._npy_value = None
+        self._one_replica_buffer_indices = None
+
+    def block_until_ready(self):
+        """Block until all remote buffers of this array are ready."""
+        self.device_mesh.block_until_ready_remote_buffers(self.remote_buffers)
+
+    @property
+    def one_replica_buffer_indices(self):
+        """Indices of buffers containing one complete copy of the array data."""
+        if self._one_replica_buffer_indices is None:
+            one_replica_indices = []
+            seen_index_hashes = set()
+            for i, index in enumerate(self.indices):
+                hashed_index = _hashable_index(index)
+                if hashed_index not in seen_index_hashes:
+                    one_replica_indices.append(i)
+                    seen_index_hashes.add(hashed_index)
+            self._one_replica_buffer_indices = one_replica_indices
+        return self._one_replica_buffer_indices
+
+    @property
+    def _value(self):
+        if self._npy_value is None:
+            npy_value = np.empty(self.aval.shape, self.aval.dtype)
+            fetched_np_buffers = self.device_mesh.get_remote_buffers([
+                self.remote_buffers[i] for i in self.one_replica_buffer_indices
+            ])
+            for ct, i in enumerate(self.one_replica_buffer_indices):
+                npy_value[self.indices[i]] = fetched_np_buffers[ct]
+            self._npy_value = npy_value
+        return self._npy_value
+
+    def __array__(self, dtype=None, context=None):
+        return np.asarray(self._value, dtype=dtype)
+
+    def __str__(self):
+        return str(self._value)
+
+
+core.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
+xla.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
+xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
 
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.

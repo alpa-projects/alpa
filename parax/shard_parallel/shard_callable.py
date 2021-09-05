@@ -1,23 +1,20 @@
+"""Generate callables for shard_parallel."""
 import hashlib
 import inspect
 import time
-from warnings import warn
 
 from jax import linear_util as lu, disable_jit
-from jax._src.util import (partial, extend_name_stack, wrap_name)
-from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, new_jaxpr_eqn, gensym)
-from jax.interpreters import xla, partial_eval as pe, pxla
+from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym)
+from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc
-import jax.numpy as jnp
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
+from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
-                                                get_input_output_sharding_specs,
                                                 HloProtoStatus)
 from parax.util import jaxpr_to_hlo_computation
 
@@ -51,9 +48,7 @@ def shard_parallel_callable(
     memory_budget_per_device,
     *avals,
 ):
-    """
-    Compile a callable with auto-sharding pass.
-    """
+    """Compile a callable with auto-sharding pass."""
     # This function resolves the polymorphism in arguments and global configurations
     # and calls actual compilation in shard_parallel_internal.
 
@@ -133,7 +128,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     Compile a callable with auto-sharding pass.
 
     Args:
-      func (lu.WrappedFun): The wrapped jax function to be compiled.
+      fun (lu.WrappedFun): The wrapped jax function to be compiled.
       in_tree (PyTree): The pytree of input arguments.
       out_tree_thunk (Callable[()->PyTree]): The thunk to produce output pytree.
       donated_invars (List[bool]): Whether to donate input parameters.
@@ -165,11 +160,14 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                      donated_invars, backend)
     #print(built.as_hlo_text())
 
-    # Compile an executable
+    # Compile a XLA executable
     if strategy_config is None:
         compiled, strategy_config = compile_with_search(
             backend,
             built,
+            avals,
+            out_avals,
+            donated_invars,
             physical_mesh,
             logical_mesh_choices,
             logical_mesh_search_mode,
@@ -182,28 +180,15 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                physical_mesh.total_devices,
                                                physical_mesh.is_distributed,
                                                HloProtoStatus.UNOPTIMIZED)
-    hlo_module = compiled.hlo_modules()[0]
-    logical_mesh_shape = strategy_config.logical_mesh_shape
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
-    # Send the code and strategy to remote workers
-    if physical_mesh.is_distributed:
-        compiled = physical_mesh.compile_remote_executable(
-            hlo_module.as_serialized_hlo_module_proto(), strategy_config,
-            HloProtoStatus.FULLY_OPTIMIZED)
-
-    # Read HloSharding from HloModule and convert them to ShardingSpec
-    # Return the final callable
-    input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-        hlo_module, physical_mesh.total_devices, avals, out_avals,
-        logical_mesh_shape)
-    return physical_mesh.get_callable_with_arg_handler(compiled, avals,
-                                                       out_avals,
-                                                       input_sharding_specs,
-                                                       output_sharding_specs,
-                                                       donated_invars)
+    # Compile a mesh executable
+    compiled = NormalMeshDriverExecutable(physical_mesh, compiled,
+                                          strategy_config, avals, out_avals,
+                                          donated_invars)
+    return compiled.get_driver_callable()
 
 
 def shard_parallel_internal_gradient_accumulation(
@@ -211,6 +196,7 @@ def shard_parallel_internal_gradient_accumulation(
         batch_invars, physical_mesh, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, search_task,
         record_file, strategy_config, *raw_avals):
+    """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
     avals = []
@@ -228,16 +214,11 @@ def shard_parallel_internal_gradient_accumulation(
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
 
-    closed_jaxpr, accumulate_grad_invar_ids, apply_grad_invar_ids, num_grads =\
+    closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads =\
         add_gradient_accumulation(closed_jaxpr, num_micro_batches)
-    global_in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars]
-    global_out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
-    grad_avals = global_in_avals[-num_grads:]
-    accumulate_grad_in_avals = [
-        global_in_avals[i] for i in accumulate_grad_invar_ids
-    ]
-    apply_grad_in_avals = [global_in_avals[i] for i in apply_grad_invar_ids
-                          ] + grad_avals
+    in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[:-num_grads]]
+    out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
+    grad_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[-num_grads:]]
 
     # Run auto-sharding and slice the combined HLO into two HLO: accumulate_grad and apply_grad
     backend = xb.get_backend("gpu")
@@ -247,6 +228,9 @@ def shard_parallel_internal_gradient_accumulation(
                                      backend)
     hlo_protos, strategy_config = compile_with_search(backend,
                                                       built,
+                                                      avals,
+                                                      out_avals,
+                                                      donated_invars,
                                                       physical_mesh,
                                                       logical_mesh_choices,
                                                       logical_mesh_search_mode,
@@ -256,10 +240,9 @@ def shard_parallel_internal_gradient_accumulation(
                                                       multiple_stages=True)
     assert len(hlo_protos) == 2
 
-    # Compile these two HLOs separately to get two executable
+    # Compile these two HLOs separately to get two XLA executables
     accumulate_grad = xc.XlaComputation(hlo_protos[0])
     apply_grad = xc.XlaComputation(hlo_protos[1])
-    logical_mesh_shape = strategy_config.logical_mesh_shape
 
     accumulate_grad = compile_with_given_strategy(
         backend, accumulate_grad, strategy_config, physical_mesh.total_devices,
@@ -269,93 +252,18 @@ def shard_parallel_internal_gradient_accumulation(
                                              physical_mesh.total_devices, False,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
-    assert not physical_mesh.is_distributed
-
-    # Read sharding specs
-    accumulate_grad_input_sharding_specs, grad_sharding_specs =\
-        get_input_output_sharding_specs(
-        accumulate_grad.hlo_modules()[0], physical_mesh.total_devices,
-        accumulate_grad_in_avals, grad_avals, logical_mesh_shape)
-    apply_grad_input_sharding_specs, output_sharding_specs =\
-        get_input_output_sharding_specs(
-        apply_grad.hlo_modules()[0], physical_mesh.total_devices,
-        apply_grad_in_avals, global_out_avals, logical_mesh_shape)
-
-    input_sharding_specs = [None] * len(global_in_avals)
-    for i, idx in enumerate(accumulate_grad_invar_ids):
-        input_sharding_specs[idx] = accumulate_grad_input_sharding_specs[i]
-    for i, idx in enumerate(apply_grad_invar_ids):
-        input_sharding_specs[idx] = apply_grad_input_sharding_specs[i]
-    assert input_sharding_specs[-num_grads:] == grad_sharding_specs
-
-    # Cache indices for the final callable
-    global_in_indices = [
-        pxla.spec_to_indices(aval.shape, spec)
-        for aval, spec in zip(global_in_avals, input_sharding_specs)
-    ]
-    global_is_batch_arg = batch_invars + (False,) * num_grads
-    devices = physical_mesh.devices
-    outs_handler = pxla.avals_to_results_handler(1, len(devices),
-                                                 output_sharding_specs,
-                                                 global_out_avals)
-
-    def final_callable(*args):
-        global_args = list(args)
-
-        # Prepare gradient buffers
-        for i in range(num_grads):
-            global_args.append(
-                jnp.zeros(grad_avals[i].shape, grad_avals[i].dtype))
-
-        # Shard args
-        global_buffers = []
-        for i, arg in enumerate(global_args):
-            if global_is_batch_arg[i]:
-                new_shape = (num_micro_batches,
-                             arg.shape[0] // num_micro_batches) + arg.shape[1:]
-                reshaped = arg.reshape(new_shape)
-                micro_batches = jnp.split(reshaped, num_micro_batches)
-                micro_batches = [x.squeeze(0) for x in micro_batches]
-                micro_batches = pxla.shard_args(
-                    devices, (global_in_indices[i],) * len(micro_batches),
-                    micro_batches)
-                global_buffers.append(micro_batches)
-            else:
-                global_buffers.append(
-                    pxla.shard_args(devices, [global_in_indices[i]], [arg])[0])
-
-        # Call accumulate_grad multiple times
-        for j in range(num_micro_batches):
-            input_buffers = []
-            for i in accumulate_grad_invar_ids:
-                if global_is_batch_arg[i]:
-                    input_buffers.append(global_buffers[i][j])
-                else:
-                    input_buffers.append(global_buffers[i])
-
-            output_bufs = accumulate_grad.execute_sharded_on_local_devices(
-                input_buffers)
-            global_buffers[-num_grads:] = output_bufs
-
-        # Call apply_grad
-        input_buffers = []
-        for i in apply_grad_invar_ids:
-            if global_is_batch_arg[i]:
-                assert False, "cannot use batch data in apply_grad"
-            else:
-                input_buffers.append(global_buffers[i])
-        input_buffers.extend(global_buffers[-num_grads:])
-        output_bufs = apply_grad.execute_sharded_on_local_devices(input_buffers)
-
-        # Wrap output buffers as ShardedArray
-        output = outs_handler(output_bufs)
-        return output
-
-    return final_callable
+    # Compile them to a single mesh executable
+    mesh_executable = GradAccMeshDriverExecutable(
+        physical_mesh, accumulate_grad, apply_grad, strategy_config, in_avals,
+        out_avals, grad_avals, donated_invars, batch_invars,
+        accumulate_grad_invar_indices, apply_grad_invar_indices,
+        num_micro_batches)
+    return mesh_executable.get_driver_callable()
 
 
 def filter_used_vars(all_vars, eqns):
     """Return the vars in all_vars that are used by eqns.
+
     The returned vars preserve their original order in all_vars.
     """
     used_vars = set()
@@ -365,7 +273,7 @@ def filter_used_vars(all_vars, eqns):
 
 
 def clone_vars(var_list, gensym_func):
-    """Clone variables"""
+    """Clone variables."""
     return [gensym_func(x.aval) for x in var_list]
 
 
@@ -392,12 +300,10 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
             pipeline_marker_end
         ].
     """
+    # pylint: disable=import-outside-toplevel
     from parax.pipeline_parallel.primitive_def import pipeline_p
 
     global_invars = set(raw_jaxpr.jaxpr.invars)
-    global_outvars = set(
-        var for var in raw_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    global_consts_dir = dict(zip(raw_jaxpr.jaxpr.constvars, raw_jaxpr.consts))
     gensym_func = gensym([raw_jaxpr.jaxpr])
 
     # Find the gradient separator marker.
@@ -429,8 +335,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p,
                       {"mark_type": "start"}, None))
-    global_invar_substitute.update(
-        {x: y for x, y in zip(old_invars, new_invars)})
+    global_invar_substitute.update(zip(old_invars, new_invars))
     accumulate_grad_invars = new_invars
 
     # Append eqns of compute_grad
@@ -447,7 +352,6 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p,
                       {"mark_type": "end"}, None))
-    accumulate_grad_outvars = new_grad_vars
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
@@ -496,7 +400,6 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(old_outvars, new_outvars, pipeline_p,
                       {"mark_type": "end"}, None))
-    apply_grad_outvars = new_outvars
 
     # Make the new jaxpr
     combined_jaxpr = ClosedJaxpr(
@@ -506,12 +409,14 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         ], new_outvars, combined_eqns), raw_jaxpr.consts)
 
     # The indices of the arguments in global arguments.
-    accumulate_grad_invar_ids = [
-        combined_jaxpr.jaxpr.invars.index(var) for var in accumulate_grad_invars
+    # TODO(lmzheng): this step is O(n^2)
+    accumulate_grad_invar_indices = [
+        combined_jaxpr.jaxpr.invars.index(var)
+        for var in accumulate_grad_invars[:-num_grads]
     ]
-    apply_grad_invar_ids = [
+    apply_grad_invar_indices = [
         combined_jaxpr.jaxpr.invars.index(var)
         for var in apply_grad_invars[:-num_grads]
     ]
-    return (combined_jaxpr, accumulate_grad_invar_ids, apply_grad_invar_ids,
-            num_grads)
+    return (combined_jaxpr, accumulate_grad_invar_indices,
+            apply_grad_invar_indices, num_grads)

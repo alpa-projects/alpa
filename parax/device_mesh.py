@@ -1,6 +1,4 @@
-"""
-The device mesh runtime that manages buffers and runs computation distributedly.
-"""
+"""The device mesh runtime that manages buffers and runs computation distributedly."""
 from collections.abc import Iterable
 from collections import defaultdict
 import logging
@@ -15,17 +13,16 @@ import ray.util.collective as col
 
 import jax.numpy
 from jax import core, xla, eval_shape
-from jax._src.util import (partial, unzip3)
+from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client
 
 from parax.global_env import global_config
-from parax.measure_record import StrategyConfig
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
@@ -256,7 +253,7 @@ class MeshHostWorker:
 
         # 0-copy version
         start_indices = tuple(
-            [ind_in_dst.start for ind_in_dst in indices_in_dst_tile])
+            ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
         new_buffer = jax_buffer_set(
             xla_buffer_to_jax_buffer(self.buffers[uuid]), recv_tensor,
             start_indices)
@@ -528,12 +525,12 @@ class PhysicalDeviceMesh:
         ray.get(tasks)
 
     ##### Executable Related Functions #####
-    def shard_args(self, indices: Sequence[Sequence[Index]],
+    def shard_args(self, arg_indices: Sequence[Sequence[Index]],
                    donated_invars: Sequence[bool], args):
         """Shard the high-level arguments into low-level buffers."""
         if self.is_distributed:
             input_bufs = []
-            for arg, indices, donated in zip(args, indices, donated_invars):
+            for arg, indices, donated in zip(args, arg_indices, donated_invars):
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     input_bufs.append(arg.remote_buffers)
@@ -548,7 +545,7 @@ class PhysicalDeviceMesh:
             return input_bufs
         else:
             # single host w/o Ray
-            return pxla.shard_args(self.devices, indices, args)
+            return pxla.shard_args(self.devices, arg_indices, args)
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
@@ -636,10 +633,9 @@ class PhysicalDeviceMesh:
 class LogicalDeviceMesh:
     """
     A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
-    A physical mesh can have multiple logical views. (e.g., a 2x8 phyiscal mesh can be viewed
-    as a 1x16 or a 4x4 logical mesh).
 
-    Each mesh dimension has its own latency and bandwidth.
+    A physical mesh can have multiple logical views. (e.g., a 2x8 phyiscal mesh can be viewed
+    as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
     We use alpha-beta model to model the communication cost.
     """
 

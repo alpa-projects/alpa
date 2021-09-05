@@ -14,7 +14,7 @@ from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file)
-from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
+from parax.mesh_executable import NormalMeshDriverExecutable
 from parax.util import get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,8 @@ logger.setLevel(logging.INFO)
 
 
 class HloProtoStatus(enum.IntEnum):
+    """The status of a HLO protobuf."""
+
     UNOPTIMIZED = 0  # An unoptimized HLO got from tracing the jaxpr.
     SHARDING_ANNOTATED = 1  # A HLO with sharding annotation attached.
     FULLY_OPTIMIZED = 2  # A fully optimized HLO which is already partitioned by
@@ -32,16 +34,15 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                         donated_invars, physical_mesh, logical_mesh_choices,
                         logical_mesh_search_mode, memory_budget_per_device,
                         search_task, record_file, multiple_stages):
-    """
-    Compile an XLA computation with mesh shape search and auto sharding solver.
+    """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
       backend (xla_extension.Client): The XLA backend client.
+      xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
+        got by tracing the jax function.
       avals (Sequence[ShapedArray]): The abstract values of input arguments.
       out_avals (Sequence[ShapedArray]): The abstract values of outputs.
       donated_invars (Sequence[bool]): Whether the arguments are donated.
-      xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
-        got by tracing the jax function.
       physical_mesh (PhysicalDeviceMesh): The physical device mesh.
       logical_mesh_choices (List[Tuple[int]]): The candidates of logical mesh shape.
         If there is only one choice, use the given one. If there are multple choices,
@@ -136,7 +137,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     else:  # Search for the best logical mesh
         assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
-        best_hlo_stages = None
         best_time_cost = float("inf")
         for logical_mesh in logical_mesh_choices:
             compiled, solution_vector, objective = _invoke_compilation(
@@ -157,8 +157,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             if np.mean(time_costs) < best_time_cost:
                 best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
                     logical_mesh, compiled, solution_vector, objective
-                if multiple_stages:
-                    best_hlo_stages = hlo_stages
                 best_time_cost = np.mean(time_costs)
 
             # Save records to file
@@ -198,8 +196,6 @@ def compile_with_given_strategy(backend, xla_computation, strategy_config,
       hlo_proto_status (HloProtoStatus): The optimization status of the
         input xla computation. see docs in the definition of `HloProtoStatus`.
     """
-    tic = time.time()
-
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -646,9 +642,11 @@ auto_sharded_hlo_stages = None
 
 
 def set_auto_sharded_hlo_stages(hlo_module_protos):
+    """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
     global auto_sharded_hlo_stages
     auto_sharded_hlo_stages = hlo_module_protos
 
 
 def get_auto_sharded_hlo_stages():
+    """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stages

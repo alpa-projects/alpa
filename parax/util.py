@@ -5,6 +5,7 @@ import itertools as it
 import os
 import subprocess
 import time
+from warnings import warn
 
 import cupy as cp
 import flax
@@ -18,7 +19,6 @@ from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
-from warnings import warn
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
@@ -300,7 +300,8 @@ def benchmark_func(run_func,
                    repeat=3,
                    number=5,
                    min_repeat_second=None):
-    """Benchmark the execution time of a function.
+    """
+    Benchmark the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
     The return value is a list of `repeat` elements and each elements is
@@ -312,7 +313,7 @@ def benchmark_func(run_func,
     costs = []
 
     # Warmup
-    for i in range(warmup):
+    for _ in range(warmup):
         run_func()
 
     # Choose a "number" according to "min_repeat_second"
@@ -326,10 +327,10 @@ def benchmark_func(run_func,
         number = max(int(min_repeat_second / cost), 1)
 
     # Benchmark
-    for i in range(repeat):
+    for _ in range(repeat):
         sync_func()
         tic = time.time()
-        for j in range(number):
+        for __ in range(number):
             run_func()
         sync_func()
         costs.append(time.time() - tic)

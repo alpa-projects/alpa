@@ -1,16 +1,13 @@
+"""Generate callables for shard_parallel."""
 import hashlib
 import inspect
 import time
-from warnings import warn
 
 from jax import linear_util as lu, disable_jit
-from jax._src.util import (partial, extend_name_stack, wrap_name)
-from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, new_jaxpr_eqn, gensym)
-from jax.interpreters import xla, partial_eval as pe, pxla
+from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym)
+from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc
-import jax.numpy as jnp
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
@@ -51,9 +48,7 @@ def shard_parallel_callable(
     memory_budget_per_device,
     *avals,
 ):
-    """
-    Compile a callable with auto-sharding pass.
-    """
+    """Compile a callable with auto-sharding pass."""
     # This function resolves the polymorphism in arguments and global configurations
     # and calls actual compilation in shard_parallel_internal.
 
@@ -133,7 +128,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     Compile a callable with auto-sharding pass.
 
     Args:
-      func (lu.WrappedFun): The wrapped jax function to be compiled.
+      fun (lu.WrappedFun): The wrapped jax function to be compiled.
       in_tree (PyTree): The pytree of input arguments.
       out_tree_thunk (Callable[()->PyTree]): The thunk to produce output pytree.
       donated_invars (List[bool]): Whether to donate input parameters.
@@ -201,6 +196,7 @@ def shard_parallel_internal_gradient_accumulation(
         batch_invars, physical_mesh, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, search_task,
         record_file, strategy_config, *raw_avals):
+    """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
     avals = []
@@ -232,7 +228,7 @@ def shard_parallel_internal_gradient_accumulation(
                                      backend)
     hlo_protos, strategy_config = compile_with_search(backend,
                                                       built,
-                                                      aval,
+                                                      avals,
                                                       out_avals,
                                                       donated_invars,
                                                       physical_mesh,
@@ -267,6 +263,7 @@ def shard_parallel_internal_gradient_accumulation(
 
 def filter_used_vars(all_vars, eqns):
     """Return the vars in all_vars that are used by eqns.
+
     The returned vars preserve their original order in all_vars.
     """
     used_vars = set()
@@ -303,12 +300,10 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
             pipeline_marker_end
         ].
     """
+    # pylint: disable=import-outside-toplevel
     from parax.pipeline_parallel.primitive_def import pipeline_p
 
     global_invars = set(raw_jaxpr.jaxpr.invars)
-    global_outvars = set(
-        var for var in raw_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    global_consts_dir = dict(zip(raw_jaxpr.jaxpr.constvars, raw_jaxpr.consts))
     gensym_func = gensym([raw_jaxpr.jaxpr])
 
     # Find the gradient separator marker.
@@ -340,8 +335,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p,
                       {"mark_type": "start"}, None))
-    global_invar_substitute.update(
-        {x: y for x, y in zip(old_invars, new_invars)})
+    global_invar_substitute.update(zip(old_invars, new_invars))
     accumulate_grad_invars = new_invars
 
     # Append eqns of compute_grad
@@ -358,7 +352,6 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p,
                       {"mark_type": "end"}, None))
-    accumulate_grad_outvars = new_grad_vars
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
@@ -407,7 +400,6 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(old_outvars, new_outvars, pipeline_p,
                       {"mark_type": "end"}, None))
-    apply_grad_outvars = new_outvars
 
     # Make the new jaxpr
     combined_jaxpr = ClosedJaxpr(

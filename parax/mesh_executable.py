@@ -1,3 +1,4 @@
+# pylint: disable=import-outside-toplevel
 """
 A mesh executable encapsulates all compiled binary and meta information of a distributed executable.
 
@@ -5,12 +6,11 @@ A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
 import logging
-from typing import List, Sequence, Tuple, Union
+from typing import List, Sequence, Tuple
 
 import numpy as np
 import ray
 
-import jax
 from jax._src.util import partial
 from jax.core import ShapedArray
 from jax.interpreters import pxla
@@ -89,12 +89,10 @@ def get_uuid_np_array(array):
 
 class MeshDriverExecutable:
     """The base class of the driver part of a mesh executable."""
-    pass
 
 
 class MeshWorkerExecutable:
     """The base class of the worker part of a mesh executable."""
-    pass
 
 
 class NormalMeshDriverExecutable(MeshDriverExecutable):
@@ -414,7 +412,6 @@ class GradAccMeshDriverExecutable:
         grad_avals = self.grad_avals
         num_grads = len(grad_avals)
         physical_mesh = self.physical_mesh
-        donated_invars = self.donated_invars
         num_hosts = physical_mesh.num_hosts
         num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
@@ -520,7 +517,7 @@ class GradAccMeshDriverExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        raise NotImplementedError
+        return self.total_allocation_size
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)

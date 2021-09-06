@@ -56,4 +56,5 @@ class Timers:
             string += ' | {}: {:.2f}'.format(name, elapsed_time)
         print(string, flush=True)
 
+
 timers = Timers()

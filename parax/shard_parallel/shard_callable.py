@@ -256,12 +256,14 @@ def shard_parallel_internal_gradient_accumulation(
         (False,) * num_grads
     setup_computation_alias(apply_grad, tmp_donate_invars)
 
+    bypass_device_assignment_check = physical_mesh.is_distributed
     accumulate_grad = compile_with_given_strategy(
         backend, accumulate_grad, strategy_config, physical_mesh.total_devices,
-        False, HloProtoStatus.SHARDING_ANNOTATED)
+        bypass_device_assignment_check, HloProtoStatus.SHARDING_ANNOTATED)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,
-                                             physical_mesh.total_devices, False,
+                                             physical_mesh.total_devices,
+                                             bypass_device_assignment_check,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
     # Compile them to a single mesh executable
@@ -389,10 +391,10 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     for i in range(num_grads):
         tmp_var = old_invars[-(i + 1)]
         combined_eqns.append(
-            new_jaxpr_eqn(
-                [tmp_var,
-                 Literal(np.array(num_micro_batches, tmp_var.aval.dtype))], [tmp_var],
-                div_p, {}, None))
+            new_jaxpr_eqn([
+                tmp_var,
+                Literal(np.array(num_micro_batches, tmp_var.aval.dtype))
+            ], [tmp_var], div_p, {}, None))
     # TODO(lmzheng): This breaks the SSA form of the combined_eqns
     # But I find jax can convert this non-SSA jaxpr to HLO correctly,
     # so I leave this issue as todo. To fix this, we should substitute

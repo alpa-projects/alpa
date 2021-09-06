@@ -144,7 +144,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = lambda : physical_mesh.devices[0].synchronize_all_activity()
+        self.sync_func = lambda: physical_mesh.devices[
+            0].synchronize_all_activity()
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -230,7 +231,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_execution_time_costs(self, warmup):
         """Return the pure execution time costs recorded by an internal timer."""
-        return self.physical_mesh.get_remote_timer(self.timer_name).costs[warmup:]
+        return self.physical_mesh.get_remote_timer(
+            self.timer_name).costs[warmup:]
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
@@ -264,8 +266,7 @@ def delete_donated_buffers(buffer_dict, uuids):
 class NormalMeshWorkerExecutable:
     """The worker part of a normal mesh executable."""
 
-    def __init__(self, worker: "MeshHostWorker",
-                 uuid: int, hlo_proto: bytes,
+    def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig):
         from parax.shard_parallel.auto_sharding import (
             compile_with_given_strategy, HloProtoStatus)
@@ -284,7 +285,8 @@ class NormalMeshWorkerExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = lambda : worker.local_devices[0].synchronize_all_activity()
+        self.sync_func = lambda: worker.local_devices[
+            0].synchronize_all_activity()
 
     def execute_on_worker(self, input_uuids: List[List[int]],
                           output_uuids: List[List[int]]):
@@ -326,8 +328,8 @@ class GradAccMeshDriverExecutable:
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
                  num_micro_batches: int):
-        from parax.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
-            make_replicated_spec)
+        from parax.shard_parallel.auto_sharding import (
+            get_input_output_sharding_specs, make_replicated_spec)
 
         self.physical_mesh = physical_mesh
         self.avals = avals
@@ -430,7 +432,8 @@ class GradAccMeshDriverExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = lambda : physical_mesh.devices[0].synchronize_all_activity()
+        self.sync_func = lambda: physical_mesh.devices[
+            0].synchronize_all_activity()
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -557,7 +560,8 @@ class GradAccMeshDriverExecutable:
 
     def get_execution_time_costs(self, warmup):
         """Return the pure execution time costs recorded by an internal timer."""
-        return self.physical_mesh.get_remote_timer(self.timer_name).costs[warmup:]
+        return self.physical_mesh.get_remote_timer(
+            self.timer_name).costs[warmup:]
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
@@ -570,10 +574,8 @@ class GradAccMeshDriverExecutable:
 class GradAccMeshWorkerExecutable:
     """The worker part of a gradient accumulation mesh executable."""
 
-    def __init__(self, worker: "MeshHostWorker",
-                 uuid: int,
-                 accumulate_grad_proto: bytes,
-                 apply_grad_proto: bytes,
+    def __init__(self, worker: "MeshHostWorker", uuid: int,
+                 accumulate_grad_proto: bytes, apply_grad_proto: bytes,
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
                  accumulate_grad_batch_arg_indices: Sequence[int],
@@ -608,7 +610,8 @@ class GradAccMeshWorkerExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = lambda : worker.local_devices[0].synchronize_all_activity()
+        self.sync_func = lambda: worker.local_devices[
+            0].synchronize_all_activity()
 
     def execute_on_worker(self, input_uuids, next_batch_uuids, output_uuids):
         """Run the executable on the worker."""
@@ -622,7 +625,8 @@ class GradAccMeshWorkerExecutable:
 
         # Prepare gradient buffers
         timers(self.timer_name).start(self.sync_func)
-        grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices([])
+        grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
+            [])
 
         # Call accumulate_grad multiple times
         tmp_input_bufs = tmp_input_bufs + grad_bufs

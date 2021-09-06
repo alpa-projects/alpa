@@ -211,9 +211,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
                             np.mean(costs))
-    heads = ["Type", "Case", "Mesh Shape", "Parameter Count",
+    heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
-    values = [model_type, str(benchmark_case[:-3]), str(benchmark_case[-3:]),
+    values = [model_type, str(benchmark_case[:-4]), str(benchmark_case[-4:]),
               f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")

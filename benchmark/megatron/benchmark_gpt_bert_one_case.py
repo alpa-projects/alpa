@@ -94,7 +94,7 @@ def get_bert_functions():
                           'sop loss': averaged_losses[1]}
         else:
             loss = lm_loss
-            #averaged_losses = average_losses_across_data_parallel_group(
+            #averaged_losses = average_losses_across_data_parallel_group(+
             #    [lm_loss])
             averaged_losses = [0]
             return loss, {'lm loss': averaged_losses[0]}

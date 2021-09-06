@@ -96,7 +96,6 @@ def benchmark_transformer_layer_one_case(benchmark_case):
             model.zero_grad_buffer()
         else:
             optimizer.zero_grad()
-
         model.module.set_input_tensor(x)
         output = model(x, attention_mask)
         loss = ((output - y) ** 2)
@@ -116,7 +115,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
         torch.cuda.synchronize()
 
     costs = benchmark_func(run_func, sync_func,
-                           warmup=1, repeat=2, number=50)
+                           warmup=1, repeat=1, number=1)
 
     # Print results
     if rank == 0:

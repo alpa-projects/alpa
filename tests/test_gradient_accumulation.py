@@ -91,15 +91,10 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(
         GradAccumulationTest("test_gradient_accumulation_single_host"))
-    #suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
+    suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
     return suite
 
 
 if __name__ == "__main__":
-    #runner = unittest.TextTestRunner()
-    #runner.run(suite())
-
-    a = GradAccumulationTest()
-    a.setUp()
-    a.test_gradient_accumulation_single_host()
-    a.tearDown()
+    runner = unittest.TextTestRunner()
+    runner.run(suite())

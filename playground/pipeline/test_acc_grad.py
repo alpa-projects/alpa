@@ -7,9 +7,9 @@ import jax.numpy as jnp
 import parax
 from parax.pipeline_parallel.manual_pipeline import manual_pipeline
 from parax.pipeline_parallel.stage import (
-    compute_to_acc_pipe, rewrite_apply_grad,
+    add_marker_for_apply_grads, compute_to_acc_pipe,
     slice_closed_jaxpr_by_manual_pipeline_marks, mark_global_and_local_vars,
-    mark_grad_mesh, slice_apply_gradient)
+    mark_grad_mesh, slice_apply_gradient, replace_all_with)
 from parax.pipeline_parallel.three_d_parallel import split_compute_and_apply
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 
@@ -54,8 +54,9 @@ def test_compute_to_accumulate():
     compute_grad = grad(loss_func, argnums=(0, 1, 2))
     params = optimizer.target
     compute_grad_jaxpr = make_jaxpr(compute_grad)(params, x, y)
+    gensym_fn = gensym([compute_grad_jaxpr.jaxpr])
     flatten_args, _ = tree_flatten((params, x, y))
-    acc_grad_jaxpr, grad_outs, _ = compute_to_acc_pipe(compute_grad_jaxpr)
+    acc_grad_jaxpr, grad_outs, _ = compute_to_acc_pipe(compute_grad_jaxpr, gensym_fn)
     grad_zeros = [jnp.zeros_like(val) for val in acc_grad_jaxpr.out_avals]
     # donate_argnums = [
     #     i for i in range(len(donated_invars)) if donated_invars[i]
@@ -109,15 +110,12 @@ def test_compute_and_apply():
 
     batch = {"x": x, "y": y}
     closed_jaxpr = make_jaxpr(train_step)(optimizer, batch)
+    gensym_func = gensym([closed_jaxpr.jaxpr])
     compute_grad_jaxpr, old_apply_grad_jaxpr, barrier = split_compute_and_apply(
         closed_jaxpr)
     # compute grad to accumulate grad
-    acc_grad_jaxpr, acc_grad_dict, _ = compute_to_acc_pipe(compute_grad_jaxpr)
-    # change invars of apply grad to output of accumulate grad
-    apply_grad_jaxpr = rewrite_apply_grad(old_apply_grad_jaxpr, acc_grad_dict,
-                                          barrier)
+    acc_grad_jaxpr, acc_grad_dict, _ = compute_to_acc_pipe(compute_grad_jaxpr, gensym_func)
     # slice accumulate grad
-    gensym_func = gensym([closed_jaxpr.jaxpr])
     old_jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
         acc_grad_jaxpr)
     jax_pipeline_stages = [
@@ -130,11 +128,19 @@ def test_compute_and_apply():
         i: (i if i < stage_num / 2 else stage_num - i - 1)
         for i, _ in enumerate(jax_pipeline_stages)
     }
+    # apply-grad
+    mask = {
+        outv: acc_grad_dict[inv]
+        for outv, inv in zip(barrier.outvars, barrier.invars)
+        if (not isinstance(outv, DropVar) and outv in old_apply_grad_jaxpr.jaxpr.invars)
+    }
+    # change invars of apply grad to output of accumulate grad
+    apply_grad_jaxpr = replace_all_with(old_apply_grad_jaxpr, mask)
     # slice apply-grad stages
-    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
-                               jax_pipeline_stages, stage_to_mesh)
-    sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
-
+    grad_mesh = mark_grad_mesh(old_apply_grad_jaxpr.jaxpr.invars,
+                               jax_pipeline_stages, stage_to_mesh, mask)
+    sliced_apply_grad, _ = slice_apply_gradient(old_apply_grad_jaxpr, grad_mesh)
+    sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad, mask, gensym_func)
     # Simulation:
     # correct result:
     args, _ = tree_flatten((optimizer, batch))

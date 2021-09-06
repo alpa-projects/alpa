@@ -699,7 +699,7 @@ def generate_sharded_xla_stages(name: str,
 
 
 def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
-                   stage_to_mesh):
+                   stage_to_mesh, mask):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
     for i, stage in enumerate(stages):
@@ -707,7 +707,9 @@ def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
             if isinstance(var, Var):
                 outvar2mesh[var] = stage_to_mesh[i]
     return {
-        invar: outvar2mesh[invar] for invar in invars if invar in outvar2mesh
+        invar: outvar2mesh[mask[invar]]
+        for invar in invars
+        if invar in mask and mask[invar] in outvar2mesh
     }
 
 
@@ -824,7 +826,7 @@ def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
     return is_gradients
 
 
-def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
+def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
     from jax.lax import add_p
     # Assume that no grad is literal
     raw_gradients = set([
@@ -843,7 +845,6 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
         assert outvar in gradients, 'all gradients are captured by pipeline marker'
     grad_values = list(gradients.values())
     # generate new variables
-    gensym_fn = gensym([compute_jaxpr.jaxpr])
     grad_invars = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
     grad_outs = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
     # modify output, here all grads are acc_grad
@@ -916,27 +917,58 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
     return ClosedJaxpr(jaxpr, compute_jaxpr.consts), update_outs, grad_in_to_out
 
 
-def rewrite_apply_grad(closed_jaxpr: ClosedJaxpr, in_dict, barrier: JaxprEqn):
-    # FIXME(yonghao): add division of microbatch num
-    # rewrite the apply_gradients by replacing all inputs with info from in_dict
-    mapping = {
-        barrier_out: in_dict[barrier_in]
-        for barrier_in, barrier_out in zip(barrier.invars, barrier.outvars)
-        if (not isinstance(barrier_out, DropVar) and
-            barrier_out in closed_jaxpr.jaxpr.invars)
-    }
-
+def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
+    # replace with given mapping of variables
     def map_var(var):
-        if isinstance(var, Var) and var in mapping:
+        if (isinstance(var, Var) and not isinstance(var, DropVar) and
+                var in mapping):
             return mapping[var]
         return var
 
     new_glob_invars = [map_var(var) for var in closed_jaxpr.jaxpr.invars]
+    new_glob_outvars = [map_var(var) for var in closed_jaxpr.jaxpr.outvars]
     new_eqns = []
     for eqn in closed_jaxpr.eqns:
         new_invars = [map_var(var) for var in eqn.invars]
+        new_outvars = [map_var(var) for var in eqn.outvars]
         new_eqns.append(
-            new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive, eqn.params))
+            new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, eqn.params))
     new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_glob_invars,
-                      closed_jaxpr.jaxpr.outvars, new_eqns)
+                      new_glob_outvars, new_eqns)
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+
+
+def add_marker_for_apply_grads(jaxprs, mask, gensym_fn):
+    # add pipeline markers for sliced apply grads, given part of mapping
+    # WARNING! the mapping is the reversed mask
+    results = []
+    for i, jaxpr in enumerate(jaxprs):
+        new_map = dict()
+        print(jaxpr.jaxpr.outvars)
+        for invar in jaxpr.jaxpr.invars:
+            if invar not in mask:
+                new_map[invar] = gensym_fn(invar.aval)
+        for outvar in jaxpr.jaxpr.outvars:
+            if isinstance(outvar, Var):
+                new_map[outvar] = gensym_fn(outvar.aval)
+            else:
+                raise NotImplemented("outvar of apply grad cannot be literal")
+        replaced = replace_all_with(jaxpr, new_map).jaxpr
+        new_invars = [
+            mask[invar] if invar in mask else invar
+            for invar in jaxpr.jaxpr.invars
+        ]
+        start_marker = mark_pipeline_jaxpreqn(new_invars,
+                                              replaced.invars,
+                                              name=str(i) + '_apply_grad',
+                                              mark_type='start')
+        end_marker = mark_pipeline_jaxpreqn(replaced.outvars,
+                                            jaxpr.jaxpr.outvars,
+                                            name=str(i) + '_apply_grad',
+                                            mark_type='end')
+        print(end_marker)
+        new_eqns = [start_marker] + replaced.eqns + [end_marker]
+        new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars,
+                          jaxpr.jaxpr.outvars, new_eqns)
+        results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
+    return results

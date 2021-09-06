@@ -3,6 +3,8 @@ import hashlib
 import inspect
 import time
 
+import numpy as np
+
 from jax import linear_util as lu, disable_jit
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym)
 from jax.interpreters import partial_eval as pe
@@ -16,7 +18,7 @@ from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverE
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
-from parax.util import jaxpr_to_hlo_computation
+from parax.util import jaxpr_to_hlo_computation, setup_computation_alias
 
 
 def get_compute_key(fun, in_tree, donated_invars, *aval):
@@ -244,12 +246,24 @@ def shard_parallel_internal_gradient_accumulation(
     accumulate_grad = xc.XlaComputation(hlo_protos[0])
     apply_grad = xc.XlaComputation(hlo_protos[1])
 
+    ## donate old_grad to make the gradient accumulation in-place
+    tmp_donate_invars = (False,) * len(accumulate_grad_invar_indices) + (
+        True,) * num_grads
+    setup_computation_alias(accumulate_grad, tmp_donate_invars)
+
+    ## donate old opt_state and params to make the weight update in-place
+    tmp_donate_invars = tuple(donated_invars[i] for i in apply_grad_invar_indices) +\
+        (False,) * num_grads
+    setup_computation_alias(apply_grad, tmp_donate_invars)
+
+    bypass_device_assignment_check = physical_mesh.is_distributed
     accumulate_grad = compile_with_given_strategy(
         backend, accumulate_grad, strategy_config, physical_mesh.total_devices,
-        False, HloProtoStatus.SHARDING_ANNOTATED)
+        bypass_device_assignment_check, HloProtoStatus.SHARDING_ANNOTATED)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,
-                                             physical_mesh.total_devices, False,
+                                             physical_mesh.total_devices,
+                                             bypass_device_assignment_check,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
     # Compile them to a single mesh executable
@@ -375,11 +389,12 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
 
     # Append eqns for gradient reduction
     for i in range(num_grads):
+        tmp_var = old_invars[-(i + 1)]
         combined_eqns.append(
-            new_jaxpr_eqn(
-                [old_invars[-(i + 1)],
-                 Literal(float(num_micro_batches))], [old_invars[-(i + 1)]],
-                div_p, {}, None))
+            new_jaxpr_eqn([
+                tmp_var,
+                Literal(np.array(num_micro_batches, tmp_var.aval.dtype))
+            ], [tmp_var], div_p, {}, None))
     # TODO(lmzheng): This breaks the SSA form of the combined_eqns
     # But I find jax can convert this non-SSA jaxpr to HLO correctly,
     # so I leave this issue as todo. To fix this, we should substitute

@@ -26,6 +26,7 @@ from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
+from parax.timer import timers
 from parax.util import (get_dim_last_value, list_gpu_info, GB, to_cupy,
                         to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
                         jax_buffer_to_xla_buffer)
@@ -99,7 +100,7 @@ class MeshHostWorker:
     ##### Executable Related Functions #####
     def put_executable(self, uuid: int, executable_class: MeshWorkerExecutable,
                        *args):
-        self.executables[uuid] = executable_class(self, *args)
+        self.executables[uuid] = executable_class(self, uuid, *args)
 
     def delete_executable(self, uuid: int):
         del self.executables[uuid]
@@ -209,6 +210,9 @@ class MeshHostWorker:
     def profile_executable_with_dummy_inputs(self, uuid: int):
         return self.executables[uuid].profile_with_dummy_inputs(
             self.backend, self.local_devices)
+
+    def get_timer(self, name: str):
+        return timers(name)
 
     ##### Other Functions #####
     def sync(self):
@@ -538,8 +542,9 @@ class PhysicalDeviceMesh:
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
-                    if donated and isinstance(
-                            arg, (xla._DeviceArray, xla._CppDeviceArray)):
+                    if donated:
+                        # shard_arg_handler always creates new buffers,
+                        # so we can delete the old buffers
                         arg.delete()
 
             return input_bufs
@@ -609,6 +614,12 @@ class PhysicalDeviceMesh:
     def save_profiling_result(self, filename: str):
         """Save profiling results to a file."""
         pickle.dump(self.prof_result, open(filename, "wb"))
+
+    def get_remote_timer(self, timer_name: str):
+        if self.is_distributed:
+            return ray.get(self.workers[0].get_timer.remote(timer_name))
+        else:
+            return timers(timer_name)
 
     ##### Other Functions #####
     def sync_workers(self):
@@ -755,6 +766,12 @@ class DistributedArray:
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
         self.device_mesh.block_until_ready_remote_buffers(self.remote_buffers)
+
+    def delete(self):
+        for buf in self.remote_buffers:
+            del buf
+        self.device_buffers = None
+        self._npy_value = None
 
     @property
     def one_replica_buffer_indices(self):

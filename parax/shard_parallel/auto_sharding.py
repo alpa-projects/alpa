@@ -192,7 +192,7 @@ def compile_with_given_strategy(backend, xla_computation, strategy_config,
       strategy_config (StrategyConfig): The auto-sharding strategy solution.
       num_devices (int): The total number of devices.
       bypass_device_assignment_check (bool): Set this to true if this compilation is invoked
-        on the driver node.
+        on the driver node in the multi-host setting.
       hlo_proto_status (HloProtoStatus): The optimization status of the
         input xla computation. see docs in the definition of `HloProtoStatus`.
     """

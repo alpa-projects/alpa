@@ -113,10 +113,10 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp("Setup device mesh")
 
     @parallelize
-    def train_step(optimizer, batch, apply_func):
+    def train_step(optimizer, batch, rngkey, apply_func):
         @partial(forward, layer_num = num_layers, use_remat = use_remat)
         def loss_func(params):
-            rngs = {"dropout": batch["rng"]}
+            rngs = {"dropout": rngkey}
             logits = apply_func(params,
                                 batch["input_ids"],
                                 batch["attention_mask"],
@@ -132,8 +132,8 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             return loss
 
         params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), optimizer.target)
-        grad = jax.grad(loss_func)(params)
-        new_optimizer = optimizer.apply_gradient(grad)
+        grads = jax.grad(loss_func)(params)
+        new_optimizer = optimizer.apply_gradient(grads)
         return new_optimizer
 
     # Prepare input batch
@@ -143,7 +143,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "rng": jax.random.PRNGKey(0),
     }
     log_time_stamp("Prepare input")
 
@@ -175,36 +174,22 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
     optimizer = optim.Adam(1e-2).create(params)
-    del (params, rngkey)
+    del params
     log_time_stamp("Init model and optimizer")
 
     # Compile executable
-    executable = train_step.get_executable(optimizer, batch, model.apply)
+    executable = train_step.get_executable(optimizer, batch, rngkey, model.apply)
     log_time_stamp("Compile (driver)")
 
     physical_mesh.sync_workers()
     log_time_stamp("Compile (workers)")
 
     # Benchmark step time
-    if args.include_all_overhead:
-        optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
-        physical_mesh.sync_workers()
-        log_time_stamp("Shard arguments")
+    for i in range(10):
+        optimizer = train_step(optimizer, batch, rngkey, model.apply)
 
-        def run_func():
-            nonlocal optimizer
-            optimizer = train_step(optimizer, batch, model.apply)
-
-        def sync_func():
-            physical_mesh.sync_workers()
-
-        costs = benchmark_func(run_func, sync_func,
-                               warmup=1, repeat=2, number=args.number)
-        log_time_stamp("Benchmark")
-    else:
-        del (optimizer, batch)
-        costs = executable.profile_with_dummy_inputs()
-        log_time_stamp("Benchmark")
+    costs = executable.get_execution_time_costs(warmup=2)
+    log_time_stamp("Benchmark")
 
     # Check sharding strategy
     real_mem = executable.get_total_allocation_size()
@@ -226,9 +211,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
                             np.mean(costs))
-    heads = ["Type", "Case", "Mesh Shape", "Parameter Count",
+    heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
-    values = [model_type, str(benchmark_case[:-3]), str(benchmark_case[-3:]),
+    values = [model_type, str(benchmark_case[:-4]), str(benchmark_case[-4:]),
               f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
@@ -293,9 +278,6 @@ if __name__ == "__main__":
     parser.add_argument("--number", type=int, default=5)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--include-all-overhead", action="store_true",
-        help="If true, run the benchmark with all python overhead included (ray, parax)."
-             "If false, only run the xla executable without any python overhead.")
     args = parser.parse_args()
 
     if not args.local:
@@ -306,4 +288,3 @@ if __name__ == "__main__":
     global_config.prefer_reduce_scatter = True
 
     benchmark_all(args.use_profiling)
-

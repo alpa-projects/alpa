@@ -5,6 +5,7 @@ import itertools as it
 import os
 import subprocess
 import time
+from typing import Sequence
 from warnings import warn
 
 import cupy as cp
@@ -192,6 +193,26 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
     return built
 
 
+def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
+    """Set input/output alias in xla computation.
+
+    Assume the tensors in output tuple strictly match the donated parameters.
+    """
+    program_shape = xla_computation.program_shape()
+    parameter_shapes = program_shape.parameter_shapes()
+    result_shapes = program_shape.result_shape().tuple_shapes()
+
+    assert len(parameter_shapes) == len(donated_invars)
+
+    ct = 0
+    for i in range(len(parameter_shapes)):
+        if donated_invars[i]:
+            assert parameter_shapes[i].dimensions(
+            ) == result_shapes[ct].dimensions()
+            xla_computation.setup_alias((ct,), i, ())
+            ct += 1
+
+
 def count_communication_primitives(hlo_ir):
     """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
@@ -283,19 +304,20 @@ def profile_xla_executable(compiled, backend, local_devices):
             device_inputs)
 
         # Reset the value for donate buffers
+        ct = 0
         for j in range(len(device_inputs)):
             if device_inputs[j][0].is_deleted():
-                device_inputs[j] = device_outputs[j]
+                device_inputs[j] = device_outputs[ct]
+                ct += 1
 
-    def sync_func():
         local_devices[0].synchronize_all_activity()
 
-    costs = benchmark_func(run_func, sync_func, repeat=3, number=3)
+    costs = benchmark_func(run_func, repeat=3, number=3)
     return costs
 
 
 def benchmark_func(run_func,
-                   sync_func,
+                   sync_func=None,
                    warmup=1,
                    repeat=3,
                    number=5,
@@ -318,21 +340,25 @@ def benchmark_func(run_func,
 
     # Choose a "number" according to "min_repeat_second"
     if min_repeat_second:
-        sync_func()
+        if sync_func:
+            sync_func()
         tic = time.time()
         run_func()
-        sync_func()
+        if sync_func:
+            sync_func()
         toc = time.time()
         cost = toc - tic
         number = max(int(min_repeat_second / cost), 1)
 
     # Benchmark
     for _ in range(repeat):
-        sync_func()
+        if sync_func:
+            sync_func()
         tic = time.time()
         for __ in range(number):
             run_func()
-        sync_func()
+        if sync_func:
+            sync_func()
         costs.append(time.time() - tic)
 
     return np.array(costs) / number

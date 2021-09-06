@@ -5,6 +5,7 @@ import itertools as it
 import os
 import subprocess
 import time
+from typing import Sequence
 from warnings import warn
 
 import cupy as cp
@@ -190,6 +191,26 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
 
     built = c.build(out_tuple)
     return built
+
+
+def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
+    """Set input/output alias in xla computation.
+
+    Assume the tensors in output tuple strictly match the donated parameters.
+    """
+    program_shape = xla_computation.program_shape()
+    parameter_shapes = program_shape.parameter_shapes()
+    result_shapes = program_shape.result_shape().tuple_shapes()
+
+    assert len(parameter_shapes) == len(donated_invars)
+
+    ct = 0
+    for i in range(len(parameter_shapes)):
+        if donated_invars[i]:
+            assert parameter_shapes[i].dimensions(
+            ) == result_shapes[ct].dimensions()
+            xla_computation.setup_alias((ct,), i, ())
+            ct += 1
 
 
 def count_communication_primitives(hlo_ir):

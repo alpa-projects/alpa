@@ -55,25 +55,26 @@ class RemoteBufferRef:
         self.host_id = host_id
         self.device_id = device_id
         self.uuid = uuid or next_remote_buffer_uuid()
-        self.is_donated = False
+        self.is_deleted_on_workers = False
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
                 self.uuid, self.device_mesh.device_strs))
 
-    def donate(self):
+    def set_deleted_on_workers(self):
         """
-        Set the buffer as donated.
+        Set the buffer as deleted on workers.
 
-        If the buffer is donated, we do not need to explicitly call the actor to
-        delete it. Its memory will be deleted by xla runtime.
+        For some buffers (e.g., donated buffers), if we know the workers has
+        already deleted them, then we do not need to do the RPC call "delete_remote_buffers"
+        again.
         """
-        self.is_donated = True
+        self.is_deleted_on_workers = True
 
     def __repr__(self):
         return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
 
     def __del__(self):
-        if not self.is_donated:
+        if not self.is_deleted_on_workers:
             self.device_mesh.delete_remote_buffers((self,))
 
 
@@ -182,11 +183,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                         physical_mesh, host_id, device_id,
                         output_uuids[i][host_id][device_id])
 
-            # Donate input buffers
+            # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
                 if is_donated:
                     for buf in bufs:
-                        buf.donate()
+                        buf.set_deleted_on_workers()
         else:
             output_bufs = self.compiled.execute_sharded_on_local_devices(
                 input_bufs)
@@ -436,7 +437,7 @@ class GradAccMeshDriverExecutable:
         input_bufs = physical_mesh.shard_args(self.global_arg_shard_indices,
                                               self.donated_invars, args)
         next_batch_bufs = physical_mesh.shard_args(
-            self.next_batch_indices, (False,) * len(self.next_batch_indices),
+            self.next_batch_indices, (True,) * len(self.next_batch_indices),
             next_batches)
 
         if physical_mesh.is_distributed:
@@ -474,11 +475,16 @@ class GradAccMeshDriverExecutable:
                         physical_mesh, host_id, device_id,
                         output_uuids[i][host_id][device_id])
 
-            # Donate input buffers
+            # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
                 if is_donated:
                     for buf in bufs:
-                        buf.donate()
+                        buf.set_deleted_on_workers()
+
+            # Mark micro batch buffers as already deleted on workers.
+            for bufs in next_batch_bufs:
+                for buf in bufs:
+                    buf.set_deleted_on_workers()
         else:
             # Prepare gradient buffers
             grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
@@ -599,6 +605,11 @@ class GradAccMeshWorkerExecutable:
 
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids)
+
+        # Delete micro batch buffers
+        for i in range(len(next_batch_uuids)):
+            for j in range(len(next_batch_uuids[i])):
+                del buffer_dict[next_batch_uuids[i][j]]
 
     def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""

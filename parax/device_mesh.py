@@ -538,8 +538,9 @@ class PhysicalDeviceMesh:
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
-                    if donated and isinstance(
-                            arg, (xla._DeviceArray, xla._CppDeviceArray)):
+                    if donated:
+                        # shard_arg_handler always creates new buffers,
+                        # so we can delete the old buffers
                         arg.delete()
 
             return input_bufs
@@ -755,6 +756,12 @@ class DistributedArray:
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
         self.device_mesh.block_until_ready_remote_buffers(self.remote_buffers)
+
+    def delete(self):
+        for buf in self.remote_buffers:
+            del buf
+        self.device_buffers = None
+        self._npy_value = None
 
     @property
     def one_replica_buffer_indices(self):

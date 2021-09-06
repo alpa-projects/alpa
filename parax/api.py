@@ -10,10 +10,9 @@ from jax.api_util import (argnums_partial, donation_vector,
 from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
-from jax.lib import xla_bridge as xb
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from parax.device_mesh import DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh
+from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.primitive_def import mark_gradient
@@ -95,7 +94,7 @@ def parallelize(fun=None,
 
             # Deal with batch argnums
             batch_tuple = rebase_donate_argnums(batch_argnums, static_argnums)
-            batch_invars = donation_vector(batch_argnums, dyn_args, kwargs)
+            batch_invars = donation_vector(batch_tuple, dyn_args, kwargs)
 
             # JIT compile and call the compiled func
             abstract_args = unsafe_map(xla.abstractify, args_flat)
@@ -120,7 +119,7 @@ def parallelize(fun=None,
                 return tree_unflatten(in_tree, sharded_args)
             elif return_value_mode == "get_executable":
                 # Return the compiled executable
-                return compiled_func.args[0]
+                return compiled_func.get_executable()
             else:
                 raise ValueError(
                     f"Invalid return_value_mode: {return_value_mode}")

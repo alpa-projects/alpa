@@ -22,20 +22,17 @@ pylint:
   enable:
     - duplicate-code
   disable:
-    # Libraries aren't installed during linting
-    - import-error
-    - wrong-import-error
     - cyclic-import
-    - invalid-name  # e.g. o and df are not allowed
-    # Most of our logs don't need lazy interpolation
+    - consider-using-enumerate
+    - import-error
+    - invalid-name
     - logging-format-interpolation
     - logging-fstring-interpolation
     - missing-docstring
-    - unused-argument
-    - too-few-public-methods
     - not-context-manager
     - no-else-return
     - protected-access
+    - too-few-public-methods
     - too-many-arguments
     - too-many-locals
     - too-many-branches
@@ -43,6 +40,9 @@ pylint:
     - too-many-lines
     - too-many-instance-attributes
     - too-many-function-args
+    - unused-argument
+    - useless-suppression
+    - wrong-import-error
   options:
     max-line-length: 120
     ignored-argument-names: arg|args|kwargs
@@ -62,6 +62,7 @@ pep257:
     - D107  # Missing docstring in __init__
     - D203  # Blank line before class docstring
     - D212  # Multi-line docstring should start at first line
+    - D213  # Multi-line docstring summary should start at the second line
     - D406  # Section name should end with newline
     - D407  # Missing dashed underline after section
     - D413  # Missing blank line after last section

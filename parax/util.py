@@ -304,19 +304,20 @@ def profile_xla_executable(compiled, backend, local_devices):
             device_inputs)
 
         # Reset the value for donate buffers
+        ct = 0
         for j in range(len(device_inputs)):
             if device_inputs[j][0].is_deleted():
-                device_inputs[j] = device_outputs[j]
+                device_inputs[j] = device_outputs[ct]
+                ct += 1
 
-    def sync_func():
         local_devices[0].synchronize_all_activity()
 
-    costs = benchmark_func(run_func, sync_func, repeat=3, number=3)
+    costs = benchmark_func(run_func, repeat=3, number=3)
     return costs
 
 
 def benchmark_func(run_func,
-                   sync_func,
+                   sync_func=None,
                    warmup=1,
                    repeat=3,
                    number=5,
@@ -339,21 +340,25 @@ def benchmark_func(run_func,
 
     # Choose a "number" according to "min_repeat_second"
     if min_repeat_second:
-        sync_func()
+        if sync_func:
+            sync_func()
         tic = time.time()
         run_func()
-        sync_func()
+        if sync_func:
+            sync_func()
         toc = time.time()
         cost = toc - tic
         number = max(int(min_repeat_second / cost), 1)
 
     # Benchmark
     for _ in range(repeat):
-        sync_func()
+        if sync_func:
+            sync_func()
         tic = time.time()
         for __ in range(number):
             run_func()
-        sync_func()
+        if sync_func:
+            sync_func()
         costs.append(time.time() - tic)
 
     return np.array(costs) / number

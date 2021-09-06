@@ -97,7 +97,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
         closed_jaxpr)
     # compute grad to accumulate grad
-    acc_grad_jaxpr, acc_grad_dict = compute_to_acc_pipe(compute_grad_jaxpr)
+    acc_grad_jaxpr, acc_grad_dict, grad_glob_in = compute_to_acc_pipe(compute_grad_jaxpr)
     # change invars of apply grad to output of accumulate grad
     apply_grad_jaxpr = rewrite_apply_grad(apply_grad_jaxpr, acc_grad_dict,
                                           barrier)
@@ -175,6 +175,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     jp = Jax3DPipeline(pipeline_stages=xla_stages,
                        global_invars=global_invars,
+                       grad_dummy_invars=grad_glob_in,
                        global_outvars=global_outvars,
                        physical_meshes=physical_meshes,
                        dependency=dependency,

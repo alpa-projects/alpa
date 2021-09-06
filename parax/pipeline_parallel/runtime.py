@@ -63,6 +63,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  *,
                  pipeline_stages,
                  global_invars,
+                 grad_dummy_invars,
                  global_outvars,
                  physical_meshes,
                  dependency,
@@ -70,6 +71,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  num_batch=1):
         self.stages = pipeline_stages
         self.global_invars = global_invars
+        self.grad_dummy_invars = grad_dummy_invars
         self.global_outvars = global_outvars
         self.global_outvars_repr_set = set()
         for var in self.global_outvars:
@@ -230,6 +232,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 splits = jnp.split(array, self.num_batch, axis=batch_dim)
                 for b, split in enumerate(splits):
                     microbatches[b][key] = split
+        for var in self.grad_dummy_invars.keys():
+            key = repr(var)
+            microbatches[0][key] = jnp.zeros_like(var.aval)
         return microbatches
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
@@ -253,6 +258,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             key = repr(var)
             if var in self.global_invars:
                 stage_inputs[key] = self._microbatches[batch_idx][key]
+            elif var in self.grad_dummy_invars:
+                if batch_idx == 0:
+                    stage_inputs[key] = self._microbatches[batch_idx][key]
+                else:
+                    _key = repr(self.grad_dummy_invars[key])
+                    stage_inputs[key] = self._microbatches[batch_idx - 1][_key]
             else:
                 for ans in ancestors:
                     if key in self._stage_outputs[batch_idx][ans]:

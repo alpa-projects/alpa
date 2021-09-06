@@ -849,13 +849,15 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
     # modify output, here all grads are acc_grad
     new_glob_outvars = []
     new_glob_invars = compute_jaxpr.jaxpr.invars + []
-    old_outs_to_new = dict()
+    update_outs = dict()
+    grad_in_to_out = dict()
     for outvar in compute_jaxpr.jaxpr.outvars:
         if isinstance(outvar, Var):
             assert outvar in gradients
             new_glob_outvars.append(grad_outs[gradients[outvar]])
             new_glob_invars.append(grad_invars[gradients[outvar]])
-            old_outs_to_new[outvar] = grad_outs[gradients[outvar]]
+            update_outs[outvar] = grad_outs[gradients[outvar]]
+            grad_in_to_out[repr(grad_invars[gradients[outvar]])] = repr(outvar)
         else:
             raise NotImplemented('gradients cannot be Literal')
     gradients = set(grad_values)
@@ -907,11 +909,11 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr):
             if not isinstance(outvar, DropVar) and outvar in gradients:
                 # collect gradients in this stage
                 to_acc.append(outvar)
-    new_jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
-                      new_glob_outvars, new_eqns)
+    jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
+                  new_glob_outvars, new_eqns)
     # We do not modify donate_invars here, as it is only to append Trues
     # Instead return grad outs to help modify apply_grad
-    return ClosedJaxpr(new_jaxpr, compute_jaxpr.consts), old_outs_to_new
+    return ClosedJaxpr(jaxpr, compute_jaxpr.consts), update_outs, grad_in_to_out
 
 
 def rewrite_apply_grad(closed_jaxpr: ClosedJaxpr, in_dict, barrier: JaxprEqn):

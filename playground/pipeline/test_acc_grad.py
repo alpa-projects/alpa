@@ -55,7 +55,7 @@ def test_compute_to_accumulate():
     params = optimizer.target
     compute_grad_jaxpr = make_jaxpr(compute_grad)(params, x, y)
     flatten_args, _ = tree_flatten((params, x, y))
-    acc_grad_jaxpr, grad_outs = compute_to_acc_pipe(compute_grad_jaxpr)
+    acc_grad_jaxpr, grad_outs, _ = compute_to_acc_pipe(compute_grad_jaxpr)
     grad_zeros = [jnp.zeros_like(val) for val in acc_grad_jaxpr.out_avals]
     # donate_argnums = [
     #     i for i in range(len(donated_invars)) if donated_invars[i]
@@ -112,7 +112,7 @@ def test_compute_and_apply():
     compute_grad_jaxpr, old_apply_grad_jaxpr, barrier = split_compute_and_apply(
         closed_jaxpr)
     # compute grad to accumulate grad
-    acc_grad_jaxpr, acc_grad_dict = compute_to_acc_pipe(compute_grad_jaxpr)
+    acc_grad_jaxpr, acc_grad_dict, _ = compute_to_acc_pipe(compute_grad_jaxpr)
     # change invars of apply grad to output of accumulate grad
     apply_grad_jaxpr = rewrite_apply_grad(old_apply_grad_jaxpr, acc_grad_dict,
                                           barrier)

@@ -16,6 +16,7 @@ from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
+from parax.mesh_executable import NormalMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
@@ -243,25 +244,20 @@ class XlaShardedPipelineStage(PipelineStage):
             backend, xla_computation, self.strategy_config, num_devices,
             mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED)
         hlo_module = compiled.hlo_modules()[0]
-        if mesh.is_distributed:
-            compiled = mesh.compile_remote_executable(
-                hlo_module.as_serialized_hlo_module_proto(),
-                self.strategy_config, HloProtoStatus.FULLY_OPTIMIZED)
 
         # Return the final callable
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-            hlo_module, num_devices, avals, out_avals, logical_mesh_shape)
+        mesh_executable = NormalMeshDriverExecutable(mesh, compiled,
+                                                     self.strategy_config,
+                                                     avals, out_avals,
+                                                     self.donated_invars)
 
         # TODO(Hao): make this better
-        self.input_sharding_specs = input_sharding_specs
-        self.output_sharding_specs = output_sharding_specs
+        self.input_sharding_specs = mesh_executable.input_sharding_specs
+        self.output_sharding_specs = mesh_executable.output_sharding_specs
 
-        return mesh.get_callable_with_arg_handler(compiled, avals, out_avals,
-                                                  input_sharding_specs,
-                                                  output_sharding_specs,
-                                                  self.donated_invars)
+        return mesh_executable.get_driver_callable()
 
 
 def slice_closed_jaxpr_by_manual_pipeline_marks(
@@ -673,6 +669,7 @@ def generate_sharded_xla_stages(name: str,
         outvars=list(outvars),
         eqns=eqns,
     )
+    donated_invars = (False,) * len(invars)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
@@ -680,6 +677,9 @@ def generate_sharded_xla_stages(name: str,
     stage_protos, strategy_config = compile_with_search(
         backend,
         built,
+        invars,
+        outvars,
+        donated_invars,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,

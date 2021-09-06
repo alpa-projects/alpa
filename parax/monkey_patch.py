@@ -2,9 +2,12 @@
 
 import flax
 from flax.linen.module import compact, wrap_method_once
+
 import jax
 from jax import core, lax, numpy as jnp
-
+from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
+                                  wrap_name)
+from jax.lib import xla_client as xc
 from jax.lib.xla_bridge import get_backend as default_get_backend
 
 ########################################
@@ -57,9 +60,6 @@ jax.random.fold_in = remove_fold_in
 
 def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
                           call_jaxpr):
-    from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
-                                      wrap_name)
-    from jax.lib import xla_client as xc
 
     def all_index(shape, cur):
         out = []
@@ -90,7 +90,7 @@ def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
         c, call_jaxpr, backend, axis_env, (),
         extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
 
-    return (xops.Tuple(c, outs))
+    return xops.Tuple(c, outs)
 
 
 jax.xla._remat_using_while = _remat_using_identity

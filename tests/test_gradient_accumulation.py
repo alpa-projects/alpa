@@ -9,23 +9,31 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
+import ray
 
 from parax import (parallelize, set_parallelize_options, grad, testing,
-                   global_config)
+                   global_config, DeviceCluster)
 from parax.testing import assert_allclose
 
 
-def all_reduce_cost(num_devices, num_bytes):
-    return 2.0 * (num_devices - 1) / num_devices * num_bytes
-
-
-class AutoShardingBasicTest(unittest.TestCase):
+class GradAccumulationTest(unittest.TestCase):
 
     def setUp(self):
-        assert len(jax.local_devices()) >= 4
-        set_parallelize_options(jax.devices()[:4])
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+        ray.init(address="auto", ignore_reinit_error=True)
 
-    def test_gradient_accumulation(self):
+    def tearDown(self):
+        ray.shutdown()
+
+    def run_gradient_accumulation(self, use_ray):
+        if use_ray:
+            device_cluster = DeviceCluster()
+            physical_mesh = device_cluster.get_physical_mesh()
+            logical_mesh = physical_mesh.get_default_logical_mesh()
+            set_parallelize_options(logical_mesh)
+        else:
+            set_parallelize_options(jax.local_devices())
+
         batch_size = 16
         num_micro_batches = 2
         hidden_size = 32
@@ -72,17 +80,21 @@ class AutoShardingBasicTest(unittest.TestCase):
         # Check results
         assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
+    def test_gradient_accumulation_single_host(self):
+        self.run_gradient_accumulation(use_ray=False)
+
+    def test_gradient_accumulation_multi_host(self):
+        self.run_gradient_accumulation(use_ray=True)
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingBasicTest("test_gradient_accumulation"))
+    suite.addTest(
+        GradAccumulationTest("test_gradient_accumulation_single_host"))
+    suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
     return suite
 
 
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-
-    #t = AutoShardingBasicTest()
-    #t.setUp()
-    #t.test_gradient_accumulation()

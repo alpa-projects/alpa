@@ -8,8 +8,9 @@ import parax
 from parax.pipeline_parallel.manual_pipeline import manual_pipeline
 from parax.pipeline_parallel.stage import (
     add_marker_for_apply_grads, compute_to_acc_pipe,
-    slice_closed_jaxpr_by_manual_pipeline_marks, mark_global_and_local_vars,
-    mark_grad_mesh, slice_apply_gradient, replace_all_with)
+    slice_closed_jaxpr_by_full_pipeline_marks,
+    mark_missing_vars_in_pipeline_marks, mark_grad_mesh, slice_apply_gradient,
+    replace_all_with)
 from parax.pipeline_parallel.three_d_parallel import split_compute_and_apply
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 
@@ -56,7 +57,8 @@ def test_compute_to_accumulate():
     compute_grad_jaxpr = make_jaxpr(compute_grad)(params, x, y)
     gensym_fn = gensym([compute_grad_jaxpr.jaxpr])
     flatten_args, _ = tree_flatten((params, x, y))
-    acc_grad_jaxpr, grad_outs, _ = compute_to_acc_pipe(compute_grad_jaxpr, gensym_fn)
+    acc_grad_jaxpr, grad_outs, _ = compute_to_acc_pipe(compute_grad_jaxpr,
+                                                       gensym_fn)
     grad_zeros = [jnp.zeros_like(val) for val in acc_grad_jaxpr.out_avals]
     # donate_argnums = [
     #     i for i in range(len(donated_invars)) if donated_invars[i]
@@ -93,13 +95,12 @@ def record_values(vars, avals, env):
 
 
 def get_and_set(closed_jaxpr, env):
-    outs = jaxpr_as_fun(closed_jaxpr)(
-        *get_invals_from_env(closed_jaxpr, env)
-    )
+    outs = jaxpr_as_fun(closed_jaxpr)(*get_invals_from_env(closed_jaxpr, env))
     record_values(closed_jaxpr.jaxpr.outvars, outs, env)
 
 
 def test_compute_and_apply():
+
     def train_step(optimizer, batch):
         grad_param, _x, _y = parax.grad(loss_func,
                                         argnums=(0, 1, 2))(optimizer.target,
@@ -114,14 +115,15 @@ def test_compute_and_apply():
     compute_grad_jaxpr, old_apply_grad_jaxpr, barrier = split_compute_and_apply(
         closed_jaxpr)
     # compute grad to accumulate grad
-    acc_grad_jaxpr, acc_grad_dict, _ = compute_to_acc_pipe(compute_grad_jaxpr, gensym_func)
+    acc_grad_jaxpr, acc_grad_dict, _ = compute_to_acc_pipe(
+        compute_grad_jaxpr, gensym_func)
     # slice accumulate grad
-    old_jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
+    global_invars = acc_grad_jaxpr.jaxpr.invars
+    global_outvars = acc_grad_jaxpr.jaxpr.outvars
+    jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
-    jax_pipeline_stages = [
-        mark_global_and_local_vars(stage, gensym_func)
-        for stage in old_jax_pipeline_stages
-    ]
+    jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
+        jax_pipeline_stages, global_invars, global_outvars)
     # delete the two lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
     stage_to_mesh = {
@@ -132,7 +134,8 @@ def test_compute_and_apply():
     mask = {
         outv: acc_grad_dict[inv]
         for outv, inv in zip(barrier.outvars, barrier.invars)
-        if (not isinstance(outv, DropVar) and outv in old_apply_grad_jaxpr.jaxpr.invars)
+        if (not isinstance(outv, DropVar) and
+            outv in old_apply_grad_jaxpr.jaxpr.invars)
     }
     # change invars of apply grad to output of accumulate grad
     apply_grad_jaxpr = replace_all_with(old_apply_grad_jaxpr, mask)
@@ -140,7 +143,8 @@ def test_compute_and_apply():
     grad_mesh = mark_grad_mesh(old_apply_grad_jaxpr.jaxpr.invars,
                                jax_pipeline_stages, stage_to_mesh, mask)
     sliced_apply_grad, _ = slice_apply_gradient(old_apply_grad_jaxpr, grad_mesh)
-    sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad, mask, gensym_func)
+    sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad, mask,
+                                                   gensym_func)
     # Simulation:
     # correct result:
     args, _ = tree_flatten((optimizer, batch))
@@ -184,7 +188,7 @@ def test_compute_and_apply():
             assert inv in grad_invars
             env_3[invar] = jnp.zeros_like(invar.aval)
 
-    for stage in old_jax_pipeline_stages:
+    for stage in jax_pipeline_stages:
         get_and_set(stage.closed_jaxpr(), env_3)
     for slice in sliced_apply_grad:
         get_and_set(slice, env_3)

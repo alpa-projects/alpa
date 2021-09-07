@@ -938,13 +938,12 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
 
-def add_marker_for_apply_grads(jaxprs, mask, gensym_fn):
+def add_marker_for_apply_grads(jaxprs, mask, gensym_fn, stage=False):
     # add pipeline markers for sliced apply grads, given part of mapping
     # WARNING! the mapping is the reversed mask
     results = []
     for i, jaxpr in enumerate(jaxprs):
         new_map = dict()
-        print(jaxpr.jaxpr.outvars)
         for invar in jaxpr.jaxpr.invars:
             if invar not in mask:
                 new_map[invar] = gensym_fn(invar.aval)
@@ -958,17 +957,24 @@ def add_marker_for_apply_grads(jaxprs, mask, gensym_fn):
             mask[invar] if invar in mask else invar
             for invar in jaxpr.jaxpr.invars
         ]
+        name = str(i) + '_apply_grad'
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,
-                                              name=str(i) + '_apply_grad',
+                                              name=name,
                                               mark_type='start')
         end_marker = mark_pipeline_jaxpreqn(replaced.outvars,
                                             jaxpr.jaxpr.outvars,
-                                            name=str(i) + '_apply_grad',
+                                            name=name,
                                             mark_type='end')
-        print(end_marker)
         new_eqns = [start_marker] + replaced.eqns + [end_marker]
-        new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars,
-                          jaxpr.jaxpr.outvars, new_eqns)
-        results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
+        if stage:
+            results.append(
+                JaxPipelineStage(name, new_invars, jaxpr.jaxpr.outvars,
+                                 new_eqns,
+                                 dict(zip(jaxpr.jaxpr.constvars,
+                                          jaxpr.consts))))
+        else:
+            new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars,
+                              jaxpr.jaxpr.outvars, new_eqns)
+            results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
     return results

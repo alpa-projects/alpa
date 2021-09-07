@@ -137,7 +137,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                jax_pipeline_stages, stage_to_mesh, mask)
     sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
     sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad, mask,
-                                                   gensym_func)
+                                                   gensym_func, stage=True)
     # FIXME(yonghao): add division of microbatch num
     # TODO(yonghao): split donate invar with mesh info
 
@@ -163,6 +163,13 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         assert len(mesh_indices) == 1
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)
+        stage_dict[mesh_idx].append(stage)
+    for i, stage in enumerate(sliced_apply_grad):
+        tot_idx = i + len(jax_pipeline_stages)
+        mesh_indices = list(schedule.stage_placement(tot_idx))
+        assert len(mesh_indices) == 1
+        mesh_idx = mesh_indices[0]
+        stage_id_dict[mesh_idx].append(tot_idx)
         stage_dict[mesh_idx].append(stage)
 
     # Call auto-sharding pass to shard each stage

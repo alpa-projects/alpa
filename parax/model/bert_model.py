@@ -110,13 +110,10 @@ class FlaxBertEmbeddings(nn.Module):
                  token_type_ids,
                  position_ids,
                  attention_mask,
-                 dummy_mask,
                  deterministic: bool = True):
         # Embed
         inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
         position_embeds = self.position_embeddings(position_ids.astype("i4"))
-
-        position_embeds = position_embeds * dummy_mask
 
         if self.config.type_vocab_size > 0:
             token_type_embeddings = self.token_type_embeddings(
@@ -382,8 +379,10 @@ class FlaxBertLayerCollection(nn.Module):
             if self.pipeline_mp_size > 1:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
-                    hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="end")
-                    hidden_states, = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
+                    # hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="end")
+                    # hidden_states, = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
+                    mark_pipeline(name=str(id), mark_type="end")
+                    mark_pipeline(name=str(id + 1), mark_type="start")
                     id = id + 1
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -563,7 +562,6 @@ class FlaxBertModule(nn.Module):
         attention_mask,
         token_type_ids,
         position_ids,
-        dummy_mask,
         deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
@@ -573,7 +571,6 @@ class FlaxBertModule(nn.Module):
                                         token_type_ids,
                                         position_ids,
                                         attention_mask,
-                                        dummy_mask,
                                         deterministic=deterministic)
         outputs = self.encoder(
             hidden_states,

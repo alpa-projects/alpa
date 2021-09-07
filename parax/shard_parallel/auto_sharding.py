@@ -33,7 +33,8 @@ class HloProtoStatus(enum.IntEnum):
 def compile_with_search(backend, xla_computation, avals, out_avals,
                         donated_invars, physical_mesh, logical_mesh_choices,
                         logical_mesh_search_mode, memory_budget_per_device,
-                        search_task, record_file, multiple_stages):
+                        search_task, record_file, multiple_stages,
+                        grad_acc_num_micro_batches):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
@@ -59,6 +60,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
       strategy_config (Optional[StrategyConfig]): If is not None, do compilation
         according to this configuration.
       multiple_stages (bool): Whether to return multiple stages sliced by xla_pipeline_maker.
+      grad_acc_num_micro_batches (Optional[int]): The number of micro batches
+        if gradient accumulation is used. If this is set, the cost of all-reduce
+        for gradient synchronization is divided by this number.
     """
     # Set compile options
     if memory_budget_per_device is None:
@@ -99,6 +103,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::batch_matmul_always_split_batch": False,
                 "auto_sharding::allow_recompute_heavy_op":
                     global_config.allow_recompute_heavy_op,
+                "auto_sharding::grad_acc_num_micro_batches":
+                    grad_acc_num_micro_batches or 1,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
@@ -111,7 +117,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::device_mesh_prof_result": getattr(
                     logical_mesh.physical_mesh, "prof_result", None),
 
-                # All-reduce options
+                # Communication combiner options
                 "combiner::all_gather_threshold": 1 << 60,
                 "combiner::all_reduce_threshold": 1 << 60,
                 "combiner::use_continuous_buffer": True,
@@ -182,7 +188,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
 def compile_with_given_strategy(backend, xla_computation, strategy_config,
                                 num_devices, bypass_device_assignment_check,
-                                hlo_proto_status):
+                                hlo_proto_status, rewrite_for_grad_acc=False):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
@@ -195,6 +201,7 @@ def compile_with_given_strategy(backend, xla_computation, strategy_config,
         on the driver node in the multi-host setting.
       hlo_proto_status (HloProtoStatus): The optimization status of the
         input xla computation. see docs in the definition of `HloProtoStatus`.
+      rewrite_for_grad_acc (bool): Whether do rewriting for gradient accumulation.
     """
     compile_options = get_compile_options(
         num_replicas=1,
@@ -229,13 +236,15 @@ def compile_with_given_strategy(backend, xla_computation, strategy_config,
             "auto_sharding::enable": run_auto_sharding,
             "auto_sharding::load_solution_vector": True,
             "auto_sharding::solution_vector": to_int_tuple(solution_vector),
+            "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
 
             # Device mesh
             "auto_sharding::device_mesh_ids": tuple(range(num_devices)),
             "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
-            # All-reduce options
-            "combiner::all_reduce_threshold": 1 << 30,
+            # Communication combiner options
+            "combiner::all_gather_threshold": 1 << 60,
+            "combiner::all_reduce_threshold": 1 << 60,
             "combiner::use_continuous_buffer": True,
 
             # Other useless but required arguments

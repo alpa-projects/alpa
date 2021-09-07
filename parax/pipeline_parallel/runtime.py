@@ -68,6 +68,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  physical_meshes,
                  dependency,
                  schedule,
+                 is_batch,
                  num_batch=1):
         self.stages = pipeline_stages
         self.global_invars = global_invars
@@ -78,6 +79,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             if not isinstance(var, Literal):
                 self.global_outvars_repr_set.add(repr(var))
         self.num_stage = len(self.stages)
+        self.is_batch = is_batch
         self.num_batch = num_batch
         self.dependency = dependency
         self.schedule = schedule
@@ -164,7 +166,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
         self._microbatches = self._make_microbatches(*args)
-        # TODO(yonghao): prepare gradients
 
         global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
@@ -216,13 +217,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                          for _ in range(self.num_batch)]
         return stage_outputs
 
-    def _make_microbatches(self, *inputs, batch_dim=0, batch_size=128):
+    def _make_microbatches(self, *inputs, batch_dim=0):
         assert len(inputs) == len(self.global_invars)
         microbatches = [dict() for _ in range(self.num_batch)]
         for i, var in enumerate(self.global_invars):
             key = repr(var)
             array = inputs[i]
-            if not array.shape or array.shape[batch_dim] != batch_size:
+            if self.is_batch[i]:
                 # empty shape means it is not the input batch
                 # no need to split
                 # ref = ray.put(inputs[i])
@@ -234,6 +235,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     microbatches[b][key] = split
         for var in self.grad_dummy_invars.keys():
             key = repr(var)
+            # TODO(yonghao): metadata of these grads
             microbatches[0][key] = jnp.zeros_like(var.aval)
         return microbatches
 

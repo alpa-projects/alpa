@@ -938,9 +938,40 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
 
+def mean_grad_for_apply_grads(jaxprs, gradients, gensym_fn, num_microbatch):
+    """
+    Get mean of input (accumulated) gradients
+    """
+    # TODO(yonghao): we assume outvar cannot be invar
+    from jax.lax import div_p
+    results = []
+    for jaxpr in jaxprs:
+        mapping = dict()
+        new_eqns = []
+        for invar in jaxpr.jaxpr.invars:
+            if invar in gradients:
+                div_out = gensym_fn(invar.aval)
+                new_eqns.append(
+                    new_jaxpr_eqn([invar, Literal(float(num_microbatch))], [div_out],
+                                  div_p, {}))
+                mapping[invar] = div_out
+        replaced = replace_all_with(jaxpr, mapping)
+        new_eqns.extend(replaced.jaxpr.eqns)
+        new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, jaxpr.jaxpr.invars,
+                          jaxpr.jaxpr.outvars, new_eqns)
+        results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
+    return results
+
+
 def add_marker_for_apply_grads(jaxprs, mask, gensym_fn, stage=False):
-    # add pipeline markers for sliced apply grads, given part of mapping
-    # WARNING! the mapping is the reversed mask
+    """
+    Add pipeline markers for sliced apply grads, given part of mapping
+    Args:
+        jaxprs(Sequence[ClosedJaxpr]): sliced apply grads.
+        mask: mask[invar] is the accumulated gradients.
+        gensym_fn: gensym function of the whole jaxpr.
+        stage(Bool): output JaxPipelineStage or ClosedJaxpr.
+    """
     results = []
     for i, jaxpr in enumerate(jaxprs):
         new_map = dict()

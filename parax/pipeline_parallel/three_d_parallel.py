@@ -16,7 +16,8 @@ from parax.pipeline_parallel.stage import (
     generate_sharded_xla_stages, mark_global_and_local_vars,
     slice_closed_jaxpr_by_manual_pipeline_marks,
     slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh)
+    mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
+    mean_grad_for_apply_grads)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -107,10 +108,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
             acc_grad_jaxpr)
         # FIXME(yonghao): the below is incompatible with apply-grad
-        # jax_pipeline_stages = [
-        #     mark_global_and_local_vars(stage, gensym_func)
-        #     for stage in jax_pipeline_stages
-        # ]
+        jax_pipeline_stages = [
+            mark_global_and_local_vars(stage, gensym_func)
+            for stage in jax_pipeline_stages
+        ]
     elif pipeline_marker_type == "full":
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
             acc_grad_jaxpr)
@@ -136,8 +137,13 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
                                jax_pipeline_stages, stage_to_mesh, mask)
     sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
-    sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad, mask,
-                                                   gensym_func, stage=True)
+    sliced_apply_grad = mean_grad_for_apply_grads(sliced_apply_grad,
+                                                  barrier.outvars, gensym_func,
+                                                  num_micro_batches)
+    sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad,
+                                                   mask,
+                                                   gensym_func,
+                                                   stage=True)
     # FIXME(yonghao): add division of microbatch num
     # TODO(yonghao): split donate invar with mesh info
 
@@ -197,6 +203,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                        physical_meshes=physical_meshes,
                        dependency=dependency,
                        schedule=schedule,
+                       is_batch=batch_invars,
                        num_batch=num_batch)
 
     return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda

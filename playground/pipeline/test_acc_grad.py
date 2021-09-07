@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import parax
 from parax.pipeline_parallel.manual_pipeline import manual_pipeline
 from parax.pipeline_parallel.stage import (
-    add_marker_for_apply_grads, compute_to_acc_pipe,
+    add_marker_for_apply_grads, compute_to_acc_pipe, mean_grad_for_apply_grads,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, mark_grad_mesh, slice_apply_gradient,
     replace_all_with)
@@ -99,7 +99,7 @@ def get_and_set(closed_jaxpr, env):
     record_values(closed_jaxpr.jaxpr.outvars, outs, env)
 
 
-def test_compute_and_apply():
+def test_compute_and_apply(microbatches=1):
 
     def train_step(optimizer, batch):
         grad_param, _x, _y = parax.grad(loss_func,
@@ -143,6 +143,7 @@ def test_compute_and_apply():
     grad_mesh = mark_grad_mesh(old_apply_grad_jaxpr.jaxpr.invars,
                                jax_pipeline_stages, stage_to_mesh, mask)
     sliced_apply_grad, _ = slice_apply_gradient(old_apply_grad_jaxpr, grad_mesh)
+    sliced_apply_grad = mean_grad_for_apply_grads(sliced_apply_grad, barrier.outvars, gensym_func, microbatches)
     sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad, mask,
                                                    gensym_func)
     # Simulation:
@@ -194,8 +195,9 @@ def test_compute_and_apply():
         get_and_set(slice, env_3)
     outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_3)
     for t, c in zip(outs, correct):
-        assert jnp.allclose(t, c)
+        assert jnp.allclose(t, c) ^ microbatches != 1
 
 
 test_compute_to_accumulate()
-test_compute_and_apply()
+test_compute_and_apply(1)
+test_compute_and_apply(2)

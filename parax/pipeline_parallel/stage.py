@@ -858,7 +858,7 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
             new_glob_outvars.append(grad_outs[gradients[outvar]])
             new_glob_invars.append(grad_invars[gradients[outvar]])
             update_outs[outvar] = grad_outs[gradients[outvar]]
-            grad_in_to_out[repr(grad_invars[gradients[outvar]])] = repr(outvar)
+            grad_in_to_out[grad_invars[gradients[outvar]]] = repr(outvar)
         else:
             raise NotImplemented('gradients cannot be Literal')
     gradients = set(grad_values)

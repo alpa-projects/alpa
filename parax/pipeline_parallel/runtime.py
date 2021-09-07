@@ -262,7 +262,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 if batch_idx == 0:
                     stage_inputs[key] = self._microbatches[batch_idx][key]
                 else:
-                    _key = repr(self.grad_dummy_invars[key])
+                    _key = repr(self.grad_dummy_invars[var])
                     stage_inputs[key] = self._microbatches[batch_idx - 1][_key]
             else:
                 for ans in ancestors:
@@ -340,7 +340,7 @@ def gen_linear_pipeline_dependency_with_apply(num_stage):
         d[i + 1][i] = 1
     for i in range(layer_num):
         d[layer_num * 2 - 1 - i][i] = 1
-        d[layer_num * 2 + i][i] = 1
+        d[layer_num * 2 + i][layer_num * 2 - 1 - i] = 1
     return d
 
 

@@ -188,6 +188,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 
+    global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     jp = Jax3DPipeline(pipeline_stages=xla_stages,
                        global_invars=global_invars,

@@ -316,6 +316,7 @@ class NormalMeshWorkerExecutable:
     def __del__(self):
         self.compiled.delete()
 
+
 def get_grad_sync_channel_ids(hlo_module) -> str:
     """Return the channel ids of all-reduces that are used for gradient synchronization.
 
@@ -544,7 +545,8 @@ class GradAccMeshDriverExecutable:
             # Call accumulate_grad multiple times
             tmp_input_bufs = [input_bufs[i] for i in self.accumulate_grad_invar_indices] +\
                             grad_bufs
-            os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
+            os.environ[
+                "XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
                 if i != 0:
                     # Feed in the data of the next batch

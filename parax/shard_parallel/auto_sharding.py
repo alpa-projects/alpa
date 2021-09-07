@@ -186,9 +186,13 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     return compiled, strategy_config
 
 
-def compile_with_given_strategy(backend, xla_computation, strategy_config,
-                                num_devices, bypass_device_assignment_check,
-                                hlo_proto_status, rewrite_for_grad_acc=False):
+def compile_with_given_strategy(backend,
+                                xla_computation,
+                                strategy_config,
+                                num_devices,
+                                bypass_device_assignment_check,
+                                hlo_proto_status,
+                                rewrite_for_grad_acc=False):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:

@@ -34,10 +34,12 @@ class GradAccumulationTest(unittest.TestCase):
         else:
             set_parallelize_options(jax.local_devices())
 
-        batch_size = 16
+        global_config.allow_all_to_all = False
+
+        batch_size = 256
         num_micro_batches = 2
-        hidden_size = 32
-        use_bias = False
+        hidden_size = 16
+        use_bias = True
 
         class Model(nn.Module):
 

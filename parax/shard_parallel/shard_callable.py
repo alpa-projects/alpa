@@ -229,19 +229,20 @@ def shard_parallel_internal_gradient_accumulation(
     name = f"{fun.__name__}_shard_parallel"
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
                                      backend)
-    hlo_protos, strategy_config = compile_with_search(backend,
-                                                      built,
-                                                      avals,
-                                                      out_avals,
-                                                      donated_invars,
-                                                      physical_mesh,
-                                                      logical_mesh_choices,
-                                                      logical_mesh_search_mode,
-                                                      memory_budget_per_device,
-                                                      search_task,
-                                                      record_file,
-                                                      multiple_stages=True,
-                                                      grad_acc_num_micro_batches=num_micro_batches)
+    hlo_protos, strategy_config = compile_with_search(
+        backend,
+        built,
+        avals,
+        out_avals,
+        donated_invars,
+        physical_mesh,
+        logical_mesh_choices,
+        logical_mesh_search_mode,
+        memory_budget_per_device,
+        search_task,
+        record_file,
+        multiple_stages=True,
+        grad_acc_num_micro_batches=num_micro_batches)
     assert len(hlo_protos) == 2
 
     # Compile these two HLOs separately to get two XLA executables
@@ -260,8 +261,12 @@ def shard_parallel_internal_gradient_accumulation(
 
     bypass_device_assignment_check = physical_mesh.is_distributed
     accumulate_grad = compile_with_given_strategy(
-        backend, accumulate_grad, strategy_config, physical_mesh.total_devices,
-        bypass_device_assignment_check, HloProtoStatus.SHARDING_ANNOTATED,
+        backend,
+        accumulate_grad,
+        strategy_config,
+        physical_mesh.total_devices,
+        bypass_device_assignment_check,
+        HloProtoStatus.SHARDING_ANNOTATED,
         rewrite_for_grad_acc=True)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,

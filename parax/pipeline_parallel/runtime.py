@@ -224,7 +224,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         for i, var in enumerate(self.global_invars):
             key = repr(var)
             array = inputs[i]
-            if self.is_batch[i]:
+            if not self.is_batch[i]:
                 # empty shape means it is not the input batch
                 # no need to split
                 # ref = ray.put(inputs[i])

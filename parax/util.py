@@ -5,7 +5,7 @@ import itertools as it
 import os
 import subprocess
 import time
-from typing import List
+from typing import Sequence
 from warnings import warn
 
 import cupy as cp
@@ -16,11 +16,10 @@ from jax._src.dlpack import from_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
 from jax.experimental.maps import FrozenDict
-from jax.interpreters import xla
+from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
-from warnings import warn
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
@@ -194,6 +193,26 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
     return built
 
 
+def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
+    """Set input/output alias in xla computation.
+
+    Assume the tensors in output tuple strictly match the donated parameters.
+    """
+    program_shape = xla_computation.program_shape()
+    parameter_shapes = program_shape.parameter_shapes()
+    result_shapes = program_shape.result_shape().tuple_shapes()
+
+    assert len(parameter_shapes) == len(donated_invars)
+
+    ct = 0
+    for i in range(len(parameter_shapes)):
+        if donated_invars[i]:
+            assert parameter_shapes[i].dimensions(
+            ) == result_shapes[ct].dimensions()
+            xla_computation.setup_alias((ct,), i, ())
+            ct += 1
+
+
 def count_communication_primitives(hlo_ir):
     """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
@@ -203,6 +222,43 @@ def count_communication_primitives(hlo_ir):
         "reduce-scatter-start(")
     all_to_all = hlo_ir.count("all-to-all(") + hlo_ir.count("all-to-all-start(")
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
+
+
+def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
+    """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
+    c = xc.XlaBuilder("allocate_zero_buffers")
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
+    ret = []
+    for shape, dtype in zip(shapes, dtypes):
+        zero = xc.ops.Constant(c, np.array(0, dtype=dtype))
+        zero = xc.ops.Broadcast(zero, shape)
+        ret.append(zero)
+    c.clear_sharding()
+    c = c.build(xc.ops.Tuple(c, ret))
+
+    compile_options = xb.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    compiled = backend.compile(c, compile_options)
+    return compiled
+
+
+def get_shard_shape(aval, sharding_spec):
+    """Return the shape of a shard."""
+    shape = []
+    for dim, spec_dim in zip(aval.shape, sharding_spec.sharding):
+        if isinstance(spec_dim, pxla.NoSharding):
+            shape.append(dim)
+        elif isinstance(spec_dim, pxla.Chunked):
+            shape.append(dim // np.prod(spec_dim.chunks))
+        elif isinstance(spec_dim, pxla.Unstacked):
+            shape.append(spec_dim.size)
+    return tuple(shape)
 
 
 class XlaPassContext:
@@ -229,7 +285,7 @@ class XlaPassContext:
 
 
 def profile_xla_executable(compiled, backend, local_devices):
-    """Measure the time costs of a xla executable."""
+    """Measure the time costs of a xla executable with dummy inputs."""
     hlo_module = compiled.hlo_modules()[0]
 
     # Allocate dummy buffers
@@ -248,24 +304,26 @@ def profile_xla_executable(compiled, backend, local_devices):
             device_inputs)
 
         # Reset the value for donate buffers
+        ct = 0
         for j in range(len(device_inputs)):
             if device_inputs[j][0].is_deleted():
-                device_inputs[j] = device_outputs[j]
+                device_inputs[j] = device_outputs[ct]
+                ct += 1
 
-    def sync_func():
         local_devices[0].synchronize_all_activity()
 
-    costs = benchmark_func(run_func, sync_func, repeat=3, number=3)
+    costs = benchmark_func(run_func, repeat=3, number=3)
     return costs
 
 
 def benchmark_func(run_func,
-                   sync_func,
+                   sync_func=None,
                    warmup=1,
                    repeat=3,
                    number=5,
                    min_repeat_second=None):
-    """Benchmark the execution time of a function.
+    """
+    Benchmark the execution time of a function.
 
     The function is executed for (warmup + number * repeat) times.
     The return value is a list of `repeat` elements and each elements is
@@ -277,26 +335,30 @@ def benchmark_func(run_func,
     costs = []
 
     # Warmup
-    for i in range(warmup):
+    for _ in range(warmup):
         run_func()
 
     # Choose a "number" according to "min_repeat_second"
     if min_repeat_second:
-        sync_func()
+        if sync_func:
+            sync_func()
         tic = time.time()
         run_func()
-        sync_func()
+        if sync_func:
+            sync_func()
         toc = time.time()
         cost = toc - tic
         number = max(int(min_repeat_second / cost), 1)
 
     # Benchmark
-    for i in range(repeat):
-        sync_func()
+    for _ in range(repeat):
+        if sync_func:
+            sync_func()
         tic = time.time()
-        for j in range(number):
+        for __ in range(number):
             run_func()
-        sync_func()
+        if sync_func:
+            sync_func()
         costs.append(time.time() - tic)
 
     return np.array(costs) / number
@@ -435,7 +497,7 @@ def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
 
 
 def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                    sliced_eqns) -> List[ClosedJaxpr]:
+                    sliced_eqns) -> Sequence[ClosedJaxpr]:
     N = len(sliced_eqns)
     global_invars = set(closed_jaxpr.jaxpr.invars)
     global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))

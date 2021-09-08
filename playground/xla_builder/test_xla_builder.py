@@ -394,6 +394,40 @@ def test_skip_hlo_passes():
     print(device_outs)
 
 
+def test_create_zero_buffers():
+    shapes = ((2, 2), (3, 3))
+    dtypes = (jnp.float32, jnp.float32)
+
+    def compile_get_zero_buffers(backend, num_devices):
+        c = xla_client.XlaBuilder("get_zero_buffers")
+        sharding = xla_client.OpSharding()
+        sharding.type = sharding.type.REPLICATED
+        c.set_sharding(sharding)
+        ret = []
+        for shape, dtype in zip(shapes, dtypes):
+            zero = ops.Constant(c, dtype(0))
+            zero = ops.Broadcast(zero, shape)
+            ret.append(zero)
+        c.clear_sharding()
+        c = c.build(ops.Tuple(c, ret))
+
+        compile_options = xla_bridge.get_compile_options(
+            num_replicas=1,
+            num_partitions=num_devices,
+            device_assignment=np.arange(num_devices).reshape((1, -1)),
+            use_spmd_partitioning=True,
+        )
+        compiled_computation = backend.compile(c, compile_options)
+        return compiled_computation
+
+    backend = xla_client.get_local_backend("gpu")
+    num_devices = 8
+    get_zero_buffers = compile_get_zero_buffers(backend, num_devices)
+
+    device_outs = get_zero_buffers.execute_sharded_on_local_devices([])
+
+    print(device_outs)
+
 
 if __name__ == "__main__":
     #test_sin_cos()
@@ -406,5 +440,7 @@ if __name__ == "__main__":
 
     #test_reshard()
 
-    test_skip_hlo_passes()
+    #test_skip_hlo_passes()
+
+    test_create_zero_buffers()
 

@@ -1,4 +1,4 @@
-# pylint: disable=no-self-use,consider-using-enumerate
+# pylint: disable=no-self-use
 """Profiling communication cost."""
 from collections import defaultdict
 import time

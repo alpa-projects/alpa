@@ -108,6 +108,9 @@ class MeshHostWorker:
     def run_executable(self, uuid: int, *args):
         self.executables[uuid].execute_on_worker(*args)
 
+    def get_exec_total_allocation_size(self, uuid: int):
+        return self.executables[uuid].get_total_allocation_size()
+
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
                            number, verbose):

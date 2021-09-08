@@ -122,7 +122,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
             hlo_module, physical_mesh.total_devices, avals, out_avals,
             strategy_config.logical_mesh_shape)
-        self.total_allocation_size = compiled.total_allocation_size()
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -237,7 +236,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return self.total_allocation_size
+        if self.physical_mesh.is_distributed:
+            return ray.get(self.physical_mesh.workers[0].\
+                get_exec_total_allocation_size.remote(self.exec_uuid))
+        else:
+            return self.compiled.total_allocation_size()
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
@@ -313,6 +316,9 @@ class NormalMeshWorkerExecutable:
         """Profile the time cost of this executable with dummy inputs."""
         return profile_xla_executable(self.compiled, backend, local_devices)
 
+    def get_total_allocation_size(self):
+        return self.compiled.total_allocation_size()
+
     def __del__(self):
         self.compiled.delete()
 
@@ -386,10 +392,6 @@ class GradAccMeshDriverExecutable:
             if spec is None:
                 global_arg_sharding_specs[i] =\
                     make_replicated_spec(avals[i], logical_mesh_shape)
-
-        self.total_allocation_size = max(
-            accumulate_grad.total_allocation_size(),
-            apply_grad.total_allocation_size())
 
         # Get the channel ids of gradient sync all-reduce
         grad_sync_channel_ids =\
@@ -585,7 +587,12 @@ class GradAccMeshDriverExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return self.total_allocation_size
+        if self.physical_mesh.is_distributed:
+            return ray.get(self.physical_mesh.workers[0].\
+                get_exec_total_allocation_size.remote(self.exec_uuid))
+        else:
+            return max(self.accumulate_grad.total_allocation_size(),
+                       self.apply_grad.total_allocation_size())
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
@@ -690,6 +697,11 @@ class GradAccMeshWorkerExecutable:
     def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
         raise NotImplementedError
+
+    def get_total_allocation_size(self):
+        """Get the total allocated memory size of this executable."""
+        return max(self.accumulate_grad.total_allocation_size(),
+                   self.apply_grad.total_allocation_size())
 
     def __del__(self):
         self.accumulate_grad.delete()

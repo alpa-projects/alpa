@@ -120,7 +120,7 @@ def _pipeline_transpose(ct, *args, name, mark_type):
         else:
             ctan_marker_id.append(len(marker_inputs))
             marker_inputs.append(ctan)
-    res = mark_pipeline(marker_inputs, name=name, mark_type=transposed_mark_type)
+    res = mark_pipeline(*marker_inputs, name=name, mark_type=transposed_mark_type)
     new_ct = []
     for i, (val, ctan) in enumerate(zip(args, ct)):
         if ctan_marker_id[i] == -1:

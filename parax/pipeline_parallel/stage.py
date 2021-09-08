@@ -953,7 +953,7 @@ def mean_grad_for_apply_grads(jaxprs, gradients, gensym_fn, num_microbatch):
             if invar in gradients:
                 div_out = gensym_fn(invar.aval)
                 new_eqns.append(
-                    new_jaxpr_eqn([invar, Literal(float(num_microbatch))], [div_out],
+                    new_jaxpr_eqn([invar, Literal(np.array(num_microbatch, invar.aval.dtype)))], [div_out],
                                   div_p, {}))
                 mapping[invar] = div_out
         replaced = replace_all_with(jaxpr, mapping)

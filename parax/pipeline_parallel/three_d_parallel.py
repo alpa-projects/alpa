@@ -148,7 +148,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # TODO(yonghao): split donate invar with mesh info
 
     # Generate schedule and placement
-    num_batch = 1
+    num_batch = num_micro_batches
     n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
     assert len(jax_pipeline_stages) == len(sliced_apply_grad) * 2
     dependency = gen_linear_pipeline_dependency_with_apply(n_stages)

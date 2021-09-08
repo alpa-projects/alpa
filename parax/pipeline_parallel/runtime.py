@@ -184,7 +184,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 inputs_list = self._process_stage_inputs(stage_idx, inputs)
                 outputs = self._runnables[stage_idx](*inputs_list)
                 outvals = self._process_stage_outputs(stage_idx, outputs)
-                # FIXME: We need to accumulate the gradients and remerge the inputs
+
                 # TODO: Add reference counting here to reduce memory usage
                 self._stage_outputs[batch_idx][stage_idx].update(outvals)
                 for key, val in outvals.items():
@@ -236,8 +236,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     microbatches[b][key] = split
         for var in self.grad_dummy_invars.keys():
             key = repr(var)
-            # TODO(yonghao): metadata of these grads
-            microbatches[0][key] = jnp.zeros_like(var.aval)
+            # TODO(yonghao): use allocate zero buffers computation
+            microbatches[self.num_batch - 1][key] = jnp.zeros_like(var.aval)
         return microbatches
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
@@ -262,11 +262,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             if var in self.global_invars:
                 stage_inputs[key] = self._microbatches[batch_idx][key]
             elif var in self.grad_dummy_invars:
-                if batch_idx == 0:
+                # TODO(yonghao): onlly work for GPipeSchedule
+                if batch_idx == self.num_batch - 1:
                     stage_inputs[key] = self._microbatches[batch_idx][key]
                 else:
-                    _key = repr(self.grad_dummy_invars[var])
-                    stage_inputs[key] = self._microbatches[batch_idx - 1][_key]
+                    _key = self.grad_dummy_invars[var]
+                    stage_inputs[key] = self._stage_outputs[batch_idx + 1][stage_idx][_key]
             else:
                 for ans in ancestors:
                     if key in self._stage_outputs[batch_idx][ans]:
@@ -430,7 +431,7 @@ class GpipeSchedule:
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
         # apply grad schedules
-        scheds = [(m - 1, i + 2 * n) for i in range(n)]
+        scheds = [(0, i + 2 * n) for i in range(n)]
         schedules.append(scheds)
         return schedules
 

@@ -2,6 +2,7 @@
 import jax
 from jax import tree_flatten
 import jax.numpy as jnp
+import numpy as np
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
@@ -45,8 +46,8 @@ def train_step(optimizer, batch):
     new_optimizer = optimizer.apply_gradient(param_grad)
     return new_optimizer
 
-x = jnp.ones((batch_size, input_dim))
-y = jnp.ones((batch_size, output_dim))
+x = jnp.array(np.random.rand(batch_size, output_dim))
+y = jnp.array(np.random.rand(batch_size, output_dim))
 rngkey = jax.random.PRNGKey(0)
 params = model.init(rngkey, x)
 optimizer = optim.GradientDescent(1e-2).create(params)

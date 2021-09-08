@@ -3,6 +3,7 @@ from jax import jit, grad, tree_flatten
 from jax._src.api import make_jaxpr
 from jax.core import DropVar, jaxpr_as_fun, gensym
 import jax.numpy as jnp
+import numpy as np
 
 import parax
 from parax.pipeline_parallel.manual_pipeline import manual_pipeline
@@ -36,8 +37,8 @@ batch_size = 128
 hidden_dim = 2048
 input_dim = output_dim = hidden_dim
 model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim)
-x = jnp.ones((batch_size, input_dim))
-y = jnp.ones((batch_size, output_dim))
+x = jnp.array(np.random.rand(batch_size, output_dim))
+y = jnp.array(np.random.rand(batch_size, output_dim))
 rngkey = jax.random.PRNGKey(0)
 params = model.init(rngkey, x)
 optimizer = optim.GradientDescent(1e-2).create(params)

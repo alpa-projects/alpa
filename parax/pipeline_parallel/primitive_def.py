@@ -112,9 +112,22 @@ def _pipeline_transpose(ct, *args, name, mark_type):
         transposed_mark_type = "start"
     else:
         raise ValueError("Invalid mark_type")
-    new_ct = [lax.zeros_like_array(val.aval) if isinstance(ctan, ad.Zero) else ctan for val, ctan in zip(args, ct)]
-    res = mark_pipeline(*new_ct, name=name, mark_type=transposed_mark_type)
-    return res
+    marker_inputs = []
+    ctan_marker_id = []
+    for val, ctan in zip(args, ct):
+        if isinstance(ctan, ad.Zero):
+            ctan_marker_id.append(-1)
+        else:
+            ctan_marker_id.append(len(marker_inputs))
+            marker_inputs.append(ctan)
+    res = mark_pipeline(marker_inputs, name=name, mark_type=transposed_mark_type)
+    new_ct = []
+    for i, (val, ctan) in enumerate(zip(args, ct)):
+        if ctan_marker_id[i] == -1:
+            new_ct.append(ad.Zero(val.aval))
+        else:
+            new_ct.append(res[ctan_marker_id[i]])
+    return new_ct
 
 
 pipeline_p.def_impl(_pipeline_impl)

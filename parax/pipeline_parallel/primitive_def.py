@@ -1,6 +1,7 @@
 """Pipeline primitive definitions."""
 import numpy as np
 
+from jax import lax
 from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
@@ -95,7 +96,9 @@ def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
         tangent_mark_type = "jvp_end"
     else:
         raise ValueError("Invalid mark_type")
-    tangent_outs = mark_pipeline(*arg_tangents,
+
+    new_tans = [lax.zeros_like_array(val) if isinstance(tan, ad.Zero) else tan for val, tan in zip(arg_values, arg_tangents)]
+    tangent_outs = mark_pipeline(*new_tans,
                                  name=name,
                                  mark_type=tangent_mark_type)
     return primal_outs, tangent_outs
@@ -109,7 +112,8 @@ def _pipeline_transpose(ct, *args, name, mark_type):
         transposed_mark_type = "start"
     else:
         raise ValueError("Invalid mark_type")
-    res = mark_pipeline(*ct, name=name, mark_type=transposed_mark_type)
+    new_ct = [lax.zeros_like_array(val.aval) if isinstance(ctan, ad.Zero) else ctan for val, ctan in zip(args, ct)]
+    res = mark_pipeline(*new_ct, name=name, mark_type=transposed_mark_type)
     return res
 
 

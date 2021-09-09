@@ -53,7 +53,7 @@ class PipelineMLPTest(unittest.TestCase):
 
         def train_step(optimizer, x, y, apply_fn, use_manual_pipeline=True):
 
-            def loss_func(params):
+            def loss_func(params, x, y):
                 out = apply_fn(params, x)
                 y_ = jax.nn.one_hot(y, out.shape[-1])
                 loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1), axis=-1).sum()
@@ -62,7 +62,7 @@ class PipelineMLPTest(unittest.TestCase):
 
             if use_manual_pipeline:
                 loss_func = manual_pipeline(loss_func)
-            grad = jax.grad(loss_func)(optimizer.target)
+            grad = jax.grad(loss_func)(optimizer.target, x, y)
             return grad
 
         x = jnp.ones((batch_size, seq_len), jnp.int32)

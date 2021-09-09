@@ -43,7 +43,10 @@ class PipelineMLPTest(unittest.TestCase):
                 self.embed = nn.Embed(vocab_size, hidden_size)
 
             def __call__(self, x):
+                mark_pipeline(name='1', mark_type='start')
                 x = self.embed(x)
+                mark_pipeline(name='1', mark_type='end')
+                mark_pipeline(name='2', mark_type='start')
                 embed = self.embed.variables["params"]["embedding"]
                 x = x @ embed.T
                 return x
@@ -53,8 +56,9 @@ class PipelineMLPTest(unittest.TestCase):
             def loss_func(params):
                 out = apply_fn(params, x)
                 y_ = jax.nn.one_hot(y, out.shape[-1])
-                loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1), axis=-1)
-                return loss.sum()
+                loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1), axis=-1).sum()
+                mark_pipeline(name='2', mark_type='end')
+                return loss
 
             if use_manual_pipeline:
                 loss_func = manual_pipeline(loss_func)

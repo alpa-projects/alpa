@@ -453,8 +453,9 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                 if (not isinstance(var, Literal) and
                         var not in closed_jaxpr.jaxpr.constvars and var_layer_dict[var] != i):
                     layer_pipeline_invars[i].add(var)
-                    if var_layer_dict[var] != -1:
-                        layer_pipeline_outvars[var_layer_dict[var]].add(var)
+                    if var_layer_dict[var] == -1:
+                        var_layer_dict[var] = i
+                    layer_pipeline_outvars[var_layer_dict[var]].add(var)
             for var in eqn.outvars:
                 if not isinstance(var, DropVar):
                     var_layer_dict[var] = i

@@ -77,7 +77,7 @@ class PipelineMLPTest(unittest.TestCase):
         pipelined_train_step = parallelize(
             donate_argnums=(), pipeline_marker_type="full")(
             lambda optimizer, batch, apply_fn: train_step(
-                optimizer, batch, apply_fn, use_manual_pipeline=True))
+                optimizer, x, y, apply_fn, use_manual_pipeline=True))
         gradients_with_pipeline = pipelined_train_step(optimizer, x, y, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
 

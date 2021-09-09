@@ -97,10 +97,24 @@ def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
     else:
         raise ValueError("Invalid mark_type")
 
-    new_tans = [lax.zeros_like_array(val) if isinstance(tan, ad.Zero) else tan for val, tan in zip(arg_values, arg_tangents)]
-    tangent_outs = mark_pipeline(*new_tans,
-                                 name=name,
-                                 mark_type=tangent_mark_type)
+    marker_inputs = []
+    tan_marker_id = []
+    for val, tan in zip(arg_values, arg_tangents):
+        if isinstance(tan, ad.Zero):
+            tan_marker_id.append(-1)
+        else:
+            tan_marker_id.append(len(marker_inputs))
+            marker_inputs.append(tan)
+    res = mark_pipeline(*marker_inputs,
+                        name=name,
+                        mark_type=tangent_mark_type)
+    tangent_outs = []
+    for i, (val, tan) in enumerate(zip(arg_values, arg_tangents)):
+        if tan_marker_id[i] == -1:
+            tangent_outs.append(ad.Zero(val.aval))
+        else:
+            tangent_outs.append(res[tan_marker_id[i]])
+
     return primal_outs, tangent_outs
 
 

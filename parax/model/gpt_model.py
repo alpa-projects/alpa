@@ -13,7 +13,6 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 
-from parax import mark_pipeline
 from parax.model.bert_model import BertConfig, FlaxBertModule, FlaxMaskedLMOutput
 
 

@@ -396,11 +396,6 @@ class FlaxBertLayerCollection(nn.Module):
             if output_attentions:
                 all_attentions += (layer_outputs[1],)
 
-        # if self.pipeline_mp_size > 1 and False:
-        #     assert id == self.pipeline_mp_size
-        #     hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="end")
-        #     hidden_states, = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
-
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -674,13 +669,6 @@ class FlaxBertForMaskedLMModule(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ):
-        # pipeline marker
-        # if self.config.pipeline_mp_size > 1:
-        #     (input_ids, attention_mask, token_type_ids, position_ids, ) = \
-        #         mark_pipeline(input_ids, attention_mask, token_type_ids, position_ids,
-        #                       name="0",
-        #                       mark_type="start")
-
         # Model
         outputs = self.bert(
             input_ids,

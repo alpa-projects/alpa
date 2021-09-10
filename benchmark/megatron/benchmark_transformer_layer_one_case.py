@@ -5,8 +5,6 @@ import timeit
 from functools import partial
 
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
-
 from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
 from megatron.model import DistributedDataParallel as LocalDDP
@@ -14,11 +12,13 @@ from megatron import mpu, initialize_megatron, get_args, get_timers
 from megatron.training import train_step, setup_model_and_optimizer
 
 import torch
-from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
 from util import write_tsv, benchmark_func
 
 GB = 1024 ** 3
+
+# Note(Hao): in order for this to run with Megatron, disable the if-branch
+# here in Megatron: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/training.py#L390
 
 
 def get_memory_usage(print_info=False):
@@ -127,7 +127,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     def sync_func():
         torch.cuda.synchronize()
 
-    repeat = 10
+    repeat = 2
     number = 5
     costs = benchmark_func(run_func, sync_func=sync_func,
                            warmup=1, repeat=repeat, number=number)

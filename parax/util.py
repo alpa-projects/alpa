@@ -213,7 +213,7 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
             ct += 1
 
 
-def count_communication_primitives(hlo_ir):
+def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
     """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
     all_reduce = hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")
@@ -221,6 +221,17 @@ def count_communication_primitives(hlo_ir):
     reduce_scatter = hlo_ir.count("reduce-scatter(") + hlo_ir.count(
         "reduce-scatter-start(")
     all_to_all = hlo_ir.count("all-to-all(") + hlo_ir.count("all-to-all-start(")
+
+    if ignore_scalar_all_reduce:
+        # Ignore allreduce of scalar values
+        scalar_all_reduce = 0
+        scalar_all_reduce += hlo_ir.count("all-reduce(f32[]")
+        scalar_all_reduce += hlo_ir.count("all-reduce-start(f32[]")
+        scalar_all_reduce += hlo_ir.count("all-reduce(f16[]")
+        scalar_all_reduce += hlo_ir.count("all-reduce-start(f16[]")
+        total -= scalar_all_reduce
+        all_reduce -= scalar_all_reduce
+
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 

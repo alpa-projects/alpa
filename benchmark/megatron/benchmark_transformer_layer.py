@@ -27,13 +27,11 @@ benchmark_suite_4_gpu = [
     # (32,  1024, 1536, 4,  1536//96,  1, 2, 2, 1, 1, 0),
     # (16,  1024, 1536, 4,  1536//96,  1, 2, 2, 1, 1, 0),
     # (16,  1024, 1536, 4,  1536//96,  2, 1, 2, 1, 1, 0),
-    # (32,  1024, 1536, 2,  1536//96,  4, 1, 1, 1, 1, 0),
-    # (32,  1024, 1536, 2,  1536//96,  2, 2, 1, 1, 1, 0),
-    # (32,  1024, 1536, 2,  1536//96,  2, 1, 2, 1, 1, 0),
+    (32,  1024, 1536, 2,  1536//96,  4, 1, 1, 1, 1, 0),
+    (32,  1024, 1536, 2,  1536//96,  2, 2, 1, 1, 1, 0),
     (32,  1024, 1536, 2,  1536//96,  1, 2, 2, 1, 1, 0),
     (32,  1024, 1536, 2,  1536//96,  2, 1, 2, 1, 1, 0),
-    # (32,  1024, 1536, 2,  1536//96,  1, 4, 1, 1, 1, 0),
-    # (32,  1024, 1536, 2,  1536//96,  1, 1, 4, 1, 1, 0),
+    (32,  1024, 1536, 2,  1536//96,  1, 4, 1, 1, 1, 0),
 ]
 
 
@@ -68,7 +66,7 @@ def benchmark_all(args):
             # Single node
             ret = run_cmd('python3 -m torch.distributed.launch '
                          f'--nproc_per_node {args.nproc_per_node} '
-                         'benchmark_transformer_layer_one_case_3d.py '
+                         'benchmark_transformer_layer_one_case.py '
                          f'"{case_str}"')
         else:
             # Multiple nodes
@@ -78,11 +76,8 @@ def benchmark_all(args):
                          f'--node_rank {args.node_rank} '
                          f'--master_addr {args.master_addr} '
                          f'--master_port {args.master_port} '
-                         'benchmark_transformer_layer_one_case_3d.py '
+                         'benchmark_transformer_layer_one_case.py '
                          f'"{case_str}"')
-
-        #if ret != 0:
-        #    return
 
 
 if __name__ == "__main__":

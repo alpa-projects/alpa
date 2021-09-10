@@ -108,6 +108,9 @@ class MeshHostWorker:
     def run_executable(self, uuid: int, *args):
         self.executables[uuid].execute_on_worker(*args)
 
+    def get_exec_total_allocation_size(self, uuid: int):
+        return self.executables[uuid].get_total_allocation_size()
+
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
                            number, verbose):
@@ -585,7 +588,7 @@ class PhysicalDeviceMesh:
             return
 
         for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(executable.remote_uuid)
+            self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
     def profile_collective(self,

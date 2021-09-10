@@ -6,6 +6,7 @@ A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
 import logging
+import os
 from typing import List, Sequence, Tuple
 
 import numpy as np
@@ -15,7 +16,7 @@ from jax._src.util import partial
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.interpreters.xla import XlaExecutable
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client, xla_bridge, xla_extension
 import jax.numpy as jnp
 
 from parax.measure_record import StrategyConfig
@@ -121,7 +122,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
             hlo_module, physical_mesh.total_devices, avals, out_avals,
             strategy_config.logical_mesh_shape)
-        self.total_allocation_size = compiled.total_allocation_size()
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -133,6 +133,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
+        self.hlo_text = compiled.hlo_modules()[0].to_string()
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
@@ -236,7 +237,14 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return self.total_allocation_size
+        if self.physical_mesh.is_distributed:
+            return ray.get(self.physical_mesh.workers[0].\
+                get_exec_total_allocation_size.remote(self.exec_uuid))
+        else:
+            return self.compiled.total_allocation_size()
+
+    def get_hlo_text(self):
+        return self.hlo_text
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
@@ -312,8 +320,20 @@ class NormalMeshWorkerExecutable:
         """Profile the time cost of this executable with dummy inputs."""
         return profile_xla_executable(self.compiled, backend, local_devices)
 
+    def get_total_allocation_size(self):
+        return self.compiled.total_allocation_size()
+
     def __del__(self):
         self.compiled.delete()
+
+
+def get_grad_sync_channel_ids(hlo_module) -> str:
+    """Return the channel ids of all-reduces that are used for gradient synchronization.
+
+    The return value is a string containing all channel ids separated by periods.
+    (e.g., ".0.12." means channel id 0 and 12)
+    """
+    return xla_extension.get_grad_sync_channel_ids(hlo_module)
 
 
 class GradAccMeshDriverExecutable:
@@ -377,9 +397,9 @@ class GradAccMeshDriverExecutable:
                 global_arg_sharding_specs[i] =\
                     make_replicated_spec(avals[i], logical_mesh_shape)
 
-        self.total_allocation_size = max(
-            accumulate_grad.total_allocation_size(),
-            apply_grad.total_allocation_size())
+        # Get the channel ids of gradient sync all-reduce
+        grad_sync_channel_ids =\
+            get_grad_sync_channel_ids(accumulate_grad.hlo_modules()[0])
 
         # Cache results for input and output sharding
         global_arg_shard_indices = [
@@ -410,6 +430,8 @@ class GradAccMeshDriverExecutable:
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
+        self.hlo_text = accumulate_grad.hlo_modules()[0].to_string() +\
+                        apply_grad.hlo_modules()[0].to_string()
         if physical_mesh.is_distributed:
             for w in physical_mesh.workers:
                 w.put_executable.remote(
@@ -421,7 +443,8 @@ class GradAccMeshDriverExecutable:
                     accumulate_grad_invar_indices, apply_grad_invar_indices,
                     accumulate_grad_batch_arg_indices, grad_shard_shapes,
                     grad_shard_dtypes, strategy_config, donated_invars,
-                    batch_invars, num_grads, num_micro_batches)
+                    batch_invars, num_grads, num_micro_batches,
+                    grad_sync_channel_ids)
         else:
             self.accumulate_grad = accumulate_grad
             self.apply_grad = apply_grad
@@ -429,6 +452,7 @@ class GradAccMeshDriverExecutable:
                 xla_bridge.get_backend("gpu"), physical_mesh.total_devices,
                 grad_shard_shapes, grad_shard_dtypes)
             self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
+            self.grad_sync_channel_ids = grad_sync_channel_ids
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
@@ -529,6 +553,8 @@ class GradAccMeshDriverExecutable:
             # Call accumulate_grad multiple times
             tmp_input_bufs = [input_bufs[i] for i in self.accumulate_grad_invar_indices] +\
                             grad_bufs
+            os.environ[
+                "XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
                 if i != 0:
                     # Feed in the data of the next batch
@@ -537,6 +563,8 @@ class GradAccMeshDriverExecutable:
                             self.accumulate_grad_batch_arg_indices):
                         tmp_input_bufs[idx] = next_batch_bufs[
                             j * (num_micro_batches - 1) + (i - 1)]
+                if i == num_micro_batches - 1:
+                    os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = ""
                 grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
                     tmp_input_bufs)
 
@@ -565,7 +593,15 @@ class GradAccMeshDriverExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return self.total_allocation_size
+        if self.physical_mesh.is_distributed:
+            return ray.get(self.physical_mesh.workers[0].\
+                get_exec_total_allocation_size.remote(self.exec_uuid))
+        else:
+            return max(self.accumulate_grad.total_allocation_size(),
+                       self.apply_grad.total_allocation_size())
+
+    def get_hlo_text(self):
+        return self.hlo_text
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
@@ -583,7 +619,8 @@ class GradAccMeshWorkerExecutable:
                  grad_shard_dtypes: Sequence[jnp.dtype],
                  strategy_config: StrategyConfig,
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
-                 num_grads: int, num_micro_batches: int):
+                 num_grads: int, num_micro_batches: int,
+                 grad_sync_channel_ids: str):
         from parax.shard_parallel.auto_sharding import (
             compile_with_given_strategy, HloProtoStatus)
 
@@ -607,6 +644,7 @@ class GradAccMeshWorkerExecutable:
         self.num_grads = num_grads
         self.num_micro_batches = num_micro_batches
         self.buffer_dict = worker.buffers
+        self.grad_sync_channel_ids = grad_sync_channel_ids
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
@@ -630,6 +668,7 @@ class GradAccMeshWorkerExecutable:
 
         # Call accumulate_grad multiple times
         tmp_input_bufs = tmp_input_bufs + grad_bufs
+        os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
         for i in range(num_micro_batches):
             if i != 0:
                 # Feed in the data of the next batch
@@ -638,6 +677,8 @@ class GradAccMeshWorkerExecutable:
                     tmp_input_bufs[idx] = get_buffers(
                         buffer_dict,
                         next_batch_uuids[j * (num_micro_batches - 1) + (i - 1)])
+            if i == num_micro_batches - 1:
+                os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
                 tmp_input_bufs)
 
@@ -665,6 +706,11 @@ class GradAccMeshWorkerExecutable:
     def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
         raise NotImplementedError
+
+    def get_total_allocation_size(self):
+        """Get the total allocated memory size of this executable."""
+        return max(self.accumulate_grad.total_allocation_size(),
+                   self.apply_grad.total_allocation_size())
 
     def __del__(self):
         self.accumulate_grad.delete()

@@ -340,18 +340,17 @@ def gen_linear_pipeline_dependency(num_stage):
     return d
 
 
-def gen_linear_pipeline_dependency_with_apply(num_stage):
+def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
     """
     Generate dependency matrix marks compute grad and apply grad
     """
-    assert num_stage % 3 == 0
     d = np.zeros([num_stage, num_stage], dtype=np.int)
-    layer_num = num_stage // 3
-    for i in range(layer_num * 2 - 1):
+    for i in range(mesh_num * 2 - 1):
         d[i + 1][i] = 1
-    for i in range(layer_num):
-        d[layer_num * 2 - 1 - i][i] = 1
-        d[layer_num * 2 + i][layer_num * 2 - 1 - i] = 1
+    for i in range(mesh_num):
+        d[mesh_num * 2 - 1 - i][i] = 1
+    for pair in apply_deps:
+        d[pair[0]][pair[1]] = 1
     return d
 
 
@@ -372,22 +371,20 @@ class GpipeSchedule:
                  *,
                  dependency,
                  mesh,
+                 num_pipeline_worker,
+                 apply_mesh,
                  sliced_meshes=None,
                  num_batch=1,
-                 costs=None,
-                 dummy_stage=set()):
+                 costs=None):
         self.dependency = dependency
         self.original_mesh = mesh
         self.meshes = sliced_meshes
+        self.apply_mesh = apply_mesh
         self.num_batch = num_batch
         self.costs = costs
-        if dependency.shape[0] % 3 != 0:
-            raise RuntimeError(
-                "GPipe schedule require a triple number of stages")
         self.num_stage = dependency.shape[0]
-        self.dummy_stage = dummy_stage
 
-        self.num_pipeline_worker = self.num_stage // 3
+        self.num_pipeline_worker = num_pipeline_worker
         # TODO (zhuohan): Seperate device placement and runtime scheduling
         if not self.meshes:
             # These are virtual meshes
@@ -440,9 +437,9 @@ class GpipeSchedule:
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
         # apply grad schedules
-        scheds = [
-            (0, i) for i in range(2 * n, 3 * n) if i not in self.dummy_stage
-        ]
+        scheds = [None] * n
+        for stage_idx, worker in self.apply_mesh.items():
+            scheds[worker] = (0, stage_idx)
         schedules.append(scheds)
         return schedules
 

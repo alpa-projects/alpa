@@ -714,7 +714,182 @@ def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
     }
 
 
-def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int], mesh_num):
+def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
+    gradients = [
+        outvar for outvar in compute_jaxpr.jaxpr.outvars
+        if isinstance(outvar, Var)
+    ]
+    gradients = set(gradients)
+    is_gradients = [[
+        isinstance(outvar, Var) and outvar in gradients
+        for outvar in slice.jaxpr.outvars
+    ]
+                    for slice in slices]
+    return is_gradients
+
+
+def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
+    """
+    Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
+    Args:
+        compute_jaxpr(ClosedJaxpr): the original jaxpr
+        gensym_fn: gensym function
+    Returns:
+        acc_grad_jaxpr(ClosedJaxpr): The accumulate grad jaxpr
+        update_outs(Dict[Var, Var]): From original output(grad) to new output(acc grad)
+        grad_in_to_out(Dict[Var, Var]): From accumulated gradient inputs to outputs
+    """
+    from jax.lax import add_p
+    # Assume that no grad is literal
+    raw_gradients = set([
+        outvar for outvar in compute_jaxpr.jaxpr.outvars
+        if isinstance(outvar, Var)
+    ])
+    assert len(raw_gradients) == len(compute_jaxpr.jaxpr.outvars)
+    # from raw_gradients to gradients(cross pipeline marker)
+    gradients = {}
+    for eqn in compute_jaxpr.eqns:
+        if eqn.primitive is pipeline_p:
+            for i, outvar in enumerate(eqn.outvars):
+                if outvar in raw_gradients and outvar not in gradients:
+                    gradients[outvar] = eqn.invars[i]
+    for outvar in raw_gradients:
+        assert outvar in gradients, 'all gradients should be captured by pipeline marker'
+    grad_values = list(gradients.values())
+    # generate new variables
+    grad_invars = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
+    grad_outs = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
+    # modify output, here all grads are acc_grad
+    new_glob_outvars = []
+    new_glob_invars = compute_jaxpr.jaxpr.invars + []
+    update_outs = dict()
+    grad_in_to_out = dict()
+    for outvar in compute_jaxpr.jaxpr.outvars:
+        if isinstance(outvar, Var):
+            assert outvar in gradients
+            new_glob_outvars.append(grad_outs[gradients[outvar]])
+            new_glob_invars.append(grad_invars[gradients[outvar]])
+            update_outs[outvar] = grad_outs[gradients[outvar]]
+            grad_in_to_out[grad_invars[gradients[outvar]]] = repr(
+                grad_outs[gradients[outvar]])
+        else:
+            raise NotImplemented('gradients cannot be Literal')
+    gradients = set(grad_values)
+    # rewrite eqns
+    # TODO(yonghao): clear unused outputs(grad not used later)
+    new_eqns = []
+    pipe_start = None
+    pipe_eqns = []
+    to_acc = []
+    for eqn in compute_jaxpr.eqns:
+        if eqn.primitive is pipeline_p:
+            if eqn.params['mark_type'] == 'start':
+                pipe_start = eqn
+                for outvar in eqn.outvars:
+                    if not isinstance(outvar, DropVar) and outvar in gradients:
+                        # collect gradients in this stage
+                        to_acc.append(outvar)
+                continue
+            if eqn.params['mark_type'] == 'end':
+                # add grad used in this stage in pipeline start
+                grad_in_after_pipe = {
+                    outvar: gensym_fn(outvar.aval) for outvar in to_acc
+                }
+                grad_out_before_pipe = {
+                    outvar: gensym_fn(outvar.aval) for outvar in to_acc
+                }
+                new_pipe_start = mark_pipeline_jaxpreqn(
+                    pipe_start.invars + map(lambda x: grad_invars[x], to_acc),
+                    pipe_start.outvars +
+                    map(lambda x: grad_in_after_pipe[x], to_acc),
+                    pipe_start.params['name'], pipe_start.params['mark_type'])
+                new_eqns.append(new_pipe_start)
+                # add normal eqns
+                new_eqns.extend(pipe_eqns)
+                # add acc grad(adds)
+                for gradient in to_acc:
+                    new_eqns.append(
+                        new_jaxpr_eqn([grad_in_after_pipe[gradient], gradient],
+                                      [grad_out_before_pipe[gradient]], add_p,
+                                      {}))
+                # add grad created in this stage in pipeline end
+                new_pipe_end = mark_pipeline_jaxpreqn(
+                    eqn.invars + map(lambda x: grad_out_before_pipe[x], to_acc),
+                    eqn.outvars + map(lambda x: grad_outs[x], to_acc),
+                    eqn.params['name'], eqn.params['mark_type'])
+                new_eqns.append(new_pipe_end)
+                pipe_start = None
+                pipe_eqns = []
+                to_acc = []
+                continue
+        pipe_eqns.append(eqn)
+        for outvar in eqn.outvars:
+            if not isinstance(outvar, DropVar) and outvar in gradients:
+                # collect gradients in this stage
+                to_acc.append(outvar)
+    jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
+                  new_glob_outvars, new_eqns)
+    # We do not modify donate_invars here, as it is only to append Trues
+    # Instead return grad outs to help modify apply_grad
+    return ClosedJaxpr(jaxpr, compute_jaxpr.consts), update_outs, grad_in_to_out
+
+
+def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
+    """replace with given mapping of variables"""
+
+    def map_var(var):
+        return get_var_mapping(mapping, var)
+
+    new_glob_invars = [map_var(var) for var in closed_jaxpr.jaxpr.invars]
+    new_glob_outvars = [map_var(var) for var in closed_jaxpr.jaxpr.outvars]
+    new_eqns = []
+    for eqn in closed_jaxpr.eqns:
+        new_invars = [map_var(var) for var in eqn.invars]
+        new_outvars = [map_var(var) for var in eqn.outvars]
+        new_eqns.append(
+            new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, eqn.params))
+    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_glob_invars,
+                      new_glob_outvars, new_eqns)
+    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+
+
+def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
+                        global_outvars):
+    """
+    Get mean of input (accumulated) gradients, run apply gradient
+    If the input is output, after this transform it outputs the divided version.
+    """
+    from jax.lax import div_p
+    mapping = dict()
+    new_eqns = []
+    invar_set = set(closed_jaxpr.jaxpr.invars)
+    outvar_set = set(closed_jaxpr.jaxpr.outvars)
+    for invar in gradients:
+        div_out = gensym_fn(invar.aval)
+        new_eqns.append(
+            new_jaxpr_eqn(
+                [invar,
+                 Literal(np.array(num_microbatch, invar.aval.dtype))],
+                [div_out], div_p, {}))
+        mapping[invar] = div_out
+    replaced = replace_all_with(closed_jaxpr, mapping)
+    final_invars = closed_jaxpr.jaxpr.invars
+    final_outvars = replaced.jaxpr.outvars
+    for invar in gradients:
+        if invar not in invar_set:
+            final_invars.append(invar)
+        if invar in global_outvars and invar not in outvar_set:
+            final_outvars.append(mapping[invar])
+    new_eqns.extend(replaced.jaxpr.eqns)
+    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, final_invars, final_outvars,
+                      new_eqns)
+    global_outvars = list(
+        map(lambda x: get_var_mapping(mapping, x), global_outvars))
+    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts), global_outvars
+
+
+def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
+                         mesh_num):
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
@@ -806,182 +981,26 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int], m
         for mesh in var_mesh[var]:
             consts[mesh].append(aval)
             constvars[mesh].append(var)
+    
+    jaxprs = []
+    deps = []
+    mesh_assignment = {}
 
-    jaxprs = [
-        ClosedJaxpr(Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
-                    consts[i]) for i in range(mesh_num)
-    ]
-    return jaxprs, infered_global_invars
-
-
-def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
-    gradients = [
-        outvar for outvar in compute_jaxpr.jaxpr.outvars
-        if isinstance(outvar, Var)
-    ]
-    gradients = set(gradients)
-    is_gradients = [[
-        isinstance(outvar, Var) and outvar in gradients
-        for outvar in slice.jaxpr.outvars
-    ]
-                    for slice in slices]
-    return is_gradients
-
-
-def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
-    """
-    Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
-    Args:
-        compute_jaxpr(ClosedJaxpr): the original jaxpr
-        gensym_fn: gensym function
-    Returns:
-        acc_grad_jaxpr(ClosedJaxpr): The accumulate grad jaxpr
-        update_outs(Dict[Var, Var]): From original output(grad) to new output(acc grad)
-        grad_in_to_out(Dict[Var, Var]): From accumulated gradient inputs to outputs
-    """
-    from jax.lax import add_p
-    # Assume that no grad is literal
-    raw_gradients = set([
-        outvar for outvar in compute_jaxpr.jaxpr.outvars
-        if isinstance(outvar, Var)
-    ])
-    assert len(raw_gradients) == len(compute_jaxpr.jaxpr.outvars)
-    # from raw_gradients to gradients(cross pipeline marker)
-    gradients = {}
-    for eqn in compute_jaxpr.eqns:
-        if eqn.primitive is pipeline_p:
-            for i, outvar in enumerate(eqn.outvars):
-                if outvar in raw_gradients and outvar not in gradients:
-                    gradients[outvar] = eqn.invars[i]
-    for outvar in raw_gradients:
-        assert outvar in gradients, 'all gradients should be captured by pipeline marker'
-    grad_values = list(gradients.values())
-    # generate new variables
-    grad_invars = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
-    grad_outs = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
-    # modify output, here all grads are acc_grad
-    new_glob_outvars = []
-    new_glob_invars = compute_jaxpr.jaxpr.invars + []
-    update_outs = dict()
-    grad_in_to_out = dict()
-    for outvar in compute_jaxpr.jaxpr.outvars:
-        if isinstance(outvar, Var):
-            assert outvar in gradients
-            new_glob_outvars.append(grad_outs[gradients[outvar]])
-            new_glob_invars.append(grad_invars[gradients[outvar]])
-            update_outs[outvar] = grad_outs[gradients[outvar]]
-            grad_in_to_out[grad_invars[gradients[outvar]]] = repr(grad_outs[gradients[outvar]])
-        else:
-            raise NotImplemented('gradients cannot be Literal')
-    gradients = set(grad_values)
-    # rewrite eqns
-    # TODO(yonghao): clear unused outputs(grad not used later)
-    new_eqns = []
-    pipe_start = None
-    pipe_eqns = []
-    to_acc = []
-    for eqn in compute_jaxpr.eqns:
-        if eqn.primitive is pipeline_p:
-            if eqn.params['mark_type'] == 'start':
-                pipe_start = eqn
-                for outvar in eqn.outvars:
-                    if not isinstance(outvar, DropVar) and outvar in gradients:
-                        # collect gradients in this stage
-                        to_acc.append(outvar)
-                continue
-            if eqn.params['mark_type'] == 'end':
-                # add grad used in this stage in pipeline start
-                grad_in_after_pipe = {
-                    outvar: gensym_fn(outvar.aval) for outvar in to_acc
-                }
-                grad_out_before_pipe = {
-                    outvar: gensym_fn(outvar.aval) for outvar in to_acc
-                }
-                new_pipe_start = mark_pipeline_jaxpreqn(
-                    pipe_start.invars + map(lambda x: grad_invars[x], to_acc),
-                    pipe_start.outvars +
-                    map(lambda x: grad_in_after_pipe[x], to_acc),
-                    pipe_start.params['name'], pipe_start.params['mark_type'])
-                new_eqns.append(new_pipe_start)
-                # add normal eqns
-                new_eqns.extend(pipe_eqns)
-                # add acc grad(adds)
-                for gradient in to_acc:
-                    new_eqns.append(
-                        new_jaxpr_eqn([grad_in_after_pipe[gradient], gradient],
-                                      [grad_out_before_pipe[gradient]], add_p,
-                                      {}))
-                # add grad created in this stage in pipeline end
-                new_pipe_end = mark_pipeline_jaxpreqn(
-                    eqn.invars + map(lambda x: grad_out_before_pipe[x], to_acc),
-                    eqn.outvars + map(lambda x: grad_outs[x], to_acc),
-                    eqn.params['name'], eqn.params['mark_type'])
-                new_eqns.append(new_pipe_end)
-                pipe_start = None
-                pipe_eqns = []
-                to_acc = []
-                continue
-        pipe_eqns.append(eqn)
-        for outvar in eqn.outvars:
-            if not isinstance(outvar, DropVar) and outvar in gradients:
-                # collect gradients in this stage
-                to_acc.append(outvar)
-    jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
-                  new_glob_outvars, new_eqns)
-    # We do not modify donate_invars here, as it is only to append Trues
-    # Instead return grad outs to help modify apply_grad
-    return ClosedJaxpr(jaxpr, compute_jaxpr.consts), update_outs, grad_in_to_out
-
-
-def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
-    """replace with given mapping of variables"""
-
-    def map_var(var):
-        return get_var_mapping(mapping, var)
-
-    new_glob_invars = [map_var(var) for var in closed_jaxpr.jaxpr.invars]
-    new_glob_outvars = [map_var(var) for var in closed_jaxpr.jaxpr.outvars]
-    new_eqns = []
-    for eqn in closed_jaxpr.eqns:
-        new_invars = [map_var(var) for var in eqn.invars]
-        new_outvars = [map_var(var) for var in eqn.outvars]
-        new_eqns.append(
-            new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, eqn.params))
-    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_glob_invars,
-                      new_glob_outvars, new_eqns)
-    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
-
-
-def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch, global_outvars):
-    """
-    Get mean of input (accumulated) gradients, run apply gradient
-    If the input is output, after this transform it outputs the divided version.
-    """
-    from jax.lax import div_p
-    mapping = dict()
-    new_eqns = []
-    invar_set = set(closed_jaxpr.jaxpr.invars)
-    outvar_set = set(closed_jaxpr.jaxpr.outvars)
-    for invar in gradients:
-        div_out = gensym_fn(invar.aval)
-        new_eqns.append(
-                new_jaxpr_eqn([
-                    invar,
-                    Literal(np.array(num_microbatch, invar.aval.dtype))
-                ], [div_out], div_p, {}))
-        mapping[invar] = div_out
-    replaced = replace_all_with(closed_jaxpr, mapping)
-    final_invars = closed_jaxpr.jaxpr.invars
-    final_outvars = replaced.jaxpr.outvars
-    for invar in gradients:
-        if invar not in invar_set:
-            final_invars.append(invar)
-        if invar in global_outvars and invar not in outvar_set:
-            final_outvars.append(mapping[invar])
-    new_eqns.extend(replaced.jaxpr.eqns)
-    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, final_invars, final_outvars, new_eqns)
-    global_outvars = list(map(lambda x: get_var_mapping(mapping, x), global_outvars))
-    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts), global_outvars
+    for i in range(mesh_num):
+        if not outvars[i]:
+            continue
+        stage_idx = mesh_num * 2 + len(jaxprs)
+        # assign the current stage into mesh i
+        mesh_assignment[stage_idx] = i
+        for v in invars[i]:
+            if v in grad_mesh:
+                # Add dependency as (stage, compute grad stage)
+                deps.append((stage_idx, mesh_num * 2 - 1 - grad_mesh[v]))
+        jaxprs.append(ClosedJaxpr(Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
+                    consts[i]))
+                    
+    info = deps, mesh_assignment, infered_global_invars
+    return jaxprs, info
 
 
 def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
@@ -1012,12 +1031,10 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
                 continue
             new_map[outvar] = gensym_fn(outvar.aval)
         replaced = replace_all_with(jaxpr, new_map).jaxpr
-        new_invars = [
-            get_var_mapping(mask, invar) for invar in jaxpr.jaxpr.invars
-        ]
-        new_outvars = [
-            get_var_mapping(outvar_map, outvar) for outvar in jaxpr.jaxpr.outvars
-        ]
+        new_invars = list(
+            map(lambda x: get_var_mapping(mask, x), jaxpr.jaxpr.invars))
+        new_outvars = list(
+            map(lambda x: get_var_mapping(outvar_map, x), jaxpr.jaxpr.outvars))
         name = str(i) + '_apply_grad'
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,
@@ -1030,12 +1047,11 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
         new_eqns = [start_marker] + replaced.eqns + [end_marker]
         if stage:
             results.append(
-                JaxPipelineStage(name, new_invars, new_outvars,
-                                 new_eqns,
+                JaxPipelineStage(name, new_invars, new_outvars, new_eqns,
                                  dict(zip(jaxpr.jaxpr.constvars,
                                           jaxpr.consts))))
         else:
-            new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars,
-                              new_outvars, new_eqns)
+            new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars, new_outvars,
+                              new_eqns)
             results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
     return results, outvar_map

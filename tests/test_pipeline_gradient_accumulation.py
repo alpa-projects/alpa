@@ -67,7 +67,7 @@ class AccumulateGradTest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer
 
-        global_config.num_micro_batches = 2
+        global_config.num_micro_batches = 4
 
         parallel_train_step = parallelize(train_step,
                                           pipeline_marker_type='full')

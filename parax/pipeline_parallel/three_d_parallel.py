@@ -129,49 +129,50 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         for i, _ in enumerate(jax_pipeline_stages)
     }
     assert stage_num % 2 == 0
-    mesh_num = stage_num / 2
-    # change invars of apply grad to output of accumulate grad
+    mesh_num = stage_num // 2
+    # Process apply gradient:
+    # 1. change invars of apply grad to output of accumulate grad
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
     mask = {
         outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
     }
-    # slice apply-grad stages
-    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
-                               jax_pipeline_stages, stage_to_mesh, mask)
+    # 2. Add compute mean and slice apply-grad stages
+    grad_mesh = mark_grad_mesh(gradients, jax_pipeline_stages, stage_to_mesh, mask)
     apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
         apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
         global_outvars)
-    sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh,
-                                                mesh_num)
+    sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr, grad_mesh,
+                                                   mesh_num)
+    apply_deps, apply_mesh, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        mask,
                                                        gensym_func,
                                                        stage=True)
     global_outvars = list(
         map(lambda x: get_var_mapping(out_map, x), global_outvars))
-    # TODO(yonghao): split donate invar with mesh info
+    # TODO(yonghao): 3. split donate invar with mesh info
     grad_invars = list(grad_glob_in.keys())
     all_invars = closed_jaxpr.jaxpr.invars + grad_invars
     all_donation = donated_invars + (True,) * len(grad_glob_in)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad
     # forward, backward and apply gradient is serialized in a batch.
-    pattern = [[i, i + mesh_num, i + mesh_num * 2] for i in range(mesh_num)]
+    pattern = [[i, i + mesh_num] for i in range(mesh_num)]
+    for stage_idx, mesh in apply_mesh.items():
+        pattern[mesh].append(stage_idx)
     donate_lists = split_donate_invars(all_donation, all_invars, jax_all_stages,
                                        pattern)
     # Generate schedule and placement
     num_batch = num_micro_batches
     n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
-    dummy_stage = set([
-        i + stage_num for i in range(mesh_num) if not sliced_apply_grad.outvars
-    ])
-    assert len(jax_pipeline_stages) == len(sliced_apply_grad) * 2
-    dependency = gen_linear_pipeline_dependency_with_apply(n_stages)
+    dependency = gen_linear_pipeline_dependency_with_apply(
+        n_stages, mesh_num, apply_deps)
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
-                             num_batch=num_batch,
-                             dummy_stage=dummy_stage)
+                             num_pipeline_worker=mesh_num,
+                             apply_mesh=apply_mesh,
+                             num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
     # TODO(Hao): delay the creation of physical mesh here
@@ -183,8 +184,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     stage_id_dict = [[] for _ in range(n_meshes)]
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
-        if i in dummy_stage:
-            continue
         assert len(mesh_indices) == 1
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)

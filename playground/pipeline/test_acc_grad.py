@@ -278,4 +278,4 @@ def test_compute_and_apply(microbatches):
 test_compute_to_accumulate()
 test_compute_and_apply_basic()
 test_compute_and_apply(1)
-test_compute_and_apply(2)
+test_compute_and_apply(4)

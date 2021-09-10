@@ -7,11 +7,13 @@ import math
 import numpy as np
 import ray
 from jax.core import Literal
+from jax.lib import xla_bridge
 import jax.numpy as jnp
 
 from parax.device_mesh import DistributedArray
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import StrVarPipelineStage
+from parax.util import compile_allocate_zero_buffers
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -122,6 +124,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # prepare inputs/outputs buffers and communication between stages.
         self._stage_outputs = self._init_stage_outputs()
         self._microbatches = None
+
+        # TODO(yonghao): allocate buffers for accumulated gradients
+        # compile_allocate_zero_buffers(xla_bridge.get_backend("gpu"), , grad_shard)
 
     def _establish_nccl_groups(self):
         """
@@ -259,10 +264,11 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             np.squeeze(np.argwhere(self.dependency[stage_idx] == 1), axis=1))
         for var in stage.invars:
             key = repr(var)
+            # TODO(yonghao): record where to obtain variables at compile time
             if var in self.global_invars:
                 stage_inputs[key] = self._microbatches[batch_idx][key]
             elif var in self.grad_dummy_invars:
-                # TODO(yonghao): onlly work for GPipeSchedule
+                # TODO(yonghao): only work for GPipeSchedule
                 if batch_idx == self.num_batch - 1:
                     stage_inputs[key] = self._microbatches[batch_idx][key]
                 else:

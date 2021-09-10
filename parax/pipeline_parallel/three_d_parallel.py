@@ -12,12 +12,12 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.runtime import (
     GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
-    add_marker_for_apply_grads, compute_to_acc_pipe,
-    generate_sharded_xla_stages, mark_global_and_local_vars,
+    JaxPipelineStage, apply_grad_add_marker, compute_to_acc_pipe,
+    generate_sharded_xla_stages, get_var_mapping, mark_global_and_local_vars,
     slice_closed_jaxpr_by_manual_pipeline_marks,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
-    mean_grad_for_apply_grads)
+    apply_grad_get_mean)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -41,17 +41,19 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
 
 
 def split_donate_invars(donated_invars: Sequence[bool], global_invars,
-                        sliced_jaxprs: Sequence[ClosedJaxpr], pattern):
+                        stages: Sequence[JaxPipelineStage], pattern):
     """
     Split donated invars for sliced jaxprs. The pattern is in form of:
     1. parallel. jaxprs are in different meshes.
     2. serial. jaxprs are in the same mesh and executes in serial.
-    3. some mesh in a stage, some in another. 
+    3. Inside a mesh is serial, between a mesh is parallel
     Args:
         donated_invars: whether a global invar is donated.
         global_invars: global invars for the whole jaxpr.
-        sliced_jaxprs: slices in topology order of execution.
-        pattern: The outter list is for parallel, and innter for serial.
+        stages: slices in topology order of execution.
+        pattern: The outter list is for parallel, and inner for serial.
+    Returns:
+        donate_lists:List[Sequence[bool]]: donate_invars for each stage
     """
     not_donated = [
         global_invars[i]
@@ -59,12 +61,12 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
         if not donated_invars[i]
     ]
     not_donated = set(not_donated)
-    ans = [None for _ in range(len(sliced_jaxprs))]
+    ans = [None for _ in range(len(stages))]
     for serial_group in pattern:
         serial_group = reversed(sorted(serial_group))
         use_later = set()
         for idx in serial_group:
-            invars = sliced_jaxprs[idx].jaxpr.invars
+            invars = stages[idx].invars
             # donate an invar if it is neither a not donated global invar nor an input of later slices
             donate_status = [
                 not (var in not_donated or var in use_later) for var in invars
@@ -102,8 +104,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     acc_grad_jaxpr, acc_grad_dict, grad_glob_in = compute_to_acc_pipe(
         compute_grad_jaxpr, gensym_func)
     # slice accumulate grad
-    global_invars = acc_grad_jaxpr.jaxpr.invars
-    global_outvars = acc_grad_jaxpr.jaxpr.outvars
+    acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
+    acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
     if pipeline_marker_type == "manual":
         jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
             acc_grad_jaxpr)
@@ -116,7 +118,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
             acc_grad_jaxpr)
         jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
-            jax_pipeline_stages, global_invars, global_outvars)
+            jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
     else:
         raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
     # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
@@ -126,6 +128,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         i: (i if i < stage_num / 2 else stage_num - i - 1)
         for i, _ in enumerate(jax_pipeline_stages)
     }
+    global_invars = closed_jaxpr.jaxpr.invars
+    global_outvars = closed_jaxpr.jaxpr.outvars
     # change invars of apply grad to output of accumulate grad
     mask = {
         outv: acc_grad_dict[inv]
@@ -136,17 +140,28 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # slice apply-grad stages
     grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
                                jax_pipeline_stages, stage_to_mesh, mask)
+    apply_grad_jaxpr, out_map = apply_grad_get_mean(apply_grad_jaxpr,
+                                                    barrier.outvars,
+                                                    gensym_func,
+                                                    num_micro_batches)
+    global_outvars = map(lambda x: get_var_mapping(out_map, x), global_outvars)
     sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
-    sliced_apply_grad = mean_grad_for_apply_grads(sliced_apply_grad,
-                                                  barrier.outvars, gensym_func,
-                                                  num_micro_batches)
-    sliced_apply_grad = add_marker_for_apply_grads(sliced_apply_grad,
-                                                   mask,
-                                                   gensym_func,
-                                                   stage=True)
-    # FIXME(yonghao): add division of microbatch num
+    sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
+                                                       mask,
+                                                       gensym_func,
+                                                       stage=True)
+    global_outvars = map(lambda x: get_var_mapping(out_map, x), global_outvars)
     # TODO(yonghao): split donate invar with mesh info
-
+    slice_num = len(sliced_apply_grad)
+    assert slice_num * 2 == stage_num
+    grad_invars = list(grad_glob_in.keys())
+    all_invars = closed_jaxpr.jaxpr.invars + grad_invars
+    all_donation = donated_invars + (True,) * len(grad_glob_in)
+    jax_all_stages = jax_pipeline_stages + sliced_apply_grad
+    # forward, backward and apply gradient is serialized in a batch.
+    pattern = [[i, i + slice_num, i + slice_num * 2] for i in range(slice_num)]
+    donate_lists = split_donate_invars(all_donation, all_invars, jax_all_stages,
+                                       pattern)
     # Generate schedule and placement
     num_batch = num_micro_batches
     n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
@@ -164,18 +179,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     stage_dict = [[] for _ in range(n_meshes)]
     stage_id_dict = [[] for _ in range(n_meshes)]
-    for i, stage in enumerate(jax_pipeline_stages):
+    for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)
-        stage_dict[mesh_idx].append(stage)
-    for i, stage in enumerate(sliced_apply_grad):
-        tot_idx = i + len(jax_pipeline_stages)
-        mesh_indices = list(schedule.stage_placement(tot_idx))
-        assert len(mesh_indices) == 1
-        mesh_idx = mesh_indices[0]
-        stage_id_dict[mesh_idx].append(tot_idx)
         stage_dict[mesh_idx].append(stage)
 
     # Call auto-sharding pass to shard each stage
@@ -194,8 +202,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 
-    global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
     jp = Jax3DPipeline(pipeline_stages=xla_stages,
                        global_invars=global_invars,
                        grad_dummy_invars=grad_glob_in,

@@ -9,7 +9,7 @@ import parax
 from parax.pipeline_parallel.manual_pipeline import manual_pipeline
 from parax.pipeline_parallel.stage import (
     apply_grad_add_marker, compute_to_acc_pipe, apply_grad_get_mean,
-    slice_closed_jaxpr_by_full_pipeline_marks,
+    get_var_mapping, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, mark_grad_mesh, slice_apply_gradient,
     replace_all_with)
 from parax.pipeline_parallel.three_d_parallel import split_compute_and_apply, split_donate_invars
@@ -35,8 +35,8 @@ class MLP_Model(nn.Module):
         return x
 
 
-batch_size = 128
-hidden_dim = 2048
+batch_size = 4
+hidden_dim = 3
 input_dim = output_dim = hidden_dim
 model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim)
 x = jnp.array(np.random.rand(batch_size, output_dim))
@@ -192,39 +192,47 @@ def test_compute_and_apply(microbatches):
         compute_grad_jaxpr, gensym_func)
     grad_in_to_out = grad_glob_in
     # slice accumulate grad
-    global_invars = acc_grad_jaxpr.jaxpr.invars
-    global_outvars = acc_grad_jaxpr.jaxpr.outvars
+    acc_invars = acc_grad_jaxpr.jaxpr.invars
+    acc_outvars = acc_grad_jaxpr.jaxpr.outvars
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
-        jax_pipeline_stages, global_invars, global_outvars)
+        jax_pipeline_stages, acc_invars, acc_outvars)
     # delete the two lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
+    assert stage_num % 2 == 0
     stage_to_mesh = {
         i: (i if i < stage_num / 2 else stage_num - i - 1)
         for i, _ in enumerate(jax_pipeline_stages)
     }
+    mesh_num = int(stage_num / 2)
     # apply-grad
     mask = {
         outv: acc_grad_dict[inv]
         for outv, inv in zip(barrier.outvars, barrier.invars)
-        if (not isinstance(outv, DropVar) and
-            outv in apply_grad_jaxpr.jaxpr.invars)
+        if not isinstance(outv, DropVar)
     }
     # slice apply-grad stages
+    global_outvars = closed_jaxpr.jaxpr.outvars
     grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
                                jax_pipeline_stages, stage_to_mesh, mask)
-    apply_grad_jaxpr, _ = apply_grad_get_mean(apply_grad_jaxpr, barrier.outvars,
-                                              gensym_func, microbatches)
-    sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh)
-    sliced_apply_grad, _ = apply_grad_add_marker(sliced_apply_grad,
-                                                 mask,
-                                                 gensym_func,
-                                                 stage=True)
+    gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
+    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(apply_grad_jaxpr,
+                                                       gradients,
+                                                       gensym_func,
+                                                       microbatches,
+                                                       global_outvars)
+    sliced_apply_grad, _ = slice_apply_gradient(apply_grad_jaxpr, grad_mesh,
+                                                mesh_num)
+    sliced_apply_grad, outvar_map = apply_grad_add_marker(sliced_apply_grad,
+                                                          mask,
+                                                          gensym_func,
+                                                          stage=True)
+    global_outvars = list(
+        map(lambda x: get_var_mapping(outvar_map, x), global_outvars))
     # donate invars
     donated_invars = (True, True, True, False, False)
     slice_num = len(sliced_apply_grad)
-    assert slice_num * 2 == stage_num
     grad_invars = list(grad_glob_in.keys())
     all_invars = closed_jaxpr.jaxpr.invars + grad_invars
     all_donation = donated_invars + (True,) * len(grad_glob_in)
@@ -267,9 +275,9 @@ def test_compute_and_apply(microbatches):
             get_and_set(stage.closed_jaxpr(), env_3, b)
     # store results of apply grad into microbatches - 1
     for i, stage in enumerate(sliced_apply_grad):
-        get_and_set(stage.closed_jaxpr(), env_3, microbatches - 1)
-    outs = get_vals_from_env(closed_jaxpr.jaxpr.outvars, env_3,
-                             microbatches - 1)
+        if stage.outvars:
+            get_and_set(stage.closed_jaxpr(), env_3, microbatches - 1)
+    outs = get_vals_from_env(global_outvars, env_3, microbatches - 1)
     for t, c in zip(outs, correct):
         assert jnp.allclose(t, c)
     grad_in_to_out = None

@@ -273,7 +273,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     stage_inputs[key] = self._microbatches[batch_idx][key]
                 else:
                     _key = self.grad_dummy_invars[var]
-                    stage_inputs[key] = self._stage_outputs[batch_idx + 1][stage_idx][_key]
+                    stage_inputs[key] = self._stage_outputs[batch_idx +
+                                                            1][stage_idx][_key]
             else:
                 for ans in ancestors:
                     if key in self._stage_outputs[batch_idx][ans]:
@@ -373,7 +374,8 @@ class GpipeSchedule:
                  mesh,
                  sliced_meshes=None,
                  num_batch=1,
-                 costs=None):
+                 costs=None,
+                 dummy_stage=set()):
         self.dependency = dependency
         self.original_mesh = mesh
         self.meshes = sliced_meshes
@@ -381,8 +383,9 @@ class GpipeSchedule:
         self.costs = costs
         if dependency.shape[0] % 3 != 0:
             raise RuntimeError(
-                "GPipe schedule require a triple number of stages") 
+                "GPipe schedule require a triple number of stages")
         self.num_stage = dependency.shape[0]
+        self.dummy_stage = dummy_stage
 
         self.num_pipeline_worker = self.num_stage // 3
         # TODO (zhuohan): Seperate device placement and runtime scheduling
@@ -437,7 +440,9 @@ class GpipeSchedule:
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
         # apply grad schedules
-        scheds = [(0, i + 2 * n) for i in range(n)]
+        scheds = [
+            (0, i) for i in range(2 * n, 3 * n) if i not in self.dummy_stage
+        ]
         schedules.append(scheds)
         return schedules
 

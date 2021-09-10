@@ -714,13 +714,15 @@ def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
     }
 
 
-def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int]):
+def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int], mesh_num):
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
         closed_jaxpr(ClosedJaxpr): closed jaxpr of apply_gradient function. 
         grad_mesh(Dict[Var, int]): dict indicating which mesh the variable is at. 
         If not in the dict, the variable should be a global parameter.
+        mesh_num(int): number of meshes. If a mesh does not have apply gradient computation,
+        add an empty jaxpr
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
         infered_global_invars(Dict[Var, List[int]]): Indicating which clusters each
@@ -734,7 +736,6 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int]):
             return cur.union(add)
 
     global_invars = closed_jaxpr.jaxpr.invars
-    mesh_num = max(set(grad_mesh.values())) + 1  # + 1 for 0-base
     eqn_mesh = dict()
     var_mesh = {var: set([mesh]) for var, mesh in grad_mesh.items()}
     infered_global_invars = dict()
@@ -951,32 +952,36 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
 
-def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch):
+def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch, global_outvars):
     """
     Get mean of input (accumulated) gradients, run apply gradient
     If the input is output, after this transform it outputs the divided version.
     """
     from jax.lax import div_p
-    results = []
-    outvar_map = dict()
     mapping = dict()
     new_eqns = []
-    for invar in closed_jaxpr.jaxpr.invars:
-        if invar in gradients:
-            div_out = gensym_fn(invar.aval)
-            new_eqns.append(
-                    new_jaxpr_eqn([
-                        invar,
-                        Literal(np.array(num_microbatch, invar.aval.dtype))
-                    ], [div_out], div_p, {}))
-            mapping[invar] = div_out
+    invar_set = set(closed_jaxpr.jaxpr.invars)
+    outvar_set = set(closed_jaxpr.jaxpr.outvars)
+    for invar in gradients:
+        div_out = gensym_fn(invar.aval)
+        new_eqns.append(
+                new_jaxpr_eqn([
+                    invar,
+                    Literal(np.array(num_microbatch, invar.aval.dtype))
+                ], [div_out], div_p, {}))
+        mapping[invar] = div_out
     replaced = replace_all_with(closed_jaxpr, mapping)
+    final_invars = closed_jaxpr.jaxpr.invars
+    final_outvars = replaced.jaxpr.outvars
+    for invar in gradients:
+        if invar not in invar_set:
+            final_invars.append(invar)
+        if invar in global_outvars and invar not in outvar_set:
+            final_outvars.append(mapping[invar])
     new_eqns.extend(replaced.jaxpr.eqns)
-    for outvar in closed_jaxpr.jaxpr.outvars:
-        if outvar in mapping:
-            outvar_map[outvar] = mapping[outvar]
-    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, closed_jaxpr.jaxpr.invars, replaced.jaxpr.outvars, new_eqns)
-    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts), outvar_map
+    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, final_invars, final_outvars, new_eqns)
+    global_outvars = list(map(lambda x: get_var_mapping(mapping, x), global_outvars))
+    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts), global_outvars
 
 
 def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):

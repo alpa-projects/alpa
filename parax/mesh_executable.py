@@ -133,6 +133,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
+        self.hlo_text = compiled.hlo_modules()[0].to_string()
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
@@ -241,6 +242,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                 get_exec_total_allocation_size.remote(self.exec_uuid))
         else:
             return self.compiled.total_allocation_size()
+
+    def get_hlo_text(self):
+        return self.hlo_text
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
@@ -426,6 +430,8 @@ class GradAccMeshDriverExecutable:
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
+        self.hlo_text = accumulate_grad.hlo_modules()[0].to_string() +\
+                        apply_grad.hlo_modules()[0].to_string()
         if physical_mesh.is_distributed:
             for w in physical_mesh.workers:
                 w.put_executable.remote(
@@ -593,6 +599,9 @@ class GradAccMeshDriverExecutable:
         else:
             return max(self.accumulate_grad.total_allocation_size(),
                        self.apply_grad.total_allocation_size())
+
+    def get_hlo_text(self):
+        return self.hlo_text
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)

@@ -68,7 +68,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
     bypass_device_assignment_check = physical_mesh.is_distributed
-    skip_backend_codegen = physical_mesh.is_distributed or multiple_stages
+    run_backend_codegen = not physical_mesh.is_distributed and not multiple_stages
 
     build_random_seed = 42
     compile_options = get_compile_options(
@@ -86,8 +86,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
         with XlaPassContext({
                 # Build options
-                "build_option::bypass_device_assignment": bypass_device_assignment_check,
-                "build_option::skip_backend_codegen": skip_backend_codegen,
+                "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
+                "build_option::run_backend_codegen": run_backend_codegen,
 
                 # Auto-sharding solver options
                 "auto_sharding::enable": True,
@@ -216,25 +216,35 @@ def compile_with_given_strategy(backend,
         build_random_seed=strategy_config.build_random_seed)
     logical_mesh_shape = strategy_config.logical_mesh_shape
 
+    # Skip some compilation stages to
+    # 1. accelerate the compilation.
+    # 2. make sure the annotaed sharding is not modified by other passes.
     if hlo_proto_status == HloProtoStatus.UNOPTIMIZED:
+        run_hlo_passes = True
+        run_hlo_optimization_pipeline = True
         run_auto_sharding = True
-        skip_hlo_passes = False
         solution_vector = strategy_config.auto_sharding_solution_vector
     elif hlo_proto_status == HloProtoStatus.SHARDING_ANNOTATED:
+        run_hlo_passes = True
+        run_hlo_optimization_pipeline = False
         run_auto_sharding = False
-        skip_hlo_passes = False
         solution_vector = []
     elif hlo_proto_status == HloProtoStatus.FULLY_OPTIMIZED:
+        run_hlo_passes = False
         run_auto_sharding = False
-        skip_hlo_passes = True
+        run_hlo_optimization_pipeline = False
         solution_vector = []
     else:
         raise ValueError(f"Invalid status: {hlo_proto_status}")
 
+    run_backend_codegen = not bypass_device_assignment_check
+
     with XlaPassContext({
             # Build options
-            "build_option::bypass_device_assignment": bypass_device_assignment_check,
-            "build_option::skip_hlo_passes": skip_hlo_passes,
+            "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
+            "build_option::run_hlo_passes": run_hlo_passes,
+            "build_option::run_hlo_optimization_pipeline": run_hlo_optimization_pipeline,
+            "build_option::run_backend_codegen": run_backend_codegen,
 
             # Auto-sharding solver options
             "auto_sharding::enable": run_auto_sharding,

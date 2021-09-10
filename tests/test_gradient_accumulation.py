@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import ray
 
 from parax import (parallelize, set_parallelize_options, grad, testing,
-                   global_config, DeviceCluster)
+                   global_config, PhysicalDeviceMesh, DeviceCluster)
 from parax.testing import assert_allclose
 
 
@@ -25,19 +25,28 @@ class GradAccumulationTest(unittest.TestCase):
     def tearDown(self):
         ray.shutdown()
 
-    def run_gradient_accumulation(self, use_ray):
+    def run_gradient_accumulation(self, use_ray, use_2d_mesh):
         if use_ray:
             device_cluster = DeviceCluster()
             physical_mesh = device_cluster.get_physical_mesh()
             logical_mesh = physical_mesh.get_default_logical_mesh()
-            set_parallelize_options(logical_mesh)
         else:
-            set_parallelize_options(jax.local_devices())
+            physical_mesh = PhysicalDeviceMesh(jax.local_devices()[:4])
+            if use_2d_mesh:
+                logical_mesh = physical_mesh.get_logical_mesh([2, 2], [1, 1],
+                                                              [1, 1])
+            else:
+                logical_mesh = physical_mesh.get_logical_mesh([1, 4], [1, 1],
+                                                              [1, 1])
 
-        batch_size = 16
+        set_parallelize_options(logical_mesh)
+
+        global_config.allow_all_to_all = False
+
+        batch_size = 256
         num_micro_batches = 2
-        hidden_size = 32
-        use_bias = False
+        hidden_size = 16
+        use_bias = True
 
         class Model(nn.Module):
 
@@ -80,11 +89,16 @@ class GradAccumulationTest(unittest.TestCase):
         # Check results
         assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
+        physical_mesh.shutdown()
+
     def test_gradient_accumulation_single_host(self):
-        self.run_gradient_accumulation(use_ray=False)
+        self.run_gradient_accumulation(use_ray=False, use_2d_mesh=False)
 
     def test_gradient_accumulation_multi_host(self):
-        self.run_gradient_accumulation(use_ray=True)
+        self.run_gradient_accumulation(use_ray=True, use_2d_mesh=False)
+
+    def test_gradient_accumulation_single_host_2d_mesh(self):
+        self.run_gradient_accumulation(use_ray=False, use_2d_mesh=True)
 
 
 def suite():
@@ -92,6 +106,8 @@ def suite():
     suite.addTest(
         GradAccumulationTest("test_gradient_accumulation_single_host"))
     suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
+    suite.addTest(
+        GradAccumulationTest("test_gradient_accumulation_single_host_2d_mesh"))
     return suite
 
 

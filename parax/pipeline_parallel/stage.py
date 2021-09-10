@@ -686,7 +686,8 @@ def generate_sharded_xla_stages(name: str,
         memory_budget_per_device,
         search_task,
         record_file,
-        multiple_stages=True)
+        multiple_stages=True,
+        grad_acc_num_micro_batches=None)
     stages = [
         XlaShardedPipelineStage.from_auto_sharded_stage(
             auto_sharded_hlo_proto=proto,

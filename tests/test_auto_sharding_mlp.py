@@ -87,13 +87,15 @@ def assert_data_parallel_cost(optimizer,
                               allow_not_sharded_params=0):
     # Check communication cost
     params = jax.tree_util.tree_leaves(optimizer.target)
+    replicated_penalty = int(
+        device_mesh.all_reduce_cost(1, 0) + device_mesh.all_reduce_cost(1, 1))
     expected = sum(
         device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
-        for x in params)
+        for x in params) + replicated_penalty * len(params)
     assert_close(objective, expected)
 
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-        count_communication_primitives(hlo_ir)
+        count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
     if global_config.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
         assert n_all_gather == 1

@@ -450,7 +450,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # Check communication cost.
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-            count_communication_primitives(hlo_ir)
+            count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == 4 * num_layers + 2 + 2
             assert n_reduce_scatter <= 3  # The correct number should be 2,

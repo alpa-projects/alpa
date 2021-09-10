@@ -33,9 +33,11 @@ class GradAccumulationTest(unittest.TestCase):
         else:
             physical_mesh = PhysicalDeviceMesh(jax.local_devices()[:4])
             if use_2d_mesh:
-                logical_mesh = physical_mesh.get_logical_mesh([2, 2], [1, 1], [1, 1])
+                logical_mesh = physical_mesh.get_logical_mesh([2, 2], [1, 1],
+                                                              [1, 1])
             else:
-                logical_mesh = physical_mesh.get_logical_mesh([1, 4], [1, 1], [1, 1])
+                logical_mesh = physical_mesh.get_logical_mesh([1, 4], [1, 1],
+                                                              [1, 1])
 
         set_parallelize_options(logical_mesh)
 

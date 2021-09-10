@@ -88,11 +88,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     if num_micro_batches > 1:
         global_config.num_micro_batches = num_micro_batches
-        global_config.prefer_reduce_scatter = True
+        global_config.prefer_reduce_scatter = False
         grad = parax.grad
     else:
         grad = jax.grad
-        global_config.prefer_reduce_scatter = False
+        global_config.prefer_reduce_scatter = True
 
     parameter_count = compute_parameter_count(
         num_layers, hidden_size, vocab_size)

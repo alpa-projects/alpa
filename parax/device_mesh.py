@@ -588,7 +588,7 @@ class PhysicalDeviceMesh:
             return
 
         for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(executable.remote_uuid)
+            self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
     def profile_collective(self,

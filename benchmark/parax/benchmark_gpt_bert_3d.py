@@ -91,20 +91,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     #                                               intra_host_bandwidth=30)
     set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
 
-    # # Load profiling results
-    # if use_profiling:
-    #     filename = physical_mesh.get_signature() + ".prof.pkl"
-    #     if os.path.exists(filename):
-    #         print(f"Load saved profiling results from {filename}")
-    #         physical_mesh.load_profiling_result(filename)
-    #         physical_mesh.prof_result.make_monotonic()
-    #         physical_mesh.prof_result.multiply_scale(1e7)
-    #     else:
-    #         physical_mesh.profile_collective("all-reduce")
-    #         print(f"Save profiling results to {filename}")
-    #         physical_mesh.save_profiling_result(filename)
-    # log_time_stamp("Setup device mesh")
-
 
     @parallelize(donate_argnums=(), pipeline_marker_type="full")
     def train_step(optimizer, batch, apply_func):
@@ -212,47 +198,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     executable = train_step.get_executable(optimizer, batch, model.apply)
     log_time_stamp("Compile (driver)")
 
-    # physical_mesh.sync_workers()
-    # log_time_stamp("Compile (workers)")
-
-    physical_mesh = None
-
-    # Benchmark step time
-    # if args.include_all_overhead:
-    #     optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
-    #     physical_mesh.sync_workers()
-    #     log_time_stamp("Shard arguments")
-    #
-    #     def run_func():
-    #         nonlocal optimizer
-    #         optimizer = train_step(optimizer, batch, model.apply)
-    #
-    #     def sync_func():
-    #         physical_mesh.sync_workers()
-    #
-    #     costs = benchmark_func(run_func, sync_func,
-    #                            warmup=1, repeat=2, number=args.number)
-    #     log_time_stamp("Benchmark")
-    # else:
-    #     del (optimizer, batch)
-    #     costs = physical_mesh.profile_executable(executable)
-    #     log_time_stamp("Benchmark")
-
-    # # Check sharding strategy
-    # real_mem = physical_mesh.get_total_allocation_size(executable)
-    # objective = testing.last_compiled_auto_sharding_objective or 0.0
-    # hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-    # hlo_ir = hlo_module.to_string()
-    #
-    # with open("last.hlo", "w") as fout:
-    #     fout.write(hlo_ir)
-    # n_total, n_all_reduce, n_all_gather, n_reduce_scatter = \
-    #     count_communication_primitives(hlo_ir)
-    # print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-    #       f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")
-    # #print("===== HLO =====")
-    # #print(hlo_ir)
-
 
     def run_func():
         nonlocal optimizer
@@ -287,31 +232,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 # NB = num_micro_batches
 # DI = ddp_implementation, CK = checkpoint_activations
 # FD = force data-parallel
-
-# # w/o pipelining
-# benchmark_suite_1_gpu = [
-#     # B,  S,    H,    L,  #head,     V,     D1, D2, FD
-#     (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  False),
-#     (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  False),
-# ]
-#
-# benchmark_suite_4_gpu = [
-# ]
-#
-# benchmark_suite_8_gpu = [
-#     # B,  S,    H,    L,  #head,     V,     D1, D2, FD
-#     (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  False),
-#     (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  True),
-#     (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  False),
-#     (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  False),
-# ]
-#
-# benchmark_suite_16_gpu = [
-#     # B,  S,    H,    L,  #head,     V,     D1, D2
-#     (512, 512,  1024, 10, 1024//64,  25600, 16, 1,  False),
-#     (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,  False),
-# ]
-
 
 # w/ pipeliening
 benchmark_suite_1_gpu = [
@@ -379,4 +299,3 @@ if __name__ == "__main__":
     global_config.prefer_reduce_scatter = True
 
     benchmark_all(args.use_profiling)
-

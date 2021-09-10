@@ -127,14 +127,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     executable = train_step.get_executable(optimizer, batch, model.apply)
     log_time_stamp("Compile (driver)")
 
-    # physical_mesh.sync_workers()
-    # log_time_stamp("Compile (workers)")
-    #
-    # # Shard inputs and weights
-    # optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
-    # physical_mesh.sync_workers()
-    # log_time_stamp("Shard arguments")
-
     # Benchmark step time
     def run_func():
         nonlocal optimizer
@@ -165,11 +157,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     else:
         real_mem = -1
         objective = -1
-    #assert_only_has_allreduce(hlo_ir)
-    #print("===== HLO =====")
-    #print(hlo_ir)
-    #optimizer = closure[0]
-    #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
 
     # Log benchmark results
     heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
@@ -185,16 +172,15 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D1, D2, PP, NB, FD
-    # (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
-    #
-    # (32,  128,  5120, 2,  5120//128, 1,  2, 2, 1, False),
-    # (32,  128,  5120, 2,  5120//128, 2,  1, 2, 1, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False,
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
-    # (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False),
-    # (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
-     (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 1, False),
+    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
      # (24,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
 ]
 
@@ -207,17 +193,6 @@ benchmark_suite_8_gpu = [
     # (32,  128,  5120, 2,  5120//128, 4,  1, 2, 1, False),
 ]
 
-
-# benchmark_suite_8_gpu = [
-#     # B,  S,    H,    L,  #head,     D1, D2
-#     (32,  1024, 1536, 4,  1536//96,  8,  1),
-#     (32,  1024, 1536, 4,  1536//96,  4,  2),
-#     (32,  1024, 1536, 4,  1536//96,  2,  4),
-#
-#     (32,  128,  5120, 3,  5120//128, 8,  1),
-#     (32,  128,  5120, 3,  5120//128, 4,  2),
-#     (32,  128,  5120, 3,  5120//128, 2,  4),
-# ]
 
 def benchmark_all(use_profiling):
     if args.local:
@@ -249,4 +224,3 @@ if __name__ == "__main__":
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all(args.use_profiling)
-

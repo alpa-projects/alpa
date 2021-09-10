@@ -150,7 +150,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                        mask,
                                                        gensym_func,
                                                        stage=True)
-    global_outvars = map(lambda x: get_var_mapping(out_map, x), global_outvars)
+    global_outvars = list(map(lambda x: get_var_mapping(out_map, x), global_outvars))
     # TODO(yonghao): split donate invar with mesh info
     slice_num = len(sliced_apply_grad)
     assert slice_num * 2 == stage_num

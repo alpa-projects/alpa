@@ -11,6 +11,7 @@ hidden_size = 128
 class Layer(nn.Module):
     @nn.compact
     def __call__(self, x):
+        return
 
 class Model(nn.Module):
     def __call__(self, x):
@@ -18,7 +19,7 @@ class Model(nn.Module):
             nn.Dense,
             variable_broadcast="params",
             in_axes=1,
-            out_axes=1
+            out_axes=1,
             split_rngs={"params": False},
         )
 

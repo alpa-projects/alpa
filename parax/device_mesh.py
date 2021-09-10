@@ -272,7 +272,7 @@ class PhysicalDeviceMesh:
     """
     A physical device mesh to run computation distributedly.
 
-    This can be either a single-host device mesh (by using the native XLA runtime) or 
+    This can be either a single-host device mesh (by using the native XLA runtime) or
     a multi-host device mesh (by using ray actors and the distributed XLA runtime).
     """
 

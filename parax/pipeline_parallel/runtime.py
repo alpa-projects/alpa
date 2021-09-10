@@ -1,4 +1,5 @@
 """Distributed JAX pipeline parallelism."""
+import time
 from collections import OrderedDict
 import functools
 import logging
@@ -67,7 +68,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  physical_meshes,
                  dependency,
                  schedule,
-                 num_batch=1):
+                 num_batch=1,
+                 profile=False):
         self.stages = pipeline_stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
@@ -82,6 +84,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self.physical_meshes = physical_meshes
 
         # private attributes
+        self._profile = profile
         self._runnables = []
         self._stage_outputs = []
         self._microbatches = []
@@ -161,9 +164,36 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         """Run the training with pipelining."""
         # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
+
+        if self._profile:
+            self.overall_time = 0.0
+            self.stage_compute_time = 0.0
+            self.driver_stitching_time = 0.0
+            self.process_stage_inputs_time = 0.0
+            self.indentify_stage_inputs_time = 0.0
+            self.process_stage_outputs_time = 0.0
+            self.make_microbatch_time = 0.0
+            self.unknown_time = 0.0
+
+
+            overall_time_tic = 0.0
+            stage_compute_time_tic = 0.0
+            process_stage_inputs_tic = 0.0
+            identify_stage_inputs_tic = 0.0
+            process_stage_outputs_tic = 0.0
+            make_microbatch_tic = 0.0
+            unknown_tic = 0.0
+
+        if self._profile:
+            overall_time_tic = time.time()
+            make_microbatch_tic = time.time()
         self._microbatches = self._make_microbatches(*args)
 
+        if self._profile:
+            self.make_microbatch_time = time.time() - make_microbatch_tic
+
         global_outputs = {}
+
         for clock, sched in enumerate(self.schedule.schedules):
             # submit work in parallel
             logger.debug(">>> At clock {}, working on tasks {}.".format(
@@ -174,12 +204,27 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 if not task:
                     continue
                 batch_idx, stage_idx = task
+                if self._profile:
+                    identify_stage_inputs_tic = time.time()
+
                 inputs = self._identify_stage_inputs(clock, stage_idx,
                                                      batch_idx)
-                # check DistributedArray colocation.
+
+                if self._profile:
+                    self.indentify_stage_inputs_time += time.time() - identify_stage_inputs_tic
+                    process_stage_inputs_tic = time.time()
+                # check DistributedArray colocation and do resharding if necessary
                 inputs_list = self._process_stage_inputs(stage_idx, inputs)
+                if self._profile:
+                    self.process_stage_inputs_time += time.time() - process_stage_inputs_tic
+                    stage_compute_time_tic = time.time()
                 outputs = self._runnables[stage_idx](*inputs_list)
+                if self._profile:
+                    self.stage_compute_time += time.time() - stage_compute_time_tic
+                    process_stage_outputs_tic = time.time()
                 outvals = self._process_stage_outputs(stage_idx, outputs)
+                if self._profile:
+                    self.process_stage_outputs_time += time.time() - process_stage_outputs_tic
                 # FIXME: We need to accumulate the gradients and remerge the inputs
                 # TODO: Add reference counting here to reduce memory usage
                 self._stage_outputs[batch_idx][stage_idx].update(outvals)
@@ -190,6 +235,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             logger.debug(
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
 
+        if self._profile:
+            unknown_tic = time.time()
         global_outvals_list = []
         for var in self.global_outvars:
             if isinstance(var, Literal):
@@ -201,6 +248,11 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 # global_outvals_list.append(val._value)
                 global_outvals_list.append(val)
         logger.debug(">>> All pipeline jobs done.")
+
+        if self._profile:
+            self.unknown_time = time.time() - unknown_tic
+            self.overall_time = time.time() - overall_time_tic
+            self.report_profiling_results()
         return global_outvals_list
 
     def _init_stage_outputs(self):
@@ -220,6 +272,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         for i, var in enumerate(self.global_invars):
             key = repr(var)
             array = inputs[i]
+            # FIXME: this filter might break when the 1st dimension of a param = batch_size
             if not array.shape or array.shape[batch_dim] != batch_size:
                 # empty shape means it is not the input batch
                 # no need to split
@@ -294,6 +347,16 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         stage = self.stages[stage_idx]
         outvals = {repr(var): val for var, val in zip(stage.outvars, outputs)}
         return outvals
+
+    def report_profiling_results(self):
+        stitching_time = self.overall_time - self.stage_compute_time
+        logger.info("Overall time: {}, compute time: {}, ray stitching time: {}.".format(
+            self.overall_time, self.stage_compute_time, stitching_time) )
+        logger.info("Identify stage input time: {}.".format(self.indentify_stage_inputs_time))
+        logger.info("Process stage input time: {}.".format(self.process_stage_inputs_time))
+        logger.info("Process stage ouptput time: {}.".format(self.process_stage_outputs_time))
+        logger.info("Make microbatch time: {}.".format(self.make_microbatch_time))
+        logger.info("Unknown time: {}.".format(self.unknown_time))
 
 
 def gen_linear_dependency(num_stage):

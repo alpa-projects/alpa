@@ -623,7 +623,7 @@ def _call_solver_serialized_args(
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
     solver = pulp.COIN_CMD(mip=True,
                            msg=msg,
-                           timeLimit=time_limit,
+                           #timeLimit=time_limit,
                            threads=multiprocessing.cpu_count())
     # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     prob.solve(solver)

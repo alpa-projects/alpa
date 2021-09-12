@@ -5,19 +5,17 @@ from typing import Callable, Optional, Sequence
 from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
 from jax.api_util import (argnums_partial, donation_vector,
-                          flatten_fun_nokwargs, rebase_donate_argnums,
-                          PyTreeDef)
+                          flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.primitive_def import mark_gradient
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
-from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.shard_parallel.shard_callable import shard_parallel_callable
 from parax.util import auto_donate_argnums, auto_static_argnums
 
@@ -175,12 +173,6 @@ def parallelize_callable(
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
                                        donated_invars, batch_invars, devices,
                                        memory_budget_per_device, *avals)
-    elif strategy == "shard_data_parallel":
-        return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,
-                                            donated_invars, devices, *avals)
-    elif strategy == "pmap_data_parallel":
-        return pmap_data_parallel_callable(fun, in_tree, out_tree_thunk,
-                                           donated_invars, devices, *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices,
                                                 pipeline_marker_type, *avals)

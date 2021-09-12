@@ -93,6 +93,8 @@ def set_parallelize_options(devices=None,
 
 # Don't let the compilation on the driver node use GPUs.
 # TODO(lmzheng): enable auto-tuning for compilation on workers.
-os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
-                                         "") + " --xla_gpu_autotune_level=0"
+
+is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"
+
+os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0"
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

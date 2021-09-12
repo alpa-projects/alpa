@@ -356,7 +356,7 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                "PARAX_IS_WORKER":  "True",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 "NCCL_USE_MULTISTREAM": "False",

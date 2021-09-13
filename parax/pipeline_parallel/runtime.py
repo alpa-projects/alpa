@@ -5,16 +5,16 @@ import functools
 import logging
 import math
 
+from parax.mesh_executable import AllocZeroBufferDriverExecutable
+
 import numpy as np
 import ray
 from jax.core import Literal
-from jax.lib import xla_bridge
 import jax.numpy as jnp
 
 from parax.device_mesh import DistributedArray
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import StrVarPipelineStage
-from parax.util import compile_allocate_zero_buffers
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -128,8 +128,33 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._stage_outputs = self._init_stage_outputs()
         self._microbatches = None
 
-        # TODO(yonghao): allocate buffers for accumulated gradients
-        # compile_allocate_zero_buffers(xla_bridge.get_backend("gpu"), , grad_shard)
+        # Allocate buffers for accumulated gradients
+        mesh_num = len(self.physical_meshes)
+        mesh_grad_vars = [dict() for _ in range(mesh_num)]
+        # collect buffers to allocate in each mesh
+        for stage_idx, stage in enumerate(self.stages):
+            mesh_indices = list(self.schedule.stage_placement(stage_idx))
+            assert len(mesh_indices) == 1
+            mesh_idx = mesh_indices[0]
+            grad_var_specs = mesh_grad_vars[mesh_idx]
+            input_specs = stage.input_sharding_specs
+            for var_idx, invar in enumerate(stage.invars):
+                if invar in self.grad_dummy_invars:
+                    if invar in grad_var_specs:
+                        raise NotImplemented(
+                            f'accumulate {invar} in a mesh but multiple stages')
+                    grad_var_specs[invar] = input_specs[var_idx]
+        # create executable for each mesh
+        self.allocate_zero_buffers = []
+        for mesh_idx in range(mesh_num):
+            grad_vars_specs = mesh_grad_vars[mesh_idx]
+            grad_vars = list(grad_vars_specs.keys())
+            self.allocate_zero_buffers.append(
+                AllocZeroBufferDriverExecutable(
+                    physical_mesh=self.physical_meshes[mesh_idx],
+                    grad_vars=grad_vars,
+                    grad_vars_specs=mesh_grad_vars[mesh_idx]).
+                get_driver_callable(), grad_vars)
 
     def _establish_nccl_groups(self):
         """
@@ -183,7 +208,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             self.process_stage_outputs_time = 0.0
             self.make_microbatch_time = 0.0
             self.unknown_time = 0.0
-
 
             overall_time_tic = 0.0
             stage_compute_time_tic = 0.0
@@ -290,10 +314,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 splits = jnp.split(array, self.num_batch, axis=batch_dim)
                 for b, split in enumerate(splits):
                     microbatches[b][key] = split
-        for var in self.grad_dummy_invars.keys():
-            key = repr(var)
-            # TODO(yonghao): use allocate zero buffers computation
-            microbatches[self.num_batch - 1][key] = jnp.zeros_like(var.aval)
+        for allocate_info in self.allocate_zero_buffers:
+            allocate_callable, allocate_vars = allocate_info
+            allocate_vals = allocate_callable()
+            for val, var in zip(allocate_vals, allocate_vars):
+                key = repr(var)
+                microbatches[self.num_batch - 1][key] = val
         return microbatches
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):

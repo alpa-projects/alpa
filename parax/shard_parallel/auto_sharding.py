@@ -84,6 +84,27 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         global last_s_val
         global last_objective
 
+        mesh_shape = logical_mesh.id_mesh.shape
+
+        # Set configs for force_data_parallel
+        if global_config.force_data_parallel:
+            allow_all_gather = False
+            allow_all_to_all = False
+
+            if mesh_shape[0] == 1:
+                force_batch_dim_to_mesh_dim = 1
+            elif mesh_shape[1] == 1:
+                force_batch_dim_to_mesh_dim = 0
+            else:
+                raise ValueError(
+                    f"Cannot force data parallel for the mesh shape {mesh_shape}. "
+                    "Please make sure the mesh shape only has a single non-one dimension."
+                )
+        else:
+            allow_all_gather = global_config.allow_all_gather
+            allow_all_to_all = global_config.allow_all_to_all
+            force_batch_dim_to_mesh_dim = -1
+
         with XlaPassContext({
                 # Build options
                 "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
@@ -92,11 +113,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 # Auto-sharding solver options
                 "auto_sharding::enable": True,
                 "auto_sharding::memory_budget_per_device": memory_budget_per_device,
-                "auto_sharding::force_all_gather_cost":
-                    not global_config.allow_all_gather,
+                "auto_sharding::force_all_gather_cost": not allow_all_gather,
                 "auto_sharding::all_gather_cost": 1e10,
-                "auto_sharding::force_all_to_all_cost":
-                    not global_config.allow_all_to_all,
+                "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
                 "auto_sharding::all_to_all_cost": 1e10,
                 "auto_sharding::prefer_reduce_scatter":
                     global_config.prefer_reduce_scatter,
@@ -105,6 +124,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                     global_config.allow_recompute_heavy_op,
                 "auto_sharding::grad_acc_num_micro_batches":
                     grad_acc_num_micro_batches or 1,
+                "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
@@ -125,8 +145,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 # Debug options
                 "auto_sharding::simplify_graph": True,
                 "auto_sharding::print_strategy": False,
-                "auto_sharding::force_batch_dim_to_mesh_dim":
-                    global_config.force_batch_dim_to_mesh_dim,
                 "auto_sharding::force_strategy": False,
                 "auto_sharding::force_strategy_inst_indices": [],
                 "auto_sharding::force_strategy_stra_names": [],

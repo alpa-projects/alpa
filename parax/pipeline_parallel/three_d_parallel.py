@@ -213,6 +213,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                        dependency=dependency,
                        schedule=schedule,
                        is_batch=batch_invars,
-                       num_batch=num_batch)
+                       num_batch=num_batch,
+                       profile=False)
 
     return lambda *args, **kwargs: jp.run(*args, **kwargs)  # pylint: disable=unnecessary-lambda

@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
+import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, forward)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
@@ -76,17 +77,26 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # Model configs
     model_type = args.model
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        mesh_dim1, mesh_dim2, force_data_parallel, use_remat = benchmark_case
+        mesh_dim1, mesh_dim2, num_micro_batches, force_data_parallel,\
+        use_remat = benchmark_case
     dtype = jnp.float16
 
+    # Parallel configs
     if force_data_parallel:
         global_config.force_batch_dim_to_mesh_dim = 0
         global_config.allow_all_gather = False
 
+    if num_micro_batches > 1:
+        global_config.num_micro_batches = num_micro_batches
+        global_config.prefer_reduce_scatter = False
+        grad = parax.grad
+    else:
+        grad = jax.grad
+        global_config.prefer_reduce_scatter = True
+
     parameter_count = compute_parameter_count(
         num_layers, hidden_size, vocab_size)
 
-    # Mesh configs
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
     else:
@@ -132,7 +142,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             return loss
 
         params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), optimizer.target)
-        grads = jax.grad(loss_func)(params)
+        grads = grad(loss_func)(params)
         new_optimizer = optimizer.apply_gradient(grads)
         return new_optimizer
 
@@ -192,19 +202,18 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp("Benchmark")
 
     # Check sharding strategy
-    real_mem = executable.get_total_allocation_size()
     objective = testing.last_compiled_auto_sharding_objective or 0.0
-    hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-    hlo_ir = hlo_module.to_string()
+    real_mem = executable.get_total_allocation_size()
+    hlo_text = executable.get_hlo_text()
 
     with open("last.hlo", "w") as fout:
-        fout.write(hlo_ir)
+        fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-        count_communication_primitives(hlo_ir)
+        count_communication_primitives(hlo_text)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
           f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")
     #print("===== HLO =====")
-    #print(hlo_ir)
+    #print(hlo_text)
 
     # Log benchmark results
     tflops = compute_tflops(batch_size, seq_len, num_layers,
@@ -213,7 +222,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                             np.mean(costs))
     heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
-    values = [model_type, str(benchmark_case[:-4]), str(benchmark_case[-4:]),
+    values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
               f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
@@ -222,30 +231,32 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2, FD = force_data_parallel
-# CK = use checkpoint
+# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2,
+# NB = num_micro_batches, FD = force_data_parallel, CK = use checkpoint
 
 benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, FD,    CK
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  False, False),
-    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  False, False),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, NB, FD,    CK
+    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False),
+    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  1,  False, False),
 ]
 
 benchmark_suite_4_gpu = [
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, FD,    CK
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  False, False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  True,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  False, False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  False, False),
+    # B,  S,    H,    L,  #head,     V,     D1, D2, NB, FD,    CK
+    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False, False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, False),
 ]
 
 benchmark_suite_16_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, FD,    CK
-    (512, 512,  1024, 10, 1024//64,  25600, 16, 1,  False, False),
-    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,  False, False),
+    # B,   S,    H,    L,  #head,     V,     D1, D2, NB, FD,    CK
+    (512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, False),
+    (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, False),
+    (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, False),
+    (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, False),
 ]
 
 def benchmark_all(use_profiling):
@@ -285,6 +296,5 @@ if __name__ == "__main__":
         jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True
-    global_config.prefer_reduce_scatter = True
 
     benchmark_all(args.use_profiling)

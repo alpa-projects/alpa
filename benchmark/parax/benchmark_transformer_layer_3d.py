@@ -11,7 +11,7 @@ import numpy as np
 import ray
 
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
+                   DeviceCluster, PhysicalDeviceMesh, mark_pipeline)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from parax.util import run_cmd, write_tsv, benchmark_func, list_gpu_info
 
@@ -47,20 +47,28 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp(None)
 
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, tensor_mp_size =\
-        benchmark_case
+    batch_size, seq_len, hidden_size, num_layers, num_heads, dp_size, \
+    tensor_mp_size, pipeline_mp_size, num_micro_batches, force_data_parallel \
+    = benchmark_case
+    is_pipeline_parallel = True if pipeline_mp_size > 1 else False
+    dtype = jnp.float32
+    if force_data_parallel:
+        global_config.force_batch_dim_to_mesh_dim = 0
+        global_config.allow_all_gather = False
 
     # Mesh configs
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.get_physical_mesh()
-    logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size],
-                                                  mesh_topology="tree",
-                                                  inter_host_bandwidth=1,
-                                                  intra_host_bandwidth=30)
-    set_parallelize_options(devices=logical_mesh)
+        virtual_mesh = device_cluster.get_virtual_mesh()
+        # virtual_mesh = virtual_mesh.slice(1, [[0, 1, 2, 3]])
+    #     physical_mesh = device_cluster.get_physical_mesh()
+    # logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size],
+    #                                               mesh_topology="tree",
+    #                                               inter_host_bandwidth=1,
+    #                                               intra_host_bandwidth=30)
+    set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
 
     # Load profiling results
     if use_profiling:
@@ -78,15 +86,20 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     @parallelize
     def train_step(optimizer, batch, apply_fn):
-        def loss_func(params):
+        def loss_func(params, hidden_states):
             rngs = {"dropout": batch["rng"]}
-            out = apply_fn(params, batch["hidden_states"], batch["attention_mask"],
+            if pipeline_mp_size:
+                hidden_states, = mark_pipeline(hidden_states, name="0", mark_type="start")
+            out = apply_fn(params, hidden_states, batch["attention_mask"],
                            deterministic=False, rngs=rngs)[0]
-            return jnp.mean((out - batch["label"]) ** 2)
+            ret = jnp.mean((out - batch["label"]) ** 2)
+            if pipeline_mp_size:
+                ret, = mark_pipeline(ret, name=str(pipeline_mp_size - 1), mark_type="end")
+            return ret
 
-        grad = jax.grad(loss_func)(optimizer.target)
-        new_optimizer = optimizer.apply_gradient(grad)
-        return new_optimizer
+        grad, grad_x = jax.grad(loss_func, argnums=(0, 1))(optimizer.target, batch["hidden_states"])
+        # new_optimizer = optimizer.apply_gradient(grad)
+        return grad
 
     # Prepare input batch
     batch = {
@@ -102,7 +115,8 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         num_hidden_layers=num_layers,
         hidden_size=hidden_size,
         intermediate_size=hidden_size * 4,
-        num_attention_heads=num_heads))
+        num_attention_heads=num_heads,
+        pipeline_mp_size=pipeline_mp_size))
     rngkey = jax.random.PRNGKey(0)
     params = model.init_dummy(rngkey, batch["hidden_states"], batch["attention_mask"])
     optimizer = optim.Adam(1e-2).create(params)
@@ -113,76 +127,72 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     executable = train_step.get_executable(optimizer, batch, model.apply)
     log_time_stamp("Compile (driver)")
 
-    physical_mesh.sync_workers()
-    log_time_stamp("Compile (workers)")
-
-    # Shard inputs and weights
-    optimizer, batch = train_step.preshard_dynamic_args(optimizer, batch, model.apply)
-    physical_mesh.sync_workers()
-    log_time_stamp("Shard arguments")
-
     # Benchmark step time
     def run_func():
         nonlocal optimizer
-        optimizer = train_step(optimizer, batch, model.apply)
+        # optimizer = train_step(optimizer, batch, model.apply)
+        train_step(optimizer, batch, model.apply)
 
     def sync_func():
-        physical_mesh.sync_workers()
+        if not is_pipeline_parallel:
+            physical_mesh.sync_workers()
+        return
+
 
     costs = benchmark_func(run_func, sync_func,
                            warmup=1, repeat=2, number=args.number)
     log_time_stamp("Benchmark")
 
     # Check sharding strategy
-    real_mem = physical_mesh.get_total_allocation_size(executable)
-    objective = testing.last_compiled_auto_sharding_objective or 0.0
-    hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-    hlo_ir = hlo_module.to_string()
-    print(f" - #comm {hlo_ir.count('channel_id')}, " +
-          f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
+    if not is_pipeline_parallel:
+        real_mem = physical_mesh.get_total_allocation_size(executable)
+        objective = testing.last_compiled_auto_sharding_objective or 0.0
+        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
+        hlo_ir = hlo_module.to_string()
+        print(f" - #comm {hlo_ir.count('channel_id')}, " +
+              f"#all-reduce {hlo_ir.count('all-reduce(') + hlo_ir.count('all-reduce-start(')}")
 
-    with open("last.hlo", "w") as fout:
-        fout.write(hlo_ir)
-    #assert_only_has_allreduce(hlo_ir)
-    #print("===== HLO =====")
-    #print(hlo_ir)
-    #optimizer = closure[0]
-    #sharding_specs = jax.tree_util.tree_map(lambda x: x.sharding_spec, optimizer)
+        with open("last.hlo", "w") as fout:
+            fout.write(hlo_ir)
+    else:
+        real_mem = -1
+        objective = -1
 
     # Log benchmark results
     heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
-    values = ["transformer-layer", str(benchmark_case[:-2]), str(benchmark_case[-2:]),
-             f"{real_mem/GB:.3f}", f"{objective:.2f}",
-             f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+    values = ["transformer-layer", str(benchmark_case[:-5]), str(benchmark_case[-5:]),
+              f"{real_mem/GB:.3f}", f"{objective:.2f}",
+              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
     write_tsv(heads, values, "result_trans.tsv")
 
-    physical_mesh.shutdown()
+    # physical_mesh.shutdown()
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
 # #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2
 
 benchmark_suite_4_gpu = [
-    # B,  S,    H,    L,  #head,     D1, D2
-    # (32,  1024, 1536, 3,  1536//96,  4,  1),
-    # (32,  1024, 1536, 3,  1536//96,  2,  2),
-    #
-    # (32,  128,  5120, 2,  5120//128, 4,  1),
-    # (32,  128,  5120, 2,  5120//128, 2,  2),
-    (32,  1024, 1536, 2,  1536//96,  4,  1),
-    (32,  1024, 1536, 2,  1536//96,  2,  2),
-    (32,  1024, 1536, 2,  1536//96,  1,  4),
+    # # B,  S,    H,    L,  #head,     D1, D2, PP, NB, FD
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 1, False),
+    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False),
+    (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False),
+     # (24,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False),
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     D1, D2
-    (32,  1024, 1536, 4,  1536//96,  8,  1),
-    (32,  1024, 1536, 4,  1536//96,  4,  2),
-    (32,  1024, 1536, 4,  1536//96,  2,  4),
-
-    (32,  128,  5120, 3,  5120//128, 8,  1),
-    (32,  128,  5120, 3,  5120//128, 4,  2),
-    (32,  128,  5120, 3,  5120//128, 2,  4),
+    # B,  S,    H,    L,  #head,     D1, D2, PP, NB, FD
+    # (32,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, False),
+    (16,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, False),
+    #
+    # (32,  128,  5120, 2,  5120//128, 1,  4, 2, 1, False),
+    # (32,  128,  5120, 2,  5120//128, 4,  1, 2, 1, False),
 ]
+
 
 def benchmark_all(use_profiling):
     if args.local:
@@ -204,7 +214,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--number", type=int, default=5)
     parser.add_argument("--local", action="store_true",
-        help="Run on local GPUs. Do not use ray actors.")
+                        help="Run on local GPUs. Do not use ray actors.")
     args = parser.parse_args()
 
     if not args.local:
@@ -214,4 +224,3 @@ if __name__ == "__main__":
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all(args.use_profiling)
-

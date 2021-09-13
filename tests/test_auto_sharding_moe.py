@@ -220,7 +220,7 @@ class AutoShardingMoETest(unittest.TestCase):
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
                 count_communication_primitives(hlo_ir)
-            assert n_all_reduce == 1
+            assert n_all_reduce == 2
             assert n_all_to_all == 4
             assert n_total == n_all_reduce + n_all_to_all
 

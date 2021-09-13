@@ -10,6 +10,12 @@ from parax.pipeline_parallel.stage import (slice_eqns_by_pipeline_marks,
                                            add_pipeline_marks_for_sliced_eqns)
 
 
+def log_jaxpr(jaxpr, name):
+    path = "/tmp/" + name
+    with open(path, "w") as f:
+        f.write(repr(jaxpr))
+
+
 def manual_pipeline(fn: Callable, static_argnums=()):
 
     @wraps(fn)

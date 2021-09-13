@@ -108,6 +108,9 @@ class MeshHostWorker:
     def run_executable(self, uuid: int, *args):
         self.executables[uuid].execute_on_worker(*args)
 
+    def get_exec_total_allocation_size(self, uuid: int):
+        return self.executables[uuid].get_total_allocation_size()
+
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
                            number, verbose):
@@ -269,7 +272,7 @@ class PhysicalDeviceMesh:
     """
     A physical device mesh to run computation distributedly.
 
-    This can be either a single-host device mesh (by using the native XLA runtime) or 
+    This can be either a single-host device mesh (by using the native XLA runtime) or
     a multi-host device mesh (by using ray actors and the distributed XLA runtime).
     """
 
@@ -353,7 +356,7 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                "PARAX_IS_WORKER":  "True",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 "NCCL_USE_MULTISTREAM": "False",
@@ -585,7 +588,7 @@ class PhysicalDeviceMesh:
             return
 
         for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(executable.remote_uuid)
+            self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
     def profile_collective(self,

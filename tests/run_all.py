@@ -4,6 +4,7 @@ Run each file in a separate process to avoid GPU memory conflicts.
 
 import glob
 import multiprocessing
+import time
 import unittest
 
 
@@ -27,4 +28,7 @@ def run_unittest_files(files):
 if __name__ == "__main__":
     files = glob.glob("*.py")
     files.sort()
+
+    tic = time.time()
     run_unittest_files(files)
+    print(f"Run all tests in {time.time() - tic:.2f}s")

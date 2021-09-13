@@ -89,9 +89,6 @@ def benchmark_model_one_case(benchmark_case, use_profiling):
         grad = jax.grad
         global_config.prefer_reduce_scatter = True
 
-    parameter_count = compute_parameter_count(
-        num_layers, hidden_size, vocab_size)
-
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
     else:
@@ -215,6 +212,7 @@ def benchmark_model_one_case(benchmark_case, use_profiling):
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
                             np.mean(costs))
+    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
     heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),

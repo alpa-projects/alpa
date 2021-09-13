@@ -34,6 +34,26 @@ class _Timer:
         self.costs = []
         self.started = False
 
+    def elapsed(self, mode="average"):
+        """Calculate the elapsed time."""
+        if not self.costs:
+            raise RuntimeError("Empty costs.")
+        if mode == "average":
+            return sum(self.costs) / len(self.costs)
+        elif mode == "sum":
+            return sum(self.costs)
+        else:
+            raise RuntimeError("Supported mode is: average | sum")
+
+    def log(self, mode="average", normalizer=1.0):
+        """Log a timer's cost in different modes."""
+        assert normalizer > 0.0
+        string = "time (ms)"
+
+        elapsed = self.elapsed(mode) * 1000.0 / normalizer
+        string += ' | {}: {:.2f}'.format(self.name, elapsed)
+        print(string, flush=True)
+
 
 class Timers:
     """A group of timers."""
@@ -46,13 +66,12 @@ class Timers:
             self.timers[name] = _Timer(name)
         return self.timers[name]
 
-    def log(self, names, normalizer=1.0, reset=True):
+    def log(self, names, normalizer=1.0):
         """Log a group of timers."""
         assert normalizer > 0.0
         string = 'time (ms)'
         for name in names:
-            elapsed_time = self.timers[name].elapsed(
-                reset=reset) * 1000.0 / normalizer
+            elapsed_time = self.timers[name].elapsed() * 1000.0 / normalizer
             string += ' | {}: {:.2f}'.format(name, elapsed_time)
         print(string, flush=True)
 

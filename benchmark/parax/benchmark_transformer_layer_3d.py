@@ -13,7 +13,8 @@ import ray
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, mark_pipeline)
 from parax.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
-from parax.util import run_cmd, write_tsv, benchmark_func, list_gpu_info
+from parax.util import write_tsv, benchmark_func, list_gpu_info
+from parax.pipeline_parallel.runtime import report_pipeline_runtime_benchmark_timers
 
 import timeit
 
@@ -37,9 +38,6 @@ def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
     print(logical_mesh.mesh_beta)
     for size in sizes:
         cost += logical_mesh.all_reduce_cost(size * 4, 0)
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,4), (1,5), (2,6), (3,7),), size / 4, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,2,4,6,), (1,3,5,7)), size / 2, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,1,2,3,4,5,6,7),), size, "float32")
     print(cost)
 
 
@@ -134,8 +132,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         train_step(optimizer, batch, model.apply)
 
     def sync_func():
-        if not is_pipeline_parallel:
-            physical_mesh.sync_workers()
         return
 
 

@@ -34,11 +34,12 @@ def mark_pipeline_xla(c, *args):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
-    output_tuple = xc.ops.CustomCall(c,
-                                     b'xla_pipeline_marker',
-                                     operands=(input_params,),
-                                     shape=input_shape,
-                                     opaque=flattened_byte_sizes.tobytes())
+    output_tuple = xc.ops.CustomCallWithLayout(c,
+                                               b'xla_pipeline_marker',
+                                               operands=(input_params,),
+                                               shape_with_layout=input_shape,
+                                               operand_shapes_with_layout=(input_shape,),
+                                               opaque=flattened_byte_sizes.tobytes())
     return output_tuple
 
 

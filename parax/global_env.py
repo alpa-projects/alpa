@@ -29,9 +29,9 @@ class GlobalConfig:
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
+        self.force_data_parallel = False  # Whether force to generate data-parallel
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
-        self.force_batch_dim_to_mesh_dim = -1  # Forcely map the batch dim to a tensor dim.
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
@@ -96,5 +96,6 @@ def set_parallelize_options(devices=None,
 
 is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"
 
-os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0"
+os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
+                                         "") + " --xla_gpu_autotune_level=0"
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

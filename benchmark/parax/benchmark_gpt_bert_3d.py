@@ -243,7 +243,7 @@ benchmark_suite_1_gpu = [
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
     (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
-    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
+    # (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
 ]
 
 benchmark_suite_8_gpu = [

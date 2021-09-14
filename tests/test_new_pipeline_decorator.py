@@ -56,7 +56,8 @@ class PipelineMLPTest(unittest.TestCase):
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
                 y_ = jax.nn.one_hot(y, out.shape[-1])
-                loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1), axis=-1).sum()
+                loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1),
+                                axis=-1).sum()
                 mark_pipeline(name='2', mark_type='end')
                 return loss
 
@@ -76,11 +77,11 @@ class PipelineMLPTest(unittest.TestCase):
         gradients = train_step(optimizer, x, y, model.apply)
         pipelined_train_step = parallelize(
             donate_argnums=(), pipeline_marker_type="full")(
-            lambda optimizer, x, y, apply_fn: train_step(
-                optimizer, x, y, apply_fn, use_manual_pipeline=True))
-        gradients_with_pipeline = pipelined_train_step(optimizer, x, y, model.apply)
+                lambda optimizer, x, y, apply_fn: train_step(
+                    optimizer, x, y, apply_fn, use_manual_pipeline=True))
+        gradients_with_pipeline = pipelined_train_step(optimizer, x, y,
+                                                       model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
-
 
     def train_2_layer_mlp(self, devices, strategy):
         set_parallelize_options(devices=devices, strategy=strategy)
@@ -157,12 +158,12 @@ class PipelineMLPTest(unittest.TestCase):
         self.train_tied_embedding(self.devices, "3d_parallel")
 
 
-
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(PipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
     suite.addTest(PipelineMLPTest("test_2_layer_mlp_3d_parallel"))
-    suite.addTest(PipelineMLPTest("test_tied_embedding_local_pipeline_parallel"))
+    suite.addTest(
+        PipelineMLPTest("test_tied_embedding_local_pipeline_parallel"))
     suite.addTest(PipelineMLPTest("test_tied_embedding_3d_parallel"))
     return suite
 

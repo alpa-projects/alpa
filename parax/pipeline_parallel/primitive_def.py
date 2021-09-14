@@ -34,12 +34,13 @@ def mark_pipeline_xla(c, *args):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
-    output_tuple = xc.ops.CustomCallWithLayout(c,
-                                               b'xla_pipeline_marker',
-                                               operands=(input_params,),
-                                               shape_with_layout=input_shape,
-                                               operand_shapes_with_layout=(input_shape,),
-                                               opaque=flattened_byte_sizes.tobytes())
+    output_tuple = xc.ops.CustomCallWithLayout(
+        c,
+        b'xla_pipeline_marker',
+        operands=(input_params,),
+        shape_with_layout=input_shape,
+        operand_shapes_with_layout=(input_shape,),
+        opaque=flattened_byte_sizes.tobytes())
     return output_tuple
 
 
@@ -106,9 +107,7 @@ def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
         else:
             tan_marker_id.append(len(marker_inputs))
             marker_inputs.append(tan)
-    res = mark_pipeline(*marker_inputs,
-                        name=name,
-                        mark_type=tangent_mark_type)
+    res = mark_pipeline(*marker_inputs, name=name, mark_type=tangent_mark_type)
     tangent_outs = []
     for i, (val, tan) in enumerate(zip(arg_values, arg_tangents)):
         if tan_marker_id[i] == -1:
@@ -135,7 +134,9 @@ def _pipeline_transpose(ct, *args, name, mark_type):
         else:
             ctan_marker_id.append(len(marker_inputs))
             marker_inputs.append(ctan)
-    res = mark_pipeline(*marker_inputs, name=name, mark_type=transposed_mark_type)
+    res = mark_pipeline(*marker_inputs,
+                        name=name,
+                        mark_type=transposed_mark_type)
     new_ct = []
     for i, (val, ctan) in enumerate(zip(args, ct)):
         if ctan_marker_id[i] == -1:

@@ -4,6 +4,7 @@ import jax
 from jax import tree_flatten
 import jax.numpy as jnp
 import numpy as np
+from parax.testing import assert_allclose
 import ray
 
 import parax
@@ -75,8 +76,7 @@ class AccumulateGradTest(unittest.TestCase):
         targets = tree_flatten(new_optimizer.target)[0]
 
         corr = tree_flatten(train_step(optimizer, batch).target)[0]
-        for tgt, cor in zip(targets, corr):
-            assert jnp.allclose(tgt, cor)
+        assert_allclose(targets, corr)
 
 
 def suite():

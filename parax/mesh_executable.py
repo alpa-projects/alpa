@@ -56,7 +56,7 @@ class RemoteBufferRef:
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
-        self.uuid = uuid or next_remote_buffer_uuid()
+        self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
         self.is_deleted_on_workers = False
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
@@ -745,7 +745,7 @@ class AllocZeroBufferDriverExecutable:
         self.exec_uuid = next_mesh_executable_uuid()
         if physical_mesh.is_distributed:
             for w in physical_mesh.workers:
-                w.put_executale.remote(self.exec_uuid,
+                w.put_executable.remote(self.exec_uuid,
                                        AllocZeroBufferWorkerExecutable,
                                        grad_shard_shapes, grad_shard_dtypes)
         else:
@@ -822,12 +822,12 @@ class AllocZeroBufferWorkerExecutable:
     def __init__(self, worker: "MeshHostWorker", uuid: int,
                  grad_shard_shapes: Sequence[Tuple[int, ...]],
                  grad_shard_dtypes: Sequence[jnp.dtype]):
-        num_divices = worker.backend.devices()
+        num_devices = len(worker.backend.devices())
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
-            worker.backend, num_divices, grad_shard_shapes, grad_shard_dtypes)
-        self.buffer_dict = worker.buffers  # Q: what's this?
-        self.timer_name = get_execution_timer_name(uuid)
+            worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
+        self.buffer_dict = worker.buffers
 
+        self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_default_sync_worker(worker)
 
     def execute_on_worker(self, output_uuids):

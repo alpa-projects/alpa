@@ -82,7 +82,7 @@ class PipelineBERTTest(unittest.TestCase):
         y = jnp.ones(
             (batch_size, seq_len, hidden_size),
             dtype=jnp.float32) * 23  # * np.arange(hidden_size)[None, None, :]
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
         model = Model(config=BertConfig(hidden_size=hidden_size,

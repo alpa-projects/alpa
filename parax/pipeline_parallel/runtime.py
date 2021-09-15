@@ -244,21 +244,25 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                                                      batch_idx)
 
                 if self._profile:
-                    self.indentify_stage_inputs_time += time.time() - identify_stage_inputs_tic
+                    self.indentify_stage_inputs_time += time.time(
+                    ) - identify_stage_inputs_tic
                     process_stage_inputs_tic = time.time()
                 # check DistributedArray colocation and do resharding if necessary
                 inputs_list = self._process_stage_inputs(stage_idx, inputs)
                 if self._profile:
-                    self.process_stage_inputs_time += time.time() - process_stage_inputs_tic
+                    self.process_stage_inputs_time += time.time(
+                    ) - process_stage_inputs_tic
                     stage_compute_time_tic = time.time()
                 outputs = self._runnables[stage_idx](*inputs_list)
                 if self._profile:
-                    self.stage_compute_time += time.time() - stage_compute_time_tic
+                    self.stage_compute_time += time.time(
+                    ) - stage_compute_time_tic
                     process_stage_outputs_tic = time.time()
                 outvals = self._process_stage_outputs(stage_idx, outputs)
 
                 if self._profile:
-                    self.process_stage_outputs_time += time.time() - process_stage_outputs_tic
+                    self.process_stage_outputs_time += time.time(
+                    ) - process_stage_outputs_tic
                 # TODO: Add reference counting here to reduce memory usage
                 self._stage_outputs[batch_idx][stage_idx].update(outvals)
                 for key, val in outvals.items():
@@ -396,12 +400,17 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
     def report_profiling_results(self):
         stitching_time = self.overall_time - self.stage_compute_time
-        logger.info("Overall time: {}, compute time: {}, ray stitching time: {}.".format(
-            self.overall_time, self.stage_compute_time, stitching_time) )
-        logger.info("Identify stage input time: {}.".format(self.indentify_stage_inputs_time))
-        logger.info("Process stage input time: {}.".format(self.process_stage_inputs_time))
-        logger.info("Process stage ouptput time: {}.".format(self.process_stage_outputs_time))
-        logger.info("Make microbatch time: {}.".format(self.make_microbatch_time))
+        logger.info(
+            "Overall time: {}, compute time: {}, ray stitching time: {}.".
+            format(self.overall_time, self.stage_compute_time, stitching_time))
+        logger.info("Identify stage input time: {}.".format(
+            self.indentify_stage_inputs_time))
+        logger.info("Process stage input time: {}.".format(
+            self.process_stage_inputs_time))
+        logger.info("Process stage ouptput time: {}.".format(
+            self.process_stage_outputs_time))
+        logger.info("Make microbatch time: {}.".format(
+            self.make_microbatch_time))
         logger.info("Unknown time: {}.".format(self.unknown_time))
 
 

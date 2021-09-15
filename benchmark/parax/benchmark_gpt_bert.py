@@ -1,6 +1,5 @@
 import argparse
 import copy
-import gc
 import os
 import time
 from functools import partial
@@ -17,12 +16,10 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, forward)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
-
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
                         count_communication_primitives)
 
 
-MB = 1024 ** 2
 GB = 1024 ** 3
 
 
@@ -71,20 +68,18 @@ def compute_parameter_count(num_layers, hidden_size, vocab_size):
            ) + vocab_size * (hidden_size + 1)
 
 
-def benchmark_transformer_one_case(benchmark_case, use_profiling):
+def benchmark_model_one_case(benchmark_case, use_profiling):
     log_time_stamp(None)
 
     # Model configs
     model_type = args.model
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        mesh_dim1, mesh_dim2, num_micro_batches, force_data_parallel,\
+        mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
         use_remat = benchmark_case
     dtype = jnp.float16
 
     # Parallel configs
-    if force_data_parallel:
-        global_config.force_batch_dim_to_mesh_dim = 0
-        global_config.allow_all_gather = False
+    global_config.force_data_parallel = force_data_parallel
 
     if num_micro_batches > 1:
         global_config.num_micro_batches = num_micro_batches
@@ -94,15 +89,12 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         grad = jax.grad
         global_config.prefer_reduce_scatter = True
 
-    parameter_count = compute_parameter_count(
-        num_layers, hidden_size, vocab_size)
-
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
-    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim1, mesh_dim2],
+    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
@@ -123,10 +115,10 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp("Setup device mesh")
 
     @parallelize
-    def train_step(optimizer, batch, rngkey, apply_func):
+    def train_step(optimizer, batch, rng_key, apply_func):
         @partial(forward, layer_num = num_layers, use_remat = use_remat)
         def loss_func(params):
-            rngs = {"dropout": rngkey}
+            rngs = {"dropout": rng_key}
             logits = apply_func(params,
                                 batch["input_ids"],
                                 batch["attention_mask"],
@@ -195,7 +187,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     log_time_stamp("Compile (workers)")
 
     # Benchmark step time
-    for i in range(10):
+    for i in range(args.niter):
         optimizer = train_step(optimizer, batch, rngkey, model.apply)
 
     costs = executable.get_execution_time_costs(warmup=2)
@@ -220,6 +212,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
                             np.mean(costs))
+    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
     heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
              "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
@@ -231,11 +224,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, D1 = mesh_dimension_1, D2 = mesh_dimension_2,
-# NB = num_micro_batches, FD = force_data_parallel, CK = use checkpoint
+# #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1,
+# NB = num_micro_batches, FD = force_data_parallel, CK = use_checkpoint
 
 benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, NB, FD,    CK
+    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
     (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False),
     (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  1,  False, False),
 ]
@@ -244,7 +237,7 @@ benchmark_suite_4_gpu = [
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     D1, D2, NB, FD,    CK
+    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
     (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False, False),
     (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  False),
     (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, False),
@@ -252,7 +245,7 @@ benchmark_suite_8_gpu = [
 ]
 
 benchmark_suite_16_gpu = [
-    # B,   S,    H,    L,  #head,     V,     D1, D2, NB, FD,    CK
+    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
     (512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, False),
     (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, False),
     (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, False),
@@ -276,7 +269,7 @@ def benchmark_all(use_profiling):
         # Backup global config
         old_global_config = copy.deepcopy(global_config.__dict__)
 
-        benchmark_transformer_one_case(case, use_profiling)
+        benchmark_model_one_case(case, use_profiling)
 
         # Restore global config
         global_config.__dict__ = old_global_config
@@ -286,7 +279,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--number", type=int, default=5)
+    parser.add_argument("--niter", type=int, default=10,
+        help="Number of benchmark iteration")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
     args = parser.parse_args()

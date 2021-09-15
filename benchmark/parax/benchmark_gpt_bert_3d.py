@@ -16,7 +16,6 @@ from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import (write_tsv, list_gpu_info, benchmark_func,
                         count_communication_primitives)
 
-MB = 1024 ** 2
 GB = 1024 ** 3
 
 
@@ -70,22 +69,17 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Model configs
     model_type = args.model
-
     batch_size, seq_len, hidden_size, num_layers, num_heads, \
-    vocab_size, mesh_dim1, mesh_dim2, pipeline_mp_size, num_micro_batches, \
+    vocab_size, mesh_dim0, mesh_dim1, pipeline_mp_size, num_micro_batches, \
     force_data_parallel = benchmark_case
-
     dtype = jnp.float16
-    if force_data_parallel:
-        global_config.force_batch_dim_to_mesh_dim = 0
-        global_config.allow_all_gather = False
 
-    parameter_count = compute_parameter_count(
-        num_layers, hidden_size, vocab_size)
+    # Parallel configs
+    global_config.force_data_parallel = force_data_parallel
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_mesh()
-    # logical_mesh = physical_mesh.get_logical_mesh([mesh_dim1, mesh_dim2],
+    # logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
     #                                               mesh_topology="tree",
     #                                               inter_host_bandwidth=1,
     #                                               intra_host_bandwidth=30)
@@ -93,10 +87,10 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 
     @parallelize(donate_argnums=(), pipeline_marker_type="full")
-    def train_step(optimizer, batch, apply_func):
+    def train_step(optimizer, batch, rng_key, apply_func):
 
         def loss_func(params, input_ids, labels, attention_mask, token_type_ids, position_ids):
-            rngs = {"dropout": batch["rng"]}
+            rngs = {"dropout": rng_key}
             if pipeline_mp_size > 1:
                 mark_pipeline(name="0", mark_type="start")
 
@@ -139,7 +133,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         "token_type_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
         "position_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
         "labels": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
-        "rng": jax.random.PRNGKey(0),
     }
     log_time_stamp("Prepare input")
 
@@ -188,40 +181,34 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     rngkey = jax.random.PRNGKey(0)
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
-    # params = model.init(rngkey, batch["input_ids"], batch["attention_mask"],
-    #                     batch["token_type_ids"], batch["position_ids"])
     optimizer = optim.Adam(1e-2).create(params)
-    del (params, rngkey)
+    del params
     log_time_stamp("Init model and optimizer")
 
     # Compile executable
-    executable = train_step.get_executable(optimizer, batch, model.apply)
+    executable = train_step.get_executable(optimizer, batch, rngkey, model.apply)
     log_time_stamp("Compile (driver)")
-
 
     def run_func():
         nonlocal optimizer
-        train_step(optimizer, batch, model.apply)
+        train_step(optimizer, batch, rngkey, model.apply)
 
-    def sync_func():
-        return
-
-    costs = benchmark_func(run_func, sync_func,
-                           warmup=1, repeat=5, number=args.number)
-
+    costs = benchmark_func(run_func, warmup=1, repeat=5, number=args.number)
     real_mem = -1
     objective = -1
 
-    # # Log benchmark results
-    # tflops = compute_tflops(batch_size, seq_len, num_layers,
-    #                         hidden_size, vocab_size,
-    #                         physical_mesh.total_devices,
-    #                         np.mean(costs))
-    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
-    values = ["transformer-layer", str(benchmark_case[:-5]), str(benchmark_case[-5:]),
-              f"{real_mem/GB:.3f}", f"{objective:.2f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
-    write_tsv(heads, values, "result_trans.tsv")
+    # Log benchmark results
+    tflops = compute_tflops(batch_size, seq_len, num_layers,
+                            hidden_size, vocab_size,
+                            physical_mesh.total_devices,
+                            np.mean(costs))
+    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
+    heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
+             "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
+    values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
+              f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
+              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
+    write_tsv(heads, values, f"result_{model_type}.tsv")
 
     # physical_mesh.shutdown()
 
@@ -287,15 +274,11 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--number", type=int, default=5)
-    parser.add_argument("--include-all-overhead", action="store_true",
-                        help="If true, run the benchmark with all python overhead included (ray, parax)."
-                             "If false, only run the xla executable without any python overhead.")
     args = parser.parse_args()
 
     ray.init(address="auto")
     jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True
-    global_config.prefer_reduce_scatter = True
 
     benchmark_all(args.use_profiling)

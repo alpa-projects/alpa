@@ -72,8 +72,8 @@ class PipelineBERTTest(unittest.TestCase):
             return grad_param
 
         batch_size = 4
-        seq_len = 128
-        hidden_size = 128
+        seq_len = 64
+        hidden_size = 256
         num_heads = 4
 
         x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
@@ -84,6 +84,7 @@ class PipelineBERTTest(unittest.TestCase):
 
         # Init model and optimizer
         model = Model(config=BertConfig(hidden_size=hidden_size,
+                                        intermediate_size=hidden_size * 4,
                                         num_attention_heads=num_heads))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, attention_mask)

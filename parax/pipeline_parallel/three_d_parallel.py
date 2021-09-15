@@ -13,8 +13,7 @@ from parax.pipeline_parallel.runtime import (
     GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency, gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, compute_to_acc_pipe,
-    generate_sharded_xla_stages, get_var_mapping, mark_global_and_local_vars,
-    slice_closed_jaxpr_by_manual_pipeline_marks,
+    generate_sharded_xla_stages, get_var_mapping,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
     apply_grad_get_mean)
@@ -81,8 +80,7 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
 @lu.cache
 def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               donated_invars, batch_invars, devices,
-                              memory_budget_per_device, pipeline_marker_type,
-                              *avals):
+                              memory_budget_per_device, *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
     if not (isinstance(devices, VirtualMesh) or
             global_config.search_logical_mesh_shape):
@@ -114,21 +112,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # slice accumulate grad
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
     acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
-    if pipeline_marker_type == "manual":
-        jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
-            acc_grad_jaxpr)
-        # FIXME(yonghao): the below is incompatible with apply-grad
-        jax_pipeline_stages = [
-            mark_global_and_local_vars(stage, gensym_func)
-            for stage in jax_pipeline_stages
-        ]
-    elif pipeline_marker_type == "full":
-        jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
-            acc_grad_jaxpr)
-        jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
-            jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
-    else:
-        raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
+    jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
+        acc_grad_jaxpr)
+    jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
+        jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
     # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
     # delete the 4 lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)

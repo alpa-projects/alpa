@@ -8,7 +8,8 @@ import jax.numpy as jnp
 from jax.experimental.maps import FrozenDict
 import ray
 
-from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster
+from parax import (parallelize, set_parallelize_options, mark_pipeline,
+                   DeviceCluster, manual_pipeline)
 from parax.testing import assert_allclose
 
 MB = 1024**2
@@ -39,21 +40,24 @@ class PipelineMLPTest(unittest.TestCase):
                 # FIXME (zhuohan): if don't require the gradient of x here, the
                 #                  backward pass of the pipeline start will not
                 #                  be generated.
-                x, = mark_pipeline(x, name='1', mark_type='start')
+                mark_pipeline(name='1', mark_type='start')
                 x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
                 x = nn.relu(x)
-                x, = mark_pipeline(x, name='1', mark_type='end')
-                x, = mark_pipeline(x, name='2', mark_type='start')
+                mark_pipeline(name='1', mark_type='end')
+                mark_pipeline(name='2', mark_type='start')
                 x = nn.Dense(features=self.output_dim, use_bias=False)(x)
                 return x
 
-        def train_step(optimizer, batch, apply_fn):
+        def train_step(optimizer, batch, apply_fn, use_manual_pipeline=False):
 
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
                 loss = jnp.mean((out - y)**2)
-                loss, = mark_pipeline(loss, name='2', mark_type='end')
+                mark_pipeline(name='2', mark_type='end')
                 return loss
+
+            if use_manual_pipeline:
+                loss_func = manual_pipeline(loss_func)
 
             grad_param, grad_x = jax.grad(loss_func,
                                           argnums=(0, 1))(optimizer.target,
@@ -76,7 +80,9 @@ class PipelineMLPTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        pipelined_train_step = parallelize(donate_argnums=())(train_step)
+        pipelined_train_step = parallelize(
+            donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
+                optimizer, batch, apply_fn, use_manual_pipeline=True))
         gradients_with_pipeline = pipelined_train_step(optimizer, {
             "x": x,
             "y": y

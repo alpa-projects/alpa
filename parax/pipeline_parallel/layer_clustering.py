@@ -173,12 +173,10 @@ def forward(fn: Callable,
                 for invar in closed_jaxpr.jaxpr.invars:
                     args.append(glob_vars[invar])
                 if use_pipeline:
-                    args = mark_pipeline(*args,
-                                         name=str(cnt),
-                                         mark_type='start')
+                    mark_pipeline(name=str(cnt), mark_type='start')
                 ans = runnable(*args)
                 if use_pipeline:
-                    ans = mark_pipeline(*ans, name=str(cnt), mark_type='end')
+                    mark_pipeline(name=str(cnt), mark_type='end')
                 for i, outvar in enumerate(closed_jaxpr.jaxpr.outvars):
                     glob_vars[outvar] = ans[i]
                 cnt += 1

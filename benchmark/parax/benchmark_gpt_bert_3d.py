@@ -86,7 +86,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
 
 
-    @parallelize(donate_argnums=(), pipeline_marker_type="full")
+    @parallelize(donate_argnums=())
     def train_step(optimizer, batch, rng_key, apply_func):
 
         def loss_func(params, input_ids, labels, attention_mask, token_type_ids, position_ids):

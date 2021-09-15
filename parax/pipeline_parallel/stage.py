@@ -74,36 +74,6 @@ class StrVarPipelineStage:
 
 
 @dataclass
-class ManualPipelineStage(PipelineStage):
-    """
-    Base class of manual pipeline stages.
-
-    Attributes:
-        pipeline_invars (Set[Var]): The set of input variables receiving from
-            the previous pipeline stage.
-        global_invars (Set[Var]): The set of input variables from driver
-            function inputs.
-        local_invars (Set[Var]): The set of input variables from previous
-            stages running on the same device.
-        pipeline_outvars (Set[Var]): The set of output variables sending to
-            the next pipeline stage.
-        global_outvars (Set[Var]): The set of output variables that will be
-            used as driver function outputs.
-        local_outvars (Set[Var]): The set of output variables that will be used
-            by future stages running on the same device.
-    """
-
-    # invars
-    pipeline_invars: Set[Var] = field(default_factory=set)
-    global_invars: Set[Var] = field(default_factory=set)
-    local_invars: Set[Var] = field(default_factory=set)
-    # outvars
-    pipeline_outvars: Set[Var] = field(default_factory=set)
-    global_outvars: Set[Var] = field(default_factory=set)
-    local_outvars: Set[Var] = field(default_factory=set)
-
-
-@dataclass
 class JaxPipelineStage(PipelineStage):
     """
     A pipeline stage defined by Jaxpr.
@@ -137,11 +107,6 @@ class JaxPipelineStage(PipelineStage):
         """Return a JIT callable of the pipeline stage."""
         closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
-
-
-@dataclass
-class JaxManualPipelineStage(JaxPipelineStage, ManualPipelineStage):
-    pass
 
 
 @dataclass
@@ -261,163 +226,11 @@ class XlaShardedPipelineStage(PipelineStage):
         return mesh_executable.get_driver_callable()
 
 
-def slice_closed_jaxpr_by_manual_pipeline_marks(
-    closed_jaxpr: ClosedJaxpr
-) -> Sequence[JaxManualPipelineStage]:  # noqa MC0001
-    """Slice a Jaxpr into multiple pipeline stages.
-
-    We assume the closed_jaxpr includes pipeline start and end markers. Also,
-    the variables in the markers represents the variables being sent
-    through the network. While other input variables must be directly from
-    the invars.
-
-    Args:
-        closed_jaxpr (ClosedJaxpr): the input Jaxpr.
-
-    Returns:
-        Sequence[JaxPipelineStage]: A list of sliced pipeline stages.
-    """
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_outvars = set(
-        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    global_consts_dir = dict(
-        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    var2stage = {}
-    result_stages = []
-
-    current_stage = None
-    current_stage_intermediate_vars = set()
-
-    first_eqn = closed_jaxpr.jaxpr.eqns[0]
-    assert (first_eqn.primitive is pipeline_p and first_eqn.params["mark_type"] == "start"), \
-        "First jaxpr equation must be a pipeline start mark."
-    last_eqn = closed_jaxpr.jaxpr.eqns[-1]
-    assert (last_eqn.primitive is pipeline_p and last_eqn.params["mark_type"] == "end"), \
-        "Last jaxpr equation must be a pipeline end mark."
-
-    for eqn in closed_jaxpr.jaxpr.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
-            assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage = JaxManualPipelineStage(name=eqn.params['name'])
-            current_stage_intermediate_vars = set()
-            for var in eqn.invars:
-                if not isinstance(var, Literal):
-                    current_stage.pipeline_invars.add(var)
-        assert current_stage is not None
-
-        for var in eqn.invars:
-            if isinstance(
-                    var, Literal) or (var in current_stage.pipeline_invars) or (
-                        var in current_stage_intermediate_vars):
-                continue
-            if var in global_consts_dir:
-                if var not in current_stage.consts_dir:
-                    current_stage.consts_dir[var] = global_consts_dir[var]
-            elif var in global_invars:
-                if var not in current_stage.global_invars:
-                    current_stage.global_invars.add(var)
-            else:
-                if var not in var2stage:
-                    raise ValueError("Unknown variable {}".format(var))
-                original_stage = var2stage[var]
-                if original_stage.name == current_stage.name:
-                    if var not in original_stage.local_outvars:
-                        original_stage.local_outvars.add(var)
-                    if var not in current_stage.local_invars:
-                        current_stage.local_invars.add(var)
-                else:
-                    raise ValueError(
-                        "Variable {} should be indicated as a pipeline stage input."
-                        .format(var))
-
-        for var in eqn.outvars:
-            if not isinstance(var, DropVar):
-                current_stage_intermediate_vars.add(var)
-                var2stage[var] = current_stage
-                if var in global_outvars:
-                    current_stage.global_outvars.add(var)
-
-        current_stage.eqns.append(eqn)
-
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            assert current_stage is not None, "Ending a pipeline stage before its start."
-            assert current_stage.name == eqn.params[
-                'name'], "Ending a pipeline stage different from its start."
-            current_stage.pipeline_outvars = set(
-                var for var in eqn.outvars if not isinstance(var, DropVar))
-            result_stages.append(current_stage)
-            current_stage = None
-
-    for stage in result_stages:
-        stage.invars = list(stage.pipeline_invars | stage.global_invars |
-                            stage.local_invars)
-        stage.outvars = list(stage.pipeline_outvars | stage.global_outvars |
-                             stage.local_outvars)
-
-    return result_stages
-
-
 def get_var_mapping(mapping, var):
     if isinstance(var, Var) and var in mapping:
         return mapping[var]
     else:
         return var
-
-
-def mark_global_and_local_vars(stage: JaxManualPipelineStage,
-                               gensym_func) -> JaxPipelineStage:
-    """Rewrite pipeline stages so that all inputs and outputs go through the pipeline marker."""
-    assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
-        'mark_type'] == 'start'
-    assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
-        'mark_type'] == 'end'
-    new_stage = JaxPipelineStage(stage.name, consts_dir=stage.consts_dir)
-    var_alias = {
-        var: gensym_func(var.aval)
-        for var in it.chain(stage.global_invars, stage.local_invars,
-                            stage.global_outvars, stage.local_outvars)
-    }
-
-    for eqn in stage.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
-            # Pipeline start marker
-            global_and_local_invars = list(
-                it.chain(stage.global_invars, stage.local_invars))
-            eqn_invars_without_literal = []
-            eqn_outvars_without_literal = []
-            for invar, outvar in zip(eqn.invars, eqn.outvars):
-                if isinstance(invar, Literal):
-                    var_alias[outvar] = invar
-                else:
-                    eqn_invars_without_literal.append(invar)
-                    eqn_outvars_without_literal.append(outvar)
-            invars = eqn_invars_without_literal + global_and_local_invars
-            outvars = [
-                get_var_mapping(var_alias, var)
-                for var in eqn_outvars_without_literal + global_and_local_invars
-            ]
-            new_stage.invars = invars
-        elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            global_and_local_outvars = list(
-                it.chain(stage.global_outvars, stage.local_outvars))
-            eqn_invars_without_dropvar = []
-            eqn_outvars_without_dropvar = []
-            for invar, outvar in zip(eqn.invars, eqn.outvars):
-                if not isinstance(outvar, DropVar):
-                    eqn_invars_without_dropvar.append(invar)
-                    eqn_outvars_without_dropvar.append(outvar)
-            invars = [
-                get_var_mapping(var_alias, var)
-                for var in eqn_invars_without_dropvar + global_and_local_outvars
-            ]
-            outvars = eqn_outvars_without_dropvar + global_and_local_outvars
-            new_stage.outvars = outvars
-        else:
-            invars = [get_var_mapping(var_alias, var) for var in eqn.invars]
-            outvars = [get_var_mapping(var_alias, var) for var in eqn.outvars]
-        new_stage.eqns.append(eqn._replace(invars=invars, outvars=outvars))
-
-    return new_stage
 
 
 def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):

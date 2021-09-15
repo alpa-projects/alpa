@@ -52,11 +52,13 @@ def next_remote_buffer_uuid(number=1):
 class RemoteBufferRef:
     """A reference to a remote device buffer."""
 
-    def __init__(self, device_mesh, host_id, device_id, uuid=None):
+    def __init__(self, device_mesh, host_id, device_id, uuid=None,
+                 dtype=jnp.float32):
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
         self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
+        self.dtype = dtype
         self.is_deleted_on_workers = False
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
@@ -73,7 +75,9 @@ class RemoteBufferRef:
         self.is_deleted_on_workers = True
 
     def __repr__(self):
-        return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
+        return f"RemoteBufferRef(uuid = {self.uuid}, " \
+               f"loc = ({self.host_id}, {self.device_id})), " \
+               f"dtype=({self.dtype})"
 
     def __del__(self):
         if not self.is_deleted_on_workers:

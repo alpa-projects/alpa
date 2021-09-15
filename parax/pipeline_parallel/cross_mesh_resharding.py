@@ -231,13 +231,16 @@ class ReshardingTask:
             receiver]
         receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
             receiver]
+
+        dtype = self.src_array.remote_buffers[0].dtype
         result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
-                                     receiver_device_id)
+                                     receiver_device_id, dtype=dtype)
         # Put an empty buffer first.
         ray.get(
             receiver_worker.put_empty_buffer.remote(result_buf.uuid,
                                                     result_buf.device_id,
-                                                    dst_tile.tile_shape))
+                                                    dst_tile.tile_shape,
+                                                    result_buf.dtype))
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
             receiver]
         for i, sender in enumerate(senders):

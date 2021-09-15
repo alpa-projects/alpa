@@ -9,7 +9,9 @@ from parax.testing import assert_allclose
 
 
 class PipelineTransposeTest(unittest.TestCase):
+
     def test_transpose(self):
+
         def f(x):
             x, = parax.mark_pipeline(x, mark_type="start", name="1")
             x = jnp.transpose(x, axes=(1, 0))

@@ -9,8 +9,7 @@ from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_parallel.primitive_def import pipeline_p
 from parax.pipeline_parallel.stage import (
-    PipelineStage, XlaPipelineStage,
-    slice_closed_jaxpr_by_full_pipeline_marks,
+    PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 
 # pylint: disable=redefined-builtin
@@ -134,9 +133,8 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
 
 
 @lu.cache
-def local_pipeline_parallel_callable(fun: lu.WrappedFun, devices: Mapping[str,
-                                                                          Any],
-                                     *avals):
+def local_pipeline_parallel_callable(fun: lu.WrappedFun,
+                                     devices: Mapping[str, Any], *avals):
     """Pipeline parallel callable."""
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)

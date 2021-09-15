@@ -8,7 +8,8 @@ import jax.numpy as jnp
 from jax.experimental.maps import FrozenDict
 import ray
 
-from parax import (parallelize, set_parallelize_options, mark_pipeline, DeviceCluster, manual_pipeline)
+from parax import (parallelize, set_parallelize_options, mark_pipeline,
+                   DeviceCluster, manual_pipeline)
 from parax.testing import assert_allclose
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 
@@ -65,9 +66,9 @@ class PipelineBERTTest(unittest.TestCase):
             if use_manual_pipeline:
                 loss_func = manual_pipeline(loss_func)
 
-            grad_param = jax.grad(loss_func)(optimizer.target,
-                                                       batch['x'], batch['y'],
-                                                       batch['attention_mask'])
+            grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
+                                             batch['y'],
+                                             batch['attention_mask'])
 
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
@@ -97,9 +98,8 @@ class PipelineBERTTest(unittest.TestCase):
             "attention_mask": attention_mask
         }, model.apply)
         pipelined_train_step = parallelize(
-            donate_argnums=())(
-                lambda optimizer, batch, apply_fn: train_step(
-                    optimizer, batch, apply_fn, use_manual_pipeline=True))
+            donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
+                optimizer, batch, apply_fn, use_manual_pipeline=True))
         gradients_with_pipeline = pipelined_train_step(optimizer, {
             "x": x,
             "y": y,

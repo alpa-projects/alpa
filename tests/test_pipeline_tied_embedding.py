@@ -76,9 +76,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         optimizer = optim.Adam(1e-2).create(params)
         gradients = train_step(optimizer, x, y, model.apply)
         pipelined_train_step = parallelize(
-            donate_argnums=())(
-                lambda optimizer, x, y, apply_fn: train_step(
-                    optimizer, x, y, apply_fn, use_manual_pipeline=True))
+            donate_argnums=())(lambda optimizer, x, y, apply_fn: train_step(
+                optimizer, x, y, apply_fn, use_manual_pipeline=True))
         gradients_with_pipeline = pipelined_train_step(optimizer, x, y,
                                                        model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
@@ -93,7 +92,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(
-        PipelineTiedEmbeddingTest("test_tied_embedding_local_pipeline_parallel"))
+        PipelineTiedEmbeddingTest(
+            "test_tied_embedding_local_pipeline_parallel"))
     suite.addTest(PipelineTiedEmbeddingTest("test_tied_embedding_3d_parallel"))
     return suite
 

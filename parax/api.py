@@ -101,8 +101,7 @@ def parallelize(fun=None,
             compiled_func = parallelize_callable(
                 f, in_tree, out_tree_hashable, donated_invars, batch_invars,
                 devices, global_config.strategy,
-                global_config.memory_budget_per_device,
-                *abstract_args)
+                global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
                 # Execute the compiled func and return results

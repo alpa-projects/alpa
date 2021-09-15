@@ -70,8 +70,7 @@ class AccumulateGradTest(unittest.TestCase):
 
         global_config.num_micro_batches = 4
 
-        parallel_train_step = parallelize(train_step,
-                                          pipeline_marker_type='full')
+        parallel_train_step = parallelize(train_step)
         new_optimizer = parallel_train_step(optimizer, batch)
         targets = tree_flatten(new_optimizer.target)[0]
 

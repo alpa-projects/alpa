@@ -32,7 +32,7 @@ def parallelize(fun=None,
 
     Args:
         fun: The function to be parallelized.
-        donate_argnums: The same as the donated_argnums argument of jax.jit.
+        donate_argnums: The same as the donate_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.

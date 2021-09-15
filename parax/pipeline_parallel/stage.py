@@ -524,7 +524,7 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     current_stage = None
 
     from parax.pipeline_parallel.manual_pipeline import log_jaxpr
-    log_jaxpr(closed_jaxpr, "in-slice")
+    log_jaxpr(closed_jaxpr, "jaxpr-review")
 
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':

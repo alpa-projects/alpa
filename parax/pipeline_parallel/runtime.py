@@ -15,7 +15,7 @@ from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator,
 from parax.pipeline_parallel.stage import StrVarPipelineStage
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def cached_property(fn, *args, **kwargs):

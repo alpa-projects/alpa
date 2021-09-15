@@ -75,10 +75,14 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     vocab_size, mesh_dim1, mesh_dim2, pipeline_mp_size, num_micro_batches, \
     force_data_parallel = benchmark_case
 
-    dtype = jnp.float16
+    dtype = jnp.float32
     if force_data_parallel:
         global_config.force_batch_dim_to_mesh_dim = 0
         global_config.allow_all_gather = False
+
+    if pipeline_mp_size > 1:
+        global_config.prefer_reduce_scatter = False
+
 
     parameter_count = compute_parameter_count(
         num_layers, hidden_size, vocab_size)
@@ -95,20 +99,20 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     @parallelize(donate_argnums=(), pipeline_marker_type="full")
     def train_step(optimizer, batch, apply_func):
 
-        def loss_func(params, input_ids, labels, attention_mask, token_type_ids, position_ids):
+        def loss_func(params):
             rngs = {"dropout": batch["rng"]}
             if pipeline_mp_size > 1:
                 mark_pipeline(name="0", mark_type="start")
 
             logits = apply_func(params,
-                                input_ids,
-                                attention_mask,
-                                token_type_ids,
-                                position_ids,
+                                batch["input_ids"],
+                                batch["attention_mask"],
+                                batch["token_type_ids"],
+                                batch["position_ids"],
                                 deterministic=True,
                                 rngs=rngs)[0]
-            label_mask = jnp.where(labels > 0, 1.0, 0.0)
-            labels = jax.nn.one_hot(labels, logits.shape[-1])
+            label_mask = jnp.where(batch["labels"]  > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
             loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
             # TODO(lmzheng): add dynamic scale for mixed-precision training
@@ -126,13 +130,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         if pipeline_mp_size > 1:
             loss_func = manual_pipeline(loss_func)
 
-        grad, _, _, _, _, _ = jax.grad(loss_func, argnums=(0, 1, 2, 3, 4, 5))\
-            (optimizer.target, batch["input_ids"], batch["labels"], batch["attention_mask"], batch["token_type_ids"],
-             batch["position_ids"])
+        grad = jax.grad(loss_func, argnums=(0))(optimizer.target)
         return grad
 
     # Prepare input batch
-    tmp_dtype = dtype
+    tmp_dtype = jnp.int32
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
@@ -141,6 +143,16 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         "labels": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
         "rng": jax.random.PRNGKey(0),
     }
+
+    # batch = {
+    #     "input_ids": jax.random.randint(jax.random.PRNGKey(0), (batch_size, seq_len), 0, 256, dtype=tmp_dtype),
+    #     "attention_mask": jax.random.randint(jax.random.PRNGKey(1), (batch_size, seq_len), 0, 256, dtype=tmp_dtype),
+    #     "token_type_ids": jax.random.randint(jax.random.PRNGKey(2), (batch_size, seq_len), 0, 256, dtype=tmp_dtype),
+    #     "position_ids": jax.random.randint(jax.random.PRNGKey(3), (batch_size, seq_len), 0, 256, dtype=tmp_dtype),
+    #     "labels": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+    #     "rng": jax.random.PRNGKey(0),
+    # }
+
     log_time_stamp("Prepare input")
 
     # Init model and optimizer
@@ -242,7 +254,7 @@ benchmark_suite_1_gpu = [
 
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
+    (8,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
     # (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
 ]
 

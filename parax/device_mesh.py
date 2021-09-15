@@ -32,7 +32,7 @@ from parax.util import (get_dim_last_value, list_gpu_info, GB, to_cupy,
                         jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -237,8 +237,9 @@ class MeshHostWorker:
         src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
         to_send = to_cupy(src_buffer[tuple(offset)])
         logger.debug(
-            "Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}.".
-            format(uuid, dst_rank, dst_gpu_idx, to_send.shape, to_send.dtype))
+            ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
+            "Sample value: {}.".
+            format(uuid, dst_rank, dst_gpu_idx, to_send.shape, to_send.dtype, to_send[0]))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -252,10 +253,10 @@ class MeshHostWorker:
             jax.numpy.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
             self.local_devices[device_id])
         to_recv = to_cupy(tmp_buffer)
-        logger.debug(
-            "Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}.".format(
-                src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype))
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+        logger.debug(
+            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}.".
+                format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype, to_recv[0]))
         recv_tensor = to_jax_tensor(to_recv)
 
         # 0-copy version

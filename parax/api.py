@@ -180,7 +180,7 @@ def parallelize_callable(
         # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
         assert not global_config.search_logical_mesh_shape
         return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
-                                         donated_invars, devices,
+                                         donated_invars, batch_invars, devices,
                                          memory_budget_per_device,
                                          pipeline_marker_type, *avals)
     else:

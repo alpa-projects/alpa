@@ -56,7 +56,7 @@ class RemoteBufferRef:
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
-        self.uuid = uuid or next_remote_buffer_uuid()
+        self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
         self.is_deleted_on_workers = False
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
@@ -103,6 +103,18 @@ def get_execution_timer_name(exec_uuid):
     return f"{exec_uuid}-execution"
 
 
+def get_sync_func_driver(physical_mesh):
+    def sync_func_driver():
+        physical_mesh.devices[0].synchronize_all_activity()
+    return sync_func_driver
+
+
+def get_sync_func_worker(worker):
+    def sync_func_worker():
+        worker.local_devices[0].synchronize_all_activity()
+    return sync_func_worker
+
+
 class NormalMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a normal mesh executable."""
 
@@ -145,8 +157,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = lambda: physical_mesh.devices[
-            0].synchronize_all_activity()
+        self.sync_func = get_sync_func_driver(physical_mesh)
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -293,8 +304,7 @@ class NormalMeshWorkerExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = lambda: worker.local_devices[
-            0].synchronize_all_activity()
+        self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: List[List[int]],
                           output_uuids: List[List[int]]):
@@ -456,8 +466,7 @@ class GradAccMeshDriverExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = lambda: physical_mesh.devices[
-            0].synchronize_all_activity()
+        self.sync_func = get_sync_func_driver(physical_mesh)
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -511,7 +520,7 @@ class GradAccMeshDriverExecutable:
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = next_remote_buffer_uuid(num_hosts * num_outs * num_devices_per_host)\
-                .reshape(num_hosts, num_outs, num_devices_per_host)\
+                .reshape(num_hosts, num_outs, num_devices_per_host)
 
             # Execute SPMD binary
             for i in range(num_hosts):
@@ -648,8 +657,7 @@ class GradAccMeshWorkerExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = lambda: worker.local_devices[
-            0].synchronize_all_activity()
+        self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids, next_batch_uuids, output_uuids):
         """Run the executable on the worker."""
@@ -715,4 +723,124 @@ class GradAccMeshWorkerExecutable:
     def __del__(self):
         self.accumulate_grad.delete()
         self.apply_grad.delete()
+        self.allocate_zero_buffers.delete()
+
+
+class AllocZeroBufferDriverExecutable:
+    """The driver part of a buffer-allocation executable."""
+
+    def __init__(self, physical_mesh, grad_vars, grad_vars_specs):
+        self.physical_mesh = physical_mesh
+        grad_avals = [var.aval for var in grad_vars]
+        grad_specs = [grad_vars_specs[var] for var in grad_vars]
+        grad_shard_shapes = [
+            get_shard_shape(aval, spec)
+            for aval, spec in zip(grad_avals, grad_specs)
+        ]
+        grad_shard_dtypes = [aval.dtype for aval in grad_avals]
+        self.out_avals = grad_avals
+        self.outs_handler = physical_mesh.get_outputs_handler(
+            grad_avals, grad_specs)
+
+        self.exec_uuid = next_mesh_executable_uuid()
+        if physical_mesh.is_distributed:
+            for w in physical_mesh.workers:
+                w.put_executable.remote(self.exec_uuid,
+                                       AllocZeroBufferWorkerExecutable,
+                                       grad_shard_shapes, grad_shard_dtypes)
+        else:
+            self.allocate_zero_buffers = compile_allocate_zero_buffers(
+                xla_bridge.get_backend("gpu"), physical_mesh.devices,
+                grad_shard_shapes, grad_shard_dtypes)
+
+        self.timer_name = get_execution_timer_name(self.exec_uuid)
+        self.sync_func = get_sync_func_driver(physical_mesh)
+
+    def get_driver_callable(self):
+        ret = partial(self.launch_on_driver)
+        ret.shard_args_only = partial(self.shard_args_only)
+        ret.get_executable = lambda: self
+        return ret
+
+    def launch_on_driver(self, *args):
+        assert len(args) == 0,\
+            f"allocate zero buffers does not need args, got {len(args)}"
+        physical_mesh = self.physical_mesh
+        num_hosts = physical_mesh.num_hosts
+        num_outs = len(self.out_avals)
+        num_devices_per_host = physical_mesh.num_devices_per_host
+
+        if physical_mesh.is_distributed:
+            # Get output uuids
+            output_uuids = next_remote_buffer_uuid(num_hosts * num_outs * num_devices_per_host)\
+                .reshape(num_hosts, num_outs, num_devices_per_host)
+
+            # Execute SPMD binary
+            for i in range(num_hosts):
+                physical_mesh.workers[i].run_executable.remote(
+                    self.exec_uuid, output_uuids[i])
+
+            output_uuids = output_uuids.transpose([1, 0, 2])
+
+            # Gather outputs
+            output_bufs = np.empty((num_outs, physical_mesh.total_devices),
+                                   dtype=object)
+            for i in range(len(output_bufs)):
+                for j in range(len(output_bufs[i])):
+                    host_id = j // num_devices_per_host
+                    device_id = j % num_devices_per_host
+                    output_bufs[i][j] = RemoteBufferRef(
+                        physical_mesh, host_id, device_id,
+                        output_uuids[i][host_id][device_id])
+        else:
+            timers(self.timer_name).start(self.sync_func)
+            output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
+                [])
+            timers(self.timer_name).stop(self.sync_func)
+
+        return self.outs_handler(output_bufs)
+
+    def shard_args_only(self, *args):
+        raise NotImplementedError
+
+    def profile_with_dummy_inputs(self):
+        raise NotImplementedError
+
+    def get_total_allocation_size(self):
+        return 0
+
+    def get_hlo_text(self):
+        return ""
+
+    def __del__(self):
+        self.physical_mesh.delete_remote_executable(self)
+
+
+class AllocZeroBufferWorkerExecutable:
+    """The driver part of a buffer-allocation executable."""
+
+    def __init__(self, worker: "MeshHostWorker", uuid: int,
+                 grad_shard_shapes: Sequence[Tuple[int, ...]],
+                 grad_shard_dtypes: Sequence[jnp.dtype]):
+        num_devices = len(worker.backend.devices())
+        self.allocate_zero_buffers = compile_allocate_zero_buffers(
+            worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
+        self.buffer_dict = worker.buffers
+
+        self.timer_name = get_execution_timer_name(uuid)
+        self.sync_func = get_sync_func_worker(worker)
+
+    def execute_on_worker(self, output_uuids):
+        buffer_dict = self.buffer_dict
+        timers(self.timer_name).start(self.sync_func)
+        grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
+            [])
+        timers(self.timer_name).stop(self.sync_func)
+        for i in range(len(output_uuids)):
+            set_buffers(buffer_dict, output_uuids[i], grad_bufs[i])
+
+    def get_total_allocation_size(self):
+        return 0
+
+    def __del__(self):
         self.allocate_zero_buffers.delete()

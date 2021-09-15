@@ -18,7 +18,7 @@ from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverE
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
-from parax.util import jaxpr_to_hlo_computation, setup_computation_alias
+from parax.util import jaxpr_to_hlo_computation, get_micro_batch, setup_computation_alias
 
 
 def get_compute_key(fun, in_tree, donated_invars, *aval):
@@ -202,15 +202,7 @@ def shard_parallel_internal_gradient_accumulation(
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
-    avals = []
-    for aval, is_batch_var in zip(raw_avals, batch_invars):
-        if is_batch_var:
-            assert aval.shape[0] % num_micro_batches == 0,\
-                "The batch dimension must be divisable by num_micro_batches."
-            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
-            avals.append(aval.update(shape=shape))
-        else:
-            avals.append(aval)
+    avals = get_micro_batch(batch_invars, num_micro_batches, *raw_avals)
 
     # Get the jaxpr and add gradient accumulation logics to it
     with disable_jit():

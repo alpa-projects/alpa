@@ -14,7 +14,7 @@ import jax
 import numpy as np
 from jax._src.dlpack import from_dlpack
 from jax.api_util import shaped_abstractify
-from jax.core import ShapedArray
+from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
@@ -492,3 +492,56 @@ def compute_bytes(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
+
+
+def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
+    avals = []
+    for aval, is_batch_var in zip(raw_avals, batch_invars):
+        if is_batch_var:
+            assert aval.shape[0] % num_micro_batches == 0,\
+                "The batch dimension must be divisable by num_micro_batches."
+            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
+            avals.append(aval.update(shape=shape))
+        else:
+            avals.append(aval)
+    return avals
+
+
+def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
+                    sliced_eqns) -> Sequence[ClosedJaxpr]:
+    N = len(sliced_eqns)
+    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    global_outvars = set(
+        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+    result = []
+    layer_invars = [set() for _ in range(N)]
+    layer_outvars = [set() for _ in range(N)]
+    layer_consts = [dict() for _ in range(N)]
+    var_layer_dict = {}
+    for i, eqns in enumerate(sliced_eqns):
+        for eqn in eqns:
+            for var in eqn.invars:
+                if isinstance(var, Literal):
+                    continue
+                if var in global_consts:
+                    layer_consts[i][var] = global_consts[var]
+                elif var in global_invars:
+                    layer_invars[i].add(var)
+                elif var_layer_dict[var] != i:
+                    layer_invars[i].add(var)
+                    layer_outvars[var_layer_dict[var]].add(var)
+                else:
+                    assert var_layer_dict[var] == i
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar):
+                    var_layer_dict[var] = i
+                if var in global_outvars:
+                    layer_outvars[i].add(var)
+    for i, eqns in enumerate(sliced_eqns):
+        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
+                          list(layer_outvars[i]), eqns)
+        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
+                                       list(layer_consts[i].values()))
+        result.append(new_closed_jaxpr)
+    return result

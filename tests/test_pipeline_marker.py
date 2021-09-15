@@ -1,6 +1,3 @@
-"""Test profiling of communication and compute costs."""
-
-import os
 import unittest
 
 import jax
@@ -11,10 +8,8 @@ import parax
 from parax.testing import assert_allclose
 
 
-class PipelineMarkerTest(unittest.TestCase):
-
+class PipelineTransposeTest(unittest.TestCase):
     def test_transpose(self):
-
         def f(x):
             x, = parax.mark_pipeline(x, mark_type="start", name="1")
             x = jnp.transpose(x, axes=(1, 0))
@@ -32,8 +27,7 @@ class PipelineMarkerTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineMarkerTest("test_transpose"))
-
+    suite.addTest(PipelineTransposeTest("test_transpose"))
     return suite
 
 

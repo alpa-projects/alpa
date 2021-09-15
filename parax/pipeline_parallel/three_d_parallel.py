@@ -22,7 +22,7 @@ logger.setLevel(logging.INFO)
 @lu.cache
 def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               donated_invars, devices, memory_budget_per_device,
-                              pipeline_marker_type, *avals):
+                              *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
     if not isinstance(devices, VirtualMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
@@ -36,21 +36,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    if pipeline_marker_type == "manual":
-        gensym_func = gensym([closed_jaxpr.jaxpr])
-        jax_pipeline_stages = slice_closed_jaxpr_by_manual_pipeline_marks(
-            closed_jaxpr)
-        jax_pipeline_stages = [
-            mark_global_and_local_vars(stage, gensym_func)
-            for stage in jax_pipeline_stages
-        ]
-    elif pipeline_marker_type == "full":
-        jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
-            closed_jaxpr)
-        jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
-            jax_pipeline_stages, global_invars, global_outvars)
-    else:
-        raise ValueError("Invalid pipeline marker type", pipeline_marker_type)
+    jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
+        closed_jaxpr)
+    jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
+        jax_pipeline_stages, global_invars, global_outvars)
 
     # Generate schedule and placement
     num_batch = 1

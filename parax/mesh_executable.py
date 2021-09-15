@@ -103,16 +103,16 @@ def get_execution_timer_name(exec_uuid):
     return f"{exec_uuid}-execution"
 
 
-def get_default_sync_driver(physical_mesh):
-    def default_sync_driver():
+def get_sync_func_driver(physical_mesh):
+    def sync_func_driver():
         physical_mesh.devices[0].synchronize_all_activity()
-    return default_sync_driver
+    return sync_func_driver
 
 
-def get_default_sync_worker(worker):
-    def default_sync_worker():
+def get_sync_func_worker(worker):
+    def sync_func_worker():
         worker.local_devices[0].synchronize_all_activity()
-    return default_sync_worker
+    return sync_func_worker
 
 
 class NormalMeshDriverExecutable(MeshDriverExecutable):
@@ -157,7 +157,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = get_default_sync_driver(physical_mesh)
+        self.sync_func = get_sync_func_driver(physical_mesh)
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -304,7 +304,7 @@ class NormalMeshWorkerExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = get_default_sync_worker(worker)
+        self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: List[List[int]],
                           output_uuids: List[List[int]]):
@@ -466,7 +466,7 @@ class GradAccMeshDriverExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = get_default_sync_driver(physical_mesh)
+        self.sync_func = get_sync_func_driver(physical_mesh)
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -657,7 +657,7 @@ class GradAccMeshWorkerExecutable:
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = get_default_sync_worker(worker)
+        self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids, next_batch_uuids, output_uuids):
         """Run the executable on the worker."""
@@ -754,7 +754,7 @@ class AllocZeroBufferDriverExecutable:
                 grad_shard_shapes, grad_shard_dtypes)
 
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = get_default_sync_driver(physical_mesh)
+        self.sync_func = get_sync_func_driver(physical_mesh)
 
     def get_driver_callable(self):
         ret = partial(self.launch_on_driver)
@@ -828,7 +828,7 @@ class AllocZeroBufferWorkerExecutable:
         self.buffer_dict = worker.buffers
 
         self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = get_default_sync_worker(worker)
+        self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, output_uuids):
         buffer_dict = self.buffer_dict

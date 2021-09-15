@@ -55,7 +55,8 @@ def set_parallelize_options(devices=None,
                             mesh_shape_search_log_file=None,
                             profile_communication=False,
                             cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False):
+                            cache_auto_sharding_ilp_solution=False,
+                            num_micro_batches=None):
     """
     Set the global options for all @parallelize decorator.
 
@@ -89,6 +90,7 @@ def set_parallelize_options(devices=None,
     global_config.profile_communication = profile_communication
     global_config.cache_folder = cache_folder
     global_config.cache_auto_sharding_ilp_solution = cache_auto_sharding_ilp_solution
+    global_config.num_micro_batches = num_micro_batches
 
 
 # Don't let the compilation on the driver node use GPUs.

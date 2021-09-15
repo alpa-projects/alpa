@@ -4,13 +4,13 @@ from typing import Sequence
 
 import jax
 from jax import linear_util as lu
-from jax.core import ClosedJaxpr, DropVar, gensym
+from jax.core import ClosedJaxpr, DropVar, Jaxpr, gensym
 from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.runtime import (
-    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency_with_apply)
+    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency, gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, compute_to_acc_pipe,
     generate_sharded_xla_stages, get_var_mapping, mark_global_and_local_vars,
@@ -31,7 +31,9 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
             split_eqn = eqn
             split_idx = idx
-    assert split_eqn is not None, 'missing barrier between compute and apply'
+    if split_eqn is None:
+        logger.warning('missing barrier between compute and apply')
+        return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn],
         closed_jaxpr.eqns[split_idx + 1:]
@@ -91,7 +93,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Slice the jaxpr into pipeline stages
     virtual_mesh = devices
     num_micro_batches = global_config.num_micro_batches
-    assert num_micro_batches
+    if num_micro_batches is None:
+        logger.warning('num microbatch is unset, automatically use 1')
+        num_micro_batches = 1
     microbatch_avals = get_micro_batch(batch_invars, num_micro_batches, *avals)
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
@@ -100,9 +104,13 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     gensym_func = gensym([closed_jaxpr.jaxpr])
     compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
         closed_jaxpr)
-    # compute grad to accumulate grad
-    acc_grad_jaxpr, acc_grad_dict, grad_glob_in = compute_to_acc_pipe(
-        compute_grad_jaxpr, gensym_func)
+    # TODO(yonghao): The case that barrier is None should be deprecated
+    if barrier is None:
+        acc_grad_jaxpr = compute_grad_jaxpr
+    else:
+        # compute grad to accumulate grad
+        acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_to_acc_pipe(
+            compute_grad_jaxpr, gensym_func)
     # slice accumulate grad
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
     acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
@@ -130,48 +138,58 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     }
     assert stage_num % 2 == 0
     mesh_num = stage_num // 2
-    # Process apply gradient:
-    # 1. change invars of apply grad to output of accumulate grad
+
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
-    mask = {
-        outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
-    }
-    # 2. Add compute mean and slice apply-grad stages
-    grad_mesh = mark_grad_mesh(gradients, jax_pipeline_stages, stage_to_mesh, mask)
-    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
-        apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
-        global_outvars)
-    sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr, grad_mesh,
-                                                   mesh_num)
-    apply_deps, apply_mesh, _ = info
-    sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
-                                                       mask,
-                                                       gensym_func,
-                                                       stage=True)
-    global_outvars = list(
-        map(lambda x: get_var_mapping(out_map, x), global_outvars))
-    # TODO(yonghao): 3. split donate invar with mesh info
-    grad_invars = list(grad_glob_in.keys())
-    all_invars = closed_jaxpr.jaxpr.invars + grad_invars
-    all_donation = donated_invars + (True,) * len(grad_glob_in)
-    jax_all_stages = jax_pipeline_stages + sliced_apply_grad
-    # forward, backward and apply gradient is serialized in a batch.
-    pattern = [[i, i + mesh_num] for i in range(mesh_num)]
-    for stage_idx, mesh in apply_mesh.items():
-        pattern[mesh].append(stage_idx)
-    donate_lists = split_donate_invars(all_donation, all_invars, jax_all_stages,
-                                       pattern)
+    if barrier is not None:
+        # Process apply gradient:
+        # 1. change invars of apply grad to output of accumulate grad
+        gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
+        mask = {
+            outv: acc_grad_dict[inv]
+            for outv, inv in zip(gradients, barrier.invars)
+        }
+        # 2. Add compute mean and slice apply-grad stages
+        grad_mesh = mark_grad_mesh(gradients, jax_pipeline_stages,
+                                   stage_to_mesh, mask)
+        apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
+            apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
+            global_outvars)
+        sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
+                                                       grad_mesh, mesh_num)
+        apply_deps, apply_grad_schedule, _ = info
+        sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
+                                                           mask,
+                                                           gensym_func,
+                                                           stage=True)
+        global_outvars = list(
+            map(lambda x: get_var_mapping(out_map, x), global_outvars))
+        # TODO(yonghao): 3. split donate invar with mesh info
+        grad_invars = list(grad_in_to_out.keys())
+        all_invars = closed_jaxpr.jaxpr.invars + grad_invars
+        all_donation = donated_invars + (True,) * len(grad_in_to_out)
+        jax_all_stages = jax_pipeline_stages + sliced_apply_grad
+        # forward, backward and apply gradient is serialized in a batch.
+        pattern = [[i, i + mesh_num] for i in range(mesh_num)]
+        for stage_idx, mesh in apply_grad_schedule.items():
+            pattern[mesh].append(stage_idx)
+        donate_lists = split_donate_invars(all_donation, all_invars,
+                                           jax_all_stages, pattern)
+        n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
+        dependency = gen_linear_pipeline_dependency_with_apply(
+            n_stages, mesh_num, apply_deps)
+    else:
+        jax_all_stages = jax_pipeline_stages
+        n_stages = len(jax_pipeline_stages)
+        dependency = gen_linear_pipeline_dependency(n_stages)
+        apply_grad_schedule = {}
+        grad_in_to_out = {}
     # Generate schedule and placement
     num_batch = num_micro_batches
-    n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
-    dependency = gen_linear_pipeline_dependency_with_apply(
-        n_stages, mesh_num, apply_deps)
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
                              num_pipeline_worker=mesh_num,
-                             apply_mesh=apply_mesh,
+                             apply_grad_schedule=apply_grad_schedule,
                              num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
@@ -207,7 +225,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     jp = Jax3DPipeline(pipeline_stages=xla_stages,
                        global_invars=global_invars,
-                       grad_dummy_invars=grad_glob_in,
+                       grad_dummy_invars=grad_in_to_out,
                        global_outvars=global_outvars,
                        physical_meshes=physical_meshes,
                        dependency=dependency,

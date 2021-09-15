@@ -450,6 +450,9 @@ class GpipeSchedule:
         mesh (VirtualMesh): a virtual mesh representing the entire cluster.
         sliced_mesh (List[VirtualMesh]): a list of pre-sliced virtual meshes
             to assign workers on.
+        num_pipeline_worker (int): 
+        apply_grad_schedule (Dict[int, int]): A map from apply grad's stage idx
+            to the worker it is assigned
         num_batch (int): number of microbatches.
         costs (List[int]): running costs of each stage.
     """
@@ -459,14 +462,14 @@ class GpipeSchedule:
                  dependency,
                  mesh,
                  num_pipeline_worker,
-                 apply_mesh,
+                 apply_grad_schedule,
                  sliced_meshes=None,
                  num_batch=1,
                  costs=None):
         self.dependency = dependency
         self.original_mesh = mesh
         self.meshes = sliced_meshes
-        self.apply_mesh = apply_mesh
+        self.apply_grad_schedule = apply_grad_schedule
         self.num_batch = num_batch
         self.costs = costs
         self.num_stage = dependency.shape[0]
@@ -525,7 +528,7 @@ class GpipeSchedule:
             schedules.append(reverse(mapped_scheds))
         # apply grad schedules
         scheds = [None] * n
-        for stage_idx, worker in self.apply_mesh.items():
+        for stage_idx, worker in self.apply_grad_schedule.items():
             scheds[worker] = (0, stage_idx)
         schedules.append(scheds)
         return schedules

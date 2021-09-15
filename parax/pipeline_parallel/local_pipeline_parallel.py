@@ -10,7 +10,6 @@ from jax.interpreters import partial_eval as pe
 from parax.pipeline_parallel.primitive_def import pipeline_p
 from parax.pipeline_parallel.stage import (
     PipelineStage, XlaPipelineStage,
-    slice_closed_jaxpr_by_manual_pipeline_marks,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 

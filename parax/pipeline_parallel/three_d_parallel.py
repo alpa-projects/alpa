@@ -10,8 +10,7 @@ from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.runtime import (GpipeSchedule, Jax3DPipeline,
                                              gen_linear_pipeline_dependency)
 from parax.pipeline_parallel.stage import (
-    generate_sharded_xla_stages, mark_global_and_local_vars,
-    slice_closed_jaxpr_by_manual_pipeline_marks,
+    generate_sharded_xla_stages,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 

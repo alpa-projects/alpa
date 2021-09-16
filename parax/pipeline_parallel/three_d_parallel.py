@@ -118,7 +118,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         acc_grad_jaxpr)
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
         jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
-    jax_pipeline_stages = pipeline_dce(jax_pipeline_stages)
+    jax_pipeline_stages = pipeline_dce(jax_pipeline_stages, acc_grad_outvars)
     # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
     # delete the 4 lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)

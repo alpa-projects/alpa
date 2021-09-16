@@ -207,7 +207,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+                        output_uuids[i][host_id][device_id],
+                        dtype=self.out_avals[i].dtype)
 
             # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
@@ -545,7 +546,8 @@ class GradAccMeshDriverExecutable:
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+                        output_uuids[i][host_id][device_id],
+                        dtype=self.out_avals[i].dtype)
 
             # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
@@ -795,7 +797,8 @@ class AllocZeroBufferDriverExecutable:
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+                        output_uuids[i][host_id][device_id],
+                        dtype=self.out_avals[i].dtype)
         else:
             timers(self.timer_name).start(self.sync_func)
             output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(

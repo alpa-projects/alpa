@@ -17,7 +17,7 @@ from parax.pipeline_parallel.stage import (
     generate_sharded_xla_stages, get_var_mapping,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
-    apply_grad_get_mean)
+    apply_grad_get_mean, pipeline_dce)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -113,10 +113,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # slice accumulate grad
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
     acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
+
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
         jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
+    jax_pipeline_stages = pipeline_dce(jax_pipeline_stages)
     # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
     # delete the 4 lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)

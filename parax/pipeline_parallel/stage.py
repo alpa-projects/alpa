@@ -547,46 +547,6 @@ def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
     return is_gradients
 
 
-def accumulate_grad_dce(closed_jaxpr: ClosedJaxpr):
-    """given closed jaxpr with pipeline marker, remove dead code"""
-    if not all(
-            isinstance(outvar, Var) for outvar in closed_jaxpr.jaxpr.outvars):
-        raise NotImplemented('gradients should not be literal')
-    used = set(closed_jaxpr.jaxpr.outvars)
-    for eqn in reversed(closed_jaxpr.eqns):
-        if eqn.primitive is pipeline_p:
-            for i, outvar in enumerate(eqn.outvars):
-                if outvar in used:
-                    used.add(eqn.invars[i])
-            continue
-        for outvar in eqn.outvars:
-            if not isinstance(outvar, DropVar) and outvar in used:
-                for invar in eqn.invars:
-                    if isinstance(invar, Var):
-                        used.add(invar)
-                break
-    new_eqns = []
-    for eqn in closed_jaxpr.eqns:
-        if eqn.primitive is pipeline_p:
-            live_indices = [
-                idx for idx, outvar in enumerate(eqn.outvars) if outvar in used
-            ]
-            live_invars = [eqn.invars[idx] for idx in live_indices]
-            live_outvars = [eqn.outvars[idx] for idx in live_indices]
-            new_eqns.append(
-                mark_pipeline_jaxpreqn(live_invars, live_outvars,
-                                       eqn.params['name'],
-                                       eqn.params['mark_type']))
-            continue
-        for outvar in eqn.outvars:
-            if outvar in used:
-                new_eqns.append(eqn)
-                break
-    return ClosedJaxpr(
-        Jaxpr(closed_jaxpr.jaxpr.constvars, closed_jaxpr.jaxpr.invars,
-              closed_jaxpr.jaxpr.outvars, new_eqns), closed_jaxpr.consts)
-
-
 def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
     """
     Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
@@ -702,8 +662,6 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
     jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
                   new_glob_outvars, new_eqns)
     new_closed_jaxpr = ClosedJaxpr(jaxpr, compute_jaxpr.consts)
-    # clear unused grad and only leave acc_grad version
-    new_closed_jaxpr = accumulate_grad_dce(new_closed_jaxpr)
     # We do not modify donate_invars here, as it is only to append Trues
     # Instead return grad outs to help modify apply_grad
     return new_closed_jaxpr, update_outs, grad_in_to_out
@@ -726,6 +684,63 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_glob_invars,
                       new_glob_outvars, new_eqns)
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+
+
+def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
+                 global_outvars):
+    """
+    clear unused vars cross pipeline stages. 
+    mainly to remove grad and only keep accumulated grad
+    """
+
+    def dce_pipe_marker(marker: JaxprEqn, used_set):
+        kept_indices = [
+            i for i, var in enumerate(marker.outvars) if var in used_set
+        ]
+        new_marker = mark_pipeline_jaxpreqn(
+            [marker.invars[i] for i in kept_indices],
+            [marker.outvars[i] for i in kept_indices], marker.params['name'],
+            marker.params['mark_type'])
+        return new_marker
+
+    global_used = set(global_outvars)
+    new_stages = []
+    for stage in reversed(jax_pipeline_stages):
+        new_eqns = []
+        # handle pipe end
+        pipe_end = stage.eqns[-1]
+        assert (pipe_end.primitive is pipeline_p and
+                pipe_end.params['mark_type'] is 'end'
+               ), 'stage not ended by a pipeline marker'
+        new_pipe_end = dce_pipe_marker(pipe_end, global_used)
+        new_eqns.append(new_pipe_end)
+        # handle normal instructions
+        local_used = set(new_pipe_end.invars)
+        for eqn in reversed(stage.eqns[1:-1]):
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar) and outvar in local_used:
+                    new_eqns.append(eqn)
+                    local_used.update([
+                        invar for invar in eqn.invars if isinstance(invar, Var)
+                    ])
+        # handle pipe start
+        pipe_start = stage.eqns[0]
+        assert (pipe_end.primitive is pipeline_p and
+                pipe_end.params['mark_type'] is 'start'
+               ), 'stage not started by a pipeline marker'
+        new_pipe_start = dce_pipe_marker(pipe_start, local_used)
+        new_eqns.append(new_pipe_start)
+        global_used.update(new_pipe_start.invars)
+
+        new_eqns = list(reversed(new_eqns))
+        new_stage = JaxPipelineStage(stage.name,
+                                     invars=new_pipe_start.invars,
+                                     outvars=new_pipe_end.outvars,
+                                     eqns=new_eqns,
+                                     consts_dir=stage.consts_dir)
+        new_stages.append(new_stage)
+    new_stages = list(reversed(new_stages))
+    return new_stages
 
 
 def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,

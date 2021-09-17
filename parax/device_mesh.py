@@ -11,8 +11,7 @@ import numpy as np
 import ray
 import ray.util.collective as col
 
-import jax.numpy
-from jax import core, xla, eval_shape
+from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
@@ -21,6 +20,7 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
 from jax.lib import xla_client
+import jax.numpy as jnp
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
@@ -77,6 +77,14 @@ class MeshHostWorker:
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
+
+    def put_non_zero_buffer(self,
+                            uuid: int,
+                            device_id: int,
+                            shape: Tuple[int, ...],
+                            dtype=np.float32):
+        self.buffers[uuid] = device_put(jnp.full(
+            shape, 1e-8, dtype), self.local_devices[device_id]).device_buffer
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
@@ -547,7 +555,7 @@ class PhysicalDeviceMesh:
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
-                    if donated:
+                    if donated and hasattr(arg, "delete"):
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
@@ -1023,7 +1031,7 @@ def _device_mesh_put(device_mesh, shards):
         for device_id in range(device_mesh.num_devices_per_host):
             buf_ref = RemoteBufferRef(device_mesh, host_id, device_id, dtype=shards[pt].dtype)
             if global_config.use_dummy_value_for_benchmarking:
-                device_mesh.workers[host_id].put_empty_buffer.remote(
+                device_mesh.workers[host_id].put_non_zero_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
             else:
                 device_mesh.workers[host_id].put_buffer.remote(

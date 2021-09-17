@@ -1,6 +1,5 @@
 """Test auto sharding with MLP."""
 
-import copy
 import unittest
 
 import jax
@@ -140,11 +139,11 @@ class AutoShardingMLPTest(unittest.TestCase):
         self.devices = jax.local_devices()[:4]
 
         # Backup global config
-        self.old_global_config = copy.deepcopy(global_config.__dict__)
+        self.old_global_config = global_config.backup()
 
     def tearDown(self):
         # Restore global config
-        global_config.__dict__ = self.old_global_config
+        global_config.restore(self.old_global_config)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(devices=self.devices)

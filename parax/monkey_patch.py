@@ -148,7 +148,8 @@ setattr(flax.linen.LayerNorm, "__call__", wrap_method_once(layer_norm_call))
 # This function is much faster than the standard initialization.
 def init_dummy(self, *args, **kwargs):
     avals = jax.eval_shape(self.init, *args, **kwargs)
-    return jax.tree_util.tree_map(lambda x: jnp.ones(x.shape, x.dtype), avals)
+    return jax.tree_util.tree_map(lambda x: jnp.full(x.shape, 1e-8, x.dtype),
+                                  avals)
 
 
 setattr(flax.linen.module.Module, "init_dummy", init_dummy)

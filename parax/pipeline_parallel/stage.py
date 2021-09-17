@@ -467,6 +467,7 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
 
 def generate_sharded_xla_stages(name: str,
                                 jax_stages: Sequence[JaxPipelineStage],
+                                stage_donate_invars,
                                 physical_mesh, logical_mesh_choices,
                                 logical_mesh_search_mode,
                                 memory_budget_per_device, search_task,
@@ -489,7 +490,7 @@ def generate_sharded_xla_stages(name: str,
         eqns=eqns,
     )
     # TODO(yonghao): add donated invars as an input
-    donated_invars = (False,) * len(invars)
+    dummy_donated_invars = (False,) * len(invars)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
@@ -499,7 +500,7 @@ def generate_sharded_xla_stages(name: str,
         built,
         invars,
         outvars,
-        donated_invars,
+        dummy_donated_invars,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,
@@ -512,8 +513,9 @@ def generate_sharded_xla_stages(name: str,
         XlaShardedPipelineStage.from_auto_sharded_stage(
             auto_sharded_hlo_proto=proto,
             jax_pipeline_stage=stage,
-            strategy_config=strategy_config)
-        for stage, proto in zip(jax_stages, stage_protos)
+            strategy_config=strategy_config,
+            donated_invars=donate_invars)
+        for stage, proto, donate_invars in zip(jax_stages, stage_protos, stage_donate_invars)
     ]
     return stages
 
@@ -551,12 +553,12 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
     """
     Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
     Args:
-        compute_jaxpr(ClosedJaxpr): the original jaxpr
+        compute_jaxpr (ClosedJaxpr): the original jaxpr
         gensym_fn: gensym function
     Returns:
-        acc_grad_jaxpr(ClosedJaxpr): The accumulate grad jaxpr
-        update_outs(Dict[Var, Var]): From original output(grad) to new output(acc grad)
-        grad_in_to_out(Dict[Var, Var]): From accumulated gradient inputs to outputs
+        acc_grad_jaxpr (ClosedJaxpr): The accumulate grad jaxpr
+        update_outs (Dict[Var, Var]): From original output(grad) to new output(acc grad)
+        grad_in_to_out (Dict[Var, Var]): From accumulated gradient inputs to outputs
     """
     from jax.lax import add_p
     raw_gradients = set([
@@ -783,15 +785,18 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
-        closed_jaxpr(ClosedJaxpr): closed jaxpr of apply_gradient function. 
-        grad_mesh(Dict[Var, int]): dict indicating which mesh the variable is at. 
+        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function. 
+        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at. 
         If not in the dict, the variable should be a global parameter.
-        mesh_num(int): number of meshes. If a mesh does not have apply gradient computation,
+        mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
-        infered_global_invars(Dict[Var, List[int]]): Indicating which clusters each
-        input variable of apply_gradient function should be sent to.
+        info: A tuple of:
+            deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient stages
+            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned 
+            infered_global_invars (Dict[Var, List[int]]): Indicating which clusters each
+            input variable of apply_gradient function should be sent to.
     """
 
     def add_allocation(cur: Set, add: Set):

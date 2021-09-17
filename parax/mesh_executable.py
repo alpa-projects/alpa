@@ -52,11 +52,13 @@ def next_remote_buffer_uuid(number=1):
 class RemoteBufferRef:
     """A reference to a remote device buffer."""
 
-    def __init__(self, device_mesh, host_id, device_id, uuid=None):
+    def __init__(self, device_mesh, host_id, device_id, uuid=None,
+                 dtype=jnp.float32):
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
         self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
+        self.dtype = dtype
         self.is_deleted_on_workers = False
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
@@ -73,7 +75,9 @@ class RemoteBufferRef:
         self.is_deleted_on_workers = True
 
     def __repr__(self):
-        return f"RemoteBufferRef(uuid = {self.uuid}, loc = ({self.host_id}, {self.device_id}))"
+        return f"RemoteBufferRef(uuid = {self.uuid}, " \
+               f"loc = ({self.host_id}, {self.device_id})), " \
+               f"dtype=({self.dtype})"
 
     def __del__(self):
         if not self.is_deleted_on_workers:
@@ -207,7 +211,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+                        output_uuids[i][host_id][device_id],
+                        dtype=self.out_avals[i].dtype)
 
             # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
@@ -545,7 +550,8 @@ class GradAccMeshDriverExecutable:
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+                        output_uuids[i][host_id][device_id],
+                        dtype=self.out_avals[i].dtype)
 
             # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
@@ -794,7 +800,8 @@ class AllocZeroBufferDriverExecutable:
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+                        output_uuids[i][host_id][device_id],
+                        dtype=self.out_avals[i].dtype)
         else:
             timers(self.timer_name).start(self.sync_func)
             output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(

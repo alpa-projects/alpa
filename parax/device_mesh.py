@@ -1021,7 +1021,7 @@ def _device_mesh_put(device_mesh, shards):
     pt = 0
     for host_id in range(device_mesh.num_hosts):
         for device_id in range(device_mesh.num_devices_per_host):
-            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
+            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id, dtype=shards[pt].dtype)
             if global_config.use_dummy_value_for_benchmarking:
                 device_mesh.workers[host_id].put_empty_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)

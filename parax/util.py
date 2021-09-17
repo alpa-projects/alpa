@@ -10,8 +10,9 @@ from warnings import warn
 
 import cupy as cp
 import flax
+from flax.training import train_state
 import jax
-import numpy as np
+from jax._src.api import FLAGS
 from jax._src.dlpack import from_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
@@ -20,11 +21,10 @@ from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
+import numpy as np
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
-from jax._src.api import FLAGS
-
 FLAGS.experimental_cpp_jit = False
 
 ########################################
@@ -53,7 +53,7 @@ def auto_static_argnums(args):
         if isinstance(arg, (bool, int, float, str)):
             return True
 
-        if isinstance(arg, flax.optim.base.Optimizer):
+        if isinstance(arg, (flax.optim.base.Optimizer, train_state.TrainState)):
             return False
 
         xs, _ = tree_flatten(arg)
@@ -72,7 +72,7 @@ def auto_donate_argnums(args):
 
     def should_donate(x):
         # Always donate optimizer
-        if isinstance(x, flax.optim.base.Optimizer):
+        if isinstance(x, (flax.optim.base.Optimizer, train_state.TrainState)):
             return True
         return False
 
@@ -481,7 +481,7 @@ MB = 1 << 20  # Megabyte
 
 def map_to_shape(array_pytree):
     """Map a PyTree of jax arrays to their shapes."""
-    return tree_map(lambda x: x.shape, array_pytree)
+    return tree_map(lambda x: getattr(x, "shape", None), array_pytree)
 
 
 def compute_bytes(pytree):

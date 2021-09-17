@@ -149,12 +149,11 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         for mesh_idx in range(mesh_num):
             grad_vars_specs = mesh_grad_vars[mesh_idx]
             grad_vars = list(grad_vars_specs.keys())
-            self.allocate_zero_buffers.append((
-                AllocZeroBufferDriverExecutable(
-                    physical_mesh=self.physical_meshes[mesh_idx],
-                    grad_vars=grad_vars,
-                    grad_vars_specs=mesh_grad_vars[mesh_idx]).
-                get_driver_callable(), grad_vars))
+            self.allocate_zero_buffers.append((AllocZeroBufferDriverExecutable(
+                physical_mesh=self.physical_meshes[mesh_idx],
+                grad_vars=grad_vars,
+                grad_vars_specs=mesh_grad_vars[mesh_idx]).get_driver_callable(),
+                                               grad_vars))
 
     def _establish_nccl_groups(self):
         """

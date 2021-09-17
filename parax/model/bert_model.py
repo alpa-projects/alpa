@@ -1,9 +1,8 @@
 # flake8: noqa
 """Model definition of BERT.
 Copied from https://github.com/huggingface/transformers/blob/master/src/transformers/models/bert/modeling_flax_bert.py"""
-from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
 import numpy as np
 

@@ -1,5 +1,6 @@
 """All global configurations for this project."""
 import os
+import copy
 
 
 class GlobalConfig:
@@ -42,6 +43,14 @@ class GlobalConfig:
 
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
+
+    def backup(self):
+        """Backup the configs."""
+        return copy.deepcopy(self.__dict__)
+
+    def restore(self, saved_dict):
+        """Restore the configs from a backup."""
+        global_config.__dict__ = saved_dict
 
 
 global_config = GlobalConfig()

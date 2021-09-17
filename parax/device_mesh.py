@@ -78,6 +78,13 @@ class MeshHostWorker:
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
 
+    def put_non_zero_buffer(self,
+                            uuid: int,
+                            device_id: int,
+                            shape: Tuple[int, ...],
+                            dtype=np.float32):
+        self.buffers[uuid] = jnp.full(shape, 1e-8, dtype).device_buffer
+
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
             return [self.buffers[uuid] for uuid in uuids]
@@ -1023,7 +1030,7 @@ def _device_mesh_put(device_mesh, shards):
         for device_id in range(device_mesh.num_devices_per_host):
             buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
             if global_config.use_dummy_value_for_benchmarking:
-                device_mesh.workers[host_id].put_empty_buffer.remote(
+                device_mesh.workers[host_id].put_non_zero_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
             else:
                 device_mesh.workers[host_id].put_buffer.remote(

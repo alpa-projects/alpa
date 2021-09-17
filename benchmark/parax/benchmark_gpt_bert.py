@@ -267,12 +267,12 @@ def benchmark_all(use_profiling):
 
     for case in benchmark_suites[int(num_gpus)]:
         # Backup global config
-        old_global_config = copy.deepcopy(global_config.__dict__)
+        backup = global_config.backup()
 
         benchmark_model_one_case(case, use_profiling)
 
         # Restore global config
-        global_config.__dict__ = old_global_config
+        global_config.restore(backup)
 
 
 if __name__ == "__main__":

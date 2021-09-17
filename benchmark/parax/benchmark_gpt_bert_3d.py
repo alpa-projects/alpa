@@ -75,7 +75,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     vocab_size, mesh_dim1, mesh_dim2, pipeline_mp_size, num_micro_batches, \
     force_data_parallel = benchmark_case
 
-    dtype = jnp.float32
+    dtype = jnp.float16
     if force_data_parallel:
         global_config.force_batch_dim_to_mesh_dim = 0
         global_config.allow_all_gather = False

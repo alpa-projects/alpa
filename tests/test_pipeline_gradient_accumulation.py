@@ -1,7 +1,8 @@
 import unittest
+import copy
 
 import jax
-from jax import tree_flatten
+from jax._src.tree_util import tree_map
 import jax.numpy as jnp
 import numpy as np
 from parax.testing import assert_allclose
@@ -29,6 +30,10 @@ class MLP_Model(nn.Module):
         mark_pipeline(name='2', mark_type='start')
         x = nn.Dense(features=self.output_dim, use_bias=False)(x)
         return x
+
+
+def deepcopy(tgt):
+    return tree_map(lambda x: jnp.array(x), copy.deepcopy(tgt))
 
 
 class BertLayer_Model(nn.Module):
@@ -86,16 +91,15 @@ class AccumulateGradTest(unittest.TestCase):
                                                                batch['x'],
                                                                batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
-            return new_optimizer
+            return new_optimizer.target
 
         global_config.num_micro_batches = 4
 
+        # copy to prevent from donation
+        corr = train_step(deepcopy(optimizer), deepcopy(batch))
         parallel_train_step = parallelize(train_step)
         new_optimizer = parallel_train_step(optimizer, batch)
-        targets = tree_flatten(new_optimizer.target)[0]
-
-        corr = tree_flatten(train_step(optimizer, batch).target)[0]
-        assert_allclose(targets, corr)
+        assert_allclose(new_optimizer, corr)
 
     def test_2_layer_bert(self):
 
@@ -139,10 +143,9 @@ class AccumulateGradTest(unittest.TestCase):
         global_config.num_micro_batches = 2
 
         corr_tgt = train_step(optimizer, batch, model.apply)
-        pipelined_train_step = parallelize(
-            donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
-                optimizer, batch, apply_fn))
-        pipe_tgt = pipelined_train_step(optimizer, batch, model.apply)
+        pipelined_train_step = parallelize(train_step)
+        pipe_tgt = pipelined_train_step(deepcopy(optimizer),
+                                        deepcopy(batch), model.apply)
         assert_allclose(corr_tgt, pipe_tgt)
 
 

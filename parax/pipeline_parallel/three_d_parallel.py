@@ -177,6 +177,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
         dependency = gen_linear_pipeline_dependency_with_apply(
             n_stages, mesh_num, apply_deps)
+        jax_all_stages = jax_pipeline_stages + sliced_apply_grad
     else:
         jax_all_stages = jax_pipeline_stages
         n_stages = len(jax_pipeline_stages)
@@ -205,12 +206,15 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)
         stage_dict[mesh_idx].append(stage)
-    # TODO(yonghao): split donate invar with mesh info
-    grad_invars = list(grad_in_to_out.keys())
-    all_invars = closed_jaxpr.jaxpr.invars + grad_invars
-    all_donation = donated_invars + (True,) * len(grad_invars)
-    jax_all_stages = jax_pipeline_stages + sliced_apply_grad
-    # forward, backward and apply gradient is serialized in a batch.
+    # split donate invar with mesh info
+    if barrier is not None:
+        grad_invars = list(grad_in_to_out.keys())
+        all_invars = closed_jaxpr.jaxpr.invars + grad_invars
+        all_donation = donated_invars + (True,) * len(grad_invars)
+        # forward, backward and apply gradient is serialized in a batch.
+    else:
+        all_invars = closed_jaxpr.jaxpr.invars
+        all_donation = donated_invars
     pattern = [stage_id_dict[mesh_idx] for mesh_idx in range(mesh_num)]
     donate_invars_dict = split_donate_invars(all_donation, all_invars,
                                              jax_all_stages, pattern)
@@ -222,7 +226,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         physical_mesh = physical_meshes[mesh_idx]
         logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
         logical_mesh_search_mode = "cost_model"
-        stage_donate_invars = donate_invars_dict[stage_id_dict[mesh_idx]]
+        stage_donate_invars = [
+            donate_invars_dict[stage_idx]
+            for stage_idx in stage_id_dict[mesh_idx]
+        ]
         search_task = None
         record_file = None
         sharded_xla_stages = generate_sharded_xla_stages(

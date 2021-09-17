@@ -733,18 +733,17 @@ class GradAccMeshWorkerExecutable:
 class AllocZeroBufferDriverExecutable:
     """The driver part of a buffer-allocation executable."""
 
-    def __init__(self, physical_mesh, grad_vars, grad_vars_specs):
+    def __init__(self, physical_mesh, grad_vars, grad_sharding_specs):
         self.physical_mesh = physical_mesh
         grad_avals = [var.aval for var in grad_vars]
-        grad_specs = [grad_vars_specs[var] for var in grad_vars]
         grad_shard_shapes = [
             get_shard_shape(aval, spec)
-            for aval, spec in zip(grad_avals, grad_specs)
+            for aval, spec in zip(grad_avals, grad_sharding_specs)
         ]
         grad_shard_dtypes = [aval.dtype for aval in grad_avals]
         self.out_avals = grad_avals
         self.outs_handler = physical_mesh.get_outputs_handler(
-            grad_avals, grad_specs)
+            grad_avals, grad_sharding_specs)
 
         self.exec_uuid = next_mesh_executable_uuid()
         if physical_mesh.is_distributed:

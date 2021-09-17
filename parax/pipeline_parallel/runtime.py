@@ -1,18 +1,17 @@
 """Distributed JAX pipeline parallelism."""
-import time
 from collections import OrderedDict
 import functools
 import logging
 import math
+import time
 
-from parax.mesh_executable import AllocZeroBufferDriverExecutable
-
-import numpy as np
-import ray
 from jax.core import Literal
 import jax.numpy as jnp
+import ray
+import numpy as np
 
 from parax.device_mesh import DistributedArray
+from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import StrVarPipelineStage
 
@@ -136,23 +135,23 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
             assert len(mesh_indices) == 1
             mesh_idx = mesh_indices[0]
-            grad_var_specs = mesh_grad_vars[mesh_idx]
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
             input_specs = stage.input_sharding_specs
             for var_idx, invar in enumerate(stage.invars):
                 if invar in self.grad_dummy_invars:
-                    if invar in grad_var_specs:
+                    if invar in grad_var_spec_dict:
                         raise NotImplemented(
                             f'accumulate {invar} in a mesh but multiple stages')
-                    grad_var_specs[invar] = input_specs[var_idx]
+                    grad_var_spec_dict[invar] = input_specs[var_idx]
         # create executable for each mesh
         self.allocate_zero_buffers = []
         for mesh_idx in range(mesh_num):
-            grad_vars_specs = mesh_grad_vars[mesh_idx]
-            grad_vars = list(grad_vars_specs.keys())
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+            grad_vars, grad_sharding_specs = list(zip(*grad_var_spec_dict))
             self.allocate_zero_buffers.append((AllocZeroBufferDriverExecutable(
                 physical_mesh=self.physical_meshes[mesh_idx],
                 grad_vars=grad_vars,
-                grad_vars_specs=mesh_grad_vars[mesh_idx]).get_driver_callable(),
+                grad_sharding_specs=grad_sharding_specs).get_driver_callable(),
                                                grad_vars))
 
     def _establish_nccl_groups(self):

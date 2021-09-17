@@ -7,9 +7,8 @@ from typing import Callable
 import numpy as np
 
 import flax
-from flax import optim
-from flax.linen.attention import dot_product_attention_weights
-import flax.linen as nn
+from flax import linen as nn, optim
+from flax.training import train_state
 import jax
 from jax import lax
 import jax.numpy as jnp
@@ -19,6 +18,10 @@ from parax.model.model_util import (FlaxBaseModelOutput,
                                     FlaxBertForPreTrainingOutput,
                                     FlaxMaskedLMOutput)
 from parax import mark_pipeline
+
+
+class TrainState(train_state.TrainState):
+    dynamic_scale: optim.DynamicScale
 
 
 class BertConfig:
@@ -184,7 +187,7 @@ class FlaxBertSelfAttention(nn.Module):
         if not deterministic and self.config.attention_probs_dropout_prob > 0.0:
             dropout_rng = self.make_rng("dropout")
 
-        attn_weights = dot_product_attention_weights(
+        attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
             bias=attention_bias,

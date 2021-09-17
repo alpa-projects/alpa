@@ -471,6 +471,8 @@ def write_tsv(heads, values, filename, print_line=True):
 
 
 _tic = None
+
+
 def print_used_time(message):
     """Print a message and the elapsed time from the last call."""
     global _tic

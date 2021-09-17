@@ -182,6 +182,7 @@ def benchmark_model_one_case(benchmark_case):
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
     train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn)
     train_step = parallelize(train_step)
+    print_used_time("Create train state")
 
     # Compile executable
     executable = train_step.get_executable(state, batch)
@@ -226,16 +227,10 @@ def benchmark_model_one_case(benchmark_case):
 # D0 = mesh_dimension_0, D1 = mesh_dimension_1,
 # NB = num_micro_batches, FD = force_data_parallel, CK = use_checkpoint
 
-default_benchmark_suite = {
-1: [ # 1 GPU
-  #B,  I,   L,  C,  W, D0, D1, NB, FD,    CK,
-  (64, 224, 50, 64, 2, 1,  1,  1,  False, False),
-],
-
-4: [ # 4 GPU
-],
-
-8: [ # 8 GPU
+default_benchmark_suite = {  # key = number of gpus, value = a list of cases
+1: [
+    #B,  I,   L,  C,  W, D0, D1, NB, FD,    CK,
+    (64, 224, 50, 64, 2, 1,  1,  1,  False, False),
 ],
 }
 

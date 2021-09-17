@@ -37,12 +37,12 @@ def assert_data_parallel_cost(state,
     replicated_penalty = int(
         device_mesh.all_reduce_cost(1, 0) + device_mesh.all_reduce_cost(1, 1))
     weight_sync = sum(
-        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
-        + replicated_penalty for x in params)
+        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim) +
+        replicated_penalty for x in params)
     num_batch_norm = len(batch_stats) // 2
     batch_norm_sync = 2 * sum(
-        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
-        + replicated_penalty for x in batch_stats)
+        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim) +
+        replicated_penalty for x in batch_stats)
     expected = weight_sync + batch_norm_sync
 
     assert_close(objective, expected, atol=0.05)
@@ -88,29 +88,36 @@ class AutoShardingConvTest(unittest.TestCase):
             @nn.compact
             def __call__(self, x, train=True):
                 for i in range(num_layers):
-                    x = nn.Conv(features=channel, kernel_size=(3, 3),
-                                strides=(2, 2), use_bias=use_bias)(x)
+                    x = nn.Conv(features=channel,
+                                kernel_size=(3, 3),
+                                strides=(2, 2),
+                                use_bias=use_bias)(x)
                     x = nn.BatchNorm(use_running_average=not train)(x)
                     x = nn.relu(x)
                 return x
 
         @parallelize
         def train_step(state, batch):
+
             def loss_func(params):
                 out, new_model_state = state.apply_fn(
-                    {"params": params, "batch_stats": state.batch_stats},
+                    {
+                        "params": params,
+                        "batch_stats": state.batch_stats
+                    },
                     batch["x"],
                     mutable=['batch_stats'])
                 loss = jnp.mean((out - batch["y"])**2)
                 return loss, new_model_state
 
-            grads, new_model_state = jax.grad(loss_func, has_aux=True)(state.params)
+            grads, new_model_state = jax.grad(loss_func,
+                                              has_aux=True)(state.params)
             new_state = state.apply_gradients(
                 grads=grads, batch_stats=new_model_state['batch_stats'])
             return new_state
 
         x = jnp.ones((batch_size, image_size, image_size, channel))
-        out_image_size = image_size // (2 ** num_layers)
+        out_image_size = image_size // (2**num_layers)
         y = jnp.ones((batch_size, out_image_size, out_image_size, channel))
 
         # Init train state
@@ -118,12 +125,11 @@ class AutoShardingConvTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         tx = optax.sgd(0.1)
-        state = TrainState.create(
-            apply_fn=model.apply,
-            params=params["params"],
-            tx=tx,
-            batch_stats=params["batch_stats"],
-            dynamic_scale=None)
+        state = TrainState.create(apply_fn=model.apply,
+                                  params=params["params"],
+                                  tx=tx,
+                                  batch_stats=params["batch_stats"],
+                                  dynamic_scale=None)
 
         # JIT compile
         state = train_step(state, {"x": x, "y": y})

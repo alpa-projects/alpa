@@ -800,7 +800,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         for mesh in var_mesh[var]:
             consts[mesh].append(aval)
             constvars[mesh].append(var)
-    
+
     jaxprs = []
     deps = []
     mesh_assignment = {}
@@ -815,9 +815,11 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
             if v in grad_mesh:
                 # Add dependency as (stage, compute grad stage)
                 deps.append((stage_idx, mesh_num * 2 - 1 - grad_mesh[v]))
-        jaxprs.append(ClosedJaxpr(Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
-                    consts[i]))
-                    
+        jaxprs.append(
+            ClosedJaxpr(
+                Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
+                consts[i]))
+
     info = deps, mesh_assignment, infered_global_invars
     return jaxprs, info
 

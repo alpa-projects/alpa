@@ -96,8 +96,8 @@ def assert_data_parallel_cost(state,
     replicated_penalty = int(
         device_mesh.all_reduce_cost(1, 0) + device_mesh.all_reduce_cost(1, 1))
     expected = sum(
-        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
-        + replicated_penalty for x in params)
+        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim) +
+        replicated_penalty for x in params)
     assert_close(objective, expected)
 
     # Check number of communication primitives

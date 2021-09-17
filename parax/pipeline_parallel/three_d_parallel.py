@@ -10,7 +10,8 @@ from jax.interpreters import partial_eval as pe
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.runtime import (
-    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency, gen_linear_pipeline_dependency_with_apply)
+    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
+    gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, compute_to_acc_pipe,
     generate_sharded_xla_stages, get_var_mapping,

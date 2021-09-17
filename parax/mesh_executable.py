@@ -104,14 +104,18 @@ def get_execution_timer_name(exec_uuid):
 
 
 def get_sync_func_driver(physical_mesh):
+
     def sync_func_driver():
         physical_mesh.devices[0].synchronize_all_activity()
+
     return sync_func_driver
 
 
 def get_sync_func_worker(worker):
+
     def sync_func_worker():
         worker.local_devices[0].synchronize_all_activity()
+
     return sync_func_worker
 
 
@@ -746,8 +750,8 @@ class AllocZeroBufferDriverExecutable:
         if physical_mesh.is_distributed:
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
-                                       AllocZeroBufferWorkerExecutable,
-                                       grad_shard_shapes, grad_shard_dtypes)
+                                        AllocZeroBufferWorkerExecutable,
+                                        grad_shard_shapes, grad_shard_dtypes)
         else:
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
                 xla_bridge.get_backend("gpu"), physical_mesh.devices,

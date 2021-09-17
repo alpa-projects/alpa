@@ -1,6 +1,7 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
 from collections import OrderedDict
+from functools import partial
 import itertools as it
 import os
 import subprocess
@@ -396,6 +397,7 @@ def jax_buffer_to_xla_buffer(jax_buf):
 
 
 # Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
+@partial(jax.jit, donate_argnums=0, static_argnums=2)
 def jax_buffer_set(src_buf, update, start_indices):
     """
     In-place write on a JAX buffer.
@@ -408,9 +410,6 @@ def jax_buffer_set(src_buf, update, start_indices):
     # src_buf = src_buf.at[indices].set(update)
     src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
     return src_buf
-
-
-jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
 
 
 def to_cupy(tensors):

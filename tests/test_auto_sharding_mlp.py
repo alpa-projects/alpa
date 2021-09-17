@@ -300,8 +300,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
-            global_config.force_batch_dim_to_mesh_dim = i
-            global_config.allow_all_gather = False
+            global_config.force_data_parallel = True
 
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_n_layer_mlp(

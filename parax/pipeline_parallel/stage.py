@@ -496,7 +496,7 @@ def generate_sharded_xla_stages(name: str,
         outvars=list(outvars),
         eqns=eqns,
     )
-    # TODO(yonghao): add donated invars as an input
+
     dummy_donated_invars = (False,) * len(invars)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'

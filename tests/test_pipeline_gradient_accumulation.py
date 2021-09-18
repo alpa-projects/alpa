@@ -24,11 +24,13 @@ class MLP_Model(nn.Module):
     @nn.compact
     def __call__(self, x):
         mark_pipeline(name='1', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         mark_pipeline(name='1', mark_type='end')
         mark_pipeline(name='2', mark_type='start')
-        x = nn.Dense(features=self.output_dim, use_bias=False)(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
+        x = nn.Dense(features=self.output_dim, use_bias=True)(x)
         return x
 
 
@@ -67,8 +69,8 @@ class AccumulateGradTest(unittest.TestCase):
         ray.shutdown()
 
     def test_mlp(self):
-        batch_size = 128
-        hidden_dim = 2048
+        batch_size = 256
+        hidden_dim = 16
         input_dim = output_dim = hidden_dim
         model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim)
         x = jnp.array(np.random.rand(batch_size, input_dim))
@@ -152,7 +154,7 @@ class AccumulateGradTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))
-    suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    # suite.addTest(AccumulateGradTest('test_2_layer_bert'))
     return suite
 
 

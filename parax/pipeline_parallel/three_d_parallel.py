@@ -235,7 +235,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         sharded_xla_stages = generate_sharded_xla_stages(
             str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
             physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
-            memory_budget_per_device, search_task, record_file)
+            memory_budget_per_device, acc_grad_outvars, search_task,
+            record_file)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 

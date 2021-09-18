@@ -17,7 +17,7 @@ from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.mesh_executable import NormalMeshDriverExecutable
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
@@ -166,10 +166,11 @@ class XlaShardedPipelineStage(PipelineStage):
     """A pipeline stage defined by XLA HLO proto. The XLA HLO is annotated by sharding spec."""
 
     hlo_proto: Any = None
-    donated_invars: Any = None  # TODO(Hao): figure out donated_invars
+    donated_invars: Any = None
     strategy_config: StrategyConfig = None
     input_sharding_specs: Any = None
     output_sharding_specs: Any = None
+    output_acc_grad_indices: Sequence[int] = None
 
     @classmethod
     def from_auto_sharded_stage(cls,
@@ -177,19 +178,25 @@ class XlaShardedPipelineStage(PipelineStage):
                                 jax_pipeline_stage: JaxPipelineStage,
                                 auto_sharded_hlo_proto: xc.XlaComputation,
                                 strategy_config: StrategyConfig,
-                                donated_invars=None):
+                                donated_invars=None,
+                                acc_grad_outvars=set()):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline stage."""
         if not donated_invars:
             donated_invars = (False,) * len(jax_pipeline_stage.invars)
-        return cls(
-            name=jax_pipeline_stage.name,
-            hlo_proto=auto_sharded_hlo_proto,
-            strategy_config=strategy_config,
-            donated_invars=donated_invars,
-            invars=jax_pipeline_stage.invars,
-            outvars=jax_pipeline_stage.outvars,
-        )
+
+        acc_grad_indices = [
+            out_idx for out_idx, outvar in enumerate(jax_pipeline_stage.outvars)
+            if outvar in acc_grad_outvars
+        ]
+
+        return cls(name=jax_pipeline_stage.name,
+                   hlo_proto=auto_sharded_hlo_proto,
+                   strategy_config=strategy_config,
+                   donated_invars=donated_invars,
+                   invars=jax_pipeline_stage.invars,
+                   outvars=jax_pipeline_stage.outvars,
+                   output_acc_grad_indices=acc_grad_indices)
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
@@ -206,18 +213,19 @@ class XlaShardedPipelineStage(PipelineStage):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
+        rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
         compiled = compile_with_given_strategy(
             backend, xla_computation, self.strategy_config, num_devices,
-            mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED)
+            mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED,
+            rewrite_for_grad_acc=rewrite_for_grad_acc)
         hlo_module = compiled.hlo_modules()[0]
 
         # Return the final callable
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        mesh_executable = NormalMeshDriverExecutable(mesh, compiled,
-                                                     self.strategy_config,
-                                                     avals, out_avals,
-                                                     self.donated_invars)
+        mesh_executable = PartialGradAccMeshDriverExecutable(
+            mesh, compiled, self.strategy_config, avals, out_avals,
+            self.donated_invars, self.output_acc_grad_indices)
 
         # TODO(Hao): make this better
         self.input_sharding_specs = mesh_executable.input_sharding_specs
@@ -467,11 +475,10 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
 
 def generate_sharded_xla_stages(name: str,
                                 jax_stages: Sequence[JaxPipelineStage],
-                                stage_donate_invars,
-                                physical_mesh, logical_mesh_choices,
-                                logical_mesh_search_mode,
-                                memory_budget_per_device, search_task,
-                                record_file):
+                                stage_donate_invars, physical_mesh,
+                                logical_mesh_choices, logical_mesh_search_mode,
+                                memory_budget_per_device, acc_grad_outvars,
+                                search_task, record_file):
     """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
@@ -514,8 +521,9 @@ def generate_sharded_xla_stages(name: str,
             auto_sharded_hlo_proto=proto,
             jax_pipeline_stage=stage,
             strategy_config=strategy_config,
-            donated_invars=donate_invars)
-        for stage, proto, donate_invars in zip(jax_stages, stage_protos, stage_donate_invars)
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars) for stage, proto, donate_invars
+        in zip(jax_stages, stage_protos, stage_donate_invars)
     ]
     return stages
 

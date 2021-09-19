@@ -256,8 +256,8 @@ class MeshHostWorker:
         if uuid not in self.buffers:
             raise RuntimeError()
         tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
-        tmp_buffer = jax.device_put(
-            jax.numpy.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
+        tmp_buffer = device_put(
+            jnp.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
             self.local_devices[device_id])
         to_recv = to_cupy(tmp_buffer)
         logger.debug(

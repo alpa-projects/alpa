@@ -145,14 +145,17 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     grad_var_spec_dict[invar] = input_specs[var_idx]
         # create executable for each mesh
         self.allocate_zero_buffers = []
-        for mesh_idx in range(mesh_num):
-            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
-            grad_vars, grad_sharding_specs = list(zip(*grad_var_spec_dict.items()))
-            self.allocate_zero_buffers.append((AllocZeroBufferDriverExecutable(
-                physical_mesh=self.physical_meshes[mesh_idx],
-                grad_vars=grad_vars,
-                grad_sharding_specs=grad_sharding_specs).get_driver_callable(),
-                                               grad_vars))
+        if len(grad_var_spec_dict):
+            for mesh_idx in range(mesh_num):
+                grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+                grad_vars, grad_sharding_specs = list(
+                    zip(*grad_var_spec_dict.items()))
+                self.allocate_zero_buffers.append(
+                    (AllocZeroBufferDriverExecutable(
+                        physical_mesh=self.physical_meshes[mesh_idx],
+                        grad_vars=grad_vars,
+                        grad_sharding_specs=grad_sharding_specs).
+                     get_driver_callable(), grad_vars))
 
     def _establish_nccl_groups(self):
         """

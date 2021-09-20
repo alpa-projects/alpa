@@ -60,8 +60,11 @@ class FlaxGPTForLMModule(nn.Module):
 
         hidden_states = outputs[0]
         if self.config.tie_word_embeddings:
-            shared_embedding = self.transformers.variables["params"][
-                "embeddings"]["word_embeddings"]["embedding"]
+            if self.dtype == jnp.float16:
+                shared_embedding = self.transformers.embeddings.word_embeddings.embedding_fp16
+            else:
+                shared_embedding = self.transformers.variables["params"][
+                    "embeddings"]["word_embeddings"]["embedding"]
             assert self.decoder is None
             logits = hidden_states @ shared_embedding.T
         else:

@@ -122,7 +122,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         if pipeline_mp_size > 1:
             loss_func = manual_pipeline(loss_func)
 
-        grad = parax.grad(loss_func, argnums=(0))(optimizer.target)
+        grad = jax.grad(loss_func, argnums=(0))(optimizer.target)
         # new_optimizer = optimizer.apply_gradient(grad)
         # return new_optimizer
         return grad
@@ -193,7 +193,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     def run_func():
         nonlocal optimizer
-        optimizer = train_step(optimizer, batch, rngkey, model.apply)
+        train_step(optimizer, batch, rngkey, model.apply)
 
     costs = benchmark_func(run_func, warmup=1, repeat=5, number=args.number)
     real_mem = -1

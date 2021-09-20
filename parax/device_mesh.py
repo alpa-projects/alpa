@@ -11,7 +11,6 @@ import numpy as np
 import ray
 import ray.util.collective as col
 
-import jax
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types

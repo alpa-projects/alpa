@@ -217,7 +217,8 @@ class XlaShardedPipelineStage(PipelineStage):
         compiled = compile_with_given_strategy(
             backend, xla_computation, self.strategy_config, num_devices,
             mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED,
-            rewrite_for_grad_acc=rewrite_for_grad_acc)
+            rewrite_for_grad_acc=rewrite_for_grad_acc,
+            rewrite_grad_acc_indices=self.output_acc_grad_indices)
         hlo_module = compiled.hlo_modules()[0]
 
         # Return the final callable

@@ -304,7 +304,8 @@ class NormalMeshWorkerExecutable:
                  uuid: int,
                  hlo_proto: bytes,
                  strategy_config: StrategyConfig,
-                 rewrite_for_grad_acc=False):
+                 rewrite_for_grad_acc=False,
+                 rewrite_grad_acc_indices=None):
         from parax.shard_parallel.auto_sharding import (
             compile_with_given_strategy, HloProtoStatus)
 
@@ -315,7 +316,7 @@ class NormalMeshWorkerExecutable:
 
         self.compiled = compile_with_given_strategy(
             worker.backend, xla_computation, strategy_config, num_devices,
-            False, hlo_proto_status, rewrite_for_grad_acc)
+            False, hlo_proto_status, rewrite_for_grad_acc, rewrite_grad_acc_indices)
         self.buffer_dict = worker.buffers
 
         # Set up timers
@@ -761,6 +762,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         hlo_module = compiled.hlo_modules()[0]
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             hlo_module, out_acc_grad_indices)
+        self.out_acc_grad_indices = out_acc_grad_indices
         super(PartialGradAccMeshDriverExecutable,
               self).__init__(physical_mesh, compiled, strategy_config, avals,
                              out_avals, donated_invars)
@@ -775,7 +777,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                                         PartialGradAccMeshWorkerExecutable,
                                         hlo_proto, strategy_config,
                                         self.grad_sync_channel_ids,
-                                        rewrite_for_grad_acc)
+                                        rewrite_for_grad_acc,
+                                        self.out_acc_grad_indices)
         else:
             self.compiled = compiled
             self.grad_sync_channel_ids = self.grad_sync_channel_ids
@@ -800,10 +803,10 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig, grad_sync_channel_ids: str,
-                 rewrite_for_grad_acc: bool):
+                 rewrite_for_grad_acc: bool, rewrite_grad_acc_indices: Sequence[int]):
         super(PartialGradAccMeshWorkerExecutable,
               self).__init__(worker, uuid, hlo_proto, strategy_config,
-                             rewrite_for_grad_acc)
+                             rewrite_for_grad_acc, rewrite_grad_acc_indices)
         self.grad_sync_channel_ids = grad_sync_channel_ids
 
     def execute_on_worker(self, input_uuids: List[List[int]],

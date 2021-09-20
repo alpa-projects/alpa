@@ -32,7 +32,7 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
             split_eqn = eqn
             split_idx = idx
     if split_eqn is None:
-        logger.warning('missing barrier between compute and apply')
+        logger.warning('missing barrier between compute and apply, hint: replace jax.grad by parax.grad')
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn],

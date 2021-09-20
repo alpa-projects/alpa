@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import os
+import parax
 import ray
 from flax import optim
 
@@ -76,6 +77,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Parallel configs
     global_config.force_data_parallel = force_data_parallel
+    global_config.prefer_reduce_scatter = False
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_mesh()
@@ -89,20 +91,20 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     @parallelize(donate_argnums=())
     def train_step(optimizer, batch, rng_key, apply_func):
 
-        def loss_func(params, input_ids, labels, attention_mask, token_type_ids, position_ids):
+        def loss_func(params):
             rngs = {"dropout": rng_key}
             if pipeline_mp_size > 1:
                 mark_pipeline(name="0", mark_type="start")
 
             logits = apply_func(params,
-                                input_ids,
-                                attention_mask,
-                                token_type_ids,
-                                position_ids,
+                                batch["input_ids"],
+                                batch["attention_mask"],
+                                batch["token_type_ids"],
+                                batch["position_ids"],
                                 deterministic=True,
                                 rngs=rngs)[0]
-            label_mask = jnp.where(labels > 0, 1.0, 0.0)
-            labels = jax.nn.one_hot(labels, logits.shape[-1])
+            label_mask = jnp.where(batch["labels"]  > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
             loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
             # TODO(lmzheng): add dynamic scale for mixed-precision training
@@ -120,13 +122,13 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         if pipeline_mp_size > 1:
             loss_func = manual_pipeline(loss_func)
 
-        grad, _, _, _, _, _ = jax.grad(loss_func, argnums=(0, 1, 2, 3, 4, 5))\
-            (optimizer.target, batch["input_ids"], batch["labels"], batch["attention_mask"], batch["token_type_ids"],
-             batch["position_ids"])
+        grad = jax.grad(loss_func, argnums=(0))(optimizer.target)
+        # new_optimizer = optimizer.apply_gradient(grad)
+        # return new_optimizer
         return grad
 
     # Prepare input batch
-    tmp_dtype = dtype
+    tmp_dtype = jnp.int32
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
         "attention_mask": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
@@ -198,16 +200,15 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     objective = -1
 
     # Log benchmark results
-    tflops = compute_tflops(batch_size, seq_len, num_layers,
-                            hidden_size, vocab_size,
-                            physical_mesh.total_devices,
-                            np.mean(costs))
-    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
-    heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
-             "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
-    values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
-              f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
+    # tflops = compute_tflops(batch_size, seq_len, num_layers,
+    #                         hidden_size, vocab_size,
+    #                         physical_mesh.total_devices,
+    #                         np.mean(costs))
+    # parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
+    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
+    values = ["transformer-layer", str(benchmark_case[:-5]), str(benchmark_case[-5:]),
+              f"{real_mem/GB:.3f}", f"{objective:.2f}",
+              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 
     # physical_mesh.shutdown()
@@ -229,8 +230,10 @@ benchmark_suite_1_gpu = [
 
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
-    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
+
+    (2,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
+    # (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
+    # (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
 ]
 
 benchmark_suite_8_gpu = [

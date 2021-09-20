@@ -384,14 +384,14 @@ class FlaxBertLayerCollection(nn.Module):
             if self.pipeline_mp_size > 1:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
-                    hidden_states, = mark_pipeline(hidden_states,
-                                                   name=str(id),
-                                                   mark_type="end")
-                    hidden_states, = mark_pipeline(hidden_states,
-                                                   name=str(id + 1),
-                                                   mark_type="start")
-                    # mark_pipeline(name=str(id), mark_type="end")
-                    # mark_pipeline(name=str(id + 1), mark_type="start")
+                    # hidden_states, = mark_pipeline(hidden_states,
+                    #                                name=str(id),
+                    #                                mark_type="end")
+                    # hidden_states, = mark_pipeline(hidden_states,
+                    #                                name=str(id + 1),
+                    #                                mark_type="start")
+                    mark_pipeline(name=str(id), mark_type="end")
+                    mark_pipeline(name=str(id + 1), mark_type="start")
                     id = id + 1
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)

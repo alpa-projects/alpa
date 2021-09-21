@@ -15,6 +15,7 @@ from jax.interpreters import xla
 
 from ..util import slices_to_jaxpr
 from .primitive_def import mark_pipeline
+from .manual_pipeline import manual_pipeline
 
 gpu_backend = xc.get_local_backend("gpu")
 
@@ -153,6 +154,7 @@ def forward(fn: Callable,
     if use_remat or use_pipeline:
 
         @wraps(fn)
+        @manual_pipeline
         def wrapped(*args):
             origin_jaxpr = make_jaxpr(fn)(*args)
             solution = slice_jaxpr(origin_jaxpr, layer_num, eps)

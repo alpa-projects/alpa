@@ -16,6 +16,7 @@ from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import (write_tsv, list_gpu_info, benchmark_func,
                         count_communication_primitives)
+from parax.pipeline_parallel.runtime import timer_names
 
 GB = 1024 ** 3
 
@@ -191,11 +192,15 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     executable = train_step.get_executable(optimizer, batch, rngkey, model.apply)
     log_time_stamp("Compile (driver)")
 
-    def run_func():
-        nonlocal optimizer
+    for i in range(args.niter):
         train_step(optimizer, batch, rngkey, model.apply)
 
-    costs = benchmark_func(run_func, warmup=1, repeat=5, number=args.number)
+    # def run_func():
+    #     nonlocal optimizer
+    #     train_step(optimizer, batch, rngkey, model.apply)
+
+    timer_name = "process_output"
+    costs = executable.get_execution_time_costs(timer_name=timer_name)
     real_mem = -1
     objective = -1
 
@@ -276,7 +281,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--number", type=int, default=5)
+    parser.add_argument("--niter", type=int, default=10)
     args = parser.parse_args()
 
     ray.init(address="auto")

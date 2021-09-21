@@ -1,16 +1,17 @@
 """Distributed JAX pipeline parallelism."""
-import time
 from collections import OrderedDict
 import functools
 import logging
 import math
+import time
 
-import numpy as np
-import ray
 from jax.core import Literal
 import jax.numpy as jnp
+import ray
+import numpy as np
 
 from parax.device_mesh import DistributedArray
+from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.timer import timers
 
@@ -89,19 +90,24 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  *,
                  pipeline_stages,
                  global_invars,
+                 grad_dummy_invars,
                  global_outvars,
                  physical_meshes,
                  dependency,
                  schedule,
-                 num_batch=1):
+                 is_batch,
+                 num_batch=1,
+                 profile=False):
         self.stages = pipeline_stages
         self.global_invars = global_invars
+        self.grad_dummy_invars = grad_dummy_invars
         self.global_outvars = global_outvars
         self.global_outvars_repr_set = set()
         for var in self.global_outvars:
             if not isinstance(var, Literal):
                 self.global_outvars_repr_set.add(repr(var))
         self.num_stage = len(self.stages)
+        self.is_batch = is_batch
         self.num_batch = num_batch
         self.dependency = dependency
         self.schedule = schedule
@@ -144,6 +150,36 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # prepare inputs/outputs buffers and communication between stages.
         self._stage_outputs = self._init_stage_outputs()
         self._microbatches = None
+
+        # Allocate buffers for accumulated gradients
+        mesh_num = len(self.physical_meshes)
+        mesh_grad_vars = [dict() for _ in range(mesh_num)]
+        # collect buffers to allocate in each mesh
+        for stage_idx, stage in enumerate(self.stages):
+            mesh_indices = list(self.schedule.stage_placement(stage_idx))
+            assert len(mesh_indices) == 1
+            mesh_idx = mesh_indices[0]
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+            input_specs = stage.input_sharding_specs
+            for var_idx, invar in enumerate(stage.invars):
+                if invar in self.grad_dummy_invars:
+                    if invar in grad_var_spec_dict:
+                        raise NotImplemented(
+                            f'accumulate {invar} in a mesh but multiple stages')
+                    grad_var_spec_dict[invar] = input_specs[var_idx]
+        # create executable for each mesh
+        self.allocate_zero_buffers = []
+        if len(grad_var_spec_dict):
+            for mesh_idx in range(mesh_num):
+                grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+                grad_vars, grad_sharding_specs = list(
+                    zip(*grad_var_spec_dict.items()))
+                self.allocate_zero_buffers.append(
+                    (AllocZeroBufferDriverExecutable(
+                        physical_mesh=self.physical_meshes[mesh_idx],
+                        grad_vars=grad_vars,
+                        grad_sharding_specs=grad_sharding_specs).
+                     get_driver_callable(), grad_vars))
 
     def _establish_nccl_groups(self):
         """
@@ -227,7 +263,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 self._stage_outputs[batch_idx][stage_idx].update(outvals)
                 for key, val in outvals.items():
                     if key in self.global_outvars_repr_set:
-                        # FIXME: This is wrong!! We should accumulate the gradient
                         global_outputs[key] = val
             logger.debug(
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
@@ -258,14 +293,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                          for _ in range(self.num_batch)]
         return stage_outputs
 
-    def _make_microbatches(self, *inputs, batch_dim=0, batch_size=128):
+    def _make_microbatches(self, *inputs, batch_dim=0):
         assert len(inputs) == len(self.global_invars)
         microbatches = [dict() for _ in range(self.num_batch)]
         for i, var in enumerate(self.global_invars):
             key = repr(var)
             array = inputs[i]
-            # FIXME: this filter might break when the 1st dimension of a param = batch_size
-            if not array.shape or array.shape[batch_dim] != batch_size:
+            if not self.is_batch[i]:
                 # empty shape means it is not the input batch
                 # no need to split
                 # ref = ray.put(inputs[i])
@@ -275,6 +309,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 splits = jnp.split(array, self.num_batch, axis=batch_dim)
                 for b, split in enumerate(splits):
                     microbatches[b][key] = split
+        for allocate_info in self.allocate_zero_buffers:
+            allocate_callable, allocate_vars = allocate_info
+            allocate_vals = allocate_callable()
+            for val, var in zip(allocate_vals, allocate_vars):
+                key = repr(var)
+                microbatches[self.num_batch - 1][key] = val
         return microbatches
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
@@ -296,8 +336,17 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             np.squeeze(np.argwhere(self.dependency[stage_idx] == 1), axis=1))
         for var in stage.invars:
             key = repr(var)
+            # TODO(yonghao): record where to obtain variables at compile time
             if var in self.global_invars:
                 stage_inputs[key] = self._microbatches[batch_idx][key]
+            elif var in self.grad_dummy_invars:
+                # TODO(yonghao): only work for GPipeSchedule
+                if batch_idx == self.num_batch - 1:
+                    stage_inputs[key] = self._microbatches[batch_idx][key]
+                else:
+                    _key = self.grad_dummy_invars[var]
+                    stage_inputs[key] = self._stage_outputs[batch_idx +
+                                                            1][stage_idx][_key]
             else:
                 for ans in ancestors:
                     if key in self._stage_outputs[batch_idx][ans]:
@@ -363,6 +412,20 @@ def gen_linear_pipeline_dependency(num_stage):
     return d
 
 
+def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
+    """
+    Generate dependency matrix marks compute grad and apply grad
+    """
+    d = np.zeros([num_stage, num_stage], dtype=np.int)
+    for i in range(mesh_num * 2 - 1):
+        d[i + 1][i] = 1
+    for i in range(mesh_num):
+        d[mesh_num * 2 - 1 - i][i] = 1
+    for pair in apply_deps:
+        d[pair[0]][pair[1]] = 1
+    return d
+
+
 class GpipeSchedule:
     """
     Construct a Gpipe-like schedule.
@@ -372,6 +435,9 @@ class GpipeSchedule:
         mesh (VirtualMesh): a virtual mesh representing the entire cluster.
         sliced_mesh (List[VirtualMesh]): a list of pre-sliced virtual meshes
             to assign workers on.
+        num_pipeline_worker (int):
+        apply_grad_schedule (Dict[int, int]): A map from apply grad's stage idx
+            to the worker it is assigned
         num_batch (int): number of microbatches.
         costs (List[int]): running costs of each stage.
     """
@@ -380,20 +446,20 @@ class GpipeSchedule:
                  *,
                  dependency,
                  mesh,
+                 num_pipeline_worker,
+                 apply_grad_schedule,
                  sliced_meshes=None,
                  num_batch=1,
                  costs=None):
         self.dependency = dependency
         self.original_mesh = mesh
         self.meshes = sliced_meshes
+        self.apply_grad_schedule = apply_grad_schedule
         self.num_batch = num_batch
         self.costs = costs
         self.num_stage = dependency.shape[0]
 
-        if self.num_stage % 2 != 0:
-            raise RuntimeError(
-                "Gpipe schedule require an even number of stages.")
-        self.num_pipeline_worker = self.num_stage // 2
+        self.num_pipeline_worker = num_pipeline_worker
         # TODO (zhuohan): Seperate device placement and runtime scheduling
         if not self.meshes:
             # These are virtual meshes
@@ -445,6 +511,11 @@ class GpipeSchedule:
         for k in range(num_clock):
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
+        # apply grad schedules
+        scheds = [None] * n
+        for stage_idx, worker in self.apply_grad_schedule.items():
+            scheds[worker] = (0, stage_idx)
+        schedules.append(scheds)
         return schedules
 
     def pprint_schedule(self):

@@ -11,8 +11,7 @@ import numpy as np
 import ray
 import ray.util.collective as col
 
-import jax.numpy
-from jax import core, xla, eval_shape
+from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
@@ -21,6 +20,7 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
 from jax.lib import xla_client
+import jax.numpy as jnp
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
@@ -77,6 +77,14 @@ class MeshHostWorker:
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
                                            self.local_devices[device_id])
+
+    def put_non_zero_buffer(self,
+                            uuid: int,
+                            device_id: int,
+                            shape: Tuple[int, ...],
+                            dtype=np.float32):
+        self.buffers[uuid] = device_put(jnp.full(
+            shape, 1e-8, dtype), self.local_devices[device_id]).device_buffer
 
     def get_buffers(self, uuids: Union[List[int], int]):
         if isinstance(uuids, Iterable):
@@ -237,8 +245,9 @@ class MeshHostWorker:
         src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
         to_send = to_cupy(src_buffer[tuple(offset)])
         logger.debug(
-            "Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}.".
-            format(uuid, dst_rank, dst_gpu_idx, to_send.shape, to_send.dtype))
+            ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
+            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx, to_send.shape,
+                                       to_send.dtype, to_send[0]))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -248,14 +257,16 @@ class MeshHostWorker:
         if uuid not in self.buffers:
             raise RuntimeError()
         tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
-        tmp_buffer = jax.device_put(
-            jax.numpy.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
+        tmp_buffer = device_put(
+            jnp.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
             self.local_devices[device_id])
         to_recv = to_cupy(tmp_buffer)
-        logger.debug(
-            "Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}.".format(
-                src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype))
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+
+        # Hao: if the following line cannot print, meaning NCCL hangs...
+        logger.debug(
+            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}.".
+                format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype, to_recv[0]))
         recv_tensor = to_jax_tensor(to_recv)
 
         # 0-copy version
@@ -356,7 +367,7 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                #"XLA_FLAGS": "--xla_gpu_autotune_level=0",
+                "PARAX_IS_WORKER": "True",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 "NCCL_USE_MULTISTREAM": "False",
@@ -547,7 +558,7 @@ class PhysicalDeviceMesh:
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
-                    if donated:
+                    if donated and hasattr(arg, "delete"):
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
@@ -1021,9 +1032,9 @@ def _device_mesh_put(device_mesh, shards):
     pt = 0
     for host_id in range(device_mesh.num_hosts):
         for device_id in range(device_mesh.num_devices_per_host):
-            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id)
+            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id, dtype=shards[pt].dtype)
             if global_config.use_dummy_value_for_benchmarking:
-                device_mesh.workers[host_id].put_empty_buffer.remote(
+                device_mesh.workers[host_id].put_non_zero_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
             else:
                 device_mesh.workers[host_id].put_buffer.remote(

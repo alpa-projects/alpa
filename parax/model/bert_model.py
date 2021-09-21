@@ -1,16 +1,14 @@
 # flake8: noqa
 """Model definition of BERT.
 Copied from https://github.com/huggingface/transformers/blob/master/src/transformers/models/bert/modeling_flax_bert.py"""
-from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
 import numpy as np
 
 import flax
-from flax import optim
-from flax.linen.attention import dot_product_attention_weights
-import flax.linen as nn
+from flax import linen as nn, optim
+from flax.training import train_state
 import jax
 from jax import lax
 import jax.numpy as jnp
@@ -20,6 +18,10 @@ from parax.model.model_util import (FlaxBaseModelOutput,
                                     FlaxBertForPreTrainingOutput,
                                     FlaxMaskedLMOutput)
 from parax import mark_pipeline
+
+
+class TrainState(train_state.TrainState):
+    dynamic_scale: optim.DynamicScale
 
 
 class BertConfig:
@@ -59,7 +61,7 @@ class BertConfig:
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.tie_word_embeddings = tie_word_embeddings
-        self.pipeline_mp_size=pipeline_mp_size
+        self.pipeline_mp_size = pipeline_mp_size
 
 
 ACT2FN = {
@@ -185,7 +187,7 @@ class FlaxBertSelfAttention(nn.Module):
         if not deterministic and self.config.attention_probs_dropout_prob > 0.0:
             dropout_rng = self.make_rng("dropout")
 
-        attn_weights = dot_product_attention_weights(
+        attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
             bias=attention_bias,
@@ -351,9 +353,12 @@ class FlaxBertLayerCollection(nn.Module):
         self.pipeline_mp_size = self.config.pipeline_mp_size
         self.pipeline_marker_positions = []
         if self.pipeline_mp_size > 1:
-            num_layer_per_stage, remained = divmod(num_layers, self.pipeline_mp_size)
+            num_layer_per_stage, remained = divmod(num_layers,
+                                                   self.pipeline_mp_size)
             assert remained == 0
-            self.pipeline_marker_positions = [num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)]
+            self.pipeline_marker_positions = [
+                num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)
+            ]
             # for i in range(1, self.pipeline_mp_size):
             #     self.pipeline_marker_positions = (self.pipeline_marker_positions, num_layer_per_stage * i, )
 
@@ -379,10 +384,14 @@ class FlaxBertLayerCollection(nn.Module):
             if self.pipeline_mp_size > 1:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
-                    hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="end")
-                    hidden_states, = mark_pipeline(hidden_states, name=str(id + 1), mark_type="start")
-                    # mark_pipeline(name=str(id), mark_type="end")
-                    # mark_pipeline(name=str(id + 1), mark_type="start")
+                    # hidden_states, = mark_pipeline(hidden_states,
+                    #                                name=str(id),
+                    #                                mark_type="end")
+                    # hidden_states, = mark_pipeline(hidden_states,
+                    #                                name=str(id + 1),
+                    #                                mark_type="start")
+                    mark_pipeline(name=str(id), mark_type="end")
+                    mark_pipeline(name=str(id + 1), mark_type="start")
                     id = id + 1
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)

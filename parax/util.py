@@ -1,6 +1,7 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
 from collections import OrderedDict
+from functools import partial
 import itertools as it
 import os
 import subprocess
@@ -10,21 +11,21 @@ from warnings import warn
 
 import cupy as cp
 import flax
+from flax.training import train_state
 import jax
-import numpy as np
+from jax._src.api import FLAGS
 from jax._src.dlpack import from_dlpack
 from jax.api_util import shaped_abstractify
-from jax.core import ShapedArray
+from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
+import numpy as np
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
-from jax._src.api import FLAGS
-
 FLAGS.experimental_cpp_jit = False
 
 ########################################
@@ -53,7 +54,7 @@ def auto_static_argnums(args):
         if isinstance(arg, (bool, int, float, str)):
             return True
 
-        if isinstance(arg, flax.optim.base.Optimizer):
+        if isinstance(arg, (flax.optim.base.Optimizer, train_state.TrainState)):
             return False
 
         xs, _ = tree_flatten(arg)
@@ -72,7 +73,7 @@ def auto_donate_argnums(args):
 
     def should_donate(x):
         # Always donate optimizer
-        if isinstance(x, flax.optim.base.Optimizer):
+        if isinstance(x, (flax.optim.base.Optimizer, train_state.TrainState)):
             return True
         return False
 
@@ -396,6 +397,7 @@ def jax_buffer_to_xla_buffer(jax_buf):
 
 
 # Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
+@partial(jax.jit, donate_argnums=0, static_argnums=2)
 def jax_buffer_set(src_buf, update, start_indices):
     """
     In-place write on a JAX buffer.
@@ -408,9 +410,6 @@ def jax_buffer_set(src_buf, update, start_indices):
     # src_buf = src_buf.at[indices].set(update)
     src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
     return src_buf
-
-
-jax_buffer_set = jax.jit(jax_buffer_set, donate_argnums=(0), static_argnums=(2))
 
 
 def to_cupy(tensors):
@@ -471,6 +470,17 @@ def write_tsv(heads, values, filename, print_line=True):
         print(line)
 
 
+_tic = None
+
+
+def print_used_time(message):
+    """Print a message and the elapsed time from the last call."""
+    global _tic
+    if message:
+        print(f" - {message}: {time.time() - _tic:.2f} s")
+    _tic = time.time()
+
+
 ########################################
 ##### Other Utilities
 ########################################
@@ -481,7 +491,7 @@ MB = 1 << 20  # Megabyte
 
 def map_to_shape(array_pytree):
     """Map a PyTree of jax arrays to their shapes."""
-    return tree_map(lambda x: x.shape, array_pytree)
+    return tree_map(lambda x: getattr(x, "shape", None), array_pytree)
 
 
 def compute_bytes(pytree):
@@ -492,3 +502,56 @@ def compute_bytes(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape) * x.dtype.itemsize
     return ret
+
+
+def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
+    avals = []
+    for aval, is_batch_var in zip(raw_avals, batch_invars):
+        if is_batch_var:
+            assert aval.shape[0] % num_micro_batches == 0,\
+                "The batch dimension must be divisable by num_micro_batches."
+            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
+            avals.append(aval.update(shape=shape))
+        else:
+            avals.append(aval)
+    return avals
+
+
+def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
+                    sliced_eqns) -> Sequence[ClosedJaxpr]:
+    N = len(sliced_eqns)
+    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    global_outvars = set(
+        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+    result = []
+    layer_invars = [set() for _ in range(N)]
+    layer_outvars = [set() for _ in range(N)]
+    layer_consts = [dict() for _ in range(N)]
+    var_layer_dict = {}
+    for i, eqns in enumerate(sliced_eqns):
+        for eqn in eqns:
+            for var in eqn.invars:
+                if isinstance(var, Literal):
+                    continue
+                if var in global_consts:
+                    layer_consts[i][var] = global_consts[var]
+                elif var in global_invars:
+                    layer_invars[i].add(var)
+                elif var_layer_dict[var] != i:
+                    layer_invars[i].add(var)
+                    layer_outvars[var_layer_dict[var]].add(var)
+                else:
+                    assert var_layer_dict[var] == i
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar):
+                    var_layer_dict[var] = i
+                if var in global_outvars:
+                    layer_outvars[i].add(var)
+    for i, eqns in enumerate(sliced_eqns):
+        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
+                          list(layer_outvars[i]), eqns)
+        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
+                                       list(layer_consts[i].values()))
+        result.append(new_closed_jaxpr)
+    return result

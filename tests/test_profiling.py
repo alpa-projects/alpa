@@ -13,7 +13,10 @@ class ProfilingTest(unittest.TestCase):
 
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        ray.init(address="auto", ignore_reinit_error=True)
+        ray.init(address="auto")
+
+    def tearDown(self):
+        ray.shutdown()
 
     def test_profile_allreduce(self):
         device_cluster = DeviceCluster()
@@ -31,6 +34,7 @@ class ProfilingTest(unittest.TestCase):
                                          verbose=False)
         physical_mesh.shutdown()
 
+    @unittest.skip("temporarily disabled")
     def test_loading_profiling_result(self):
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()

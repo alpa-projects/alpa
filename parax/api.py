@@ -5,19 +5,17 @@ from typing import Callable, Optional, Sequence
 from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
 from jax.api_util import (argnums_partial, donation_vector,
-                          flatten_fun_nokwargs, rebase_donate_argnums,
-                          PyTreeDef)
+                          flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.primitive_def import mark_gradient
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
-from parax.shard_parallel.data_parallel import pmap_data_parallel_callable, shard_data_parallel_callable
 from parax.shard_parallel.shard_callable import shard_parallel_callable
 from parax.util import auto_donate_argnums, auto_static_argnums
 
@@ -28,14 +26,13 @@ unsafe_map, map = map, safe_map  # type: ignore
 def parallelize(fun=None,
                 donate_argnums="auto",
                 static_argnums="auto",
-                pipeline_marker_type="manual",
                 batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
     Args:
         fun: The function to be parallelized.
-        donate_argnums: The same as the donated_argnums argument of jax.jit.
+        donate_argnums: The same as the donate_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
           If is "auto", parax uses heuristic rules to infer this.
@@ -104,8 +101,7 @@ def parallelize(fun=None,
             compiled_func = parallelize_callable(
                 f, in_tree, out_tree_hashable, donated_invars, batch_invars,
                 devices, global_config.strategy,
-                global_config.memory_budget_per_device, pipeline_marker_type,
-                *abstract_args)
+                global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
                 # Execute the compiled func and return results
@@ -161,7 +157,6 @@ def parallelize_callable(
     devices,
     strategy: str,
     memory_budget_per_device: Optional[float],
-    pipeline_marker_type: str,
     *avals: Sequence[AbstractValue],
 ):
     """Auto parallel callable."""
@@ -175,22 +170,14 @@ def parallelize_callable(
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
                                        donated_invars, batch_invars, devices,
                                        memory_budget_per_device, *avals)
-    elif strategy == "shard_data_parallel":
-        return shard_data_parallel_callable(fun, in_tree, out_tree_thunk,
-                                            donated_invars, devices, *avals)
-    elif strategy == "pmap_data_parallel":
-        return pmap_data_parallel_callable(fun, in_tree, out_tree_thunk,
-                                           donated_invars, devices, *avals)
     elif strategy == "local_pipeline_parallel":
-        return local_pipeline_parallel_callable(fun, devices,
-                                                pipeline_marker_type, *avals)
+        return local_pipeline_parallel_callable(fun, devices, *avals)
     elif strategy == "3d_parallel":
         # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
         assert not global_config.search_logical_mesh_shape
         return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
-                                         donated_invars, devices,
-                                         memory_budget_per_device,
-                                         pipeline_marker_type, *avals)
+                                         donated_invars, batch_invars, devices,
+                                         memory_budget_per_device, *avals)
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)
 

@@ -1,5 +1,6 @@
 """All global configurations for this project."""
 import os
+import copy
 
 
 class GlobalConfig:
@@ -29,9 +30,9 @@ class GlobalConfig:
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
+        self.force_data_parallel = False  # Whether force to generate data-parallel
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
-        self.force_batch_dim_to_mesh_dim = -1  # Forcely map the batch dim to a tensor dim.
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
@@ -42,6 +43,14 @@ class GlobalConfig:
 
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
+
+    def backup(self):
+        """Backup the configs."""
+        return copy.deepcopy(self.__dict__)
+
+    def restore(self, saved_dict):
+        """Restore the configs from a backup."""
+        global_config.__dict__ = saved_dict
 
 
 global_config = GlobalConfig()
@@ -55,7 +64,8 @@ def set_parallelize_options(devices=None,
                             mesh_shape_search_log_file=None,
                             profile_communication=False,
                             cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False):
+                            cache_auto_sharding_ilp_solution=False,
+                            num_micro_batches=None):
     """
     Set the global options for all @parallelize decorator.
 
@@ -89,10 +99,14 @@ def set_parallelize_options(devices=None,
     global_config.profile_communication = profile_communication
     global_config.cache_folder = cache_folder
     global_config.cache_auto_sharding_ilp_solution = cache_auto_sharding_ilp_solution
+    global_config.num_micro_batches = num_micro_batches
 
 
 # Don't let the compilation on the driver node use GPUs.
 # TODO(lmzheng): enable auto-tuning for compilation on workers.
+
+is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"
+
 os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
                                          "") + " --xla_gpu_autotune_level=0"
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

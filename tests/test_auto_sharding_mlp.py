@@ -1,6 +1,5 @@
 """Test auto sharding with MLP."""
 
-import copy
 import unittest
 
 import jax
@@ -15,12 +14,12 @@ from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
 
-def assert_close(x, y):
-    assert abs(x / y - 1) < 0.01, f"{x} vs. {y}"
+def assert_close(x, y, atol=0.01):
+    assert abs(x / y - 1) <= atol, f"{x} vs. {y}"
 
 
 def assert_less_equal(x, y):
-    assert abs(x / y) < 1.01, f"{x} vs. {y}"
+    assert abs(x / y) <= 1.01, f"{x} vs. {y}"
 
 
 def assert_column_partitioned(x, num_chunks, mesh_dim):
@@ -79,21 +78,28 @@ def assert_fully_sharded(x):
     assert is_fully_sharded(x), f"Not fully sharded: {str(x.sharding_spec)}"
 
 
-def assert_data_parallel_cost(optimizer,
+def assert_data_parallel_cost(state,
                               hlo_ir,
                               objective,
                               device_mesh,
                               mesh_dim,
                               allow_not_sharded_params=0):
+    if isinstance(state, optim.base.Optimizer):
+        params = jax.tree_util.tree_leaves(state.target)
+        opt_state = jax.tree_util.tree_leaves(state.state.param_states)
+    else:
+        params = jax.tree_util.tree_leaves(state.params)
+        opt_state = jax.tree_util.tree_leaves(state.opt_state)
+
     # Check communication cost
-    params = jax.tree_util.tree_leaves(optimizer.target)
     replicated_penalty = int(
         device_mesh.all_reduce_cost(1, 0) + device_mesh.all_reduce_cost(1, 1))
     expected = sum(
-        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
-        for x in params) + replicated_penalty * len(params)
+        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim) +
+        replicated_penalty for x in params)
     assert_close(objective, expected)
 
+    # Check number of communication primitives
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
     if global_config.prefer_reduce_scatter:
@@ -117,7 +123,7 @@ def assert_data_parallel_cost(optimizer,
         assert num_not_sharded <= allow_not_sharded_params * 2
 
         num_not_sharded = 0
-        for weight in jax.tree_util.tree_leaves(optimizer.state.param_states):
+        for weight in opt_state:
             if not is_sharded(weight):
                 num_not_sharded += 1
         assert num_not_sharded <= allow_not_sharded_params * 2
@@ -133,11 +139,11 @@ class AutoShardingMLPTest(unittest.TestCase):
         self.devices = jax.local_devices()[:4]
 
         # Backup global config
-        self.old_global_config = copy.deepcopy(global_config.__dict__)
+        self.old_global_config = global_config.backup()
 
     def tearDown(self):
         # Restore global config
-        global_config.__dict__ = self.old_global_config
+        global_config.restore(self.old_global_config)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(devices=self.devices)
@@ -293,8 +299,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
-            global_config.force_batch_dim_to_mesh_dim = i
-            global_config.allow_all_gather = False
+            global_config.force_data_parallel = True
 
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_n_layer_mlp(

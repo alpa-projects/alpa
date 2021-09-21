@@ -18,10 +18,6 @@ from test_auto_sharding_mlp import assert_close
 MB = 1024**2
 
 
-def all_reduce_cost(num_devices, num_bytes):
-    return 2.0 * (num_devices - 1) / num_devices * num_bytes
-
-
 class AutoShardingBasicTest(unittest.TestCase):
 
     def setUp(self):
@@ -111,8 +107,6 @@ class AutoShardingBasicTest(unittest.TestCase):
         hlo_ir = hlo_module.to_string()
         assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
 
-        assert_close(testing.last_compiled_auto_sharding_objective,
-                     all_reduce_cost(4, 16 * 16 * 4) * 2)
         assert hlo_ir.count("channel_id") == 1
         assert hlo_ir.count("all-reduce(") == 1
 

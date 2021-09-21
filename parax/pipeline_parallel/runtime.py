@@ -22,10 +22,9 @@ logger.setLevel(logging.INFO)
 
 timer_names = {"overall": "average",
                "compute": "sum",
-               "process_input": "sum",
+               "resharding": "sum",
                "identify_input": "sum",
                "make_microbatch": "average",
-               "process_output": "sum"
                }
 
 
@@ -34,14 +33,6 @@ def reset_pipeline_runtime_benchmark_timers():
     logger.debug(">>> Reset all timers.")
     for t in timer_names:
         timers(t).reset()
-
-
-def report_pipeline_runtime_benchmark_timers(reset=True):
-    """Report all related timers in pipeline parallel runtime."""
-    for timer_name, mode in timer_names.items():
-        timers(timer_name).log(mode=mode)
-    if reset:
-        reset_pipeline_runtime_benchmark_timers()
 
 
 def cached_property(fn, *args, **kwargs):
@@ -243,20 +234,18 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
                 timers("identify_input").start()
                 inputs = self._identify_stage_inputs(clock, stage_idx, batch_idx)
-                timers("identify_input").stop()
+                timers("identify_input").suspend()
 
-                timers("process_input").start()
+                timers("resharding").start()
                 # check DistributedArray colocation and do resharding if necessary
                 inputs_list = self._process_stage_inputs(stage_idx, inputs)
-                timers("process_input").stop()
+                timers("resharding").suspend()
 
                 timers("compute").start()
                 outputs = self._runnables[stage_idx](*inputs_list)
-                timers("compute").stop()
+                timers("compute").suspend()
 
-                timers("process_output").start()
                 outvals = self._process_stage_outputs(stage_idx, outputs)
-                timers("process_output").stop()
 
                 # FIXME: We need to accumulate the gradients and remerge the inputs
                 # TODO: Add reference counting here to reduce memory usage
@@ -266,6 +255,10 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                         global_outputs[key] = val
             logger.debug(
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
+
+        # stop loop timers
+        for timer_name in ["compute", "resharding", "identify_input"]:
+            timers(timer_name).stop()
 
         global_outvals_list = []
         for var in self.global_outvars:
@@ -278,9 +271,15 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 global_outvals_list.append(val)
         logger.debug(">>> All pipeline jobs done.")
         timers("overall").stop()
-        report_pipeline_runtime_benchmark_timers(reset=True)
+        # report_pipeline_runtime_benchmark_timers(reset=True)
 
         return global_outvals_list
+
+    def get_execution_time_costs(self, warmup=2, timer_name="overall"):
+        if timer_name not in timer_names:
+            raise RuntimeError("Unrecognized timer name for pipeline parallel runtime. "
+                               "Query timer name from the following: {}.".format(timer_names.keys()))
+        return timers(timer_name).costs[warmup:]
 
     def _init_stage_outputs(self):
         """

@@ -115,10 +115,7 @@ def parallelize(fun=None,
                 return tree_unflatten(in_tree, sharded_args)
             elif return_value_mode == "get_executable":
                 # Return the compiled executable
-                if global_config.strategy != "3d_parallel":
-                    return compiled_func.get_executable()
-                else:
-                    return compiled_func
+                return compiled_func.get_executable()
             else:
                 raise ValueError(
                     f"Invalid return_value_mode: {return_value_mode}")

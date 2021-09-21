@@ -13,6 +13,10 @@ class _Timer:
         self.start_time = None
         self.costs = []
 
+        # Loop timer
+        self.ever_suspended = False
+        self.accum_cost = 0.0
+
     def start(self, sync_func=None):
         """Start the timer."""
         assert not self.started, "timer has already been started"
@@ -21,18 +25,39 @@ class _Timer:
         self.start_time = time.time()
         self.started = True
 
-    def stop(self, sync_func=None):
-        """Stop the timer."""
-        assert self.started, "timer is not started"
+    def suspend(self, sync_func=None):
+        """Suspend the timer in a loop."""
+        assert self.started
+        self.ever_suspended = True
+
+        # we accumulate on the accum_cost
         if sync_func and do_sync:
             sync_func()
-        self.costs.append(time.time() - self.start_time)
+        self.accum_cost += time.time() - self.start_time
+        self.started = False
+
+    def stop(self, sync_func=None):
+        """Stop the timer."""
+        if self.ever_suspended:
+            assert not self.started, "Stop the timer before suspending it."
+        else:
+            assert self.started, "timer is not started nor ever suspended."
+        if sync_func and do_sync:
+            sync_func()
+        if self.ever_suspended:
+            self.costs.append(self.accum_cost)
+            self.accum_cost = 0.0
+        else:
+            cost = time.time() - self.start_time
+            self.costs.append(cost)
         self.started = False
 
     def reset(self):
         """Reset timer."""
         self.costs = []
+        self.accum_cost = 0.0
         self.started = False
+        self.ever_suspended = False
 
     def elapsed(self, mode="average"):
         """Calculate the elapsed time."""

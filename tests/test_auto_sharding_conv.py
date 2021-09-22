@@ -93,6 +93,8 @@ class AutoShardingConvTest(unittest.TestCase):
                                 use_bias=use_bias)(x)
                     x = nn.BatchNorm(use_running_average=not train)(x)
                     x = nn.relu(x)
+                    x = nn.max_pool(x, window_shape=(2, 2), strides=(1, 1),
+                                    padding="SAME")
                 return x
 
         @parallelize

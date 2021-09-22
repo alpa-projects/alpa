@@ -133,10 +133,15 @@ def benchmark_model_one_case(benchmark_case):
 
     # Model configs
     model_type = args.model
-    batch_size, image_size, num_layers, num_channels, width_factor,\
+    batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
         use_remat = benchmark_case
-    dtype = jnp.float16
+    if dtype == "fp32":
+        dtype = jnp.float32
+    elif dtype == "fp16":
+        dtype = jnp.float16
+    else:
+        raise ValueError(f"Invalid dtype: {dtype}")
 
     # Parallel configs
     global_config.force_data_parallel = force_data_parallel
@@ -147,7 +152,7 @@ def benchmark_model_one_case(benchmark_case):
         grad = parax.grad
     else:
         grad = jax.grad
-        global_config.prefer_reduce_scatter = True
+        global_config.prefer_reduce_scatter = False
 
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
@@ -165,7 +170,7 @@ def benchmark_model_one_case(benchmark_case):
     num_classes = 1000
     batch = {
         "images": jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
-        "labels": jnp.ones((batch_size, 1), dtype=jnp.int32),
+        "labels": jnp.ones((batch_size), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
 
@@ -208,15 +213,18 @@ def benchmark_model_one_case(benchmark_case):
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}"
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
           f"#all-to-all: {n_all_to_all}")
 
     # Log benchmark results
+    num_gpus = mesh_dim0 * mesh_dim1
+    throughput = batch_size / np.mean(costs) / num_gpus
     heads = ["Model", "Model Config", "Parallel Config",
-             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time"]
+             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "Throughput"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
               f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
+              f"{throughput:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 
     physical_mesh.shutdown()
@@ -229,9 +237,15 @@ def benchmark_model_one_case(benchmark_case):
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,  I,   L,  C,  W, D0, D1, NB, FD,    CK,
-    (64, 224, 50, 64, 2, 1,  1,  1,  False, False),
+    #B,    I,   L,  C,  W, dtype,  D0, D1, NB, FD,    CK,
+    (128,  224, 50, 64, 1, "fp32", 1,  1,  1,  False, False),
 ],
+
+8: [
+    #B,    I,   L,  C,  W, dtype,  D0, D1, NB, FD,    CK,
+    (1024, 224, 50, 64, 1, "fp32", 8,  1,  1,  False, False),
+],
+
 }
 
 benchmark_suites = {
@@ -268,7 +282,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="wide_resnet")
-    parser.add_argument("--niter", type=int, default=10,
+    parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
     parser.add_argument("--suite", choices=["default"], default="default")
     parser.add_argument("--local", action="store_true",

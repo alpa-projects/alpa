@@ -17,7 +17,7 @@ from parax.pipeline_parallel.stage import (
     generate_sharded_xla_stages, get_var_mapping,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
-    apply_grad_get_mean)
+    apply_grad_get_mean, pipeline_dce)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -27,12 +27,12 @@ logger.setLevel(logging.INFO)
 def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
     from parax.pipeline_parallel.primitive_def import pipeline_p
     split_eqn = None
-    for idx, eqn in enumerate(closed_jaxpr.jaxpr.eqns):
+    for idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
             split_eqn = eqn
             split_idx = idx
     if split_eqn is None:
-        logger.warning('missing barrier between compute and apply')
+        logger.warning('missing barrier between compute and apply, hint: replace jax.grad by parax.grad')
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn],
@@ -48,14 +48,16 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
     Split donated invars for sliced jaxprs. The pattern is in form of:
     1. parallel. jaxprs are in different meshes.
     2. serial. jaxprs are in the same mesh and executes in serial.
-    3. Inside a mesh is serial, between a mesh is parallel
+    3. Inside a mesh is serial, between a mesh is parallel.
+    In the third pattern, we should consider main buffer and copy buffer.
+    A main buffer should not be donated unless no other mesh requires its result.
     Args:
         donated_invars: whether a global invar is donated.
         global_invars: global invars for the whole jaxpr.
         stages: slices in topology order of execution.
         pattern: The outter list is for parallel, and inner for serial.
     Returns:
-        donate_lists:List[Sequence[bool]]: donate_invars for each stage
+        donate_invars_dict:List[Sequence[bool]]: donate_invars for each stage
     """
     not_donated = [
         global_invars[i]
@@ -63,18 +65,36 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
         if not donated_invars[i]
     ]
     not_donated = set(not_donated)
+    # global last use to consider if the main copy can be discarded
+    global_last_use = dict()
+    for stage_idx, stage in enumerate(stages):
+        for invar in stage.invars:
+            global_last_use[invar] = stage_idx
+
     ans = [None for _ in range(len(stages))]
+
     for serial_group in pattern:
-        serial_group = reversed(sorted(serial_group))
+        serial_group = sorted(serial_group)
+        main_copy_vars = set()
+        for stage_idx in serial_group:
+            main_copy_vars.update(stages[stage_idx].outvars)
+        serial_group = reversed(serial_group)
         use_later = set()
-        for idx in serial_group:
-            invars = stages[idx].invars
-            # donate an invar if it is neither a not donated global invar nor an input of later slices
-            donate_status = [
-                not (var in not_donated or var in use_later) for var in invars
-            ]
+        for stage_idx in serial_group:
+            invars = stages[stage_idx].invars
+            donate_status = []
+            for var in invars:
+                # global invar not allowed to donate or use in later stages
+                if var in not_donated or var in use_later:
+                    donate_status.append(False)
+                # var is not used in later cases of the mesh.
+                # But if it's main copy, consider global_last_use
+                elif var in main_copy_vars and global_last_use[var] > stage_idx:
+                    donate_status.append(False)
+                else:
+                    donate_status.append(True)
             use_later.update(invars)
-            ans[idx] = donate_status
+            ans[stage_idx] = donate_status
     return ans
 
 
@@ -113,10 +133,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # slice accumulate grad
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
     acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
+
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
         jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
+    jax_pipeline_stages = pipeline_dce(jax_pipeline_stages, acc_grad_outvars)
     # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
     # delete the 4 lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
@@ -152,20 +174,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                            stage=True)
         global_outvars = list(
             map(lambda x: get_var_mapping(out_map, x), global_outvars))
-        # TODO(yonghao): 3. split donate invar with mesh info
-        grad_invars = list(grad_in_to_out.keys())
-        all_invars = closed_jaxpr.jaxpr.invars + grad_invars
-        all_donation = donated_invars + (True,) * len(grad_in_to_out)
-        jax_all_stages = jax_pipeline_stages + sliced_apply_grad
-        # forward, backward and apply gradient is serialized in a batch.
-        pattern = [[i, i + mesh_num] for i in range(mesh_num)]
-        for stage_idx, mesh in apply_grad_schedule.items():
-            pattern[mesh].append(stage_idx)
-        donate_lists = split_donate_invars(all_donation, all_invars,
-                                           jax_all_stages, pattern)
         n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
         dependency = gen_linear_pipeline_dependency_with_apply(
             n_stages, mesh_num, apply_deps)
+        jax_all_stages = jax_pipeline_stages + sliced_apply_grad
     else:
         jax_all_stages = jax_pipeline_stages
         n_stages = len(jax_pipeline_stages)
@@ -194,6 +206,18 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)
         stage_dict[mesh_idx].append(stage)
+    # split donate invar with mesh info
+    if barrier is not None:
+        grad_invars = list(grad_in_to_out.keys())
+        all_invars = closed_jaxpr.jaxpr.invars + grad_invars
+        all_donation = donated_invars + (True,) * len(grad_invars)
+        # forward, backward and apply gradient is serialized in a batch.
+    else:
+        all_invars = closed_jaxpr.jaxpr.invars
+        all_donation = donated_invars
+    pattern = [stage_id_dict[mesh_idx] for mesh_idx in range(mesh_num)]
+    donate_invars_dict = split_donate_invars(all_donation, all_invars,
+                                             jax_all_stages, pattern)
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
@@ -202,12 +226,17 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         physical_mesh = physical_meshes[mesh_idx]
         logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
         logical_mesh_search_mode = "cost_model"
+        stage_donate_invars = [
+            donate_invars_dict[stage_idx]
+            for stage_idx in stage_id_dict[mesh_idx]
+        ]
         search_task = None
         record_file = None
         sharded_xla_stages = generate_sharded_xla_stages(
-            str(mesh_idx), stage_dict[mesh_idx], physical_mesh,
-            logical_mesh_choices, logical_mesh_search_mode,
-            memory_budget_per_device, search_task, record_file)
+            str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
+            physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
+            memory_budget_per_device, acc_grad_outvars, search_task,
+            record_file)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 

@@ -17,7 +17,7 @@ from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
-from parax.mesh_executable import NormalMeshDriverExecutable
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
@@ -166,10 +166,11 @@ class XlaShardedPipelineStage(PipelineStage):
     """A pipeline stage defined by XLA HLO proto. The XLA HLO is annotated by sharding spec."""
 
     hlo_proto: Any = None
-    donated_invars: Any = None  # TODO(Hao): figure out donated_invars
+    donated_invars: Any = None
     strategy_config: StrategyConfig = None
     input_sharding_specs: Any = None
     output_sharding_specs: Any = None
+    output_acc_grad_indices: Sequence[int] = None
 
     @classmethod
     def from_auto_sharded_stage(cls,
@@ -177,19 +178,25 @@ class XlaShardedPipelineStage(PipelineStage):
                                 jax_pipeline_stage: JaxPipelineStage,
                                 auto_sharded_hlo_proto: xc.XlaComputation,
                                 strategy_config: StrategyConfig,
-                                donated_invars=None):
+                                donated_invars=None,
+                                acc_grad_outvars=set()):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline stage."""
         if not donated_invars:
             donated_invars = (False,) * len(jax_pipeline_stage.invars)
-        return cls(
-            name=jax_pipeline_stage.name,
-            hlo_proto=auto_sharded_hlo_proto,
-            strategy_config=strategy_config,
-            donated_invars=donated_invars,
-            invars=jax_pipeline_stage.invars,
-            outvars=jax_pipeline_stage.outvars,
-        )
+
+        acc_grad_indices = [
+            out_idx for out_idx, outvar in enumerate(jax_pipeline_stage.outvars)
+            if outvar in acc_grad_outvars
+        ]
+
+        return cls(name=jax_pipeline_stage.name,
+                   hlo_proto=auto_sharded_hlo_proto,
+                   strategy_config=strategy_config,
+                   donated_invars=donated_invars,
+                   invars=jax_pipeline_stage.invars,
+                   outvars=jax_pipeline_stage.outvars,
+                   output_acc_grad_indices=acc_grad_indices)
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
@@ -206,18 +213,22 @@ class XlaShardedPipelineStage(PipelineStage):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
+        # FIXME(yonghao): turn it on again after no conflict in environs
+        rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
+        rewrite_for_grad_acc = False
         compiled = compile_with_given_strategy(
             backend, xla_computation, self.strategy_config, num_devices,
-            mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED)
+            mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED,
+            rewrite_for_grad_acc=rewrite_for_grad_acc,
+            rewrite_grad_acc_indices=self.output_acc_grad_indices)
         hlo_module = compiled.hlo_modules()[0]
 
         # Return the final callable
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        mesh_executable = NormalMeshDriverExecutable(mesh, compiled,
-                                                     self.strategy_config,
-                                                     avals, out_avals,
-                                                     self.donated_invars)
+        mesh_executable = PartialGradAccMeshDriverExecutable(
+            mesh, compiled, self.strategy_config, avals, out_avals,
+            self.donated_invars, self.output_acc_grad_indices)
 
         # TODO(Hao): make this better
         self.input_sharding_specs = mesh_executable.input_sharding_specs
@@ -470,10 +481,10 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
 
 def generate_sharded_xla_stages(name: str,
                                 jax_stages: Sequence[JaxPipelineStage],
-                                physical_mesh, logical_mesh_choices,
-                                logical_mesh_search_mode,
-                                memory_budget_per_device, search_task,
-                                record_file):
+                                stage_donate_invars, physical_mesh,
+                                logical_mesh_choices, logical_mesh_search_mode,
+                                memory_budget_per_device, acc_grad_outvars,
+                                search_task, record_file):
     """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
@@ -491,8 +502,8 @@ def generate_sharded_xla_stages(name: str,
         outvars=list(outvars),
         eqns=eqns,
     )
-    # TODO(yonghao): add donated invars as an input
-    donated_invars = (False,) * len(invars)
+
+    dummy_donated_invars = (False,) * len(invars)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
@@ -502,7 +513,7 @@ def generate_sharded_xla_stages(name: str,
         built,
         invars,
         outvars,
-        donated_invars,
+        dummy_donated_invars,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,
@@ -515,8 +526,10 @@ def generate_sharded_xla_stages(name: str,
         XlaShardedPipelineStage.from_auto_sharded_stage(
             auto_sharded_hlo_proto=proto,
             jax_pipeline_stage=stage,
-            strategy_config=strategy_config)
-        for stage, proto in zip(jax_stages, stage_protos)
+            strategy_config=strategy_config,
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars) for stage, proto, donate_invars
+        in zip(jax_stages, stage_protos, stage_donate_invars)
     ]
     return stages
 
@@ -554,27 +567,41 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
     """
     Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
     Args:
-        compute_jaxpr(ClosedJaxpr): the original jaxpr
+        compute_jaxpr (ClosedJaxpr): the original jaxpr
         gensym_fn: gensym function
     Returns:
-        acc_grad_jaxpr(ClosedJaxpr): The accumulate grad jaxpr
-        update_outs(Dict[Var, Var]): From original output(grad) to new output(acc grad)
-        grad_in_to_out(Dict[Var, Var]): From accumulated gradient inputs to outputs
+        acc_grad_jaxpr (ClosedJaxpr): The accumulate grad jaxpr
+        update_outs (Dict[Var, Var]): From original output(grad) to new output(acc grad)
+        grad_in_to_out (Dict[Var, Var]): From accumulated gradient inputs to outputs
     """
     from jax.lax import add_p
-    # Assume that no grad is literal
     raw_gradients = set([
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
     ])
+    # Currently, assume no grad is literal
     assert len(raw_gradients) == len(compute_jaxpr.jaxpr.outvars)
     # from raw_gradients to gradients(cross pipeline marker)
     gradients = {}
-    for eqn in compute_jaxpr.eqns:
+    reverse_gradients = {}
+    for eqn in reversed(compute_jaxpr.eqns):
         if eqn.primitive is pipeline_p:
             for i, outvar in enumerate(eqn.outvars):
-                if outvar in raw_gradients and outvar not in gradients:
+                if outvar in raw_gradients:
                     gradients[outvar] = eqn.invars[i]
+                    reverse_gradients[eqn.invars[i]] = outvar
+                elif outvar in reverse_gradients:
+                    """
+                    in case that:
+                    invar = compute gradient
+                    invar' = pipeline end(invar)
+                    outvar = pipeline start(invar')
+                    final = pipeline end(outvar)
+                    gradients[final] should finally maps invar instead of outvar, then acc grad there
+                    """
+                    final_outvar = reverse_gradients[outvar]
+                    gradients[final_outvar] = eqn.invars[i]
+                    reverse_gradients[eqn.invars[i]] = final_outvar
     for outvar in raw_gradients:
         assert outvar in gradients, 'all gradients should be captured by pipeline marker'
     grad_values = list(gradients.values())
@@ -598,7 +625,6 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
             raise NotImplemented('gradients cannot be Literal')
     gradients = set(grad_values)
     # rewrite eqns
-    # TODO(yonghao): clear unused outputs(grad not used later)
     new_eqns = []
     pipe_start = None
     pipe_eqns = []
@@ -651,9 +677,10 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
                 to_acc.append(outvar)
     jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
                   new_glob_outvars, new_eqns)
+    new_closed_jaxpr = ClosedJaxpr(jaxpr, compute_jaxpr.consts)
     # We do not modify donate_invars here, as it is only to append Trues
     # Instead return grad outs to help modify apply_grad
-    return ClosedJaxpr(jaxpr, compute_jaxpr.consts), update_outs, grad_in_to_out
+    return new_closed_jaxpr, update_outs, grad_in_to_out
 
 
 def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
@@ -673,6 +700,63 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_glob_invars,
                       new_glob_outvars, new_eqns)
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+
+
+def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
+                 global_outvars):
+    """
+    clear unused vars cross pipeline stages. 
+    mainly to remove grad and only keep accumulated grad
+    """
+
+    def dce_pipe_marker(marker: JaxprEqn, used_set):
+        kept_indices = [
+            i for i, var in enumerate(marker.outvars) if var in used_set
+        ]
+        new_marker = mark_pipeline_jaxpreqn(
+            [marker.invars[i] for i in kept_indices],
+            [marker.outvars[i] for i in kept_indices], marker.params['name'],
+            marker.params['mark_type'])
+        return new_marker
+
+    global_used = set(global_outvars)
+    new_stages = []
+    for stage in reversed(jax_pipeline_stages):
+        new_eqns = []
+        # handle pipe end
+        pipe_end = stage.eqns[-1]
+        assert (pipe_end.primitive is pipeline_p and
+                pipe_end.params['mark_type'] is 'end'
+               ), 'stage not ended by a pipeline marker'
+        new_pipe_end = dce_pipe_marker(pipe_end, global_used)
+        new_eqns.append(new_pipe_end)
+        # handle normal instructions
+        local_used = set(new_pipe_end.invars)
+        for eqn in reversed(stage.eqns[1:-1]):
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar) and outvar in local_used:
+                    new_eqns.append(eqn)
+                    local_used.update([
+                        invar for invar in eqn.invars if isinstance(invar, Var)
+                    ])
+        # handle pipe start
+        pipe_start = stage.eqns[0]
+        assert (pipe_start.primitive is pipeline_p and
+                pipe_start.params['mark_type'] is 'start'
+               ), 'stage not started by a pipeline marker'
+        new_pipe_start = dce_pipe_marker(pipe_start, local_used)
+        new_eqns.append(new_pipe_start)
+        global_used.update(new_pipe_start.invars)
+
+        new_eqns = list(reversed(new_eqns))
+        new_stage = JaxPipelineStage(stage.name,
+                                     invars=new_pipe_start.invars,
+                                     outvars=new_pipe_end.outvars,
+                                     eqns=new_eqns,
+                                     consts_dir=stage.consts_dir)
+        new_stages.append(new_stage)
+    new_stages = list(reversed(new_stages))
+    return new_stages
 
 
 def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
@@ -715,15 +799,18 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
-        closed_jaxpr(ClosedJaxpr): closed jaxpr of apply_gradient function. 
-        grad_mesh(Dict[Var, int]): dict indicating which mesh the variable is at. 
+        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function. 
+        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at. 
         If not in the dict, the variable should be a global parameter.
-        mesh_num(int): number of meshes. If a mesh does not have apply gradient computation,
+        mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
-        infered_global_invars(Dict[Var, List[int]]): Indicating which clusters each
-        input variable of apply_gradient function should be sent to.
+        info: A tuple of:
+            deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient stages
+            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned 
+            infered_global_invars (Dict[Var, List[int]]): Indicating which clusters each
+            input variable of apply_gradient function should be sent to.
     """
 
     def add_allocation(cur: Set, add: Set):

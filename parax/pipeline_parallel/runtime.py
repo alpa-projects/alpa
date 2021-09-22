@@ -15,17 +15,16 @@ from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.timer import timers
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-
-timer_names = {"overall": "average",
-               "compute": "sum",
-               "resharding": "sum",
-               "identify_input": "sum",
-               "make_microbatch": "average",
-               }
+timer_names = {
+    "overall": "average",
+    "compute": "sum",
+    "resharding": "sum",
+    "identify_input": "sum",
+    "make_microbatch": "average",
+}
 
 
 def reset_pipeline_runtime_benchmark_timers():
@@ -233,7 +232,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 batch_idx, stage_idx = task
 
                 timers("identify_input").start()
-                inputs = self._identify_stage_inputs(clock, stage_idx, batch_idx)
+                inputs = self._identify_stage_inputs(clock, stage_idx,
+                                                     batch_idx)
                 timers("identify_input").suspend()
 
                 timers("resharding").start()
@@ -242,12 +242,18 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 timers("resharding").suspend()
 
                 timers("compute").start()
-                outputs = self._runnables[stage_idx](*inputs_list)
+                skip_grad_sync = True
+                # TODO(yonghao): only works for GPipeSchedule
+                if stage_idx >= self.num_mesh and batch_idx == 0:
+                    skip_grad_sync = False
+                # FIXME(yonghao): turn it on after no conflict in environs
+                skip_grad_sync = False
+                outputs = self._runnables[stage_idx](
+                    *inputs_list, skip_grad_sync=skip_grad_sync)
                 timers("compute").suspend()
 
                 outvals = self._process_stage_outputs(stage_idx, outputs)
 
-                # FIXME: We need to accumulate the gradients and remerge the inputs
                 # TODO: Add reference counting here to reduce memory usage
                 self._stage_outputs[batch_idx][stage_idx].update(outvals)
                 for key, val in outvals.items():
@@ -277,8 +283,10 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
     def get_execution_time_costs(self, warmup=2, timer_name="overall"):
         if timer_name not in timer_names:
-            raise RuntimeError("Unrecognized timer name for pipeline parallel runtime. "
-                               "Query timer name from the following: {}.".format(timer_names.keys()))
+            raise RuntimeError(
+                "Unrecognized timer name for pipeline parallel runtime. "
+                "Query timer name from the following: {}.".format(
+                    timer_names.keys()))
         return timers(timer_name).costs[warmup:]
 
     def _init_stage_outputs(self):

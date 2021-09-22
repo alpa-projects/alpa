@@ -1,10 +1,84 @@
 import copy
 import numba
 import numpy as np
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
-from parax.device_mesh import VirtualMesh
+from jax.core import ClosedJaxpr, Jaxpr, jaxpr_as_fun
+
+from parax.api import parallelize
+from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh
 from parax.global_env import global_config
+from parax.pipeline_parallel.cross_mesh_resharding import (
+    ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray as VDA)
+from parax.pipeline_parallel.stage import JaxPipelineStage
+
+
+def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
+                                     mesh: PhysicalDeviceMesh):
+    """
+    Args:
+        layers (Sequence[JaxPipelineStage]): forward and corresponding backward
+        mesh (PhysicalDeviceMesh): the assigned mesh
+    """
+    import jax.numpy as jnp
+    backup_config = global_config.backup()
+
+    global_config.num_micro_batches = None
+    global_config.devices = mesh
+    global_config.strategy = "shard_parallel"
+
+    invars = set()
+    outvars = set()
+    eqns = []
+    consts_dir = {}
+    for stage in layers:
+        consts_dir.update(stage.consts_dir)
+        # Do not add local invars into the invars
+        invars.update([var for var in stage.invars if var not in outvars])
+        outvars.update(stage.outvars)
+        eqns += stage.eqns
+    jaxpr = Jaxpr(
+        constvars=list(consts_dir.keys()),
+        invars=list(invars),
+        outvars=list(outvars),
+        eqns=eqns,
+    )
+    mixed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
+    fn = jaxpr_as_fun(mixed_jaxpr)
+    compiled_fn = parallelize(fn)
+    args = [jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars]
+    executable = compiled_fn(*args, __return_value_mode='get_executable')
+    ret = executable.profile_with_dummy_inputs()
+
+    global_config.restore(backup_config)
+    return ret, executable.input_sharding_specs, executable.output_sharding_specs
+
+
+def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
+                         src_outvar_sharding_spec, dst_invar_sharding_spec,
+                         src_mesh: PhysicalDeviceMesh,
+                         dst_mesh: PhysicalDeviceMesh):
+    src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
+    tot_cost = 0
+    # TODO(yonghao)
+    collective_group = None
+    for idx, invar in enumerate(dest.invars):
+        if invar in src_outvars:
+            out_sharding_spec = src_outvar_sharding_spec[src_outvars[invar]]
+            in_sharding_spec = dst_invar_sharding_spec[idx]
+            src_array = VDA(device_mesh=src_mesh,
+                            aval=invar.aval,
+                            sharding_spec=out_sharding_spec)
+            dst_array = VDA(device_mesh=dst_mesh,
+                            aval=invar.aval,
+                            sharding_spec=in_sharding_spec)
+            task_spec = ReshardingTaskSpec(src_array, dst_array)
+
+            val = DistributedArray(src_mesh, invar.aval, out_sharding_spec,
+                                   None, None)
+            task = ReshardingTask(task_spec, collective_group, val)
+            task.do()
+    return tot_cost
 
 
 def draw_fill(puzzle, tileLength, tileWidth, start, count, solList):
@@ -160,9 +234,6 @@ def pipeline_dp(cost_e, cost_c, k, B):
             elif j == 0:
                 e_sum = presum[i + 1]
                 for m in range(M):
-                    # TODO: shall we consider this?
-                    # B is a factor to augement cost_e compared with cost_c,
-                    # but we communicate in each microbatch also instead of once per batch
                     costs[i][j][m] = (B - 1) * max(0, e_sum - possible[m])
                     last_cut[i][j][m] = -1
             else:

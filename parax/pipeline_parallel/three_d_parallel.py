@@ -78,40 +78,6 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
     return ans
 
 
-def split_donate_invars(donated_invars: Sequence[bool], global_invars,
-                        sliced_jaxprs: Sequence[ClosedJaxpr], pattern):
-    """
-    Split donated invars for sliced jaxprs. The pattern is in form of:
-    1. parallel. jaxprs are in different meshes.
-    2. serial. jaxprs are in the same mesh and executes in serial.
-    3. some mesh in a stage, some in another. 
-    Args:
-        donated_invars: whether a global invar is donated.
-        global_invars: global invars for the whole jaxpr.
-        sliced_jaxprs: slices in topology order of execution.
-        pattern: The outter list is for parallel, and innter for serial.
-    """
-    not_donated = [
-        global_invars[i]
-        for i in range(len(donated_invars))
-        if not donated_invars[i]
-    ]
-    not_donated = set(not_donated)
-    ans = [None for _ in range(len(sliced_jaxprs))]
-    for serial_group in pattern:
-        serial_group = reversed(sorted(serial_group))
-        use_later = set()
-        for idx in serial_group:
-            invars = sliced_jaxprs[idx].jaxpr.invars
-            # donate an invar if it is neither a not donated global invar nor an input of later slices
-            donate_status = [
-                not (var in not_donated or var in use_later) for var in invars
-            ]
-            use_later.update(invars)
-            ans[idx] = donate_status
-    return ans
-
-
 @lu.cache
 def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               donated_invars, batch_invars, devices,
@@ -133,7 +99,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
     # the sliced_meshes is set when tracing into forward decorator
-    sliced_meshes = global_config.sliced_meshes
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     gensym_func = gensym([closed_jaxpr.jaxpr])
     compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
@@ -211,7 +176,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     num_batch = num_micro_batches
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,
-                             meshes=sliced_meshes,
+                             num_pipeline_worker=mesh_num,
+                             apply_grad_schedule=apply_grad_schedule,
                              num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)

@@ -112,6 +112,8 @@ def embed_call_one_hot(self, inputs):
 def embed_setup(self):
     self.embedding = self.param('embedding', self.embedding_init,
                                 (self.num_embeddings, self.features))
+    if self.dtype == jnp.float16:
+        self.embedding_fp16 = self.embedding.astype(jnp.float16)
 
 
 setattr(flax.linen.Embed, "setup", embed_setup)

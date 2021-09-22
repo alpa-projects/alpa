@@ -81,10 +81,8 @@ class PipelineAutoMarkerTest(unittest.TestCase):
             return loss
 
         def train_step(optimizer, batch):
-            param_grad, _x, _y = parax.grad(loss_func,
-                                            argnums=(0, 1, 2))(optimizer.target,
-                                                               batch['x'],
-                                                               batch['y'])
+            param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
+                                               batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer.target
 
@@ -138,8 +136,8 @@ class PipelineAutoMarkerTest(unittest.TestCase):
 
         corr_tgt = train_step(optimizer, batch, model.apply)
         pipelined_train_step = parallelize(train_step)
-        pipe_tgt = pipelined_train_step(deepcopy(optimizer),
-                                        deepcopy(batch), model.apply)
+        pipe_tgt = pipelined_train_step(deepcopy(optimizer), deepcopy(batch),
+                                        model.apply)
         assert_allclose(corr_tgt, pipe_tgt)
 
 

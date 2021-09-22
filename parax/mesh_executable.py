@@ -751,7 +751,7 @@ class GradAccMeshWorkerExecutable:
 
 
 def get_grad_sync_channel_ids_with_hint(hlo_module, hint) -> str:
-    return xla_extension.get_grad_sync_channel_ids_with_hint(hlo_module, hint)
+    return xla_extension.get_grad_sync_channel_ids(hlo_module, hint)
 
 
 class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):

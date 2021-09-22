@@ -1,20 +1,19 @@
+import copy
 from functools import partial
 import unittest
-import copy
 
+from flax import linen as nn, optim
 import jax
 from jax._src.tree_util import tree_map
 import jax.numpy as jnp
 import numpy as np
-from parax.testing import assert_allclose
 import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, forward)
 from parax.model.bert_model import BertConfig, FlaxBertLayer
-
-from flax import linen as nn, optim
+from parax.testing import assert_allclose
 
 
 class MLP_Model(nn.Module):

@@ -254,12 +254,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     self.process_stage_inputs_time += time.time(
                     ) - process_stage_inputs_tic
                     stage_compute_time_tic = time.time()
-                unskip = False
+                skip_grad_sync = True
                 # TODO(yonghao): only works for GPipeSchedule
                 if stage_idx >= self.num_mesh and batch_idx == 0:
-                    unskip = True
-                outputs = self._runnables[stage_idx](*inputs_list,
-                                                     unskip=unskip)
+                    skip_grad_sync = False
+                outputs = self._runnables[stage_idx](
+                    *inputs_list, skip_grad_sync=skip_grad_sync)
                 if self._profile:
                     self.stage_compute_time += time.time(
                     ) - stage_compute_time_tic

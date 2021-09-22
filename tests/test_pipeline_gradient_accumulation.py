@@ -1,11 +1,9 @@
 import unittest
-import copy
 
+from flax import linen as nn, optim
 import jax
-from jax._src.tree_util import tree_map
 import jax.numpy as jnp
 import numpy as np
-from parax.testing import assert_allclose
 import ray
 
 import parax
@@ -13,8 +11,7 @@ from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, manual_pipeline)
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.pipeline_parallel.primitive_def import mark_pipeline
-
-from flax import linen as nn, optim
+from parax.testing import assert_allclose
 
 
 class MLP_Model(nn.Module):
@@ -32,10 +29,6 @@ class MLP_Model(nn.Module):
         x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         x = nn.Dense(features=self.output_dim, use_bias=True)(x)
         return x
-
-
-def deepcopy(tgt):
-    return tree_map(lambda x: jnp.array(x), copy.deepcopy(tgt))
 
 
 class BertLayer_Model(nn.Module):
@@ -88,17 +81,15 @@ class AccumulateGradTest(unittest.TestCase):
             return loss
 
         def train_step(optimizer, batch):
-            param_grad, _x, _y = parax.grad(loss_func,
-                                            argnums=(0, 1, 2))(optimizer.target,
-                                                               batch['x'],
-                                                               batch['y'])
+            param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
+                                                  batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer.target
 
         global_config.num_micro_batches = 4
 
         # copy to prevent from donation
-        corr = train_step(deepcopy(optimizer), deepcopy(batch))
+        corr = train_step(optimizer, batch)
         parallel_train_step = parallelize(train_step)
         new_optimizer = parallel_train_step(optimizer, batch)
         assert_allclose(new_optimizer, corr)
@@ -146,8 +137,7 @@ class AccumulateGradTest(unittest.TestCase):
 
         corr_tgt = train_step(optimizer, batch, model.apply)
         pipelined_train_step = parallelize(train_step)
-        pipe_tgt = pipelined_train_step(deepcopy(optimizer),
-                                        deepcopy(batch), model.apply)
+        pipe_tgt = pipelined_train_step(optimizer, batch, model.apply)
         assert_allclose(corr_tgt, pipe_tgt)
 
 

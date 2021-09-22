@@ -52,7 +52,11 @@ def next_remote_buffer_uuid(number=1):
 class RemoteBufferRef:
     """A reference to a remote device buffer."""
 
-    def __init__(self, device_mesh, host_id, device_id, uuid=None,
+    def __init__(self,
+                 device_mesh,
+                 host_id,
+                 device_id,
+                 uuid=None,
                  dtype=jnp.float32):
         self.device_mesh = device_mesh
         self.host_id = host_id
@@ -215,7 +219,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
+                        physical_mesh,
+                        host_id,
+                        device_id,
                         output_uuids[i][host_id][device_id],
                         dtype=self.out_avals[i].dtype)
 
@@ -316,7 +322,8 @@ class NormalMeshWorkerExecutable:
 
         self.compiled = compile_with_given_strategy(
             worker.backend, xla_computation, strategy_config, num_devices,
-            False, hlo_proto_status, rewrite_for_grad_acc, rewrite_grad_acc_indices)
+            False, hlo_proto_status, rewrite_for_grad_acc,
+            rewrite_grad_acc_indices)
         self.buffer_dict = worker.buffers
 
         # Set up timers
@@ -557,7 +564,9 @@ class GradAccMeshDriverExecutable:
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
+                        physical_mesh,
+                        host_id,
+                        device_id,
                         output_uuids[i][host_id][device_id],
                         dtype=self.out_avals[i].dtype)
 
@@ -785,12 +794,12 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
 
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
-        assert 'unskip' in kwargs,\
-            'Partial grad acc mesh executable missing kwargs "unskip"'
-        unskip = kwargs['unskip']
+        assert 'skip_grad_sync' in kwargs,\
+            'Partial grad acc mesh executable missing kwargs "skip_grad_sync"'
+        skip_grad_sync = kwargs['skip_grad_sync']
         if not self.physical_mesh.is_distributed:
             os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] =\
-                "" if unskip else self.grad_sync_channel_ids
+                self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshDriverExecutable,
                      self).launch_on_driver(*args, **kwargs)
 
@@ -803,17 +812,18 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig, grad_sync_channel_ids: str,
-                 rewrite_for_grad_acc: bool, rewrite_grad_acc_indices: Sequence[int]):
+                 rewrite_for_grad_acc: bool,
+                 rewrite_grad_acc_indices: Sequence[int]):
         super(PartialGradAccMeshWorkerExecutable,
               self).__init__(worker, uuid, hlo_proto, strategy_config,
                              rewrite_for_grad_acc, rewrite_grad_acc_indices)
         self.grad_sync_channel_ids = grad_sync_channel_ids
 
     def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]], unskip):
+                          output_uuids: List[List[int]], skip_grad_sync):
         """Run the executable on the worker."""
         os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] =\
-            "" if unskip else self.grad_sync_channel_ids
+            self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshWorkerExecutable,
                      self).execute_on_worker(input_uuids, output_uuids)
 
@@ -881,7 +891,9 @@ class AllocZeroBufferDriverExecutable:
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
+                        physical_mesh,
+                        host_id,
+                        device_id,
                         output_uuids[i][host_id][device_id],
                         dtype=self.out_avals[i].dtype)
         else:

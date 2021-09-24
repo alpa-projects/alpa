@@ -359,7 +359,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             # TODO: only work for GPipeSchedule
             if var in self.grad_dummy_invars and batch_idx < self.num_batch - 1:
                 key = (batch_idx + 1, self.grad_dummy_invars[var])
-            stage_inputs[key] = self._pop_var(key)
+            stage_inputs[repr(var)] = self._pop_var(key)
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs. "
                                "`stage_inputs` got {}, but expect {}.".format(

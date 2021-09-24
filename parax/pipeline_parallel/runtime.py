@@ -319,12 +319,17 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         assert len(inputs) == len(self.global_invars)
         for i, var in enumerate(self.global_invars):
             if not self.is_batch[i]:
-                for b in range(self.num_batch):
-                    self._env[(b, repr(var))] = inputs[i]
+                splits = [inputs[i]] * self.num_batch
             else:
                 splits = jnp.split(inputs[i], self.num_batch, axis=batch_dim)
-                for b, split in enumerate(splits):
-                    self._env[(b, repr(var))] = split
+            for b, split in enumerate(splits):
+                key = (b, repr(var))
+                assert key in self._env_reference_count
+                # Do not include unused inputs
+                if self._env_reference_count[key] == 0:
+                    del self._env_reference_count[key]
+                else:
+                    self._env[key] = split
 
         for allocate_callable, allocate_vars in self.allocate_zero_buffers:
             allocate_vals = allocate_callable()

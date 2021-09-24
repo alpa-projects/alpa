@@ -302,7 +302,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # report_pipeline_runtime_benchmark_timers(reset=True)
 
         # Make sure reference counting is correct
-        assert len(self._env) == 0
+        assert len(self._env) == 0, (self._env, self._env_reference_count)
 
         return global_outvals_list
 

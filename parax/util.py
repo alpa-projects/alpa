@@ -504,6 +504,16 @@ def compute_bytes(pytree):
     return ret
 
 
+def compute_param_number(pytree):
+    """Compute the total number of elements in a pytree."""
+    flatten_args, _ = tree_flatten(pytree)
+    ret = 0
+    for x in flatten_args:
+        if hasattr(x, "shape"):
+            ret += np.prod(x.shape)
+    return ret
+
+
 def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
     avals = []
     for aval, is_batch_var in zip(raw_avals, batch_invars):

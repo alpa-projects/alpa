@@ -9,7 +9,7 @@ from jax import linear_util as lu, disable_jit
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
-from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
@@ -160,7 +160,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     backend = xb.get_backend("gpu")
     built = jaxpr_to_hlo_computation(name, ClosedJaxpr(jaxpr, consts),
                                      donated_invars, backend)
-    #print(built.as_hlo_text())
+    flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(built.as_hlo_module())
 
     # Compile a XLA executable
     if strategy_config is None:
@@ -190,7 +190,8 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Compile a mesh executable
     compiled = NormalMeshDriverExecutable(physical_mesh, compiled,
                                           strategy_config, avals, out_avals,
-                                          donated_invars)
+                                          donated_invars,
+                                          flop_count=flop_count)
     return compiled.get_driver_callable()
 
 

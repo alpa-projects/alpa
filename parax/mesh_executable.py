@@ -133,7 +133,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
     def __init__(self, physical_mesh: "PhysicalDeviceMesh",
                  compiled: XlaExecutable, strategy_config: StrategyConfig,
                  avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool]):
+                 donated_invars: Sequence[bool], flop_count=None):
         from parax.shard_parallel.auto_sharding import get_input_output_sharding_specs
 
         self.physical_mesh = physical_mesh

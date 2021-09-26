@@ -195,6 +195,11 @@ class MeshHostWorker:
                                               time_cost)
                 communication_size = array_size * (num_devices -
                                                    1) / num_devices
+            elif primitive_name == "all-to-all":
+                communication_size = array_size * (num_devices -
+                                                   1) / num_devices / num_devices
+                penalty_factor = num_devices // 2
+                communication_size *= penalty_factor
             else:
                 raise ValueError("Invalid primitive: " + primitive_name)
 
@@ -620,6 +625,8 @@ class PhysicalDeviceMesh:
             self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict
         elif primitive_name == "all-gather":
             self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
+        elif primitive_name == "all-to-all":
+            pass
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 

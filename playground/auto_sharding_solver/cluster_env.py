@@ -28,32 +28,40 @@ class ClusterEnvironment:
             self.force_all_reduce_cost = solver_option.force_all_reduce_cost
             self.force_reduce_scatter_cost = solver_option.force_reduce_scatter_cost
 
-    def all_gather_cost(self, num_bytes, mesh_dim):
+    def all_gather_cost(self, num_bytes, mesh_dim=0):
         if self.force_all_gather_cost:
             return self.force_all_gather_cost
 
         num_devices = self.device_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] +
-                self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes +
+        return (int(self.mesh_alpha[mesh_dim] +
+                self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes) +
                 0.1) + self.all_gather_penalty
 
-    def all_reduce_cost(self, num_bytes, mesh_dim):
+    def all_reduce_cost(self, num_bytes, mesh_dim=0):
         if self.force_all_reduce_cost:
             return self.force_all_reduce_cost
 
         num_devices = self.device_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] +
-                self.mesh_beta[mesh_dim] * 2 * (num_devices - 1) / num_devices * num_bytes +
+        return (int(self.mesh_alpha[mesh_dim] +
+                self.mesh_beta[mesh_dim] * 2 * (num_devices - 1) / num_devices * num_bytes) +
                 0.01) + self.all_reduce_penalty
 
-    def reduce_scatter_cost(self, num_bytes, mesh_dim):
+    def reduce_scatter_cost(self, num_bytes, mesh_dim=0):
         if self.force_reduce_scatter_cost:
             return self.force_reduce_scatter_cost
 
         num_devices = self.device_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] +
-                self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes +
-                0.001) + self.reduce_scatter_penalty
+        return (int(self.mesh_alpha[mesh_dim] +
+                self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices * num_bytes) +
+                0.001)
+
+    def all_to_all_cost(self, num_bytes, mesh_dim=0):
+        num_devices = self.device_mesh.shape[mesh_dim]
+        penalty_factor = 1.5;
+        return (int(self.mesh_alpha[mesh_dim] +
+                self.mesh_beta[mesh_dim] * (num_devices - 1) / num_devices /\
+                    num_devices * num_bytes * penalty_factor) +
+                0.001);
 
     def get_tensor_dim_to_mesh_dim(self, shape, spec):
         """Map the tensor dimention to mesh dimension, -1 means replicated"""

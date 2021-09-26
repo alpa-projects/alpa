@@ -15,7 +15,8 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, forward)
 from parax.model.wide_resnet import get_wide_resnet, TrainState
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
-                        count_communication_primitives, print_used_time)
+                        count_communication_primitives, print_used_time,
+                        compute_param_number)
 
 
 GB = 1024 ** 3
@@ -188,6 +189,7 @@ def benchmark_model_one_case(benchmark_case):
     train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn)
     train_step = parallelize(train_step)
     print_used_time("Create train state")
+    param_count = compute_param_number(state.params)
 
     # Compile executable
     executable = train_step.get_executable(state, batch)
@@ -218,13 +220,14 @@ def benchmark_model_one_case(benchmark_case):
 
     # Log benchmark results
     num_gpus = mesh_dim0 * mesh_dim1
-    throughput = batch_size / np.mean(costs) / num_gpus
-    heads = ["Model", "Model Config", "Parallel Config",
-             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "Throughput"]
+    tflops = executable.flop_count / num_gpus / np.mean(costs) / 1e12
+    heads = ["Model", "Model Config", "Parallel Config", "Param count", 
+             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
+              f"{param_count/1e9:.3f}",
               f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
-              f"{throughput:.2f}"]
+              f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 
     physical_mesh.shutdown()
@@ -237,13 +240,13 @@ def benchmark_model_one_case(benchmark_case):
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,    I,   L,  C,  W, dtype,  D0, D1, NB, FD,    CK,
-    (128,  224, 50, 64, 1, "fp32", 1,  1,  1,  False, False),
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    (16,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
 ],
 
 8: [
-    #B,    I,   L,  C,  W, dtype,  D0, D1, NB, FD,    CK,
-    (1024, 224, 50, 64, 1, "fp32", 8,  1,  1,  False, False),
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    (16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
 ],
 
 }

@@ -8,12 +8,35 @@ from jax.core import ClosedJaxpr, Jaxpr, jaxpr_as_fun
 from jax.interpreters import pxla
 
 from parax.api import parallelize
-from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh, _shard_device_array
+from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
 from parax.pipeline_parallel.stage import JaxPipelineStage
+
+
+def split_sharding_specs(layers: Sequence[JaxPipelineStage],
+                         mixed_jaxpr: ClosedJaxpr, in_sharding_specs,
+                         out_sharding_specs):
+    '''
+    split sharding specs of layers. Some intermediate sharding specs are missed,
+    but they do not cross mesh so this does not matter.
+    '''
+
+    def map_or_none(var, ref):
+        return ref[var] if var in ref else None
+
+    in_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.invars, in_sharding_specs))
+    out_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.outvars, out_sharding_specs))
+    layer_in_sharding_specs = []
+    layer_out_sharding_specs = []
+    for layer in layers:
+        layer_in_sharding_specs.append(
+            [map_or_none(var, in_sharding_dict) for var in layer.invars])
+        layer_out_sharding_specs.append(
+            [map_or_none(var, out_sharding_dict) for var in layer.outvars])
+    return layer_in_sharding_specs, layer_out_sharding_specs
 
 
 def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
@@ -29,6 +52,7 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     global_config.num_micro_batches = None
     global_config.devices = mesh
     global_config.strategy = "shard_parallel"
+    global_config.use_dummy_value_for_benchmarking = True
 
     invars = set()
     outvars = set()
@@ -56,13 +80,18 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     ret = executable.profile_with_dummy_inputs()
 
     global_config.restore(backup_config)
-    return ret, executable.input_sharding_specs, executable.output_sharding_specs
+    split_in_specs, split_out_specs = split_sharding_specs(
+        layers, mixed_jaxpr, executable.input_sharding_specs,
+        executable.output_sharding_specs)
+    return ret, split_in_specs, split_out_specs
 
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,
                             dst_mesh: PhysicalDeviceMesh) -> CollectiveGroup:
-    return CollectiveGroup(src_mesh.device_strs() | dst_mesh.device_strs(),
+    cg = CollectiveGroup(set(src_mesh.device_strs + dst_mesh.device_strs),
                            src_mesh, dst_mesh)
+    cg.instantiate()
+    return cg
 
 
 def dummy_resharding_strategy(spec: ReshardingTaskSpec):
@@ -97,6 +126,7 @@ def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
     backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
     global_config.use_dummy_value_for_benchmarking = True
     tasks = []
+    src_phy_mesh = collective_group.src_mesh
     for idx, invar in enumerate(dest.invars):
         if invar in src_outvars:
             out_sharding_spec = src_outvar_sharding_spec[src_outvars[invar]]
@@ -113,9 +143,10 @@ def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
             # create distributed array as dummy inputs
             input_indices = pxla.spec_to_indices(invar.aval.shape,
                                                  out_sharding_spec)
-            val = _shard_device_array(jnp.zeros_like(invar), src_mesh,
-                                      input_indices)
-
+            remote_buffers = _shard_device_array(jnp.zeros_like(invar.aval),
+                                                 src_phy_mesh, input_indices)
+            val = DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
+                                   remote_buffers, input_indices)
             task = ReshardingTask(task_spec, collective_group, val)
             tasks.append(task)
 

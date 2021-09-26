@@ -213,9 +213,7 @@ class XlaShardedPipelineStage(PipelineStage):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
-        # FIXME(yonghao): turn it on again after no conflict in environs
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
-        rewrite_for_grad_acc = False
         compiled = compile_with_given_strategy(
             backend, xla_computation, self.strategy_config, num_devices,
             mesh.is_distributed, HloProtoStatus.SHARDING_ANNOTATED,

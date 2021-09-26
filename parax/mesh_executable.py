@@ -30,7 +30,6 @@ logger.setLevel(logging.INFO)
 mesh_executable_counter = 0
 remote_buffer_counter = 0
 
-__skip_allreduce_suffix = "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
 def next_mesh_executable_uuid():
     """Return the next uuid of a mesh executable."""
@@ -485,8 +484,9 @@ class GradAccMeshDriverExecutable:
                 grad_shard_shapes, grad_shard_dtypes)
             self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
             self.grad_sync_channel_ids = grad_sync_channel_ids
-            self.skip_allreduce_env_name = \
-                self.accumulate_grad.hlo_modules()[0].name() + __skip_allreduce_suffix
+            self.skip_allreduce_env_name =\
+                self.accumulate_grad.hlo_modules()[0].name() +\
+                "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
@@ -680,8 +680,9 @@ class GradAccMeshWorkerExecutable:
         self.num_micro_batches = num_micro_batches
         self.buffer_dict = worker.buffers
         self.grad_sync_channel_ids = grad_sync_channel_ids
-        self.skip_allreduce_env_name = \
-            self.accumulate_grad.hlo_modules()[0].name() + __skip_allreduce_suffix
+        self.skip_allreduce_env_name =\
+            self.accumulate_grad.hlo_modules()[0].name() +\
+            "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
@@ -772,7 +773,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         hlo_module = compiled.hlo_modules()[0]
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             hlo_module, out_acc_grad_indices)
-        self.skip_allreduce_env_name = hlo_module.name()
+        self.skip_allreduce_env_name =\
+            hlo_module.name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
         super(PartialGradAccMeshDriverExecutable,
               self).__init__(physical_mesh, compiled, strategy_config, avals,
                              out_avals, donated_invars)
@@ -813,7 +815,8 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         super(PartialGradAccMeshWorkerExecutable,
               self).__init__(worker, uuid, hlo_proto, strategy_config)
         self.grad_sync_channel_ids = grad_sync_channel_ids
-        self.skip_allreduce_env_name = self.compiled.hlo_modules[0].name()
+        self.skip_allreduce_env_name =\
+            self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
     def execute_on_worker(self, input_uuids: List[List[int]],
                           output_uuids: List[List[int]], skip_grad_sync):

@@ -246,8 +246,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 # TODO(yonghao): only works for GPipeSchedule
                 if stage_idx >= self.num_mesh and batch_idx == 0:
                     skip_grad_sync = False
-                # FIXME(yonghao): turn it on after no conflict in environs
-                skip_grad_sync = False
                 outputs = self._runnables[stage_idx](
                     *inputs_list, skip_grad_sync=skip_grad_sync)
                 timers("compute").suspend()

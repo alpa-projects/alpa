@@ -484,6 +484,9 @@ class GradAccMeshDriverExecutable:
                 grad_shard_shapes, grad_shard_dtypes)
             self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
             self.grad_sync_channel_ids = grad_sync_channel_ids
+            self.skip_allreduce_env_name =\
+                self.accumulate_grad.hlo_modules()[0].name() +\
+                "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
@@ -586,8 +589,7 @@ class GradAccMeshDriverExecutable:
             # Call accumulate_grad multiple times
             tmp_input_bufs = [input_bufs[i] for i in self.accumulate_grad_invar_indices] +\
                             grad_bufs
-            os.environ[
-                "XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
+            os.environ[self.skip_allreduce_env_name] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
                 if i != 0:
                     # Feed in the data of the next batch
@@ -597,7 +599,7 @@ class GradAccMeshDriverExecutable:
                         tmp_input_bufs[idx] = next_batch_bufs[
                             j * (num_micro_batches - 1) + (i - 1)]
                 if i == num_micro_batches - 1:
-                    os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = ""
+                    os.environ[self.skip_allreduce_env_name] = ""
                 grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
                     tmp_input_bufs)
 
@@ -678,6 +680,9 @@ class GradAccMeshWorkerExecutable:
         self.num_micro_batches = num_micro_batches
         self.buffer_dict = worker.buffers
         self.grad_sync_channel_ids = grad_sync_channel_ids
+        self.skip_allreduce_env_name =\
+            self.accumulate_grad.hlo_modules()[0].name() +\
+            "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
@@ -700,7 +705,7 @@ class GradAccMeshWorkerExecutable:
 
         # Call accumulate_grad multiple times
         tmp_input_bufs = tmp_input_bufs + grad_bufs
-        os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
+        os.environ[self.skip_allreduce_env_name] = self.grad_sync_channel_ids
         for i in range(num_micro_batches):
             if i != 0:
                 # Feed in the data of the next batch
@@ -710,7 +715,7 @@ class GradAccMeshWorkerExecutable:
                         buffer_dict,
                         next_batch_uuids[j * (num_micro_batches - 1) + (i - 1)])
             if i == num_micro_batches - 1:
-                os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = ""
+                os.environ[self.skip_allreduce_env_name] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
                 tmp_input_bufs)
 
@@ -768,6 +773,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         hlo_module = compiled.hlo_modules()[0]
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             hlo_module, out_acc_grad_indices)
+        self.skip_allreduce_env_name =\
+            hlo_module.name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
         super(PartialGradAccMeshDriverExecutable,
               self).__init__(physical_mesh, compiled, strategy_config, avals,
                              out_avals, donated_invars)
@@ -791,7 +798,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             'Partial grad acc mesh executable missing kwargs "skip_grad_sync"'
         skip_grad_sync = kwargs['skip_grad_sync']
         if not self.physical_mesh.is_distributed:
-            os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] =\
+            os.environ[self.skip_allreduce_env_name] =\
                 self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshDriverExecutable,
                      self).launch_on_driver(*args, **kwargs)
@@ -808,11 +815,13 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         super(PartialGradAccMeshWorkerExecutable,
               self).__init__(worker, uuid, hlo_proto, strategy_config)
         self.grad_sync_channel_ids = grad_sync_channel_ids
+        self.skip_allreduce_env_name =\
+            self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
     def execute_on_worker(self, input_uuids: List[List[int]],
                           output_uuids: List[List[int]], skip_grad_sync):
         """Run the executable on the worker."""
-        os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] =\
+        os.environ[self.skip_allreduce_env_name] =\
             self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshWorkerExecutable,
                      self).execute_on_worker(input_uuids, output_uuids)

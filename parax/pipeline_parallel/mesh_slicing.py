@@ -3,13 +3,16 @@ import numba
 import numpy as np
 from typing import List, Sequence, Tuple
 
+import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Jaxpr, jaxpr_as_fun
+from jax.interpreters import pxla
 
 from parax.api import parallelize
-from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh
+from parax.device_mesh import PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
-    ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray as VDA)
+    CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
+    as VDA)
 from parax.pipeline_parallel.stage import JaxPipelineStage
 
 
@@ -46,7 +49,9 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     mixed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     fn = jaxpr_as_fun(mixed_jaxpr)
     compiled_fn = parallelize(fn)
-    args = [jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars]
+    args = [
+        jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
+    ]
     executable = compiled_fn(*args, __return_value_mode='get_executable')
     ret = executable.profile_with_dummy_inputs()
 
@@ -54,14 +59,44 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     return ret, executable.input_sharding_specs, executable.output_sharding_specs
 
 
+def create_collective_group(src_mesh: PhysicalDeviceMesh,
+                            dst_mesh: PhysicalDeviceMesh) -> CollectiveGroup:
+    return CollectiveGroup(src_mesh.device_strs() | dst_mesh.device_strs(),
+                           src_mesh, dst_mesh)
+
+
+def dummy_resharding_strategy(spec: ReshardingTaskSpec):
+    strategy = []
+    _sender_loads = {sender: 0 for sender in spec.src.device_mesh.device_strs}
+    for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
+        # plan is a 2D array
+        per_spec_plan = np.empty(
+            (len(dst_tile.replica_device_strs), len(src_tileslices)),
+            dtype=object)
+        for receiver_idx, _ in enumerate(dst_tile.replica_device_strs):
+            for src_tileslice_idx, src_tileslice in enumerate(src_tileslices):
+                loads = {
+                    sender: _sender_loads[sender]
+                    for sender in src_tileslice.replica_device_strs
+                }
+                sender = min(loads, key=loads.get)
+                per_spec_plan[receiver_idx][src_tileslice_idx] = sender
+                # upload load on-the-fly
+                _sender_loads[sender] += src_tileslice.slice_size
+        strategy.append(per_spec_plan)
+    spec.set_resharding_strategy(strategy)
+    return strategy
+
+
 def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
                          src_outvar_sharding_spec, dst_invar_sharding_spec,
-                         src_mesh: PhysicalDeviceMesh,
-                         dst_mesh: PhysicalDeviceMesh):
+                         src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
+                         collective_group: CollectiveGroup):
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
     tot_cost = 0
-    # TODO(yonghao)
-    collective_group = None
+    backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
+    global_config.use_dummy_value_for_benchmarking = True
+    tasks = []
     for idx, invar in enumerate(dest.invars):
         if invar in src_outvars:
             out_sharding_spec = src_outvar_sharding_spec[src_outvars[invar]]
@@ -73,11 +108,21 @@ def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
                             aval=invar.aval,
                             sharding_spec=in_sharding_spec)
             task_spec = ReshardingTaskSpec(src_array, dst_array)
+            # create resharding strategy, ignore global load balance
+            dummy_resharding_strategy(task_spec)
+            # create distributed array as dummy inputs
+            input_indices = pxla.spec_to_indices(invar.aval.shape,
+                                                 out_sharding_spec)
+            val = _shard_device_array(jnp.zeros_like(invar), src_mesh,
+                                      input_indices)
 
-            val = DistributedArray(src_mesh, invar.aval, out_sharding_spec,
-                                   None, None)
             task = ReshardingTask(task_spec, collective_group, val)
-            task.do()
+            tasks.append(task)
+
+    for task in tasks:
+        task.do()
+
+    global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
 
 

@@ -282,17 +282,19 @@ class MeshHostWorker:
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+        return True
 
     def put_resharding_recv_task(self, uuid, tasks, group_name):
         self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+        return True
 
     def run_resharding_send_task(self, uuid, buf_uuids):
         task = self.send_tasks[uuid]
         for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
-            # tile_offset, receiver_rank, receiver_gpu_idx = tile_detail
             self.send_tile(buf_uuid,
                            *tile_detail,
                            group_name=task['group_name'])
+        return True
 
     def run_resharding_recv_task(self, uuid, buf_uuids):
         task = self.recv_tasks[uuid]
@@ -303,6 +305,7 @@ class MeshHostWorker:
                                recv_detail[0],
                                *recv_subtask,
                                group_name=task['group_name'])
+        return True
 
 
 class PhysicalDeviceMesh:

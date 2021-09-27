@@ -198,6 +198,8 @@ class ReshardingTask:
 
     def do(self):
         """According to the task_spec, launch send/recv operations."""
+        # self.prepare_send_recv_tasks()
+        # return self.do_prepared(self.src_array)
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
@@ -304,32 +306,35 @@ class ReshardingTask:
                 for i, sender in enumerate(senders):
                     # Sender's task
                     tile = src_tiles[i]
+                    sender_worker = self.collective_group.device_str_to_mesh_worker_map[
+                        sender]
                     sender_tasks[sender_worker].append(
                         (tile.offset, receiver_rank, receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
-                    sender_worker = self.collective_group.device_str_to_mesh_worker_map[
-                        sender]
                     sender_rank, sender_gpu_idx = \
                         self.collective_group.device_str_to_rank_map[sender]
 
                     indices_in_dst_tile = indices_in_dst_tiles[i]
                     receiver_subtasks.append(
                         [indices_in_dst_tile, sender_rank, sender_gpu_idx])
+                receiver_task.append(receiver_subtasks)
 
                 receiver_tasks[receiver_worker].append(receiver_task)
 
         self.send_worker_task_ids = dict()
-        for worker, task in sender_tasks:
+        task_dones = []
+        for worker, task in sender_tasks.items():
             uuid = next_resharding_task_uuid()
             self.send_worker_task_ids[worker] = uuid
-            worker.put_resharding_send_task.remote(uuid, task, group_name)
+            task_dones.append(worker.put_resharding_send_task.remote(uuid, task, group_name))
 
         self.recv_worker_task_ids = dict()
-        for worker, task in receiver_tasks:
+        for worker, task in receiver_tasks.items():
             uuid = next_resharding_task_uuid()
             self.recv_worker_task_ids[worker] = uuid
-            worker.put_resharding_recv_task.remote(uuid, task, group_name)
+            task_dones.append(worker.put_resharding_recv_task.remote(uuid, task, group_name))
+        ray.get(task_dones)
 
     def do_prepared(self, src_array):
         send_buf_uuids = {host: list() for host in self.src_mesh.workers}
@@ -347,9 +352,9 @@ class ReshardingTask:
             receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
                 receiver]
             result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
-                                         receiver_device_id, dtype)
+                                         receiver_device_id, dtype=dtype)
             recv_buf_uuids[receiver_worker].append(result_buf.uuid)
-            device_str_to_buf_map[receiver] = result_buf.uuid
+            device_str_to_buf_map[receiver] = result_buf
 
         for sender in self.sender_uuid_plan:
             sender_worker = self.collective_group.device_str_to_mesh_worker_map[
@@ -359,9 +364,9 @@ class ReshardingTask:
             send_buf_uuids[sender_worker].append(send_buf.uuid)
 
         task_dones = []
-        for worker, uuid in self.send_worker_task_ids:
+        for worker, uuid in self.send_worker_task_ids.items():
             task_dones.append(worker.run_resharding_send_task.remote(uuid, send_buf_uuids[worker]))
-        for worker, uuid in self.recv_worker_task_ids:
+        for worker, uuid in self.recv_worker_task_ids.items():
             task_dones.append(worker.run_resharding_recv_task.remote(uuid, recv_buf_uuids[worker]))
         ray.get(task_dones)
 

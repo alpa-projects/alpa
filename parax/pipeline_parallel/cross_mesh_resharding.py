@@ -233,8 +233,10 @@ class ReshardingTask:
             receiver]
 
         dtype = self.src_array.remote_buffers[0].dtype
-        result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
-                                     receiver_device_id, dtype=dtype)
+        result_buf = RemoteBufferRef(self.dst_mesh,
+                                     receiver_host_id,
+                                     receiver_device_id,
+                                     dtype=dtype)
         # Put an empty buffer first.
         ray.get(
             receiver_worker.put_empty_buffer.remote(result_buf.uuid,

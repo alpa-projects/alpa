@@ -220,7 +220,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
         for _, allocate_vars in self.allocate_zero_buffers:
             for var in allocate_vars:
-                self._initial_var_reference_count[(self.num_batch - 1, repr(var))] = 0
+                self._initial_var_reference_count[(self.num_batch - 1,
+                                                   repr(var))] = 0
 
         for clock, sched in enumerate(self.schedule.schedules):
             for _, task in enumerate(sched):
@@ -322,7 +323,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
     def _prepare_env(self, *inputs, batch_dim=0):
         assert self._initial_var_reference_count is not None
         self._env = {}
-        self._env_reference_count = copy.deepcopy(self._initial_var_reference_count)
+        self._env_reference_count = copy.deepcopy(
+            self._initial_var_reference_count)
         assert len(inputs) == len(self.global_invars)
         for i, var in enumerate(self.global_invars):
             if not self.is_batch[i]:

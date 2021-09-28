@@ -9,7 +9,7 @@ from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_pipeline)
+                   DeviceCluster, manual_layer_slicing)
 from parax.testing import assert_allclose
 
 MB = 1024**2
@@ -62,7 +62,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                 return loss
 
             if use_manual_pipeline:
-                loss_func = manual_pipeline(loss_func)
+                loss_func = manual_layer_slicing(loss_func)
             grad = jax.grad(loss_func)(optimizer.target, x, y)
             return grad
 

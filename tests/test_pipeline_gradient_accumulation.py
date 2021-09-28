@@ -8,7 +8,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, manual_pipeline)
+                   DeviceCluster, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 from parax.testing import assert_allclose
@@ -73,7 +73,7 @@ class AccumulateGradTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
         batch = {'x': x, 'y': y}
 
-        @manual_pipeline
+        @manual_layer_slicing
         def loss_func(params, x, y):
             out = model.apply(params, x)
             loss = jnp.mean((out - y)**2)
@@ -98,7 +98,7 @@ class AccumulateGradTest(unittest.TestCase):
 
         def train_step(optimizer, batch, apply_fn):
 
-            @manual_pipeline
+            @manual_layer_slicing
             def loss_func(params, x, y, attention_mask):
                 out = apply_fn(params, x, attention_mask)
                 loss = jnp.mean((out - y)**2)

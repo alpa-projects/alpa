@@ -11,7 +11,7 @@ import ray
 from flax import optim
 
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, mark_pipeline, manual_pipeline)
+                   DeviceCluster, PhysicalDeviceMesh, mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import (write_tsv, list_gpu_info, benchmark_func,
@@ -121,7 +121,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         # grad = jax.grad(loss_func)(params)
         # new_optimizer = optimizer.apply_gradient(grad)
         if pipeline_mp_size > 1:
-            loss_func = manual_pipeline(loss_func)
+            loss_func = manual_layer_slicing(loss_func)
 
         grad = jax.grad(loss_func, argnums=(0))(optimizer.target)
         # new_optimizer = optimizer.apply_gradient(grad)

@@ -14,7 +14,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, forward)
+                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
@@ -93,7 +93,7 @@ def get_train_step(grad_func, num_layers, use_remat, dtype):
 
     @parallelize
     def train_step(state, batch, rng_key):
-        @partial(forward, layer_num=num_layers, use_remat=use_remat)
+        @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             logits = state.apply_fn(params,

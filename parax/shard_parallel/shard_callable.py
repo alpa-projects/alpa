@@ -223,6 +223,7 @@ def shard_parallel_internal_gradient_accumulation(
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
                                      backend)
     flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(built.as_hlo_module())
+    flop_count *= num_micro_batches
 
     hlo_protos, strategy_config = compile_with_search(
         backend,

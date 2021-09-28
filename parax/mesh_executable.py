@@ -542,9 +542,12 @@ class GradAccMeshDriverExecutable:
                 .reshape(len(input_bufs), num_hosts, num_devices_per_host)\
                 .transpose([1, 0, 2])
 
-            next_batch_uuids = get_uuid_np_array(next_batch_bufs)\
-                .reshape(len(next_batch_bufs), num_hosts, num_devices_per_host)\
-                .transpose([1, 0, 2])
+            if next_batch_bufs:
+                next_batch_uuids = get_uuid_np_array(next_batch_bufs)\
+                    .reshape(len(next_batch_bufs), num_hosts, num_devices_per_host)\
+                    .transpose([1, 0, 2])
+            else:
+                next_batch_uuids = (None,) * num_hosts
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = next_remote_buffer_uuid(num_hosts * num_outs * num_devices_per_host)\

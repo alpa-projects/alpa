@@ -23,11 +23,9 @@ GB = 1024 ** 3
 
 
 def compute_metrics(logits, labels):
-    loss = cross_entropy_loss(logits, labels)
-    accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
     metrics = {
-        "loss": loss,
-        "accuracy": accuracy,
+        "loss": cross_entropy_loss(logits, labels),
+        "accuracy": jnp.mean(jnp.argmax(logits, -1) == labels),
     }
     return metrics
 
@@ -79,7 +77,7 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def train_step_func(state, batch, learning_rate_fn):
+def train_step_func(state, batch, learning_rate_fn, use_grad_acc):
     def loss_fn(params):
         logits, new_model_state = state.apply_fn(
             {"params": params, "batch_stats": state.batch_stats},
@@ -92,23 +90,30 @@ def train_step_func(state, batch, learning_rate_fn):
                          for x in weight_penalty_params
                          if x.ndim > 1])
         weight_penalty = weight_decay * 0.5 * weight_l2
-        loss = loss + weight_penalty
-        return loss, (new_model_state, logits)
+        metrics = {
+          "loss": loss,
+          "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
+          "lr": learning_rate_fn(step)
+        }
+        return loss + weight_penalty, (new_model_state, metrics)
 
     step = state.step
     dynamic_scale = state.dynamic_scale
-    lr = learning_rate_fn(step)
 
     if dynamic_scale:
+        # TOOD(lmzheng): handle gradient accumulation for this
         grad_fn = dynamic_scale.value_and_grad(loss_fn, has_aux=True)
         dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
         # dynamic loss takes care of averaging gradients across replicas
     else:
-        grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-        aux, grads = grad_fn(state.params)
-    new_model_state, logits = aux[1]
-    metrics = compute_metrics(logits, batch["labels"])
-    metrics["learning_rate"] = lr
+        if use_grad_acc:
+            get_grad_fn = parax.grad
+        else:
+            get_grad_fn = jax.grad
+
+        grad_fn = get_grad_fn(loss_fn, has_aux=True)
+        grads, aux = grad_fn(state.params)
+    new_model_state, metrics = aux
 
     new_state = state.apply_gradients(
         grads=grads, batch_stats=new_model_state["batch_stats"])
@@ -148,12 +153,15 @@ def benchmark_model_one_case(benchmark_case):
     global_config.force_data_parallel = force_data_parallel
 
     if num_micro_batches > 1:
-        global_config.num_micro_batches = num_micro_batches
+        use_grad_acc = True
         global_config.prefer_reduce_scatter = False
-        grad = parax.grad
     else:
-        grad = jax.grad
+        use_grad_acc = False
         global_config.prefer_reduce_scatter = False
+        num_micro_batches = None
+
+    use_grad_acc = True
+    num_micro_batches = 1
 
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
@@ -164,7 +172,8 @@ def benchmark_model_one_case(benchmark_case):
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
-    set_parallelize_options(devices=logical_mesh)
+    set_parallelize_options(devices=logical_mesh,
+                            num_micro_batches=num_micro_batches)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
@@ -186,7 +195,8 @@ def benchmark_model_one_case(benchmark_case):
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn)
+    train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn,
+                         use_grad_acc=use_grad_acc)
     train_step = parallelize(train_step)
     print_used_time("Create train state")
     param_count = compute_param_number(state.params)
@@ -241,12 +251,14 @@ def benchmark_model_one_case(benchmark_case):
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (16,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
+    (16,   224, 50,  64,  1, "fp32", 1,  1,  1,  False, False),
 ],
 
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
+    (32,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
+    #(64,   224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
+    #(16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
 ],
 
 }

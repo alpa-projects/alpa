@@ -222,6 +222,8 @@ def shard_parallel_internal_gradient_accumulation(
     name = f"{fun.__name__}_shard_parallel"
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
                                      backend)
+    flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(built.as_hlo_module())
+
     hlo_protos, strategy_config = compile_with_search(
         backend,
         built,
@@ -272,7 +274,7 @@ def shard_parallel_internal_gradient_accumulation(
         physical_mesh, accumulate_grad, apply_grad, strategy_config, in_avals,
         out_avals, grad_avals, donated_invars, batch_invars,
         accumulate_grad_invar_indices, apply_grad_invar_indices,
-        num_micro_batches)
+        num_micro_batches, flop_count=flop_count)
     return mesh_executable.get_driver_callable()
 
 

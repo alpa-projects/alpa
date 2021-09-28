@@ -7,7 +7,7 @@ For each type of mesh executable, there is a driver part and a worker part.
 """
 import logging
 import os
-from typing import List, Sequence, Tuple
+from typing import List, Sequence, Tuple, Optional
 
 import numpy as np
 import ray
@@ -133,7 +133,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
     def __init__(self, physical_mesh: "PhysicalDeviceMesh",
                  compiled: XlaExecutable, strategy_config: StrategyConfig,
                  avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool], flop_count=None):
+                 donated_invars: Sequence[bool], flop_count: Optional[int]=None):
         from parax.shard_parallel.auto_sharding import get_input_output_sharding_specs
 
         self.physical_mesh = physical_mesh
@@ -378,7 +378,8 @@ class GradAccMeshDriverExecutable:
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
-                 num_micro_batches: int):
+                 num_micro_batches: int,
+                 flop_count: Optional[int]=None):
         from parax.shard_parallel.auto_sharding import (
             get_input_output_sharding_specs, make_replicated_spec)
 
@@ -391,6 +392,7 @@ class GradAccMeshDriverExecutable:
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
         self.apply_grad_invar_indices = apply_grad_invar_indices
         self.num_micro_batches = num_micro_batches
+        self.flop_count = flop_count
 
         # Read sharding specs
         logical_mesh_shape = strategy_config.logical_mesh_shape
@@ -431,6 +433,7 @@ class GradAccMeshDriverExecutable:
         # Get the channel ids of gradient sync all-reduce
         grad_sync_channel_ids =\
             get_grad_sync_channel_ids(accumulate_grad.hlo_modules()[0])
+        print(grad_sync_channel_ids)
 
         # Cache results for input and output sharding
         global_arg_shard_indices = [
@@ -632,8 +635,7 @@ class GradAccMeshDriverExecutable:
             return ray.get(self.physical_mesh.workers[0].\
                 get_exec_total_allocation_size.remote(self.exec_uuid))
         else:
-            return max(self.accumulate_grad.total_allocation_size(),
-                       self.apply_grad.total_allocation_size())
+            return self.accumulate_grad.total_allocation_size()
 
     def get_hlo_text(self):
         return self.hlo_text
@@ -746,8 +748,7 @@ class GradAccMeshWorkerExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return max(self.accumulate_grad.total_allocation_size(),
-                   self.apply_grad.total_allocation_size())
+        return self.accumulate_grad.total_allocation_size()
 
     def __del__(self):
         self.accumulate_grad.delete()

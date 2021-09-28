@@ -160,9 +160,6 @@ def benchmark_model_one_case(benchmark_case):
         global_config.prefer_reduce_scatter = False
         num_micro_batches = None
 
-    use_grad_acc = True
-    num_micro_batches = 1
-
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
     else:
@@ -251,14 +248,14 @@ def benchmark_model_one_case(benchmark_case):
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (16,   224, 50,  64,  1, "fp32", 1,  1,  1,  False, False),
+    (16,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
 ],
 
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
     (32,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
-    #(64,   224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
-    #(16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
+    (64,   224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
+    (16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
 ],
 
 }

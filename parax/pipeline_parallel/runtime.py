@@ -421,7 +421,7 @@ def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
     """
     Generate dependency matrix marks compute grad and apply grad
     """
-    d = np.zeros([num_stage, num_stage], dtype=np.int)
+    d = np.zeros((num_stage, num_stage), dtype=np.int32)
     for i in range(mesh_num * 2 - 1):
         d[i + 1][i] = 1
     for i in range(mesh_num):

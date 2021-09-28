@@ -140,6 +140,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.avals = avals
         self.out_avals = out_avals
         self.donated_invars = donated_invars
+        self.flop_count = flop_count
 
         # Read sharding specs
         hlo_module = compiled.hlo_modules()[0]

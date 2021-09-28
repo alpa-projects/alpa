@@ -1,4 +1,5 @@
 """Distributed JAX pipeline parallelism."""
+import copy
 from collections import OrderedDict
 import functools
 import logging
@@ -104,23 +105,27 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self.physical_meshes = physical_meshes
 
         # private attributes
-        self._runnables = []
-        self._stage_outputs = []
-        self._microbatches = []
+        self._runnables = None
+        self._env = None
+        self._initial_var_reference_count = None
 
         # for resharding
         self._communicator = None
         self._collective_groups = [
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
-        self._prepare()
+
+        self._prepare_runables()
+        self._prepare_communicator()
+        self._prepare_gradient_accumulation()
+        self._prepare_reference_count()
 
     @property
     def num_mesh(self):
         """Return the number of meshes in the pipeline job."""
         return len(self.physical_meshes)
 
-    def _prepare(self):
+    def _prepare_runables(self):
         # Let each physical mesh to re-compile the sharded stage
         self._runnables = []
         for stage_idx, stage in enumerate(self.stages):
@@ -130,46 +135,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             self._runnables.append(
                 stage.get_runnable(self.physical_meshes[mesh_idx]))
 
+    def _prepare_communicator(self):
         # Based on dependency and sharding specs, infer communication spec (cross-mesh).
         self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
 
         # Now we establish NCCL collective groups and communicators
         # because we need physical meshes we have to do this out of the CrossMeshCommunicator class.
         self._establish_nccl_groups()
-
-        # prepare inputs/outputs buffers and communication between stages.
-        self._stage_outputs = self._init_stage_outputs()
-        self._microbatches = None
-
-        # Allocate buffers for accumulated gradients
-        mesh_num = len(self.physical_meshes)
-        mesh_grad_vars = [dict() for _ in range(mesh_num)]
-        # collect buffers to allocate in each mesh
-        for stage_idx, stage in enumerate(self.stages):
-            mesh_indices = list(self.schedule.stage_placement(stage_idx))
-            assert len(mesh_indices) == 1
-            mesh_idx = mesh_indices[0]
-            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
-            input_specs = stage.input_sharding_specs
-            for var_idx, invar in enumerate(stage.invars):
-                if invar in self.grad_dummy_invars:
-                    if invar in grad_var_spec_dict:
-                        raise NotImplemented(
-                            f'accumulate {invar} in a mesh but multiple stages')
-                    grad_var_spec_dict[invar] = input_specs[var_idx]
-        # create executable for each mesh
-        self.allocate_zero_buffers = []
-        if len(grad_var_spec_dict):
-            for mesh_idx in range(mesh_num):
-                grad_var_spec_dict = mesh_grad_vars[mesh_idx]
-                grad_vars, grad_sharding_specs = list(
-                    zip(*grad_var_spec_dict.items()))
-                self.allocate_zero_buffers.append(
-                    (AllocZeroBufferDriverExecutable(
-                        physical_mesh=self.physical_meshes[mesh_idx],
-                        grad_vars=grad_vars,
-                        grad_sharding_specs=grad_sharding_specs).
-                     get_driver_callable(), grad_vars))
 
     def _establish_nccl_groups(self):
         """
@@ -209,15 +181,80 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
 
+    def _prepare_gradient_accumulation(self):
+        # Allocate buffers for accumulated gradients
+        mesh_num = len(self.physical_meshes)
+        mesh_grad_vars = [dict() for _ in range(mesh_num)]
+        # collect buffers to allocate in each mesh
+        for stage_idx, stage in enumerate(self.stages):
+            mesh_indices = list(self.schedule.stage_placement(stage_idx))
+            assert len(mesh_indices) == 1
+            mesh_idx = mesh_indices[0]
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+            input_specs = stage.input_sharding_specs
+            for var_idx, invar in enumerate(stage.invars):
+                if invar in self.grad_dummy_invars:
+                    if invar in grad_var_spec_dict:
+                        raise NotImplemented(
+                            f'accumulate {invar} in a mesh but multiple stages')
+                    grad_var_spec_dict[invar] = input_specs[var_idx]
+        # create executable for each mesh
+        self.allocate_zero_buffers = []
+        if len(grad_var_spec_dict):
+            for mesh_idx in range(mesh_num):
+                grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+                grad_vars, grad_sharding_specs = list(
+                    zip(*grad_var_spec_dict.items()))
+                self.allocate_zero_buffers.append(
+                    (AllocZeroBufferDriverExecutable(
+                        physical_mesh=self.physical_meshes[mesh_idx],
+                        grad_vars=grad_vars,
+                        grad_sharding_specs=grad_sharding_specs).
+                     get_driver_callable(), grad_vars))
+
+    def _prepare_reference_count(self):
+        self._initial_var_reference_count = {}
+        for i, var in enumerate(self.global_invars):
+            for b in range(self.num_batch):
+                self._initial_var_reference_count[(b, repr(var))] = 0
+
+        for _, allocate_vars in self.allocate_zero_buffers:
+            for var in allocate_vars:
+                self._initial_var_reference_count[(self.num_batch - 1,
+                                                   repr(var))] = 0
+
+        for clock, sched in enumerate(self.schedule.schedules):
+            for _, task in enumerate(sched):
+                if not task:
+                    continue
+                batch_idx, stage_idx = task
+                stage = self.stages[stage_idx]
+
+                for var in stage.invars:
+                    key = (batch_idx, repr(var))
+                    # TODO: only work for GPipeSchedule
+                    if var in self.grad_dummy_invars and batch_idx < self.num_batch - 1:
+                        key = (batch_idx + 1, self.grad_dummy_invars[var])
+                    self._initial_var_reference_count[key] += 1
+
+                for var in stage.outvars:
+                    key = (batch_idx, repr(var))
+                    self._initial_var_reference_count[key] = 0
+
+        for var in self.global_outvars:
+            if not isinstance(var, Literal):
+                key = (0, repr(var))
+                self._initial_var_reference_count[key] += 1
+
     def run(self, *args, **kwargs):
         """Run the training with pipelining."""
         # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
 
         timers("overall").start()
-        timers("make_microbatch").start()
-        self._microbatches = self._make_microbatches(*args)
-        timers("make_microbatch").stop()
+        timers("initialize_microbatch").start()
+        self._prepare_env(*args)
+        timers("initialize_microbatch").stop()
 
         global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
@@ -250,13 +287,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     *inputs_list, skip_grad_sync=skip_grad_sync)
                 timers("compute").suspend()
 
-                outvals = self._process_stage_outputs(stage_idx, outputs)
-
-                # TODO: Add reference counting here to reduce memory usage
-                self._stage_outputs[batch_idx][stage_idx].update(outvals)
-                for key, val in outvals.items():
-                    if key in self.global_outvars_repr_set:
-                        global_outputs[key] = val
+                self._process_stage_outputs(batch_idx, stage_idx, outputs)
             logger.debug(
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
 
@@ -269,13 +300,15 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             if isinstance(var, Literal):
                 global_outvals_list.append(var.val)
             else:
-                key = repr(var)
-                assert key in global_outputs
-                val = global_outputs[key]
+                key = (0, repr(var))
+                val = self._pop_var(key)
                 global_outvals_list.append(val)
         logger.debug(">>> All pipeline jobs done.")
         timers("overall").stop()
         # report_pipeline_runtime_benchmark_timers(reset=True)
+
+        # Make sure reference counting is correct
+        assert len(self._env) == 0, (self._env, self._env_reference_count)
 
         return global_outvals_list
 
@@ -287,40 +320,39 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     timer_names.keys()))
         return timers(timer_name).costs[warmup:]
 
-    def _init_stage_outputs(self):
-        """
-        Construct the output matrix.
-
-        it is a C by S matrix where C is the #clocks and S is #stages.
-        """
-        stage_outputs = [[dict()
-                          for _ in range(self.num_stage)]
-                         for _ in range(self.num_batch)]
-        return stage_outputs
-
-    def _make_microbatches(self, *inputs, batch_dim=0):
+    def _prepare_env(self, *inputs, batch_dim=0):
+        assert self._initial_var_reference_count is not None
+        self._env = {}
+        self._env_reference_count = copy.deepcopy(
+            self._initial_var_reference_count)
         assert len(inputs) == len(self.global_invars)
-        microbatches = [dict() for _ in range(self.num_batch)]
         for i, var in enumerate(self.global_invars):
-            key = repr(var)
-            array = inputs[i]
             if not self.is_batch[i]:
-                # empty shape means it is not the input batch
-                # no need to split
-                # ref = ray.put(inputs[i])
-                for b in range(self.num_batch):
-                    microbatches[b][key] = inputs[i]
+                splits = [inputs[i]] * self.num_batch
             else:
-                splits = jnp.split(array, self.num_batch, axis=batch_dim)
-                for b, split in enumerate(splits):
-                    microbatches[b][key] = split
-        for allocate_info in self.allocate_zero_buffers:
-            allocate_callable, allocate_vars = allocate_info
+                splits = jnp.split(inputs[i], self.num_batch, axis=batch_dim)
+            for b, split in enumerate(splits):
+                key = (b, repr(var))
+                assert key in self._env_reference_count
+                # Do not include unused inputs
+                if self._env_reference_count[key] == 0:
+                    del self._env_reference_count[key]
+                else:
+                    self._env[key] = split
+
+        for allocate_callable, allocate_vars in self.allocate_zero_buffers:
             allocate_vals = allocate_callable()
             for val, var in zip(allocate_vals, allocate_vars):
-                key = repr(var)
-                microbatches[self.num_batch - 1][key] = val
-        return microbatches
+                self._env[(self.num_batch - 1, repr(var))] = val
+
+    def _pop_var(self, key):
+        assert key in self._env and key in self._env_reference_count
+        result = self._env[key]
+        self._env_reference_count[key] -= 1
+        if self._env_reference_count[key] == 0:
+            del self._env_reference_count[key]
+            del self._env[key]
+        return result
 
     def _identify_stage_inputs(self, clock, stage_idx, batch_idx):
         """
@@ -334,29 +366,14 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         Returns:
             stage_inputs (dict[str, Any]):
         """
-        stage_inputs = OrderedDict()
+        stage_inputs = {}
         stage = self.stages[stage_idx]
-        # find stages that depend on it
-        ancestors = list(
-            np.squeeze(np.argwhere(self.dependency[stage_idx] == 1), axis=1))
         for var in stage.invars:
-            key = repr(var)
-            # TODO(yonghao): record where to obtain variables at compile time
-            if var in self.global_invars:
-                stage_inputs[key] = self._microbatches[batch_idx][key]
-            elif var in self.grad_dummy_invars:
-                # TODO(yonghao): only work for GPipeSchedule
-                if batch_idx == self.num_batch - 1:
-                    stage_inputs[key] = self._microbatches[batch_idx][key]
-                else:
-                    _key = self.grad_dummy_invars[var]
-                    stage_inputs[key] = self._stage_outputs[batch_idx +
-                                                            1][stage_idx][_key]
-            else:
-                for ans in ancestors:
-                    if key in self._stage_outputs[batch_idx][ans]:
-                        stage_inputs[key] = self._stage_outputs[batch_idx][ans][
-                            key]
+            key = (batch_idx, repr(var))
+            # TODO: only work for GPipeSchedule
+            if var in self.grad_dummy_invars and batch_idx < self.num_batch - 1:
+                key = (batch_idx + 1, self.grad_dummy_invars[var])
+            stage_inputs[repr(var)] = self._pop_var(key)
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs. "
                                "`stage_inputs` got {}, but expect {}.".format(
@@ -389,10 +406,11 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 inputs_list.append(val)
         return inputs_list
 
-    def _process_stage_outputs(self, stage_idx, outputs):
+    def _process_stage_outputs(self, batch_idx, stage_idx, outputs):
         stage = self.stages[stage_idx]
-        outvals = {repr(var): val for var, val in zip(stage.outvars, outputs)}
-        return outvals
+        for var, val in zip(stage.outvars, outputs):
+            key = (batch_idx, repr(var))
+            self._env[key] = val
 
 
 def gen_linear_dependency(num_stage):

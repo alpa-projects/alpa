@@ -34,6 +34,14 @@ class ProfilingTest(unittest.TestCase):
                                          verbose=False)
         physical_mesh.shutdown()
 
+    def test_profile_alltoall(self):
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
+        physical_mesh.profile_collective("all-to-all",
+                                         size_range=range(18, 19),
+                                         verbose=False)
+        physical_mesh.shutdown()
+
     @unittest.skip("temporarily disabled")
     def test_loading_profiling_result(self):
         device_cluster = DeviceCluster()
@@ -65,6 +73,7 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(ProfilingTest("test_profile_allreduce"))
     suite.addTest(ProfilingTest("test_profile_allgather"))
+    suite.addTest(ProfilingTest("test_profile_alltoall"))
     suite.addTest(ProfilingTest("test_loading_profiling_result"))
 
     return suite

@@ -15,18 +15,17 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, forward)
 from parax.model.wide_resnet import get_wide_resnet, TrainState
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
-                        count_communication_primitives, print_used_time)
+                        count_communication_primitives, print_used_time,
+                        compute_param_number)
 
 
 GB = 1024 ** 3
 
 
 def compute_metrics(logits, labels):
-    loss = cross_entropy_loss(logits, labels)
-    accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
     metrics = {
-        "loss": loss,
-        "accuracy": accuracy,
+        "loss": cross_entropy_loss(logits, labels),
+        "accuracy": jnp.mean(jnp.argmax(logits, -1) == labels),
     }
     return metrics
 
@@ -78,7 +77,7 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def train_step_func(state, batch, learning_rate_fn):
+def train_step_func(state, batch, learning_rate_fn, use_grad_acc):
     def loss_fn(params):
         logits, new_model_state = state.apply_fn(
             {"params": params, "batch_stats": state.batch_stats},
@@ -91,23 +90,30 @@ def train_step_func(state, batch, learning_rate_fn):
                          for x in weight_penalty_params
                          if x.ndim > 1])
         weight_penalty = weight_decay * 0.5 * weight_l2
-        loss = loss + weight_penalty
-        return loss, (new_model_state, logits)
+        metrics = {
+          "loss": loss,
+          "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
+          "lr": learning_rate_fn(step)
+        }
+        return loss + weight_penalty, (new_model_state, metrics)
 
     step = state.step
     dynamic_scale = state.dynamic_scale
-    lr = learning_rate_fn(step)
 
     if dynamic_scale:
+        # TOOD(lmzheng): handle gradient accumulation for this
         grad_fn = dynamic_scale.value_and_grad(loss_fn, has_aux=True)
         dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
         # dynamic loss takes care of averaging gradients across replicas
     else:
-        grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-        aux, grads = grad_fn(state.params)
-    new_model_state, logits = aux[1]
-    metrics = compute_metrics(logits, batch["labels"])
-    metrics["learning_rate"] = lr
+        if use_grad_acc:
+            get_grad_fn = parax.grad
+        else:
+            get_grad_fn = jax.grad
+
+        grad_fn = get_grad_fn(loss_fn, has_aux=True)
+        grads, aux = grad_fn(state.params)
+    new_model_state, metrics = aux
 
     new_state = state.apply_gradients(
         grads=grads, batch_stats=new_model_state["batch_stats"])
@@ -133,21 +139,26 @@ def benchmark_model_one_case(benchmark_case):
 
     # Model configs
     model_type = args.model
-    batch_size, image_size, num_layers, num_channels, width_factor,\
+    batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
         use_remat = benchmark_case
-    dtype = jnp.float16
+    if dtype == "fp32":
+        dtype = jnp.float32
+    elif dtype == "fp16":
+        dtype = jnp.float16
+    else:
+        raise ValueError(f"Invalid dtype: {dtype}")
 
     # Parallel configs
     global_config.force_data_parallel = force_data_parallel
 
     if num_micro_batches > 1:
-        global_config.num_micro_batches = num_micro_batches
+        use_grad_acc = True
         global_config.prefer_reduce_scatter = False
-        grad = parax.grad
     else:
-        grad = jax.grad
-        global_config.prefer_reduce_scatter = True
+        use_grad_acc = False
+        global_config.prefer_reduce_scatter = False
+        num_micro_batches = None
 
     if args.local:
         physical_mesh = PhysicalDeviceMesh(jax.devices())
@@ -158,14 +169,15 @@ def benchmark_model_one_case(benchmark_case):
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
-    set_parallelize_options(devices=logical_mesh)
+    set_parallelize_options(devices=logical_mesh,
+                            num_micro_batches=num_micro_batches)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
     num_classes = 1000
     batch = {
         "images": jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
-        "labels": jnp.ones((batch_size, 1), dtype=jnp.int32),
+        "labels": jnp.ones((batch_size), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
 
@@ -180,9 +192,11 @@ def benchmark_model_one_case(benchmark_case):
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn)
+    train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn,
+                         use_grad_acc=use_grad_acc)
     train_step = parallelize(train_step)
     print_used_time("Create train state")
+    param_count = compute_param_number(state.params)
 
     # Compile executable
     executable = train_step.get_executable(state, batch)
@@ -208,15 +222,19 @@ def benchmark_model_one_case(benchmark_case):
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}"
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
           f"#all-to-all: {n_all_to_all}")
 
     # Log benchmark results
-    heads = ["Model", "Model Config", "Parallel Config",
-             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time"]
+    num_gpus = mesh_dim0 * mesh_dim1
+    tflops = executable.flop_count / num_gpus / np.mean(costs) / 1e12
+    heads = ["Model", "Model Config", "Parallel Config", "Param count", 
+             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
+              f"{param_count/1e9:.3f}",
               f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
+              f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 
     physical_mesh.shutdown()
@@ -229,9 +247,17 @@ def benchmark_model_one_case(benchmark_case):
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,  I,   L,  C,  W, D0, D1, NB, FD,    CK,
-    (64, 224, 50, 64, 2, 1,  1,  1,  False, False),
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    (16,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
 ],
+
+8: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    (32,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
+    (64,   224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
+    (16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
+],
+
 }
 
 benchmark_suites = {
@@ -268,7 +294,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="wide_resnet")
-    parser.add_argument("--niter", type=int, default=10,
+    parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
     parser.add_argument("--suite", choices=["default"], default="default")
     parser.add_argument("--local", action="store_true",

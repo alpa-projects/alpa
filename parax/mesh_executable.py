@@ -7,7 +7,7 @@ For each type of mesh executable, there is a driver part and a worker part.
 """
 import logging
 import os
-from typing import List, Sequence, Tuple
+from typing import List, Sequence, Tuple, Optional
 
 import numpy as np
 import ray
@@ -52,7 +52,11 @@ def next_remote_buffer_uuid(number=1):
 class RemoteBufferRef:
     """A reference to a remote device buffer."""
 
-    def __init__(self, device_mesh, host_id, device_id, uuid=None,
+    def __init__(self,
+                 device_mesh,
+                 host_id,
+                 device_id,
+                 uuid=None,
                  dtype=jnp.float32):
         self.device_mesh = device_mesh
         self.host_id = host_id
@@ -126,16 +130,21 @@ def get_sync_func_worker(worker):
 class NormalMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a normal mesh executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 compiled: XlaExecutable, strategy_config: StrategyConfig,
-                 avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool]):
+    def __init__(self,
+                 physical_mesh: "PhysicalDeviceMesh",
+                 compiled: XlaExecutable,
+                 strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray],
+                 out_avals: Sequence[ShapedArray],
+                 donated_invars: Sequence[bool],
+                 flop_count: Optional[int] = None):
         from parax.shard_parallel.auto_sharding import get_input_output_sharding_specs
 
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
         self.donated_invars = donated_invars
+        self.flop_count = flop_count
 
         # Read sharding specs
         hlo_module = compiled.hlo_modules()[0]
@@ -154,6 +163,15 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
         self.hlo_text = compiled.hlo_modules()[0].to_string()
+
+        self.set_executable(physical_mesh, compiled, strategy_config)
+
+        # Set up timers
+        self.timer_name = get_execution_timer_name(self.exec_uuid)
+        self.sync_func = get_sync_func_driver(physical_mesh)
+
+    def set_executable(self, physical_mesh, compiled, strategy_config):
+        hlo_module = compiled.hlo_modules()[0]
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
@@ -163,10 +181,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         else:
             self.compiled = compiled
 
-        # Set up timers
-        self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = get_sync_func_driver(physical_mesh)
-
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
         ret = partial(self.launch_on_driver)
@@ -174,7 +188,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         ret.get_executable = lambda: self
         return ret
 
-    def launch_on_driver(self, *args):
+    def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
         physical_mesh = self.physical_mesh
         num_hosts = physical_mesh.num_hosts
@@ -196,7 +210,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             # Execute the SPMD binary
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
-                    self.exec_uuid, input_uuids[i], output_uuids[i])
+                    self.exec_uuid, input_uuids[i], output_uuids[i], **kwargs)
 
             # Shape: (num_outs, num_hosts, num_devices_per_host)
             output_uuids = output_uuids.transpose([1, 0, 2])
@@ -210,7 +224,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
+                        physical_mesh,
+                        host_id,
+                        device_id,
                         output_uuids[i][host_id][device_id],
                         dtype=self.out_avals[i].dtype)
 
@@ -358,15 +374,20 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
 class GradAccMeshDriverExecutable:
     """The driver part of a gradient accumulation mesh executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 accumulate_grad: XlaExecutable, apply_grad: XlaExecutable,
-                 strategy_config: StrategyConfig, avals: Sequence[ShapedArray],
+    def __init__(self,
+                 physical_mesh: "PhysicalDeviceMesh",
+                 accumulate_grad: XlaExecutable,
+                 apply_grad: XlaExecutable,
+                 strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  grad_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+                 donated_invars: Sequence[bool],
+                 batch_invars: Sequence[bool],
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
-                 num_micro_batches: int):
+                 num_micro_batches: int,
+                 flop_count: Optional[int] = None):
         from parax.shard_parallel.auto_sharding import (
             get_input_output_sharding_specs, make_replicated_spec)
 
@@ -379,6 +400,7 @@ class GradAccMeshDriverExecutable:
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
         self.apply_grad_invar_indices = apply_grad_invar_indices
         self.num_micro_batches = num_micro_batches
+        self.flop_count = flop_count
 
         # Read sharding specs
         logical_mesh_shape = strategy_config.logical_mesh_shape
@@ -472,6 +494,9 @@ class GradAccMeshDriverExecutable:
                 grad_shard_shapes, grad_shard_dtypes)
             self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
             self.grad_sync_channel_ids = grad_sync_channel_ids
+            self.skip_allreduce_env_name =\
+                self.accumulate_grad.hlo_modules()[0].name() +\
+                "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
@@ -523,9 +548,12 @@ class GradAccMeshDriverExecutable:
                 .reshape(len(input_bufs), num_hosts, num_devices_per_host)\
                 .transpose([1, 0, 2])
 
-            next_batch_uuids = get_uuid_np_array(next_batch_bufs)\
-                .reshape(len(next_batch_bufs), num_hosts, num_devices_per_host)\
-                .transpose([1, 0, 2])
+            if next_batch_bufs:
+                next_batch_uuids = get_uuid_np_array(next_batch_bufs)\
+                    .reshape(len(next_batch_bufs), num_hosts, num_devices_per_host)\
+                    .transpose([1, 0, 2])
+            else:
+                next_batch_uuids = (None,) * num_hosts
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = next_remote_buffer_uuid(num_hosts * num_outs * num_devices_per_host)\
@@ -549,7 +577,9 @@ class GradAccMeshDriverExecutable:
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
+                        physical_mesh,
+                        host_id,
+                        device_id,
                         output_uuids[i][host_id][device_id],
                         dtype=self.out_avals[i].dtype)
 
@@ -573,7 +603,7 @@ class GradAccMeshDriverExecutable:
             tmp_input_bufs = [input_bufs[i] for i in self.accumulate_grad_invar_indices] +\
                             grad_bufs
             os.environ[
-                "XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
+                self.skip_allreduce_env_name] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
                 if i != 0:
                     # Feed in the data of the next batch
@@ -583,7 +613,7 @@ class GradAccMeshDriverExecutable:
                         tmp_input_bufs[idx] = next_batch_bufs[
                             j * (num_micro_batches - 1) + (i - 1)]
                 if i == num_micro_batches - 1:
-                    os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = ""
+                    os.environ[self.skip_allreduce_env_name] = ""
                 grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
                     tmp_input_bufs)
 
@@ -616,8 +646,7 @@ class GradAccMeshDriverExecutable:
             return ray.get(self.physical_mesh.workers[0].\
                 get_exec_total_allocation_size.remote(self.exec_uuid))
         else:
-            return max(self.accumulate_grad.total_allocation_size(),
-                       self.apply_grad.total_allocation_size())
+            return self.accumulate_grad.total_allocation_size()
 
     def get_hlo_text(self):
         return self.hlo_text
@@ -664,6 +693,9 @@ class GradAccMeshWorkerExecutable:
         self.num_micro_batches = num_micro_batches
         self.buffer_dict = worker.buffers
         self.grad_sync_channel_ids = grad_sync_channel_ids
+        self.skip_allreduce_env_name =\
+            self.accumulate_grad.hlo_modules()[0].name() +\
+            "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
@@ -686,7 +718,7 @@ class GradAccMeshWorkerExecutable:
 
         # Call accumulate_grad multiple times
         tmp_input_bufs = tmp_input_bufs + grad_bufs
-        os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = self.grad_sync_channel_ids
+        os.environ[self.skip_allreduce_env_name] = self.grad_sync_channel_ids
         for i in range(num_micro_batches):
             if i != 0:
                 # Feed in the data of the next batch
@@ -696,7 +728,7 @@ class GradAccMeshWorkerExecutable:
                         buffer_dict,
                         next_batch_uuids[j * (num_micro_batches - 1) + (i - 1)])
             if i == num_micro_batches - 1:
-                os.environ["XLA_SKIP_NCCL_COLLECTIVE_IDS"] = ""
+                os.environ[self.skip_allreduce_env_name] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
                 tmp_input_bufs)
 
@@ -727,13 +759,84 @@ class GradAccMeshWorkerExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return max(self.accumulate_grad.total_allocation_size(),
-                   self.apply_grad.total_allocation_size())
+        return self.accumulate_grad.total_allocation_size()
 
     def __del__(self):
         self.accumulate_grad.delete()
         self.apply_grad.delete()
         self.allocate_zero_buffers.delete()
+
+
+def get_grad_sync_channel_ids_with_hint(hlo_module, hint) -> str:
+    return xla_extension.get_grad_sync_channel_ids(hlo_module, hint)
+
+
+class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
+    """
+    The driver part of a mesh executable that 
+    only compute and accumulate grads, but not apply it.
+    """
+
+    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
+                 compiled: XlaExecutable, strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
+                 donated_invars: Sequence[bool],
+                 out_acc_grad_indices: Sequence[int]):
+        hlo_module = compiled.hlo_modules()[0]
+        self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
+            hlo_module, out_acc_grad_indices)
+        self.skip_allreduce_env_name =\
+            hlo_module.name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
+        super(PartialGradAccMeshDriverExecutable,
+              self).__init__(physical_mesh, compiled, strategy_config, avals,
+                             out_avals, donated_invars)
+
+    def set_executable(self, physical_mesh, compiled, strategy_config):
+        hlo_module = compiled.hlo_modules()[0]
+        if physical_mesh.is_distributed:
+            hlo_proto = hlo_module.as_serialized_hlo_module_proto()
+            for w in physical_mesh.workers:
+                w.put_executable.remote(self.exec_uuid,
+                                        PartialGradAccMeshWorkerExecutable,
+                                        hlo_proto, strategy_config,
+                                        self.grad_sync_channel_ids)
+        else:
+            self.compiled = compiled
+            self.grad_sync_channel_ids = self.grad_sync_channel_ids
+
+    def launch_on_driver(self, *args, **kwargs):
+        """Launch the executable on the driver."""
+        assert 'skip_grad_sync' in kwargs,\
+            'Partial grad acc mesh executable missing kwargs "skip_grad_sync"'
+        skip_grad_sync = kwargs['skip_grad_sync']
+        if not self.physical_mesh.is_distributed:
+            os.environ[self.skip_allreduce_env_name] =\
+                self.grad_sync_channel_ids if skip_grad_sync else ""
+        return super(PartialGradAccMeshDriverExecutable,
+                     self).launch_on_driver(*args, **kwargs)
+
+
+class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
+    """
+    The worker part of a mesh executable that
+    only compute and accumulate grads, but not apply it
+    """
+
+    def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
+                 strategy_config: StrategyConfig, grad_sync_channel_ids: str):
+        super(PartialGradAccMeshWorkerExecutable,
+              self).__init__(worker, uuid, hlo_proto, strategy_config)
+        self.grad_sync_channel_ids = grad_sync_channel_ids
+        self.skip_allreduce_env_name =\
+            self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
+
+    def execute_on_worker(self, input_uuids: List[List[int]],
+                          output_uuids: List[List[int]], skip_grad_sync):
+        """Run the executable on the worker."""
+        os.environ[self.skip_allreduce_env_name] =\
+            self.grad_sync_channel_ids if skip_grad_sync else ""
+        return super(PartialGradAccMeshWorkerExecutable,
+                     self).execute_on_worker(input_uuids, output_uuids)
 
 
 class AllocZeroBufferDriverExecutable:
@@ -799,7 +902,9 @@ class AllocZeroBufferDriverExecutable:
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
+                        physical_mesh,
+                        host_id,
+                        device_id,
                         output_uuids[i][host_id][device_id],
                         dtype=self.out_avals[i].dtype)
         else:

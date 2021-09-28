@@ -153,6 +153,13 @@ def _op_all_gather(builder, operand, replica_groups, channel_id):
     return ret
 
 
+def _op_all_to_all(builder, operand, replica_groups, channel_id):
+    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    ret = ops.AllToAll(operand, 0, 0, len(replica_groups[0]),
+                       replica_groups_protos, channel_id, None, True)
+    return ret
+
+
 def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype,
                            primitive_name):
     """
@@ -165,6 +172,9 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype,
     elif primitive_name == "all-gather":
         in_shape = (shape[0] // len(replica_groups[0]),)
         out_shape = shape
+    elif primitive_name == "all-to-all":
+        in_shape = (shape[0] // len(replica_groups[0]),)
+        out_shape = in_shape
     else:
         raise ValueError("Invalid primitive: " + primitive_name)
 
@@ -195,6 +205,11 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype,
             pass
         else:
             out_buf = _op_all_gather(body, in_buf, replica_groups, channel_id)
+    elif primitive_name == "all-to-all":
+        if in_shape[0] == 0 or out_shape[0] == 0:
+            pass
+        else:
+            out_buf = _op_all_to_all(body, in_buf, replica_groups, channel_id)
     else:
         raise ValueError("Invalid primitive: " + primitive_name)
     counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))

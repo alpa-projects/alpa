@@ -62,10 +62,10 @@ def set_parallelize_options(devices=None,
                             search_logical_mesh_shape=False,
                             mesh_shape_search_mode="cost_model",
                             mesh_shape_search_log_file=None,
+                            num_micro_batches=None,
                             profile_communication=False,
                             cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False,
-                            num_micro_batches=None):
+                            cache_auto_sharding_ilp_solution=False):
     """
     Set the global options for all @parallelize decorator.
 
@@ -82,6 +82,8 @@ def set_parallelize_options(devices=None,
         the logical mesh shape. Possible choices: {"cost_model", "measurement"}.
       mesh_shape_search_log_file (Optional[str]): The file to store measurement records of
         logical mesh shape search.
+      num_micro_batches (int): The number of micro batches in pipeline parallel and gradient
+        accumulation.
       profile_communication (bool): Whether to use the profiled communication cost
         for the auto-sharding pass.
       cache_folder (str): The folder to store cached profiling results and strategies.
@@ -96,10 +98,10 @@ def set_parallelize_options(devices=None,
     global_config.search_logical_mesh_shape = search_logical_mesh_shape
     global_config.mesh_shape_search_mode = mesh_shape_search_mode
     global_config.mesh_shape_search_log_file = mesh_shape_search_log_file
+    global_config.num_micro_batches = num_micro_batches
     global_config.profile_communication = profile_communication
     global_config.cache_folder = cache_folder
     global_config.cache_auto_sharding_ilp_solution = cache_auto_sharding_ilp_solution
-    global_config.num_micro_batches = num_micro_batches
 
 
 # Don't let the compilation on the driver node use GPUs.

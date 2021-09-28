@@ -1,20 +1,19 @@
+import copy
 from functools import partial
 import unittest
-import copy
 
+from flax import linen as nn, optim
 import jax
 from jax._src.tree_util import tree_map
 import jax.numpy as jnp
 import numpy as np
-from parax.testing import assert_allclose
 import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, forward)
 from parax.model.bert_model import BertConfig, FlaxBertLayer
-
-from flax import linen as nn, optim
+from parax.testing import assert_allclose
 
 
 class MLP_Model(nn.Module):
@@ -81,10 +80,8 @@ class PipelineAutoMarkerTest(unittest.TestCase):
             return loss
 
         def train_step(optimizer, batch):
-            param_grad, _x, _y = parax.grad(loss_func,
-                                            argnums=(0, 1, 2))(optimizer.target,
-                                                               batch['x'],
-                                                               batch['y'])
+            param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
+                                               batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer.target
 
@@ -113,10 +110,10 @@ class PipelineAutoMarkerTest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(grad_param)
             return new_optimizer.target
 
-        batch_size = 4
-        seq_len = 64
-        hidden_size = 256
-        num_heads = 4
+        batch_size = 16
+        seq_len = 8
+        hidden_size = 512
+        num_heads = 8
 
         x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
         y = jnp.ones(
@@ -138,8 +135,8 @@ class PipelineAutoMarkerTest(unittest.TestCase):
 
         corr_tgt = train_step(optimizer, batch, model.apply)
         pipelined_train_step = parallelize(train_step)
-        pipe_tgt = pipelined_train_step(deepcopy(optimizer),
-                                        deepcopy(batch), model.apply)
+        pipe_tgt = pipelined_train_step(deepcopy(optimizer), deepcopy(batch),
+                                        model.apply)
         assert_allclose(corr_tgt, pipe_tgt)
 
 

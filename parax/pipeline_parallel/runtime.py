@@ -16,17 +16,16 @@ from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.timer import timers
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-
-timer_names = {"overall": "average",
-               "compute": "sum",
-               "resharding": "sum",
-               "identify_input": "sum",
-               "make_microbatch": "average",
-               }
+timer_names = {
+    "overall": "average",
+    "compute": "sum",
+    "resharding": "sum",
+    "identify_input": "sum",
+    "make_microbatch": "average",
+}
 
 
 def reset_pipeline_runtime_benchmark_timers():
@@ -269,7 +268,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 batch_idx, stage_idx = task
 
                 timers("identify_input").start()
-                inputs = self._identify_stage_inputs(clock, stage_idx, batch_idx)
+                inputs = self._identify_stage_inputs(clock, stage_idx,
+                                                     batch_idx)
                 timers("identify_input").suspend()
 
                 timers("resharding").start()
@@ -278,7 +278,12 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 timers("resharding").suspend()
 
                 timers("compute").start()
-                outputs = self._runnables[stage_idx](*inputs_list)
+                skip_grad_sync = True
+                # TODO(yonghao): only works for GPipeSchedule
+                if stage_idx >= self.num_mesh and batch_idx == 0:
+                    skip_grad_sync = False
+                outputs = self._runnables[stage_idx](
+                    *inputs_list, skip_grad_sync=skip_grad_sync)
                 timers("compute").suspend()
 
                 self._process_stage_outputs(batch_idx, stage_idx, outputs)
@@ -308,8 +313,10 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
     def get_execution_time_costs(self, warmup=2, timer_name="overall"):
         if timer_name not in timer_names:
-            raise RuntimeError("Unrecognized timer name for pipeline parallel runtime. "
-                               "Query timer name from the following: {}.".format(timer_names.keys()))
+            raise RuntimeError(
+                "Unrecognized timer name for pipeline parallel runtime. "
+                "Query timer name from the following: {}.".format(
+                    timer_names.keys()))
         return timers(timer_name).costs[warmup:]
 
     def _prepare_env(self, *inputs, batch_dim=0):
@@ -430,7 +437,7 @@ def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
     """
     Generate dependency matrix marks compute grad and apply grad
     """
-    d = np.zeros([num_stage, num_stage], dtype=np.int)
+    d = np.zeros((num_stage, num_stage), dtype=np.int32)
     for i in range(mesh_num * 2 - 1):
         d[i + 1][i] = 1
     for i in range(mesh_num):

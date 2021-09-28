@@ -82,7 +82,7 @@ class AccumulateGradTest(unittest.TestCase):
 
         def train_step(optimizer, batch):
             param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
-                                                  batch['y'])
+                                               batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer.target
 

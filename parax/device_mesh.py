@@ -196,8 +196,8 @@ class MeshHostWorker:
                 communication_size = array_size * (num_devices -
                                                    1) / num_devices
             elif primitive_name == "all-to-all":
-                communication_size = array_size * (num_devices -
-                                                   1) / num_devices / num_devices
+                communication_size = array_size * (
+                    num_devices - 1) / num_devices / num_devices
                 penalty_factor = num_devices // 2
                 communication_size *= penalty_factor
             else:
@@ -251,8 +251,9 @@ class MeshHostWorker:
         to_send = to_cupy(src_buffer[tuple(offset)])
         logger.debug(
             ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
-            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx, to_send.shape,
-                                       to_send.dtype, to_send[0]))
+            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
+                                       to_send.shape, to_send.dtype,
+                                       to_send[0]))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -270,8 +271,9 @@ class MeshHostWorker:
 
         # Hao: if the following line cannot print, meaning NCCL hangs...
         logger.debug(
-            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}.".
-                format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype, to_recv[0]))
+            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
+            .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
+                    to_recv[0]))
         recv_tensor = to_jax_tensor(to_recv)
 
         # 0-copy version
@@ -1039,7 +1041,10 @@ def _device_mesh_put(device_mesh, shards):
     pt = 0
     for host_id in range(device_mesh.num_hosts):
         for device_id in range(device_mesh.num_devices_per_host):
-            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id, dtype=shards[pt].dtype)
+            buf_ref = RemoteBufferRef(device_mesh,
+                                      host_id,
+                                      device_id,
+                                      dtype=shards[pt].dtype)
             if global_config.use_dummy_value_for_benchmarking:
                 device_mesh.workers[host_id].put_non_zero_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)

@@ -104,7 +104,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             allow_all_gather = global_config.allow_all_gather
             allow_all_to_all = global_config.allow_all_to_all
 
-            if logical_mesh.id_mesh.shape[0] > 1 and logical_mesh.id_mesh.shape[1] > 1:
+            if logical_mesh.id_mesh.shape[0] > 1 and logical_mesh.id_mesh.shape[
+                    1] > 1:
                 # in 2d mesh, force the batch tensor dim to match the first mesh dim
                 force_batch_dim_to_mesh_dim = 0
             else:

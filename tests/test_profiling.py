@@ -42,7 +42,6 @@ class ProfilingTest(unittest.TestCase):
                                          verbose=False)
         physical_mesh.shutdown()
 
-
     @unittest.skip("temporarily disabled")
     def test_loading_profiling_result(self):
         device_cluster = DeviceCluster()

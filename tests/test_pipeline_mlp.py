@@ -56,9 +56,8 @@ class PipelineMLPTest(unittest.TestCase):
             if use_manual_pipeline:
                 loss_func = manual_pipeline(loss_func)
 
-            grad_param = jax.grad(loss_func)(optimizer.target,
-                                                          batch['x'],
-                                                          batch['y'])
+            grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
+                                             batch['y'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param

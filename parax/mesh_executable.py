@@ -130,10 +130,14 @@ def get_sync_func_worker(worker):
 class NormalMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a normal mesh executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 compiled: XlaExecutable, strategy_config: StrategyConfig,
-                 avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool], flop_count: Optional[int]=None):
+    def __init__(self,
+                 physical_mesh: "PhysicalDeviceMesh",
+                 compiled: XlaExecutable,
+                 strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray],
+                 out_avals: Sequence[ShapedArray],
+                 donated_invars: Sequence[bool],
+                 flop_count: Optional[int] = None):
         from parax.shard_parallel.auto_sharding import get_input_output_sharding_specs
 
         self.physical_mesh = physical_mesh
@@ -306,10 +310,7 @@ def delete_donated_buffers(buffer_dict, uuids):
 class NormalMeshWorkerExecutable:
     """The worker part of a normal mesh executable."""
 
-    def __init__(self,
-                 worker: "MeshHostWorker",
-                 uuid: int,
-                 hlo_proto: bytes,
+    def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig):
         from parax.shard_parallel.auto_sharding import (
             compile_with_given_strategy, HloProtoStatus)
@@ -319,9 +320,11 @@ class NormalMeshWorkerExecutable:
         assert num_devices == len(worker.backend.devices())
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
 
-        self.compiled = compile_with_given_strategy(
-            worker.backend, xla_computation, strategy_config, num_devices,
-            False, hlo_proto_status)
+        self.compiled = compile_with_given_strategy(worker.backend,
+                                                    xla_computation,
+                                                    strategy_config,
+                                                    num_devices, False,
+                                                    hlo_proto_status)
         self.buffer_dict = worker.buffers
 
         # Set up timers
@@ -371,16 +374,20 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
 class GradAccMeshDriverExecutable:
     """The driver part of a gradient accumulation mesh executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 accumulate_grad: XlaExecutable, apply_grad: XlaExecutable,
-                 strategy_config: StrategyConfig, avals: Sequence[ShapedArray],
+    def __init__(self,
+                 physical_mesh: "PhysicalDeviceMesh",
+                 accumulate_grad: XlaExecutable,
+                 apply_grad: XlaExecutable,
+                 strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  grad_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+                 donated_invars: Sequence[bool],
+                 batch_invars: Sequence[bool],
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
                  num_micro_batches: int,
-                 flop_count: Optional[int]=None):
+                 flop_count: Optional[int] = None):
         from parax.shard_parallel.auto_sharding import (
             get_input_output_sharding_specs, make_replicated_spec)
 
@@ -595,7 +602,8 @@ class GradAccMeshDriverExecutable:
             # Call accumulate_grad multiple times
             tmp_input_bufs = [input_bufs[i] for i in self.accumulate_grad_invar_indices] +\
                             grad_bufs
-            os.environ[self.skip_allreduce_env_name] = self.grad_sync_channel_ids
+            os.environ[
+                self.skip_allreduce_env_name] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
                 if i != 0:
                     # Feed in the data of the next batch

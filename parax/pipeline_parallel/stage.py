@@ -352,7 +352,7 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     result_stages = []
     current_stage = None
 
-    from parax.pipeline_parallel.manual_pipeline import log_jaxpr
+    from parax.pipeline_parallel.manual_layer_slicing import log_jaxpr
     log_jaxpr(closed_jaxpr, "new_jaxpr")
 
     for eqn in closed_jaxpr.jaxpr.eqns:

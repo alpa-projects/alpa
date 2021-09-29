@@ -15,7 +15,7 @@ from jax.interpreters import xla
 
 from ..util import slices_to_jaxpr
 from .primitive_def import mark_pipeline
-from .manual_pipeline import manual_layer_slicing
+from .manual_layer_slicing import manual_layer_slicing
 
 gpu_backend = xc.get_local_backend("gpu")
 

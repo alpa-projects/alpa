@@ -253,6 +253,7 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    (256,  224, 50,  256, 4, "fp32", 8,  1,  1,  False, False),
     (32,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
     (64,   224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
     (16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),

@@ -210,7 +210,8 @@ def compile_with_given_strategy(backend,
                                 num_devices,
                                 bypass_device_assignment_check,
                                 hlo_proto_status,
-                                rewrite_for_grad_acc=False):
+                                rewrite_for_grad_acc=False,
+                                rewrite_grad_acc_indices=None):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
@@ -257,6 +258,12 @@ def compile_with_given_strategy(backend,
 
     run_backend_codegen = not bypass_device_assignment_check
 
+    if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
+        rewrite_grad_acc_indices = tuple(
+            range(
+                len(xla_computation.program_shape().result_shape().tuple_shapes(
+                ))))
+
     with XlaPassContext({
             # Build options
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
@@ -269,6 +276,7 @@ def compile_with_given_strategy(backend,
             "auto_sharding::load_solution_vector": True,
             "auto_sharding::solution_vector": to_int_tuple(solution_vector),
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
+            "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
 
             # Device mesh
             "auto_sharding::device_mesh_ids": tuple(range(num_devices)),

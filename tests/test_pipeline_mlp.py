@@ -37,9 +37,6 @@ class PipelineMLPTest(unittest.TestCase):
 
             @nn.compact
             def __call__(self, x):
-                # FIXME (zhuohan): if don't require the gradient of x here, the
-                #                  backward pass of the pipeline start will not
-                #                  be generated.
                 mark_pipeline(name='1', mark_type='start')
                 x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
                 x = nn.relu(x)
@@ -59,8 +56,7 @@ class PipelineMLPTest(unittest.TestCase):
             if use_manual_pipeline:
                 loss_func = manual_pipeline(loss_func)
 
-            grad_param, grad_x = jax.grad(loss_func,
-                                          argnums=(0, 1))(optimizer.target,
+            grad_param = jax.grad(loss_func)(optimizer.target,
                                                           batch['x'],
                                                           batch['y'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient

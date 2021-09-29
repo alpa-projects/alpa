@@ -60,6 +60,8 @@ class MeshHostWorker:
         self.local_devices = self.backend.local_devices()
         self.buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
+        self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
+        self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         set_override_backend(self.backend)
 
     ##### Buffer Related Functions #####
@@ -113,8 +115,8 @@ class MeshHostWorker:
     def delete_executable(self, uuid: int):
         del self.executables[uuid]
 
-    def run_executable(self, uuid: int, *args):
-        self.executables[uuid].execute_on_worker(*args)
+    def run_executable(self, uuid: int, *args, **kwargs):
+        self.executables[uuid].execute_on_worker(*args, **kwargs)
 
     def get_exec_total_allocation_size(self, uuid: int):
         return self.executables[uuid].get_total_allocation_size()
@@ -276,6 +278,33 @@ class MeshHostWorker:
             xla_buffer_to_jax_buffer(self.buffers[uuid]), recv_tensor,
             start_indices)
         self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
+        return True
+
+    def put_resharding_send_task(self, uuid, tasks, group_name):
+        self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+        return True
+
+    def put_resharding_recv_task(self, uuid, tasks, group_name):
+        self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+        return True
+
+    def run_resharding_send_task(self, uuid, buf_uuids):
+        task = self.send_tasks[uuid]
+        for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
+            self.send_tile(buf_uuid,
+                           *tile_detail,
+                           group_name=task['group_name'])
+        return True
+
+    def run_resharding_recv_task(self, uuid, buf_uuids):
+        task = self.recv_tasks[uuid]
+        for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
+            self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
+            for recv_subtask in recv_detail[-1]:
+                self.recv_tile(buf_uuid,
+                               recv_detail[0],
+                               *recv_subtask,
+                               group_name=task['group_name'])
         return True
 
 
@@ -1032,7 +1061,10 @@ def _device_mesh_put(device_mesh, shards):
     pt = 0
     for host_id in range(device_mesh.num_hosts):
         for device_id in range(device_mesh.num_devices_per_host):
-            buf_ref = RemoteBufferRef(device_mesh, host_id, device_id, dtype=shards[pt].dtype)
+            buf_ref = RemoteBufferRef(device_mesh,
+                                      host_id,
+                                      device_id,
+                                      dtype=shards[pt].dtype)
             if global_config.use_dummy_value_for_benchmarking:
                 device_mesh.workers[host_id].put_non_zero_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)

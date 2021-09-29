@@ -11,7 +11,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, forward)
+                   DeviceCluster, automatic_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.testing import assert_allclose
 
@@ -73,7 +73,7 @@ class PipelineAutoMarkerTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
         batch = {'x': x, 'y': y}
 
-        @partial(forward, layer_num=2, use_pipeline=True)
+        @partial(automatic_layer_slicing, layer_num=2, use_pipeline=True)
         def loss_func(params, x, y):
             out = model.apply(params, x)
             loss = jnp.mean((out - y)**2)
@@ -97,7 +97,7 @@ class PipelineAutoMarkerTest(unittest.TestCase):
 
         def train_step(optimizer, batch, apply_fn):
 
-            @partial(forward, layer_num=2, use_pipeline=True)
+            @partial(automatic_layer_slicing, layer_num=2, use_pipeline=True)
             def loss_func(params, x, y, attention_mask):
                 out = apply_fn(params, x, attention_mask)
                 loss = jnp.mean((out - y)**2)

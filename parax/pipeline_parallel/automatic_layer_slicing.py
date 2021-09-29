@@ -15,7 +15,7 @@ from jax.interpreters import xla
 
 from ..util import slices_to_jaxpr
 from .primitive_def import mark_pipeline
-from .manual_pipeline import manual_pipeline
+from .manual_layer_slicing import manual_layer_slicing
 
 gpu_backend = xc.get_local_backend("gpu")
 
@@ -145,16 +145,16 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
     return list(reversed(reversed_sliced_eqns))
 
 
-def forward(fn: Callable,
-            layer_num: int,
-            eps: float = 0,
-            use_pipeline: bool = False,
-            use_remat: bool = False):
+def automatic_layer_slicing(fn: Callable,
+                            layer_num: int,
+                            eps: float = 0,
+                            use_pipeline: bool = False,
+                            use_remat: bool = False):
     ''''''
     if use_remat or use_pipeline:
 
         @wraps(fn)
-        @manual_pipeline
+        @manual_layer_slicing
         def wrapped(*args):
             origin_jaxpr = make_jaxpr(fn)(*args)
             solution = slice_jaxpr(origin_jaxpr, layer_num, eps)

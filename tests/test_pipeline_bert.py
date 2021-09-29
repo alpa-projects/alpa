@@ -9,7 +9,7 @@ from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_pipeline)
+                   DeviceCluster, manual_layer_slicing)
 from parax.testing import assert_allclose
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 
@@ -64,7 +64,7 @@ class PipelineBERTTest(unittest.TestCase):
                 return loss
 
             if use_manual_pipeline:
-                loss_func = manual_pipeline(loss_func)
+                loss_func = manual_layer_slicing(loss_func)
 
             grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
                                              batch['y'],

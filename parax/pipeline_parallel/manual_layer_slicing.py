@@ -16,7 +16,7 @@ def log_jaxpr(jaxpr, name):
         f.write(repr(jaxpr))
 
 
-def manual_pipeline(fn: Callable, static_argnums=()):
+def manual_layer_slicing(fn: Callable, static_argnums=()):
 
     @wraps(fn)
     def wrapped(*args):

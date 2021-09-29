@@ -58,7 +58,7 @@ def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
     return train_step
 
 
-def benchmark_transformer_one_case(benchmark_case, use_profiling):
+def benchmark_transformer_one_case(benchmark_case):
     print_used_time(None)
 
     # Model configs
@@ -70,7 +70,6 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = False
     if num_micro_batches > 1:
-        global_config.num_micro_batches = num_micro_batches
         grad_func = parax.grad
     else:
         grad_func = jax.grad
@@ -79,7 +78,9 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     # 3D parallel always run atop a Ray cluster.
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_mesh()
-    set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
+    set_parallelize_options(devices=virtual_mesh,
+                            strategy="3d_parallel",
+                            num_micro_batches=num_micro_batches)
 
     # Prepare input batch
     batch = {
@@ -113,10 +114,11 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     costs = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
 
+    print(costs)
     # Log benchmark results
     heads = ["Type", "Model Config", "Parallel Config", "# Microbatch", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:5]), str(benchmark_case[5:]),
-             f"{benchmark_case[9]:.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+             f"{benchmark_case[8]:.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
     write_tsv(heads, values, "result_trans.tsv")
 
     executable.shutdown()
@@ -126,15 +128,15 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
     (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 1, False, False),
-    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 1, False, False),
-    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False, False),
-    (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False, False),
-    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
+    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
+    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    # (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False, False),
+    # (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False, False),
+    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
 ]
 
 benchmark_suite_8_gpu = [
@@ -160,12 +162,10 @@ def benchmark_all(use_profiling):
 
     for case in benchmark_suites[num_gpus]:
         # Backup global config
-        old_global_config = copy.deepcopy(global_config.__dict__)
-
-        benchmark_transformer_one_case(case, use_profiling)
-
+        backup = global_config.backup()
+        benchmark_transformer_one_case(case)
         # Restore global config
-        global_config.__dict__ = old_global_config
+        global_config.restore(backup)
 
 
 if __name__ == "__main__":

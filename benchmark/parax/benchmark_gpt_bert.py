@@ -145,7 +145,7 @@ def benchmark_model_one_case(benchmark_case):
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
-    set_parallelize_options(devices=logical_mesh)
+    set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
     # Load profiling results
     if args.use_profiling:

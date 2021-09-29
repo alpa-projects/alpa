@@ -394,14 +394,19 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             for j in range(self.num_mesh):
                 if i < j:
                     self._collective_groups[i][j].destroy()
+
         # Recycle the recompiled runnables
         del self._runnables
+
         # Destroy the Ray workers
         if not self.physical_meshes:
             raise RuntimeError("No physical meshes spawned yet in "
                                "the runtime before shutting down.")
         for mesh in self.physical_meshes:
             mesh.shutdown()
+
+        # reset all timers
+        reset_pipeline_runtime_benchmark_timers()
 
 
 def gen_linear_dependency(num_stage):

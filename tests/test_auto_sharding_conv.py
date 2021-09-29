@@ -223,7 +223,8 @@ def suite():
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
+    suite.addTest(
+        AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
 
     return suite
 

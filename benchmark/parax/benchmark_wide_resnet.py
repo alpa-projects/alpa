@@ -157,7 +157,7 @@ def benchmark_model_one_case(benchmark_case):
         global_config.prefer_reduce_scatter = False
     else:
         use_grad_acc = False
-        global_config.prefer_reduce_scatter = False
+        global_config.prefer_reduce_scatter = True
         num_micro_batches = None
 
     if args.local:
@@ -248,20 +248,28 @@ def benchmark_model_one_case(benchmark_case):
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (16,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
+    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
 ],
 
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (32,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
-    (64,   224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
-    (16,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
+    (256,  224, 50,  256, 4, "fp32", 8,  1,  1,  False, False),
+    (64,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
+    (128,  224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
+    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
 ],
+}
 
+oom_benchmark_suite = {  # key = number of gpus, value = a list of cases
+8: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  True,  False),
+],
 }
 
 benchmark_suites = {
     "default": default_benchmark_suite,
+    "oom": oom_benchmark_suite,
 }
 
 
@@ -296,7 +304,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="wide_resnet")
     parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
-    parser.add_argument("--suite", choices=["default"], default="default")
+    parser.add_argument("--suite", choices=["default", "oom"], default="default",
+        help="The benchmark suite")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
     args = parser.parse_args()

@@ -8,10 +8,11 @@ import numpy as np
 import ray
 from flax import optim
 
-from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster, mark_pipeline, manual_pipeline)
+from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
+                   mark_pipeline, manual_pipeline)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import (write_tsv)
+from parax.util import write_tsv
 
 GB = 1024 ** 3
 

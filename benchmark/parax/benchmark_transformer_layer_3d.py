@@ -9,11 +9,10 @@ import ray
 from functools import partial
 
 import parax
-from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster, mark_pipeline, manual_pipeline,
-                   forward)
+from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
+                   mark_pipeline, manual_pipeline, forward)
 from parax.model.bert_model import BertConfig, FlaxBertLayerCollection, TrainState
-from parax.util import (write_tsv, list_gpu_info,
-                        print_used_time)
+from parax.util import write_tsv, list_gpu_info, print_used_time
 
 MB = 1024 ** 2
 GB = 1024 ** 3
@@ -128,15 +127,10 @@ def benchmark_transformer_one_case(benchmark_case):
 
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
     (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
     (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
     (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (32,  1024, 1536, 4,  1536//96,  2,  1, 2, 1, False, False),
-    # (32,  1024, 1536, 4,  1536//96,  2,  1, 4, 1, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
 ]
 
 benchmark_suite_8_gpu = [

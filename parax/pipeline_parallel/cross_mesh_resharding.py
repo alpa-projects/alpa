@@ -13,7 +13,7 @@ from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 class VirtualDistributedArray:

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import parax
-from parax.pipeline_parallel.manual_pipeline import manual_pipeline
+from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing
 from parax.pipeline_parallel.stage import (
     apply_grad_add_marker, compute_to_acc_pipe, apply_grad_get_mean,
     get_var_mapping, slice_closed_jaxpr_by_full_pipeline_marks,
@@ -48,7 +48,7 @@ batch = {"x": x, "y": y}
 grad_in_to_out = None
 
 
-@manual_pipeline
+@manual_layer_slicing
 def loss_func(params, x, y):
     out = model.apply(params, x)
     loss = jnp.mean((out - y)**2)

@@ -295,34 +295,71 @@ class MeshHostWorker:
         self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
         return True
 
-    def run_resharding_send_task(self, uuid, buf_uuids, profiling=False):
+    def run_resharding_send_task(self, uuid, buf_uuids):
         task = self.send_tasks[uuid]
-        if profiling:
-            tic = time.time()
         for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             self.send_tile(buf_uuid,
                            *tile_detail,
                            group_name=task['group_name'])
-        if profiling:
-            cost = time.time() - tic
-            return cost
         return True
 
-    def run_resharding_recv_task(self, uuid, buf_uuids, profiling=False):
+    def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
         task = self.recv_tasks[uuid]
-        if profiling:
-            tic = time.time()
         for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
-            self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
+            if set_empty_buffer:
+                self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
             for recv_subtask in recv_detail[-1]:
                 self.recv_tile(buf_uuid,
                                recv_detail[0],
                                *recv_subtask,
                                group_name=task['group_name'])
-        if profiling:
-            cost = time.time() - tic
-            return cost
         return True
+
+    def run_resharding_send_task_profiling(self,
+                                           uuid,
+                                           buf_uuids,
+                                           warmup=1,
+                                           repeat=3,
+                                           number=3,
+                                           sync=False):
+        for _ in range(warmup):
+            self.run_resharding_send_task(uuid, buf_uuids)
+        costs = []
+        if sync:
+            self.sync()
+        for _ in range(repeat):
+            tic = time.time()
+            for _ in range(number):
+                self.run_resharding_send_task(uuid, buf_uuids)
+            if sync:
+                self.sync()
+            costs.append((time.time() - tic) / number)
+        return np.mean(costs)
+
+    def run_resharding_recv_task_profiling(self,
+                                           uuid,
+                                           buf_uuids,
+                                           warmup=1,
+                                           repeat=3,
+                                           number=3,
+                                           sync=False):
+        for i in range(warmup):
+            self.run_resharding_recv_task(uuid,
+                                          buf_uuids,
+                                          set_empty_buffer=(i == 0))
+        costs = []
+        if sync:
+            self.sync()
+        for _ in range(repeat):
+            tic = time.time()
+            for _ in range(number):
+                self.run_resharding_recv_task(uuid,
+                                              buf_uuids,
+                                              set_empty_buffer=False)
+            if sync:
+                self.sync()
+            costs.append((time.time() - tic) / number)
+        return np.mean(costs)
 
 
 class PhysicalDeviceMesh:

@@ -4,7 +4,7 @@ from jax._src.api import make_jaxpr
 import jax.numpy as jnp
 import ray
 
-from parax import DeviceCluster, manual_pipeline, mark_pipeline
+from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 
 
@@ -40,7 +40,7 @@ def train_step(optimizer, batch, apply_fn):
         mark_pipeline(name='2', mark_type='end')
         return loss
 
-    loss_func = manual_pipeline(loss_func)
+    loss_func = manual_layer_slicing(loss_func)
     grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
                                        batch['y'], batch['attention_mask'])
 
@@ -48,7 +48,7 @@ def train_step(optimizer, batch, apply_fn):
     return grad_param
 
 Inc = 1
-batch_size = 2000 * Inc
+batch_size = 2 * Inc
 seq_len = 64 * Inc
 hidden_size = 256 * Inc
 num_heads = 1
@@ -87,7 +87,6 @@ stages = mark_missing_vars_in_pipeline_marks(stages,
 # for stage in stages:
 #     print(stage.closed_jaxpr())
 
-from parax.timer import timers
 '''----------------profile cost c----------------'''
 # round = 1
 # physical_mesh = DeviceCluster().get_physical_mesh()

@@ -329,13 +329,15 @@ class ReshardingTask:
         for worker, task in sender_tasks.items():
             uuid = next_resharding_task_uuid()
             self.send_worker_task_ids[worker] = uuid
-            task_dones.append(worker.put_resharding_send_task.remote(uuid, task, group_name))
+            task_dones.append(
+                worker.put_resharding_send_task.remote(uuid, task, group_name))
 
         self.recv_worker_task_ids = dict()
         for worker, task in receiver_tasks.items():
             uuid = next_resharding_task_uuid()
             self.recv_worker_task_ids[worker] = uuid
-            task_dones.append(worker.put_resharding_recv_task.remote(uuid, task, group_name))
+            task_dones.append(
+                worker.put_resharding_recv_task.remote(uuid, task, group_name))
         ray.get(task_dones)
 
     def do_prepared(self, src_array, profiling=False):
@@ -353,8 +355,10 @@ class ReshardingTask:
                 receiver]
             receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
                 receiver]
-            result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
-                                         receiver_device_id, dtype=dtype)
+            result_buf = RemoteBufferRef(self.dst_mesh,
+                                         receiver_host_id,
+                                         receiver_device_id,
+                                         dtype=dtype)
             recv_buf_uuids[receiver_worker].append(result_buf.uuid)
             device_str_to_buf_map[receiver] = result_buf
 
@@ -366,10 +370,24 @@ class ReshardingTask:
             send_buf_uuids[sender_worker].append(send_buf.uuid)
 
         results = []
-        for worker, uuid in self.send_worker_task_ids.items():
-            results.append(worker.run_resharding_send_task.remote(uuid, send_buf_uuids[worker], profiling))
-        for worker, uuid in self.recv_worker_task_ids.items():
-            results.append(worker.run_resharding_recv_task.remote(uuid, recv_buf_uuids[worker], profiling))
+        if profiling:
+            for worker, uuid in self.send_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_send_task_profiling.remote(
+                        uuid, send_buf_uuids[worker]))
+            for worker, uuid in self.recv_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_recv_task_profiling.remote(
+                        uuid, recv_buf_uuids[worker]))
+        else:
+            for worker, uuid in self.send_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_send_task.remote(
+                        uuid, send_buf_uuids[worker]))
+            for worker, uuid in self.recv_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_recv_task.remote(
+                        uuid, recv_buf_uuids[worker]))
         results = ray.get(results)
 
         for i, device_str in enumerate(

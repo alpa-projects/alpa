@@ -9,7 +9,7 @@ from jax import linear_util as lu, disable_jit
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
-from jax.lib import xla_bridge as xb, xla_client as xc
+from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
 
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
@@ -160,7 +160,8 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     backend = xb.get_backend("gpu")
     built = jaxpr_to_hlo_computation(name, ClosedJaxpr(jaxpr, consts),
                                      donated_invars, backend)
-    #print(built.as_hlo_text())
+    flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(
+        built.as_hlo_module())
 
     # Compile a XLA executable
     if strategy_config is None:
@@ -188,9 +189,13 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
     # Compile a mesh executable
-    compiled = NormalMeshDriverExecutable(physical_mesh, compiled,
-                                          strategy_config, avals, out_avals,
-                                          donated_invars)
+    compiled = NormalMeshDriverExecutable(physical_mesh,
+                                          compiled,
+                                          strategy_config,
+                                          avals,
+                                          out_avals,
+                                          donated_invars,
+                                          flop_count=flop_count)
     return compiled.get_driver_callable()
 
 
@@ -221,6 +226,10 @@ def shard_parallel_internal_gradient_accumulation(
     name = f"{fun.__name__}_shard_parallel"
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
                                      backend)
+    flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(
+        built.as_hlo_module())
+    flop_count *= num_micro_batches
+
     hlo_protos, strategy_config = compile_with_search(
         backend,
         built,
@@ -267,11 +276,19 @@ def shard_parallel_internal_gradient_accumulation(
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
     # Compile them to a single mesh executable
-    mesh_executable = GradAccMeshDriverExecutable(
-        physical_mesh, accumulate_grad, apply_grad, strategy_config, in_avals,
-        out_avals, grad_avals, donated_invars, batch_invars,
-        accumulate_grad_invar_indices, apply_grad_invar_indices,
-        num_micro_batches)
+    mesh_executable = GradAccMeshDriverExecutable(physical_mesh,
+                                                  accumulate_grad,
+                                                  apply_grad,
+                                                  strategy_config,
+                                                  in_avals,
+                                                  out_avals,
+                                                  grad_avals,
+                                                  donated_invars,
+                                                  batch_invars,
+                                                  accumulate_grad_invar_indices,
+                                                  apply_grad_invar_indices,
+                                                  num_micro_batches,
+                                                  flop_count=flop_count)
     return mesh_executable.get_driver_callable()
 
 

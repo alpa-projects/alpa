@@ -197,6 +197,11 @@ class MeshHostWorker:
                                               time_cost)
                 communication_size = array_size * (num_devices -
                                                    1) / num_devices
+            elif primitive_name == "all-to-all":
+                communication_size = array_size * (
+                    num_devices - 1) / num_devices / num_devices
+                penalty_factor = num_devices // 2
+                communication_size *= penalty_factor
             else:
                 raise ValueError("Invalid primitive: " + primitive_name)
 
@@ -248,8 +253,9 @@ class MeshHostWorker:
         to_send = to_cupy(src_buffer[tuple(offset)])
         logger.debug(
             ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
-            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx, to_send.shape,
-                                       to_send.dtype, to_send[0]))
+            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
+                                       to_send.shape, to_send.dtype,
+                                       to_send[0]))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -267,8 +273,9 @@ class MeshHostWorker:
 
         # Hao: if the following line cannot print, meaning NCCL hangs...
         logger.debug(
-            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}.".
-                format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype, to_recv[0]))
+            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
+            .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
+                    to_recv[0]))
         recv_tensor = to_jax_tensor(to_recv)
 
         # 0-copy version
@@ -659,6 +666,8 @@ class PhysicalDeviceMesh:
             self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict
         elif primitive_name == "all-gather":
             self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
+        elif primitive_name == "all-to-all":
+            pass
         else:
             raise ValueError("Invalid primitive_name: " + primitive_name)
 
@@ -736,7 +745,7 @@ class LogicalDeviceMesh:
 
     def all_to_all_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
-        penalty_factor = 1.5
+        penalty_factor = num_devices / 2
         return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
                 (num_devices - 1) / num_devices / num_devices * num_bytes *
                 penalty_factor + 0.001)

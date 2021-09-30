@@ -135,6 +135,10 @@ class ResNet(nn.Module):
 
 
 model_configs = {
+    0: {
+        "stage_sizes": [],
+        "block_cls": ResNetBlock
+    },
     18: {
         "stage_sizes": [2, 2, 2, 2],
         "block_cls": ResNetBlock

@@ -7,7 +7,7 @@ For each type of mesh executable, there is a driver part and a worker part.
 """
 import logging
 import os
-from typing import List, Sequence, Tuple
+from typing import List, Sequence, Tuple, Optional
 
 import numpy as np
 import ray
@@ -130,16 +130,21 @@ def get_sync_func_worker(worker):
 class NormalMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a normal mesh executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 compiled: XlaExecutable, strategy_config: StrategyConfig,
-                 avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool]):
+    def __init__(self,
+                 physical_mesh: "PhysicalDeviceMesh",
+                 compiled: XlaExecutable,
+                 strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray],
+                 out_avals: Sequence[ShapedArray],
+                 donated_invars: Sequence[bool],
+                 flop_count: Optional[int] = None):
         from parax.shard_parallel.auto_sharding import get_input_output_sharding_specs
 
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
         self.donated_invars = donated_invars
+        self.flop_count = flop_count
 
         # Read sharding specs
         hlo_module = compiled.hlo_modules()[0]
@@ -305,10 +310,7 @@ def delete_donated_buffers(buffer_dict, uuids):
 class NormalMeshWorkerExecutable:
     """The worker part of a normal mesh executable."""
 
-    def __init__(self,
-                 worker: "MeshHostWorker",
-                 uuid: int,
-                 hlo_proto: bytes,
+    def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig):
         from parax.shard_parallel.auto_sharding import (
             compile_with_given_strategy, HloProtoStatus)
@@ -318,9 +320,11 @@ class NormalMeshWorkerExecutable:
         assert num_devices == len(worker.backend.devices())
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
 
-        self.compiled = compile_with_given_strategy(
-            worker.backend, xla_computation, strategy_config, num_devices,
-            False, hlo_proto_status)
+        self.compiled = compile_with_given_strategy(worker.backend,
+                                                    xla_computation,
+                                                    strategy_config,
+                                                    num_devices, False,
+                                                    hlo_proto_status)
         self.buffer_dict = worker.buffers
 
         # Set up timers
@@ -370,15 +374,20 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
 class GradAccMeshDriverExecutable:
     """The driver part of a gradient accumulation mesh executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 accumulate_grad: XlaExecutable, apply_grad: XlaExecutable,
-                 strategy_config: StrategyConfig, avals: Sequence[ShapedArray],
+    def __init__(self,
+                 physical_mesh: "PhysicalDeviceMesh",
+                 accumulate_grad: XlaExecutable,
+                 apply_grad: XlaExecutable,
+                 strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  grad_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+                 donated_invars: Sequence[bool],
+                 batch_invars: Sequence[bool],
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
-                 num_micro_batches: int):
+                 num_micro_batches: int,
+                 flop_count: Optional[int] = None):
         from parax.shard_parallel.auto_sharding import (
             get_input_output_sharding_specs, make_replicated_spec)
 
@@ -391,6 +400,7 @@ class GradAccMeshDriverExecutable:
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
         self.apply_grad_invar_indices = apply_grad_invar_indices
         self.num_micro_batches = num_micro_batches
+        self.flop_count = flop_count
 
         # Read sharding specs
         logical_mesh_shape = strategy_config.logical_mesh_shape
@@ -538,9 +548,12 @@ class GradAccMeshDriverExecutable:
                 .reshape(len(input_bufs), num_hosts, num_devices_per_host)\
                 .transpose([1, 0, 2])
 
-            next_batch_uuids = get_uuid_np_array(next_batch_bufs)\
-                .reshape(len(next_batch_bufs), num_hosts, num_devices_per_host)\
-                .transpose([1, 0, 2])
+            if next_batch_bufs:
+                next_batch_uuids = get_uuid_np_array(next_batch_bufs)\
+                    .reshape(len(next_batch_bufs), num_hosts, num_devices_per_host)\
+                    .transpose([1, 0, 2])
+            else:
+                next_batch_uuids = (None,) * num_hosts
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = next_remote_buffer_uuid(num_hosts * num_outs * num_devices_per_host)\
@@ -589,7 +602,8 @@ class GradAccMeshDriverExecutable:
             # Call accumulate_grad multiple times
             tmp_input_bufs = [input_bufs[i] for i in self.accumulate_grad_invar_indices] +\
                             grad_bufs
-            os.environ[self.skip_allreduce_env_name] = self.grad_sync_channel_ids
+            os.environ[
+                self.skip_allreduce_env_name] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
                 if i != 0:
                     # Feed in the data of the next batch
@@ -632,8 +646,7 @@ class GradAccMeshDriverExecutable:
             return ray.get(self.physical_mesh.workers[0].\
                 get_exec_total_allocation_size.remote(self.exec_uuid))
         else:
-            return max(self.accumulate_grad.total_allocation_size(),
-                       self.apply_grad.total_allocation_size())
+            return self.accumulate_grad.total_allocation_size()
 
     def get_hlo_text(self):
         return self.hlo_text
@@ -746,8 +759,7 @@ class GradAccMeshWorkerExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return max(self.accumulate_grad.total_allocation_size(),
-                   self.apply_grad.total_allocation_size())
+        return self.accumulate_grad.total_allocation_size()
 
     def __del__(self):
         self.accumulate_grad.delete()

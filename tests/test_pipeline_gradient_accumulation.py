@@ -8,7 +8,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, manual_pipeline)
+                   DeviceCluster, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 from parax.testing import assert_allclose
@@ -73,7 +73,7 @@ class AccumulateGradTest(unittest.TestCase):
         optimizer = optim.GradientDescent(1e-2).create(params)
         batch = {'x': x, 'y': y}
 
-        @manual_pipeline
+        @manual_layer_slicing
         def loss_func(params, x, y):
             out = model.apply(params, x)
             loss = jnp.mean((out - y)**2)
@@ -82,7 +82,7 @@ class AccumulateGradTest(unittest.TestCase):
 
         def train_step(optimizer, batch):
             param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
-                                                  batch['y'])
+                                               batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer.target
 
@@ -98,7 +98,7 @@ class AccumulateGradTest(unittest.TestCase):
 
         def train_step(optimizer, batch, apply_fn):
 
-            @manual_pipeline
+            @manual_layer_slicing
             def loss_func(params, x, y, attention_mask):
                 out = apply_fn(params, x, attention_mask)
                 loss = jnp.mean((out - y)**2)
@@ -112,10 +112,10 @@ class AccumulateGradTest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(grad_param)
             return new_optimizer.target
 
-        batch_size = 4
-        seq_len = 64
-        hidden_size = 256
-        num_heads = 4
+        batch_size = 16
+        seq_len = 8
+        hidden_size = 512
+        num_heads = 8
 
         x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
         y = jnp.ones(

@@ -198,8 +198,6 @@ class ReshardingTask:
 
     def do(self):
         """According to the task_spec, launch send/recv operations."""
-        # self.prepare_send_recv_tasks()
-        # return self.do_prepared(self.src_array)
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(

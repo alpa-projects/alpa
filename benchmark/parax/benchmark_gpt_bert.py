@@ -64,7 +64,7 @@ def compute_parameter_count(num_layers, hidden_size, vocab_size):
            ) + vocab_size * (hidden_size + 1)
 
 
-def load_profiling_result():
+def load_profiling_result(physical_mesh):
     filename = physical_mesh.get_signature() + ".prof.pkl"
     if os.path.exists(filename):
         print(f"Load saved profiling results from {filename}")

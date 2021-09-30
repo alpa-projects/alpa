@@ -285,6 +285,10 @@ class MeshHostWorker:
         self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
         return True
 
+    def destroy_collective_group(self, group_name: str = "default"):
+        col.destroy_collective_group(group_name)
+        return True
+
 
 class PhysicalDeviceMesh:
     """

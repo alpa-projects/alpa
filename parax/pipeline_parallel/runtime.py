@@ -87,8 +87,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  dependency,
                  schedule,
                  is_batch,
-                 num_batch=1,
-                 profile=False):
+                 num_batch=1):
         self.stages = pipeline_stages
         self.global_invars = global_invars
         self.grad_dummy_invars = grad_dummy_invars
@@ -411,6 +410,27 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         for var, val in zip(stage.outvars, outputs):
             key = (batch_idx, repr(var))
             self._env[key] = val
+
+    def shutdown(self):
+        """Shutdown the pipeline runtime."""
+        # Recycle the groups an Ray resources
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i < j:
+                    self._collective_groups[i][j].destroy()
+
+        # Recycle the recompiled runnables
+        del self._runnables
+
+        # Destroy the Ray workers
+        if not self.physical_meshes:
+            raise RuntimeError("No physical meshes spawned yet in "
+                               "the runtime before shutting down.")
+        for mesh in self.physical_meshes:
+            mesh.shutdown()
+
+        # reset all timers
+        reset_pipeline_runtime_benchmark_timers()
 
 
 def gen_linear_dependency(num_stage):

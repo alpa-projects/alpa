@@ -14,7 +14,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, forward)
+                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
@@ -44,6 +44,9 @@ def compute_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
     total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
           (1 + seq_len / (6 * hidden_size)) \
           + 6 * batch_size * seq_len * hidden_size * vocab_size
+    # Note: if we use dot to compute forward embedding
+    # then the last term in total_flops should be
+    # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
     tflops = total_flop / latency / num_gpus / 1e12
     return tflops
 
@@ -90,7 +93,7 @@ def get_train_step(grad_func, num_layers, use_remat, dtype):
 
     @parallelize
     def train_step(state, batch, rng_key):
-        @partial(forward, layer_num=num_layers, use_remat=use_remat)
+        @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             logits = state.apply_fn(params,
@@ -129,10 +132,10 @@ def benchmark_model_one_case(benchmark_case):
     global_config.force_data_parallel = force_data_parallel
 
     if num_micro_batches > 1:
-        global_config.num_micro_batches = num_micro_batches
-        global_config.prefer_reduce_scatter = False
         grad_func = parax.grad
+        global_config.prefer_reduce_scatter = False
     else:
+        num_micro_batches = None
         grad_func = jax.grad
         global_config.prefer_reduce_scatter = True
 

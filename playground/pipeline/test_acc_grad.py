@@ -242,7 +242,7 @@ def test_compute_and_apply(microbatches):
     donate_lists = split_donate_invars(all_donation, all_invars, jax_all_stages,
                                        pattern)
     pipe_donate = donate_lists[:slice_num * 2]
-    apply_donate = donate_lists[:slice_num * 2:]
+    apply_donate = donate_lists[slice_num * 2:]
     # Simulation:
     # correct result:
     args, _ = tree_flatten((optimizer, batch))

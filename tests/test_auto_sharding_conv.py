@@ -14,7 +14,7 @@ from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceM
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
-from test_auto_sharding_mlp import assert_close, assert_all_replicated
+from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
 
 
 class TrainState(train_state.TrainState):
@@ -49,11 +49,23 @@ def assert_data_parallel_cost(state,
     # Check number of communication primitives
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
-    assert n_all_reduce == 1 + num_batch_norm * 2
-    assert n_total == n_all_reduce
 
-    for weight in params:
-        assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
+    if global_config.prefer_reduce_scatter:
+        assert n_all_reduce == num_batch_norm * 2
+        assert n_reduce_scatter == 2
+        assert n_all_gather == 1
+        assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
+    else:
+        assert n_all_reduce == 1 + num_batch_norm * 2
+        assert n_total == n_all_reduce
+
+    if global_config.prefer_reduce_scatter:
+        for weight in params:
+            if len(weight.shape) > 1:
+                assert is_sharded(weight)
+    else:
+        for weight in params:
+            assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
 
 
 class AutoShardingConvTest(unittest.TestCase):
@@ -93,6 +105,10 @@ class AutoShardingConvTest(unittest.TestCase):
                                 use_bias=use_bias)(x)
                     x = nn.BatchNorm(use_running_average=not train)(x)
                     x = nn.relu(x)
+                    x = nn.max_pool(x,
+                                    window_shape=(2, 2),
+                                    strides=(1, 1),
+                                    padding="SAME")
                 return x
 
         @parallelize
@@ -123,7 +139,7 @@ class AutoShardingConvTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        tx = optax.sgd(0.1)
+        tx = optax.sgd(0.1, momentum=0.9)
         state = TrainState.create(apply_fn=model.apply,
                                   params=params["params"],
                                   tx=tx,
@@ -152,10 +168,63 @@ class AutoShardingConvTest(unittest.TestCase):
 
             assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
 
+    def test_n_layer_conv_model_parallel(self):
+        batch_size = 8
+        image_size = 16
+        num_layers = 4
+        channel = 1024
+
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            state, hlo_ir, objective = self.run_n_layer_conv(
+                num_layers, batch_size, image_size, channel, device_mesh)
+
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
+                count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+
+            assert n_all_reduce == num_layers - 1
+            assert n_total == n_all_reduce
+
+    def test_n_layer_conv_2d_mesh(self):
+        batch_size = 16
+        image_size = 64
+        num_layers = 4
+        channel = 8
+
+        # Test on different device meshes
+        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
+        state, hlo_ir, objective = self.run_n_layer_conv(
+            num_layers, batch_size, image_size, channel, device_mesh)
+
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
+            count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+
+    def test_n_layer_conv_data_parallel_reduce_scatter(self):
+        batch_size = 16
+        image_size = 64
+        num_layers = 3
+        channel = 4
+
+        global_config.prefer_reduce_scatter = True
+
+        # Test on different device meshes
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            state, hlo_ir, objective = self.run_n_layer_conv(
+                num_layers, batch_size, image_size, channel, device_mesh)
+
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
+            return
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
+    suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
+    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
+    suite.addTest(
+        AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
 
     return suite
 

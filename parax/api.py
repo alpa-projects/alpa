@@ -185,7 +185,13 @@ def clear_callable_cache():
 
 
 def grad(*args, **kwargs):
-    """The same as jax.grad, but inserts a gradient marker after the gradient computation."""
+    """The same as jax.grad, but inserts a gradient marker after the gradient computation.
+
+    This function annotates all gradient tensors. This information is used to perform
+    gradient accumulation transformation.
+    If any auxilary tensors are returned, they are averaged over mini batches in the same
+    way as how the gradients are averaged.
+    """
 
     def ret(*call_args, **call_kwargs):
         func = api.grad(*args, **kwargs)

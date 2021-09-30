@@ -8,8 +8,8 @@ import numpy as np
 import ray
 from flax import optim
 
-from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
-                   mark_pipeline, manual_pipeline)
+from parax import (parallelize, global_config, set_parallelize_options,
+                   DeviceCluster, mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import write_tsv
@@ -117,7 +117,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         # grad = jax.grad(loss_func)(params)
         # new_optimizer = optimizer.apply_gradient(grad)
         if pipeline_mp_size > 1:
-            loss_func = manual_pipeline(loss_func)
+            loss_func = manual_layer_slicing(loss_func)
 
         grad = jax.grad(loss_func, argnums=(0))(optimizer.target)
         # new_optimizer = optimizer.apply_gradient(grad)
@@ -277,7 +277,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=5)
+    parser.add_argument("--niter", type=int, default=10)
     args = parser.parse_args()
 
     ray.init(address="auto")

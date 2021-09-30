@@ -9,7 +9,7 @@ from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_pipeline)
+                   DeviceCluster, manual_layer_slicing)
 from parax.testing import assert_allclose
 
 MB = 1024**2
@@ -37,9 +37,6 @@ class PipelineMLPTest(unittest.TestCase):
 
             @nn.compact
             def __call__(self, x):
-                # FIXME (zhuohan): if don't require the gradient of x here, the
-                #                  backward pass of the pipeline start will not
-                #                  be generated.
                 mark_pipeline(name='1', mark_type='start')
                 x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
                 x = nn.relu(x)
@@ -57,12 +54,10 @@ class PipelineMLPTest(unittest.TestCase):
                 return loss
 
             if use_manual_pipeline:
-                loss_func = manual_pipeline(loss_func)
+                loss_func = manual_layer_slicing(loss_func)
 
-            grad_param, grad_x = jax.grad(loss_func,
-                                          argnums=(0, 1))(optimizer.target,
-                                                          batch['x'],
-                                                          batch['y'])
+            grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
+                                             batch['y'])
             # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param

@@ -288,16 +288,23 @@ class MeshHostWorker:
         self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
         return True
 
-    def run_resharding_send_task(self, uuid, buf_uuids):
+    def run_resharding_send_task(self, uuid, buf_uuids, profiling=False):
         task = self.send_tasks[uuid]
+        if profiling:
+            tic = time.time()
         for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             self.send_tile(buf_uuid,
                            *tile_detail,
                            group_name=task['group_name'])
+        if profiling:
+            cost = time.time() - tic
+            return cost
         return True
 
-    def run_resharding_recv_task(self, uuid, buf_uuids):
+    def run_resharding_recv_task(self, uuid, buf_uuids, profiling=False):
         task = self.recv_tasks[uuid]
+        if profiling:
+            tic = time.time()
         for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
             for recv_subtask in recv_detail[-1]:
@@ -305,6 +312,9 @@ class MeshHostWorker:
                                recv_detail[0],
                                *recv_subtask,
                                group_name=task['group_name'])
+        if profiling:
+            cost = time.time() - tic
+            return cost
         return True
 
 

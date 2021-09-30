@@ -43,9 +43,6 @@ class PipelineBERTTest(unittest.TestCase):
                                             dtype=self.dtype)
 
             def __call__(self, x, attention_mask):
-                # FIXME (zhuohan): if don't require the gradient of x here, the
-                #                  backward pass of the pipeline start will not
-                #                  be generated.
                 mark_pipeline(name='1', mark_type='start')
                 layer_outputs = self.layer0(x, attention_mask)
                 x = layer_outputs[0]

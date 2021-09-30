@@ -336,7 +336,7 @@ class ReshardingTask:
             task_dones.append(worker.put_resharding_recv_task.remote(uuid, task, group_name))
         ray.get(task_dones)
 
-    def do_prepared(self, src_array):
+    def do_prepared(self, src_array, profiling=False):
         send_buf_uuids = {host: list() for host in self.src_mesh.workers}
         recv_buf_uuids = {host: list() for host in self.dst_mesh.workers}
 
@@ -363,12 +363,12 @@ class ReshardingTask:
                 self.task_spec.src.device_str_to_flat_index[sender]]
             send_buf_uuids[sender_worker].append(send_buf.uuid)
 
-        task_dones = []
+        results = []
         for worker, uuid in self.send_worker_task_ids.items():
-            task_dones.append(worker.run_resharding_send_task.remote(uuid, send_buf_uuids[worker]))
+            results.append(worker.run_resharding_send_task.remote(uuid, send_buf_uuids[worker], profiling))
         for worker, uuid in self.recv_worker_task_ids.items():
-            task_dones.append(worker.run_resharding_recv_task.remote(uuid, recv_buf_uuids[worker]))
-        ray.get(task_dones)
+            results.append(worker.run_resharding_recv_task.remote(uuid, recv_buf_uuids[worker], profiling))
+        results = ray.get(results)
 
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):
@@ -380,6 +380,8 @@ class ReshardingTask:
         dst_array = DistributedArray(self.dst_mesh, self.src_array.aval,
                                      self.task_spec.dst_sharding_spec, bufs,
                                      self.task_spec.dst_indices)
+        if profiling:
+            return results
         return dst_array
 
 

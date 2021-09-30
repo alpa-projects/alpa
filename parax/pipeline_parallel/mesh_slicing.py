@@ -117,7 +117,7 @@ def dummy_resharding_strategy(spec: ReshardingTaskSpec):
     return strategy
 
 
-def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
+def profile_layer_cost_e(src: JaxPipelineStage, dst: JaxPipelineStage,
                          src_outvar_sharding_spec, dst_invar_sharding_spec,
                          src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
                          collective_group: CollectiveGroup):
@@ -127,7 +127,7 @@ def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
     global_config.use_dummy_value_for_benchmarking = True
     tasks = []
     src_phy_mesh = collective_group.src_mesh
-    for idx, invar in enumerate(dest.invars):
+    for idx, invar in enumerate(dst.invars):
         if invar in src_outvars:
             out_sharding_spec = src_outvar_sharding_spec[src_outvars[invar]]
             in_sharding_spec = dst_invar_sharding_spec[idx]
@@ -151,7 +151,15 @@ def profile_layer_cost_e(src: JaxPipelineStage, dest: JaxPipelineStage,
             tasks.append(task)
 
     for task in tasks:
-        task.do()
+        task.prepare_send_recv_tasks()
+    src_phy_mesh.sync_workers()
+    collective_group.dst_mesh.sync_workers()
+    for _ in range(10):
+        results = []
+        for task in tasks:
+            results.append(task.do_prepared(task.src_array, True))
+
+    tot_cost = sum([max(result) for result in results])
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost

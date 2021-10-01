@@ -18,16 +18,27 @@ from parax.pipeline_parallel.stage import JaxPipelineStage
 ########################################
 
 
+def merge_invar_donation(layers, mixed_jaxpr, donate_invars_list):
+    '''
+    Merge invar donation for invars of layers to the merged stage.
+    '''
+    can_donate = set()
+    for layer, donate_invars in zip(layers, donate_invars_list):
+        can_donate.update(
+            [var for var, donate in zip(layer.invars, donate_invars) if donate])
+    mixed_donation = [
+        i for i, var in enumerate(mixed_jaxpr.jaxpr.invars) if var in can_donate
+    ]
+    return mixed_donation
+
+
 def split_sharding_specs(layers: Sequence[JaxPipelineStage],
                          mixed_jaxpr: ClosedJaxpr, in_sharding_specs,
                          out_sharding_specs):
     '''
-    split sharding specs of layers. Some intermediate sharding specs are missed,
+    Split sharding specs of layers. Some intermediate sharding specs are missed,
     but they do not cross mesh so this does not matter.
     '''
-
-    def map_or_none(var, ref):
-        return ref[var] if var in ref else None
 
     in_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.invars, in_sharding_specs))
     out_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.outvars, out_sharding_specs))
@@ -35,20 +46,24 @@ def split_sharding_specs(layers: Sequence[JaxPipelineStage],
     layer_out_sharding_specs = []
     for layer in layers:
         layer_in_sharding_specs.append(
-            [map_or_none(var, in_sharding_dict) for var in layer.invars])
+            [in_sharding_dict.get(var, None) for var in layer.invars])
         layer_out_sharding_specs.append(
-            [map_or_none(var, out_sharding_dict) for var in layer.outvars])
+            [out_sharding_dict.get(var, None) for var in layer.outvars])
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
-                                     mesh: PhysicalDeviceMesh):
+def compile_and_profile_layer_cost_c(
+        layers: Sequence[JaxPipelineStage], mesh: PhysicalDeviceMesh,
+        donate_invars_list: Sequence[Sequence[bool]],
+        global_used_list: Sequence[Sequence[bool]]):
     """
     Args:
         layers (Sequence[JaxPipelineStage]): forward and corresponding backward
         mesh (PhysicalDeviceMesh): the assigned mesh
+        donate_invars_list (Sequence[Sequence[bool]]): donate_invar of each layer
+        global_used_list (Sequence[Sequence[bool]]): for each layer, record if each
+            outvar is used outside the compiled layers
     """
-    import jax.numpy as jnp
     backup_config = global_config.backup()
 
     global_config.num_micro_batches = None
@@ -60,11 +75,12 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     outvars = set()
     eqns = []
     consts_dir = {}
-    for stage in layers:
+    for stage, global_used in zip(layers, global_used_list):
         consts_dir.update(stage.consts_dir)
         # Do not add local invars into the invars
         invars.update([var for var in stage.invars if var not in outvars])
-        outvars.update(stage.outvars)
+        outvars.update(
+            [var for var, used in zip(stage.outvars, global_used) if used])
         eqns += stage.eqns
     jaxpr = Jaxpr(
         constvars=list(consts_dir.keys()),
@@ -74,11 +90,13 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     )
     mixed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     fn = jaxpr_as_fun(mixed_jaxpr)
-    compiled_fn = parallelize(fn)
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
-    executable = compiled_fn(*args, __return_value_mode='get_executable')
+    donate_argnums = merge_invar_donation(layers, mixed_jaxpr,
+                                          donate_invars_list)
+    executable = parallelize(
+        fn, donate_argnums=donate_argnums).get_executable(*args)
     ret = executable.profile_with_dummy_inputs()
 
     global_config.restore(backup_config)

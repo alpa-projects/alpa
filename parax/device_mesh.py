@@ -27,9 +27,9 @@ from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWor
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
-from parax.util import (get_dim_last_value, list_gpu_info, GB, to_cupy,
-                        to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
-                        jax_buffer_to_xla_buffer)
+from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
+                        to_cupy, to_jax_tensor, jax_buffer_set,
+                        xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -289,11 +289,9 @@ class MeshHostWorker:
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
-        return True
 
     def put_resharding_recv_task(self, uuid, tasks, group_name):
         self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
-        return True
 
     def run_resharding_send_task(self, uuid, buf_uuids):
         task = self.send_tasks[uuid]
@@ -322,18 +320,9 @@ class MeshHostWorker:
                                            repeat=3,
                                            number=3,
                                            sync=False):
-        for _ in range(warmup):
-            self.run_resharding_send_task(uuid, buf_uuids)
-        costs = []
-        if sync:
-            self.sync()
-        for _ in range(repeat):
-            tic = time.time()
-            for _ in range(number):
-                self.run_resharding_send_task(uuid, buf_uuids)
-            if sync:
-                self.sync()
-            costs.append((time.time() - tic) / number)
+        run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
+        sync_fn = self.sync if sync else None
+        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
 
     def run_resharding_recv_task_profiling(self,
@@ -343,22 +332,15 @@ class MeshHostWorker:
                                            repeat=3,
                                            number=3,
                                            sync=False):
-        for i in range(warmup):
-            self.run_resharding_recv_task(uuid,
-                                          buf_uuids,
-                                          set_empty_buffer=(i == 0))
-        costs = []
-        if sync:
-            self.sync()
-        for _ in range(repeat):
-            tic = time.time()
-            for _ in range(number):
-                self.run_resharding_recv_task(uuid,
-                                              buf_uuids,
-                                              set_empty_buffer=False)
-            if sync:
-                self.sync()
-            costs.append((time.time() - tic) / number)
+        set_empty_buffer = True
+
+        def run_fn():
+            nonlocal set_empty_buffer
+            self.run_resharding_recv_task(uuid, buf_uuids, set_empty_buffer)
+            set_empty_buffer = False
+
+        sync_fn = self.sync if sync else None
+        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
 
 

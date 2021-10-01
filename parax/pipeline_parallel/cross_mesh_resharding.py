@@ -317,7 +317,7 @@ class ReshardingTask:
 
                     indices_in_dst_tile = indices_in_dst_tiles[i]
                     receiver_subtasks.append(
-                        [indices_in_dst_tile, sender_rank, sender_gpu_idx])
+                        (indices_in_dst_tile, sender_rank, sender_gpu_idx))
                 receiver_task.append(receiver_subtasks)
 
                 receiver_tasks[receiver_worker].append(receiver_task)

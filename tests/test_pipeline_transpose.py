@@ -19,11 +19,11 @@ class PipelineTransposeTest(unittest.TestCase):
             return x
 
         x = np.random.rand(2, 4)
-        print(x)
+        # print(x)
         no_jit_result = f(x)
         jit_result = jax.jit(f)(x)
-        print(no_jit_result)
-        print(jit_result)
+        # print(no_jit_result)
+        # print(jit_result)
         assert_allclose(no_jit_result, jit_result)
 
 

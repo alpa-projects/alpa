@@ -43,9 +43,6 @@ class PipelineBERTTest(unittest.TestCase):
                                             dtype=self.dtype)
 
             def __call__(self, x, attention_mask):
-                # FIXME (zhuohan): if don't require the gradient of x here, the
-                #                  backward pass of the pipeline start will not
-                #                  be generated.
                 mark_pipeline(name='1', mark_type='start')
                 layer_outputs = self.layer0(x, attention_mask)
                 x = layer_outputs[0]
@@ -100,16 +97,13 @@ class PipelineBERTTest(unittest.TestCase):
         pipelined_train_step = parallelize(
             donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
                 optimizer, batch, apply_fn, use_manual_pipeline=True))
-        executable = pipelined_train_step.get_executable(optimizer, {
+        args = (optimizer, {
             "x": x,
             "y": y,
             "attention_mask": attention_mask
         }, model.apply)
-        gradients_with_pipeline = executable.run(optimizer, {
-            "x": x,
-            "y": y,
-            "attention_mask": attention_mask
-        }, model.apply)
+        executable = pipelined_train_step.get_executable(*args)
+        gradients_with_pipeline = pipelined_train_step(*args)
         assert_allclose(gradients, gradients_with_pipeline)
         executable.shutdown()
 

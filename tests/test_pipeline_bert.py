@@ -100,12 +100,18 @@ class PipelineBERTTest(unittest.TestCase):
         pipelined_train_step = parallelize(
             donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
                 optimizer, batch, apply_fn, use_manual_pipeline=True))
-        gradients_with_pipeline = pipelined_train_step(optimizer, {
+        executable = pipelined_train_step.get_executable(optimizer, {
+            "x": x,
+            "y": y,
+            "attention_mask": attention_mask
+        }, model.apply)
+        gradients_with_pipeline = executable.run(optimizer, {
             "x": x,
             "y": y,
             "attention_mask": attention_mask
         }, model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
+        executable.shutdown()
 
     def test_2_layer_bert_local_pipeline_parallel(self):
         self.train_2_layer_bert(self.devices, "local_pipeline_parallel")

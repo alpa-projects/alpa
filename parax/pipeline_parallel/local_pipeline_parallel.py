@@ -129,6 +129,10 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
                     sender_runner.del_var(var)
         return global_outvals_list
 
+    ret_func.shutdown = lambda: None
+    ret_func.get_executable = lambda: ret_func
+    ret_func.run = ret_func
+
     return ret_func
 
 

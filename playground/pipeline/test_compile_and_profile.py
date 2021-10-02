@@ -73,6 +73,24 @@ batch = {"x": x, "y": y, "attention_mask": attention_mask}
 origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch,
                                                            model.apply)
 
+def dummy_large_trans(*args):
+    @manual_layer_slicing
+    def dummy_fwd(x, y, z, tgt):
+        mark_pipeline(name='1', mark_type='start')
+        out = x @ y
+        mark_pipeline(name='1', mark_type='end')
+        mark_pipeline(name='2', mark_type='start')
+        out = out @ z
+        loss = jnp.mean((out - tgt) ** 2)
+        mark_pipeline(name='2', mark_type='end')
+        return loss
+    grad = jax.grad(dummy_fwd)(*args)
+    return grad
+N = 16384
+args = [jnp.zeros((N, N)) for _ in range(4)]
+
+origin_jaxpr = make_jaxpr(dummy_large_trans)(*args)
+
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)

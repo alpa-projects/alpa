@@ -319,7 +319,7 @@ class MeshHostWorker:
                                            warmup=1,
                                            repeat=3,
                                            number=3,
-                                           sync=False):
+                                           sync=True):
         run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
@@ -331,7 +331,7 @@ class MeshHostWorker:
                                            warmup=1,
                                            repeat=3,
                                            number=3,
-                                           sync=False):
+                                           sync=True):
         set_empty_buffer = True
 
         def run_fn():

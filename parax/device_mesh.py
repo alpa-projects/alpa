@@ -313,13 +313,14 @@ class MeshHostWorker:
                                group_name=task['group_name'])
         return True
 
+    # TODO(yonghao): the sync function should be carefully reconsidered
     def run_resharding_send_task_profiling(self,
                                            uuid,
                                            buf_uuids,
                                            warmup=1,
                                            repeat=3,
                                            number=3,
-                                           sync=True):
+                                           sync=False):
         run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
@@ -331,7 +332,7 @@ class MeshHostWorker:
                                            warmup=1,
                                            repeat=3,
                                            number=3,
-                                           sync=True):
+                                           sync=False):
         set_empty_buffer = True
 
         def run_fn():

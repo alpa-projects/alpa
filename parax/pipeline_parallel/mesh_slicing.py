@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Sequence, Tuple
+from typing import Sequence, Set, Tuple
 
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Jaxpr, jaxpr_as_fun
@@ -13,9 +13,53 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
     as VDA)
 from parax.pipeline_parallel.stage import JaxPipelineStage
 
+
 ########################################
 ##### Profile tools
 ########################################
+def split_global_use_and_donate(layers, layer_indices,
+                                all_invars: Sequence[Set['Var']],
+                                not_donated_global_invars: Set['Var'],
+                                global_outvars: Set['Var']):
+    '''
+    This function pessimisticly get outvars used in global and
+    invars donated for the layer group.
+    Actually we can process each (fwd-bwd) together just like
+    what in three_d_parallel, but this is designed to support not only
+    (fwd-bwd) group, but also many layers.
+    Args:
+        layers (Sequence[JaxPipelineStage]): selected layers
+        layer_indices (Set[int]): indices of selected layers, they are
+        assumed to be in the same stage
+        all_invars (Sequence[Set[Var]]): invars of each stage(layer) in order
+        not_donated_global_invars (Set[Var]): not donated global invars
+        global_outvars (Set[Var]): donated outvars
+    Returns:
+        donate_invars_list, global_used_list:
+            see compile_and_profile_layer_cost_c
+    '''
+    layer_indices = set(layer_indices)
+    num_layers = len(all_invars)
+    donate_invars_list = []
+    global_used_list = []
+    used = set(global_outvars)
+    local_used = set()  # limit donation
+    for idx in reversed(range(num_layers)):
+        if idx in layer_indices:
+            donate_invars = []
+            global_used = []
+            layer = layers[-1 * (len(donate_invars_list) + 1)]
+            donate_invars = [
+                not (var in not_donated_global_invars or var in used or
+                     var in local_used) for var in layer.invars
+            ]
+            global_used = [var in used for var in layer.outvars]
+            donate_invars_list.append(donate_invars)
+            global_used_list.append(global_used)
+            local_used.update(layer.invars)
+            continue
+        used.update(all_invars[idx])
+    return list(reversed(donate_invars_list)), list(reversed(global_used_list))
 
 
 def merge_invar_donation(layers, mixed_jaxpr, donate_invars_list):
@@ -174,10 +218,9 @@ def profile_layer_cost_e(src: JaxPipelineStage, dst: JaxPipelineStage,
         task.prepare_send_recv_tasks()
     src_phy_mesh.sync_workers()
     collective_group.dst_mesh.sync_workers()
-    for _ in range(10):
-        results = []
-        for task in tasks:
-            results.append(task.do_prepared(task.src_array, True))
+    results = []
+    for task in tasks:
+        results.append(task.do_prepared(task.src_array, True))
 
     tot_cost = sum([max(result) for result in results])
 
@@ -190,7 +233,7 @@ def profile_layer_cost_e(src: JaxPipelineStage, dst: JaxPipelineStage,
 ########################################
 def get_mesh_slicing_configs(
         grid: VirtualMesh, layers,
-        B) -> Tuple[List[np.ndarray], np.ndarray, List[List[int]]]:
+        B) -> Tuple[Sequence[np.ndarray], np.ndarray, Sequence[Sequence[int]]]:
     '''
     TODO(yonghao, zhuohan): mesh slicing and layer allocation algorithm
     Args:

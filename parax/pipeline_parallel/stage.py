@@ -728,7 +728,7 @@ def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
         # handle pipe end
         pipe_end = stage.eqns[-1]
         assert (pipe_end.primitive is pipeline_p and
-                pipe_end.params['mark_type'] is 'end'
+                pipe_end.params['mark_type'] == 'end'
                ), 'stage not ended by a pipeline marker'
         new_pipe_end = dce_pipe_marker(pipe_end, global_used)
         new_eqns.append(new_pipe_end)
@@ -744,7 +744,7 @@ def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
         # handle pipe start
         pipe_start = stage.eqns[0]
         assert (pipe_start.primitive is pipeline_p and
-                pipe_start.params['mark_type'] is 'start'
+                pipe_start.params['mark_type'] == 'start'
                ), 'stage not started by a pipeline marker'
         new_pipe_start = dce_pipe_marker(pipe_start, local_used)
         new_eqns.append(new_pipe_start)

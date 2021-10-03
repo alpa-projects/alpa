@@ -11,6 +11,7 @@ from jax.interpreters.pxla import Replicated
 
 from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -268,7 +269,9 @@ class ReshardingTask:
             recv_done_ref = receiver_worker.recv_tile.remote(
                 result_buf.uuid, result_buf.device_id, indices_in_dst_tile,
                 sender_rank, sender_gpu_idx, self.collective_group.group_name)
-            ray.get([send_done_ref, recv_done_ref])
+
+            if global_config.pipeline_aggressively_sync:
+                ray.get([send_done_ref, recv_done_ref])
         return result_buf
 
 

@@ -34,6 +34,9 @@ class GlobalConfig:
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
+        ########## Options for pipeline runtime ##########
+        self.pipeline_aggressively_sync = True
+
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.

@@ -1,6 +1,7 @@
 """Cross mesh resharding for pipeline parallelism."""
 from dataclasses import dataclass
 from typing import List
+import logging
 
 import numpy as np
 import ray
@@ -11,14 +12,15 @@ from jax.interpreters.pxla import Replicated
 from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 
-resharding_task_counter = 0
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
+resharding_task_counter = 0
 
 def next_resharding_task_uuid():
     global resharding_task_counter
     resharding_task_counter = (resharding_task_counter + 1) % (1 << 60)
     return resharding_task_counter
-
 
 class VirtualDistributedArray:
     """
@@ -484,6 +486,7 @@ class CollectiveGroup:
         # generate a group name
         self.group_name = ",".join(self.device_strs)
 
+        self._destroyed = False
         self._debug_check()
 
         # construct a device str -> rank: (process_rank, gpu_index) map
@@ -529,8 +532,27 @@ class CollectiveGroup:
         col.create_collective_group(self.mesh_workers, **options)
 
     def destroy(self):
-        """TODO(Hao): destory the gropu upon exit."""
-        raise NotImplementedError()
+        """Destroy the nccl collective group at exit."""
+        logger.debug("Recycling the collective group: {}.".format(self.group_name))
+        for worker in self.mesh_workers:
+            # This remote call will remove ray named actors (hence it is necessary)
+            ret = ray.get(worker.destroy_collective_group.remote(self.group_name))
+        # Destroy the declared named actor in ray
+
+        # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+        name = "info_" + self.group_name
+        try:
+            store =ray.get_actor(name)
+            ray.kill(store)
+        except ValueError:
+            pass
+        self._destroyed = True
+
+    def __del__(self):
+        if not self._destroyed:
+            self.destroy()
+            self._destroyed = True
+        return
 
     def _debug_check(self):
         all_device_strs = self.src_mesh.device_strs + self.dst_mesh.device_strs

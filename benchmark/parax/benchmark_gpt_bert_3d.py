@@ -5,18 +5,14 @@ import copy
 import jax
 import jax.numpy as jnp
 import numpy as np
-import os
-import parax
 import ray
 from flax import optim
 
-from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, mark_pipeline, manual_layer_slicing)
+from parax import (parallelize, global_config, set_parallelize_options,
+                   DeviceCluster, mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import (write_tsv, list_gpu_info, benchmark_func,
-                        count_communication_primitives)
-from parax.pipeline_parallel.runtime import timer_names
+from parax.util import write_tsv
 
 GB = 1024 ** 3
 
@@ -199,7 +195,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     #     nonlocal optimizer
     #     train_step(optimizer, batch, rngkey, model.apply)
 
-    timer_name = "process_output"
+    timer_name = "overall"
     costs = executable.get_execution_time_costs(timer_name=timer_name)
     real_mem = -1
     objective = -1
@@ -236,7 +232,7 @@ benchmark_suite_1_gpu = [
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
 
-    (2,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
+    (8,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
     # (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
     # (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
 ]

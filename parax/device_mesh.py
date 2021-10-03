@@ -343,6 +343,9 @@ class MeshHostWorker:
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
 
+    def destroy_collective_group(self, group_name: str = "default"):
+        col.destroy_collective_group(group_name)
+        return True
 
 class PhysicalDeviceMesh:
     """

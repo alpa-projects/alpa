@@ -7,19 +7,24 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 
 import flax
-from flax import optim
+from flax import optim, linen as nn
+from flax.training import train_state
 from flax.linen.attention import dot_product_attention_weights
 from flax.linen.initializers import lecun_normal
-import flax.linen as nn
 import jax
 from jax import lax
 import jax.numpy as jnp
+from jax.nn import one_hot
 
 from parax.model.bert_model import (FlaxBaseModelOutput,
                                     FlaxBaseModelOutputWithPooling,
                                     FlaxBertAttention, FlaxBertEmbeddings,
                                     FlaxBertIntermediate, FlaxBertLayer,
                                     FlaxBertOutput, FlaxMaskedLMOutput)
+
+
+class TrainState(train_state.TrainState):
+    dynamic_scale: optim.DynamicScale
 
 
 class MoEConfig:
@@ -65,7 +70,7 @@ class MoEConfig:
         self.expert_number = expert_number
 
 
-def top2gating(gates):  # [GSE] -> [GSEC, GSEC]
+def top2_gating_dummy(gates):  # [GSE] -> [GSEC, GSEC]
     """A temporary dummy implementation."""
     G, S, E = gates.shape
     C = 2 * S // E
@@ -73,6 +78,65 @@ def top2gating(gates):  # [GSE] -> [GSEC, GSEC]
     combined_weights = jnp.broadcast_to(gates, (G, S, E, C))
     dispatch_mask = combined_weights
     return combined_weights, dispatch_mask
+
+
+def top2_gating(gates):  # GSE -> (GSEC, GSEC)
+    """Modified from https://github.com/tensorflow/lingvo/blob/
+    b885b91d4b5361c971a998b810fc58f83baa625f/lingvo/core/gshard_layers.py#L1787
+
+    # TODO(lmzheng): add the auxiliary loss. add 'random' policy for the second expert.
+    """
+    G, S, E = gates.shape
+    C = 2 * S // E
+
+    mask_dtype = jnp.int32
+
+    index_1 = jnp.argmax(gates, axis=-1)  # GS
+    mask_1 = one_hot(index_1, E, dtype=mask_dtype)  # GSE
+    gate_1 = jnp.einsum("GSE,GSE->GS", gates, mask_1)  # GS
+
+    gates_without_top_1 = gates * (1 - mask_1)
+
+    index_2 = jnp.argmax(gates_without_top_1, axis=-1)  # GSE
+    mask_2 = one_hot(index_2, E, dtype=mask_dtype)
+    gate_2 = jnp.einsum("GSE,GSE->GS", gates_without_top_1, mask_2)
+
+    pos_1 = jnp.cumsum(mask_1, axis=-2) - mask_1
+    mask_1 *= pos_1 < C
+    pos_1 = jnp.einsum("GSE,GSE->GS", pos_1, mask_1)
+
+    mask_1_count = jnp.sum(mask_1, axis=-2)
+    mask_1_flat = jnp.sum(mask_1, axis=-1)
+
+    pos_2 = (jnp.cumsum(mask_2, axis=-2) - mask_2) + jnp.expand_dims(
+        mask_1_count, -2)
+    mask_2 *= pos_2 < C
+    pos_2 = jnp.einsum("GSE,GSE->GS", pos_2, mask_2)
+
+    mask_2_flat = jnp.sum(mask_2, axis=-1)
+
+    gate_1 *= mask_1_flat
+    gate_2 *= mask_2_flat
+
+    denom = gate_1 + gate_2
+    denom = jnp.where(denom > 0, denom, jnp.ones_like(denom))
+    gate_1 /= denom
+    gate_2 /= denom
+
+    a = jnp.expand_dims(gate_1 * mask_1_flat, -1) * one_hot(
+        index_1, E, dtype=gates.dtype)
+    b = one_hot(pos_1, C, dtype=gates.dtype)
+    first_part_of_combine_tensor = jnp.einsum("GSE,GSC->GSEC", a, b)
+
+    a = jnp.expand_dims(gate_2 * mask_2_flat, -1) * one_hot(
+        index_2, E, dtype=gates.dtype)
+    b = one_hot(pos_2, C, dtype=gates.dtype)
+    second_part_of_combine_tensor = jnp.einsum("GSE,GSC->GSEC", a, b)
+
+    combined_tensor = first_part_of_combine_tensor + second_part_of_combine_tensor
+    dispatch_tensor = combined_tensor.astype(jnp.bool_)
+
+    return combined_tensor, dispatch_tensor
 
 
 class FlaxPositionWiseMoELayer(nn.Module):
@@ -83,7 +147,6 @@ class FlaxPositionWiseMoELayer(nn.Module):
     @nn.compact
     def __call__(self, inputs):
         S = self.config.expert_group_size
-        M = self.config.hidden_size
         M = self.config.hidden_size
         H = self.config.intermediate_size
         E = self.config.expert_number
@@ -109,8 +172,8 @@ class FlaxPositionWiseMoELayer(nn.Module):
         wo = jnp.asarray(wo, self.dtype)
 
         reshaped_inputs = jnp.reshape(inputs, (-1, S, M))
-        gates = jnp.einsum("GSM,ME->GSE", reshaped_inputs, wg)
-        combined_weights, dispatch_mask = top2gating(gates)
+        gates = jax.nn.softmax(jnp.einsum("GSM,ME->GSE", reshaped_inputs, wg))
+        combined_weights, dispatch_mask = top2_gating(gates)
         dispatched_expert_inputs = jnp.einsum("GSEC,GSM->EGCM", dispatch_mask,
                                               reshaped_inputs)
         h = jnp.einsum("EGCM,EMH->EGCH", dispatched_expert_inputs, wi)

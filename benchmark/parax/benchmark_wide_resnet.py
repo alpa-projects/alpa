@@ -231,8 +231,7 @@ def benchmark_model_one_case(benchmark_case):
     heads = ["Model", "Model Config", "Parallel Config", "Param count", 
              "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
-              f"{param_count/1e9:.3f}",
-              f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
+              f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
               f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")

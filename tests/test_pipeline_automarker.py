@@ -30,10 +30,6 @@ class MLP_Model(nn.Module):
         return x
 
 
-def deepcopy(tgt):
-    return tree_map(lambda x: jnp.array(x), copy.deepcopy(tgt))
-
-
 class BertLayer_Model(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
@@ -88,10 +84,11 @@ class PipelineAutoMarkerTest(unittest.TestCase):
         global_config.num_micro_batches = 4
 
         # copy to prevent from donation
-        corr = train_step(deepcopy(optimizer), deepcopy(batch))
+        corr = train_step(optimizer, batch)
         parallel_train_step = parallelize(train_step)
         new_optimizer = parallel_train_step(optimizer, batch)
         assert_allclose(new_optimizer, corr)
+        parallel_train_step.get_executable(optimizer, batch).shutdown()
 
     def test_2_layer_bert(self):
 
@@ -135,14 +132,15 @@ class PipelineAutoMarkerTest(unittest.TestCase):
 
         corr_tgt = train_step(optimizer, batch, model.apply)
         pipelined_train_step = parallelize(train_step)
-        pipe_tgt = pipelined_train_step(deepcopy(optimizer), deepcopy(batch),
-                                        model.apply)
+        pipe_tgt = pipelined_train_step(optimizer, batch, model.apply)
         assert_allclose(corr_tgt, pipe_tgt)
+        pipelined_train_step.get_executable(optimizer, batch,
+                                            model.apply).shutdown()
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineAutoMarkerTest('test_mlp'))
+    # suite.addTest(PipelineAutoMarkerTest('test_mlp'))
     suite.addTest(PipelineAutoMarkerTest('test_2_layer_bert'))
     return suite
 

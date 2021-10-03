@@ -249,33 +249,38 @@ def optax_adafactor(
     eps: float = 1e-30,
     factored: bool = True,
     weight_decay_mask: Optional[Union[Any, Callable[[Any], Any]]] = None,
-    ):
-  """
+):
+    """
   The same as optax.adafactor but adds the mask for weight decay.
   """
-  from optax._src.alias import combine, clipping, factorized, transform,\
-          _scale_by_learning_rate
+    from optax._src.alias import combine, clipping, factorized, transform,\
+            _scale_by_learning_rate
 
-  # The core of the algorithm is a procedure for rescaling gradients
-  # by a factored estimate of the root mean squared gradients.
-  # This reduces memory compared to algorithms such as Adam or RmsProp,
-  # by not having to hold a separate estimate for each weight.
-  tx = [
-      factorized.scale_by_factored_rms(
-          factored, decay_rate, decay_offset, min_dim_size_to_factor, eps)]
-  # This basic rescaling is typically combined with one or more of the following
-  # transformation (all can be disabled via adafactor's constructor args).
-  if clipping_threshold is not None:
-    tx.append(clipping.clip_by_block_rms(clipping_threshold))
-  if learning_rate is not None:
-    tx.append(_scale_by_learning_rate(learning_rate, flip_sign=False))
-  if multiply_by_parameter_scale:
-    tx.append(transform.scale_by_param_block_rms())
-  if momentum is not None:
-    tx.append(
-        transform.ema(momentum, debias=False, accumulator_dtype=dtype_momentum))
-  if weight_decay_rate is not None:
-    tx.append(transform.add_decayed_weights(weight_decay_rate, mask=weight_decay_mask))
-  # In gradient "descent" we follow the negative gradient.
-  tx.append(transform.scale(-1))
-  return combine.chain(*tx)
+    # The core of the algorithm is a procedure for rescaling gradients
+    # by a factored estimate of the root mean squared gradients.
+    # This reduces memory compared to algorithms such as Adam or RmsProp,
+    # by not having to hold a separate estimate for each weight.
+    tx = [
+        factorized.scale_by_factored_rms(factored, decay_rate, decay_offset,
+                                         min_dim_size_to_factor, eps)
+    ]
+    # This basic rescaling is typically combined with one or more of the following
+    # transformation (all can be disabled via adafactor's constructor args).
+    if clipping_threshold is not None:
+        tx.append(clipping.clip_by_block_rms(clipping_threshold))
+    if learning_rate is not None:
+        tx.append(_scale_by_learning_rate(learning_rate, flip_sign=False))
+    if multiply_by_parameter_scale:
+        tx.append(transform.scale_by_param_block_rms())
+    if momentum is not None:
+        tx.append(
+            transform.ema(momentum,
+                          debias=False,
+                          accumulator_dtype=dtype_momentum))
+    if weight_decay_rate is not None:
+        tx.append(
+            transform.add_decayed_weights(weight_decay_rate,
+                                          mask=weight_decay_mask))
+    # In gradient "descent" we follow the negative gradient.
+    tx.append(transform.scale(-1))
+    return combine.chain(*tx)

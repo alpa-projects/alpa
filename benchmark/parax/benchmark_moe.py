@@ -128,10 +128,11 @@ def benchmark_model_one_case(benchmark_case):
 
     with open("last.hlo", "w") as fout:
         fout.write(hlo_text)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+          f"#all-to-all: {n_all_to_all}")
 
     # Log benchmark results
     num_gpus = mesh_dim0 * mesh_dim1
@@ -154,14 +155,15 @@ def benchmark_model_one_case(benchmark_case):
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,   S,    H,    L,  #head,     V,     S_,  E,  D0, D1, NB, FD,    CK
-    (1,   512,  512, 12, 1024//64,  25600,  512, 4,  1,  1,  1,  False, False),
+    #B,   S,    H,    L,  #head,    V,     S_,   E,  D0, D1, NB, FD,    CK
+    (8,   1024, 1024, 12, 1024//64, 25600, 1024, 4,  1,  1,  1,  False, False),
 ],
 
 4: [
 ],
 
 8: [
+    (16,   1024, 1024, 12, 1024//64, 25600, 1024, 8,  8,  1,  1,  False, False),
 ],
 
 16: [

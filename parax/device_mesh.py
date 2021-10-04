@@ -9,8 +9,10 @@ from typing import List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
+from ray.util import ActorPool
 import ray.util.collective as col
 
+import jax
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
@@ -19,17 +21,19 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
-from jax.lib import xla_client
+from jax.lib import xla_client, xla_bridge
 import jax.numpy as jnp
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
 from parax.monkey_patch import set_override_backend
+from parax.shard_parallel.auto_sharding import compile_with_search
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
-from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
-                        to_cupy, to_jax_tensor, jax_buffer_set,
-                        xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer)
+from parax.util import (benchmark_func, get_dim_last_value,
+                        jaxpr_to_hlo_computation, list_gpu_info, GB, to_cupy,
+                        to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
+                        jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -347,6 +351,64 @@ class MeshHostWorker:
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)
         return True
+
+
+class CompileWorker:
+    """
+    A ray actor to distributedly compile Jaxpr to HLO Proto.
+    To activaite the worker, a gpu resource is required.
+    """
+
+    def __init__(self):
+        self.cnt = 0
+        self.backend = xla_bridge.get_backend("gpu")
+        self.physical_mesh = PhysicalDeviceMesh()
+        pass
+
+    def compile_single_layer_with_search(self, new_global_config, logical_mesh,
+                                         layer, donated_invars, *args):
+        global_config.restore(new_global_config)
+        closed_jaxpr = layer.closed_jaxpr()
+        name = f'profile_{self.cnt}_shard_parallel'
+        self.cnt += 1
+        built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
+                                         self.backend)
+
+        avals = [var.aval for var in layer.invars]
+        out_avals = [var.aval for var in layer.outvars]
+        logical_mesh_choices = [logical_mesh]
+        search_task = None
+        record_file = None
+
+        physical_mesh = PhysicalDeviceMesh(jax.devices(), use_ray=True)
+
+        proto, strategy_config = compile_with_search(
+            self.backend,
+            built,
+            avals,
+            out_avals,
+            donated_invars,
+            physical_mesh,
+            logical_mesh_choices,
+            global_config.mesh_shape_search_mode,
+            search_task,
+            record_file,
+            multiple_stages=False,
+            grad_acc_num_micro_batches=None)
+        return proto, strategy_config
+
+
+class CompileWorkerPool:
+    """wrapped ray.util.ActorPool"""
+    def __init__(self, num_cpus, num_gpus):
+        gpu_per_cpu = num_gpus / num_cpus * 0.5
+        worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
+        self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
+    def push(self, actor):
+        self.pool.push(actor)
+    def pop_idle(self):
+        return self.pool.pop_idle()
+
 
 class PhysicalDeviceMesh:
     """

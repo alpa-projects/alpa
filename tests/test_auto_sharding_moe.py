@@ -38,6 +38,7 @@ class AutoShardingMoETest(unittest.TestCase):
     def run_moe_layer(self, batch_size, seq_len, hidden_size, num_heads, S, E,
                       deterministic, device_mesh):
         set_parallelize_options(devices=device_mesh)
+        dtype = jnp.float32
 
         @parallelize
         def train_step(optimizer, batch, deterministic, apply_fn):
@@ -55,19 +56,20 @@ class AutoShardingMoETest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        hidden_states = jnp.ones((batch_size, seq_len, hidden_size))
+        hidden_states = jnp.ones((batch_size, seq_len, hidden_size),
+                                 dtype=dtype)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-        labels = jnp.ones((batch_size, seq_len, hidden_size))
+        labels = jnp.ones((batch_size, seq_len, hidden_size), dtype=dtype)
 
         # Init model and optimizer
-        model = FlaxMoELayer(
-            MoEConfig(
-                hidden_size=hidden_size,
-                intermediate_size=hidden_size * 4,
-                num_attention_heads=num_heads,
-                expert_group_size=S,
-                expert_number=E,
-            ))
+        model = FlaxMoELayer(MoEConfig(
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            expert_group_size=S,
+            expert_number=E,
+        ),
+                             dtype=dtype)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.Adam(1e-2).create(params)

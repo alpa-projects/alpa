@@ -81,6 +81,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         gradients_with_pipeline = pipelined_train_step(optimizer, x, y,
                                                        model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
+        pipelined_train_step.get_executable(optimizer, x, y, model.apply).shutdown()
 
     def test_tied_embedding_local_pipeline_parallel(self):
         self.train_tied_embedding(self.devices, "local_pipeline_parallel")

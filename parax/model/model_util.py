@@ -1,10 +1,11 @@
 # flake8: noqa
 from collections import OrderedDict
 from dataclasses import fields
-from typing import Any, Tuple, Optional
+from typing import Any, Tuple, Optional, Callable, Union
 
 import flax
 import jaxlib.xla_extension as jax_xla
+import jax.numpy as jnp
 
 
 def is_tensor(x):
@@ -233,3 +234,53 @@ class FlaxMaskedLMOutput(ModelOutput):
 
 def softmax_cross_entropy(logits, labels):
     return -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+
+
+def optax_adafactor(
+    learning_rate: Optional[Any] = None,
+    min_dim_size_to_factor: int = 128,
+    decay_rate: float = 0.8,
+    decay_offset: int = 0,
+    multiply_by_parameter_scale: float = True,
+    clipping_threshold: Optional[float] = 1.0,
+    momentum: Optional[float] = None,
+    dtype_momentum: Any = jnp.float32,
+    weight_decay_rate: Optional[float] = None,
+    eps: float = 1e-30,
+    factored: bool = True,
+    weight_decay_mask: Optional[Union[Any, Callable[[Any], Any]]] = None,
+):
+    """
+  The same as optax.adafactor but adds the mask for weight decay.
+  """
+    from optax._src.alias import combine, clipping, factorized, transform,\
+            _scale_by_learning_rate
+
+    # The core of the algorithm is a procedure for rescaling gradients
+    # by a factored estimate of the root mean squared gradients.
+    # This reduces memory compared to algorithms such as Adam or RmsProp,
+    # by not having to hold a separate estimate for each weight.
+    tx = [
+        factorized.scale_by_factored_rms(factored, decay_rate, decay_offset,
+                                         min_dim_size_to_factor, eps)
+    ]
+    # This basic rescaling is typically combined with one or more of the following
+    # transformation (all can be disabled via adafactor's constructor args).
+    if clipping_threshold is not None:
+        tx.append(clipping.clip_by_block_rms(clipping_threshold))
+    if learning_rate is not None:
+        tx.append(_scale_by_learning_rate(learning_rate, flip_sign=False))
+    if multiply_by_parameter_scale:
+        tx.append(transform.scale_by_param_block_rms())
+    if momentum is not None:
+        tx.append(
+            transform.ema(momentum,
+                          debias=False,
+                          accumulator_dtype=dtype_momentum))
+    if weight_decay_rate is not None:
+        tx.append(
+            transform.add_decayed_weights(weight_decay_rate,
+                                          mask=weight_decay_mask))
+    # In gradient "descent" we follow the negative gradient.
+    tx.append(transform.scale(-1))
+    return combine.chain(*tx)

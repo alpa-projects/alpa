@@ -10,7 +10,7 @@ from functools import partial
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
-                   mark_pipeline, manual_pipeline, forward)
+                   mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayerCollection, TrainState
 from parax.util import write_tsv, list_gpu_info, print_used_time
 
@@ -33,7 +33,6 @@ def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
 
     @parallelize
     def train_step(state, batch, rng_key):
-        @partial(forward, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             if pipeline_mp_size > 1:
@@ -48,7 +47,7 @@ def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
                 mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
             return loss
         if pipeline_mp_size > 1:
-            loss_func = manual_pipeline(loss_func)
+            loss_func = manual_layer_slicing(loss_func)
         # grad, grad_x = jax.grad(loss_func, argnums=(0, 1))(optimizer.target, batch["hidden_states"])
         grad = grad_func(loss_func, argnums=(0))(state.params)
         # new_state = state.apply_gradients(grads=grads)
@@ -127,6 +126,7 @@ def benchmark_transformer_one_case(benchmark_case):
 
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
+    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
     (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
     (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),

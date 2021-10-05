@@ -27,7 +27,6 @@ import jax.numpy as jnp
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
 from parax.monkey_patch import set_override_backend
-from parax.shard_parallel.auto_sharding import compile_with_search
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value,
@@ -367,6 +366,7 @@ class CompileWorker:
 
     def compile_single_layer_with_search(self, new_global_config, logical_mesh,
                                          layer, donated_invars, *args):
+        from parax.shard_parallel.auto_sharding import compile_with_search
         global_config.restore(new_global_config)
         closed_jaxpr = layer.closed_jaxpr()
         name = f'profile_{self.cnt}_shard_parallel'

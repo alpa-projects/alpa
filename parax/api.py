@@ -11,7 +11,6 @@ from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
 from parax.pipeline_parallel.primitive_def import mark_gradient

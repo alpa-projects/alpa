@@ -45,9 +45,7 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_
     return total_cost, res
 
 
-def get_stage_and_mesh_assignments(layers: Sequence[JaxPipelineStage], mesh: VirtualMesh):
-    num_layers = len(layers)
-    num_devices = mesh.total_devices
+def get_submesh_choices(mesh: VirtualMesh):
     num_hosts = mesh.num_hosts
     num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []
@@ -65,5 +63,12 @@ def get_stage_and_mesh_assignments(layers: Sequence[JaxPipelineStage], mesh: Vir
     for i in range(2, num_hosts + 1):
         submesh_choices.append((i, num_devices_per_host))
 
+    return submesh_choices
+
+
+
+def get_stage_and_mesh_assignments(layers: Sequence[JaxPipelineStage], mesh: VirtualMesh):
+    num_layers = len(layers)
+    submesh_choices = get_submesh_choices(mesh)
     submesh_sizes = [np.prod(submesh) for submesh in submesh_choices]
 

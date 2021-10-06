@@ -14,7 +14,7 @@ from parax.pipeline_parallel.three_d_parallel import (
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.mesh_slicing import (
     compile_and_profile_layer_cost_c, split_global_use_and_donate)
-from parax.pipeline_parallel.stage_construction import get_submesh_choices
+from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
@@ -156,4 +156,8 @@ compute_cost = np.array(
 print(compute_cost.shape, (N, N, M))
 print(compute_cost)
 
+cost, solution = dp(N, virtual_mesh.total_devices, batch_size, submesh_choices, compute_cost)
+print("-" * 30, "Solution", "-" * 30)
+print("Cost:", cost)
+print(solution)
 ray.shutdown()

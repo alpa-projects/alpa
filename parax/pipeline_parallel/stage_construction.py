@@ -9,7 +9,7 @@ from parax.device_mesh import VirtualMesh
 
 
 @numba.jit(nopython=True)
-def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, communication_cost, max_stage_cost):
+def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, max_stage_cost):
     # For f, layer ID start from 1
     f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float)
     f_stage_max = np.full((num_layers + 1, num_devices + 1), 0.0, dtype=np.float)
@@ -21,7 +21,7 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_
                 for m, submesh in enumerate(submesh_choices):
                     s = np.prod(submesh)
                     if s <= j:
-                        stage_cost = compute_cost[k, i, m] + communication_cost[k, m]
+                        stage_cost = compute_cost[k - 1, i - 1, m]
                         new_cost = f[k - 1, j - s] + stage_cost
                         if stage_cost <= max_stage_cost and new_cost < f[i, j]:
                             f[i, j] = new_cost
@@ -43,6 +43,26 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_
         current_devices -= np.prod(submesh_choices[submesh_choice])
 
     return total_cost, res
+
+
+def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost):
+    all_possible_stage_costs = np.sort(np.unique(compute_cost))
+    best_cost = np.inf
+    best_solution = None
+    last_max_stage_cost = 0.0
+    gap = 1e-6
+    for max_stage_cost in all_possible_stage_costs:
+        if max_stage_cost * num_microbatches >= best_cost:
+            break
+        if max_stage_cost - last_max_stage_cost < gap:
+            continue
+        cost, solution = dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, max_stage_cost)
+        if solution is not None:
+            solution = reversed(solution)
+        if cost < best_cost:
+            best_cost = cost
+            best_solution = solution
+    return best_cost, best_solution
 
 
 def get_submesh_choices(mesh: VirtualMesh):

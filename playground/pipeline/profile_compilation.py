@@ -119,6 +119,7 @@ def get_compute_cost():
         print(f'profiled costs are: {compute_cost[:, :, mesh_id]}')
         print('=' * 30)
 
+
 compute_cost = np.array(
 [[[0.00112862, 0.00207896, 0.00304582, 0.00409389, 0.00481757, 0.0058842 , 0.00729934, 0.00901646, 0.01083485, 0.01064126],
  [    np.inf, 0.00105063, 0.00192263, 0.00338936, 0.00393539, 0.00490199, 0.00584266, 0.0072612 , 0.00946384, 0.01016763],
@@ -150,8 +151,9 @@ compute_cost = np.array(
  [    np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf, 0.00314818, 0.00580152, 0.00824009],
  [    np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf, 0.00310455, 0.005536  ],
  [    np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf,     np.inf, 0.00285437],]]
-)
+).transpose((1, 2, 0))
 
+print(compute_cost.shape, (N, N, M))
 print(compute_cost)
 
 ray.shutdown()

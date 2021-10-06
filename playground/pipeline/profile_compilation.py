@@ -103,7 +103,7 @@ def profile(mesh, mesh_id):
             _, global_used_list = split_global_use_and_donate(layer_collections, layer_indices, all_invars, donated_global_invars, global_outvars)
             donate_invars_list = [[False for _ in stage.invars] for stage in layer_collections]
             cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layer_collections, mesh, donate_invars_list, global_used_list)
-            compute_cost[start, end, mesh_id] = cost
+            compute_cost[start, end, mesh_id] = np.mean(cost)
 
 def get_compute_cost():
     for mesh_id, submesh in enumerate(submesh_choices):

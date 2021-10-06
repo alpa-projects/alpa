@@ -111,7 +111,7 @@ for mesh_id, submesh in enumerate(submesh_choices):
     sliced_virtual_mesh = virtual_mesh.slice_2d(list(range(num_hosts)), [list(range(num_devices)) for _ in range(num_hosts)])
     mesh = sliced_virtual_mesh.get_physical_mesh()
     tic = time()
-    profile(mesh.mesh_id)
+    profile(mesh, mesh_id)
     toc = time()
     mesh.shutdown()
     print(f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds')

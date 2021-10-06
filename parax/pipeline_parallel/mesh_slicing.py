@@ -124,10 +124,12 @@ def compile_and_profile_layer_cost_c(
     outvars = set()
     eqns = []
     consts_dir = {}
+    local_outvars = set()
     for stage, global_used in zip(layers, global_used_list):
         consts_dir.update(stage.consts_dir)
         # Do not add local invars into the invars
-        invars.update([var for var in stage.invars if var not in outvars])
+        invars.update([var for var in stage.invars if var not in local_outvars])
+        local_outvars.update(stage.outvars)
         outvars.update(
             [var for var, used in zip(stage.outvars, global_used) if used])
         eqns += stage.eqns

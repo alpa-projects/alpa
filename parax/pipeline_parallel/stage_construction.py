@@ -11,21 +11,21 @@ from parax.device_mesh import VirtualMesh
 @numba.jit(nopython=True)
 def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, max_stage_cost):
     # For f, layer ID start from 1
-    f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float)
-    f_stage_max = np.full((num_layers + 1, num_devices + 1), 0.0, dtype=np.float)
-    f_argmin = np.full((num_layers + 1, num_devices + 1), -1, dtype=np.int)
-    f[0] = 0
+    f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float32)
+    f_stage_max = np.full((num_layers + 1, num_devices + 1), 0.0, dtype=np.float32)
+    f_argmin = np.full((num_layers + 1, num_devices + 1, 2), -1, dtype=np.int32)
+    f[0, 0] = 0
     for i in range(1, num_layers + 1):
         for j in range(1, num_devices + 1):
             for k in range(1, i + 1):
                 for m, submesh in enumerate(submesh_choices):
-                    s = np.prod(submesh)
+                    s = np.prod(np.array(submesh))
                     if s <= j:
                         stage_cost = compute_cost[k - 1, i - 1, m]
                         new_cost = f[k - 1, j - s] + stage_cost
                         if stage_cost <= max_stage_cost and new_cost < f[i, j]:
                             f[i, j] = new_cost
-                            f_stage_max[i, j] = max(f_stage_max[i, j], f[i, j])
+                            f_stage_max[i, j] = max(f_stage_max[k - 1, j - s], stage_cost)
                             f_argmin[i, j] = (k, m)
 
     if np.isinf(f[num_layers, num_devices]):
@@ -38,9 +38,11 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_
     res = []
     while current_layer > 0 and current_devices > 0:
         start_layer, submesh_choice = f_argmin[current_layer, current_devices]
-        res.append((start_layer - 1, current_layer), submesh_choice)
-        current_layer = start_layer
-        current_devices -= np.prod(submesh_choices[submesh_choice])
+        assert start_layer != -1 and current_devices != -1
+        res.append(((start_layer - 1, current_layer), submesh_choice))
+        current_layer = start_layer - 1
+        current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
+    assert current_layer == 0 and current_devices == 0
 
     return total_cost, res
 
@@ -58,7 +60,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost)
             continue
         cost, solution = dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, max_stage_cost)
         if solution is not None:
-            solution = reversed(solution)
+            solution = list(reversed(solution))
         if cost < best_cost:
             best_cost = cost
             best_solution = solution

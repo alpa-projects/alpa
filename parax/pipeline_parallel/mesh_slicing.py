@@ -19,7 +19,7 @@ from parax.pipeline_parallel.stage import JaxPipelineStage
 ########################################
 def split_global_use_and_donate(layers, layer_indices,
                                 all_invars: Sequence[Set['Var']],
-                                not_donated_global_invars: Set['Var'],
+                                donated_global_invars: Set['Var'],
                                 global_outvars: Set['Var']):
     '''
     This function pessimisticly get outvars used in global and
@@ -49,10 +49,15 @@ def split_global_use_and_donate(layers, layer_indices,
             donate_invars = []
             global_used = []
             layer = layers[-1 * (len(donate_invars_list) + 1)]
+            # TODO(yonghao): current donation is incorrect: 
+            # find corresponding donation outvar, 
+            # then add donated invar into the outvar's stage
             donate_invars = [
-                not (var in not_donated_global_invars or var in used or
-                     var in local_used) for var in layer.invars
+                var in donated_global_invars and
+                var not in used and var not in local_used
+                for var in layer.invars
             ]
+            donate_invars = tuple()
             global_used = [var in used for var in layer.outvars]
             donate_invars_list.append(donate_invars)
             global_used_list.append(global_used)
@@ -119,10 +124,12 @@ def compile_and_profile_layer_cost_c(
     outvars = set()
     eqns = []
     consts_dir = {}
+    local_outvars = set()
     for stage, global_used in zip(layers, global_used_list):
         consts_dir.update(stage.consts_dir)
         # Do not add local invars into the invars
-        invars.update([var for var in stage.invars if var not in outvars])
+        invars.update([var for var in stage.invars if var not in local_outvars])
+        local_outvars.update(stage.outvars)
         outvars.update(
             [var for var, used in zip(stage.outvars, global_used) if used])
         eqns += stage.eqns
@@ -139,6 +146,7 @@ def compile_and_profile_layer_cost_c(
     ]
     donate_argnums = merge_invar_donation(layers, mixed_jaxpr,
                                           donate_invars_list)
+    # donate_argnums = tuple()
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)
     ret = executable.profile_with_dummy_inputs()

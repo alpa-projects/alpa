@@ -86,15 +86,17 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
             invars = stages[stage_idx].invars
             donate_status = []
             for var in invars:
+                donate_status.append(var in donated_invars)
+                # TODO(yonghao): consider this algo more precisely to match shape
                 # global invar not allowed to donate or use in later stages
-                if var in not_donated or var in use_later:
-                    donate_status.append(False)
-                # var is not used in later cases of the mesh.
-                # But if it's main copy, consider global_last_use
-                elif var in main_copy_vars and global_last_use[var] > stage_idx:
-                    donate_status.append(False)
-                else:
-                    donate_status.append(True)
+                # if var in not_donated or var in use_later:
+                #     donate_status.append(False)
+                # # var is not used in later cases of the mesh.
+                # # But if it's main copy, consider global_last_use
+                # elif var in main_copy_vars and global_last_use[var] > stage_idx:
+                #     donate_status.append(False)
+                # else:
+                #     donate_status.append(True)
             use_later.update(invars)
             ans[stage_idx] = donate_status
     return ans

@@ -24,7 +24,6 @@ timer_names = {
     "compute": "sum",
     "resharding": "sum",
     "identify_input": "sum",
-    "make_microbatch": "average",
 }
 
 

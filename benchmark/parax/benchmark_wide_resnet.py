@@ -77,68 +77,73 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def train_step_func(state, batch, learning_rate_fn, use_grad_acc):
-    def loss_fn(params):
-        logits, new_model_state = state.apply_fn(
-            {"params": params, "batch_stats": state.batch_stats},
-            batch["images"],
-            mutable=["batch_stats"])
-        loss = cross_entropy_loss(logits, batch["labels"])
-        weight_penalty_params = jax.tree_leaves(params)
-        weight_decay = 0.0001
-        weight_l2 = sum([jnp.sum(x ** 2)
-                         for x in weight_penalty_params
-                         if x.ndim > 1])
-        weight_penalty = weight_decay * 0.5 * weight_l2
-        metrics = {
-          "loss": loss,
-          "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
-          "lr": learning_rate_fn(step)
-        }
-        return loss + weight_penalty, (new_model_state, metrics)
+def get_train_step(learning_rate_fn, use_grad_acc):
 
-    step = state.step
-    dynamic_scale = state.dynamic_scale
+    @parallelize
+    def train_step(state, batch):
+        def loss_fn(params):
+            logits, new_model_state = state.apply_fn(
+                {"params": params, "batch_stats": state.batch_stats},
+                batch["images"],
+                mutable=["batch_stats"])
+            loss = cross_entropy_loss(logits, batch["labels"])
+            weight_penalty_params = jax.tree_leaves(params)
+            weight_decay = 0.0001
+            weight_l2 = sum([jnp.sum(x ** 2)
+                             for x in weight_penalty_params
+                             if x.ndim > 1])
+            weight_penalty = weight_decay * 0.5 * weight_l2
+            metrics = {
+              "loss": loss,
+              "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
+              "lr": learning_rate_fn(step)
+            }
+            return loss + weight_penalty, (new_model_state, metrics)
 
-    if dynamic_scale:
-        # TOOD(lmzheng): handle gradient accumulation for this
-        grad_fn = dynamic_scale.value_and_grad(loss_fn, has_aux=True)
-        dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
-        # dynamic loss takes care of averaging gradients across replicas
-    else:
-        if use_grad_acc:
-            get_grad_fn = parax.grad
+        step = state.step
+        dynamic_scale = state.dynamic_scale
+
+        if dynamic_scale:
+            # TOOD(lmzheng): handle gradient accumulation for this
+            grad_fn = dynamic_scale.value_and_grad(loss_fn, has_aux=True)
+            dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
+            # dynamic loss takes care of averaging gradients across replicas
         else:
-            get_grad_fn = jax.grad
+            if use_grad_acc:
+                get_grad_fn = parax.grad
+            else:
+                get_grad_fn = jax.grad
 
-        grad_fn = get_grad_fn(loss_fn, has_aux=True)
-        grads, aux = grad_fn(state.params)
-    new_model_state, metrics = aux
+            grad_fn = get_grad_fn(loss_fn, has_aux=True)
+            grads, aux = grad_fn(state.params)
+        new_model_state, metrics = aux
 
-    new_state = state.apply_gradients(
-        grads=grads, batch_stats=new_model_state["batch_stats"])
-    if dynamic_scale:
-        # if is_fin == False the gradients contain Inf/NaNs and optimizer state and
-        # params should be restored (= skip this step).
-        new_state = new_state.replace(
-            opt_state=jax.tree_multimap(
-                functools.partial(jnp.where, is_fin),
-                new_state.opt_state,
-                state.opt_state),
-            params=jax.tree_multimap(
-                functools.partial(jnp.where, is_fin),
-                new_state.params,
-                state.params))
-        metrics["scale"] = dynamic_scale.scale
+        new_state = state.apply_gradients(
+            grads=grads, batch_stats=new_model_state["batch_stats"])
+        if dynamic_scale:
+            # if is_fin == False the gradients contain Inf/NaNs and optimizer
+            # state and params should be restored (= skip this step).
+            new_state = new_state.replace(
+                opt_state=jax.tree_multimap(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.opt_state,
+                    state.opt_state),
+                params=jax.tree_multimap(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.params,
+                    state.params))
+            metrics["scale"] = dynamic_scale.scale
 
-    return new_state, metrics
+        return new_state, metrics
+
+    return train_step
 
 
 def benchmark_model_one_case(benchmark_case):
     print_used_time(None)
 
     # Model configs
-    model_type = args.model
+    model_type = "wide_resnet"
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
         use_remat = benchmark_case
@@ -192,9 +197,7 @@ def benchmark_model_one_case(benchmark_case):
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = partial(train_step_func, learning_rate_fn=learning_rate_fn,
-                         use_grad_acc=use_grad_acc)
-    train_step = parallelize(train_step)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc)
     print_used_time("Create train state")
     param_count = compute_param_number(state.params)
 
@@ -300,7 +303,6 @@ def benchmark_all():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
-    parser.add_argument("--model", type=str, default="wide_resnet")
     parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
     parser.add_argument("--suite", choices=["default", "oom"], default="default",

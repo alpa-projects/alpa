@@ -75,10 +75,15 @@ class ConvSubSample(nn.Module):
 
     def setup(self):
         self.conv1 = nn.Conv(features=self.config.conv_subsample_channel,
-                             kernel_size=(3, 3), strides=(2, 2), dtype=self.dtype)
+                             kernel_size=(3, 3),
+                             strides=(2, 2),
+                             dtype=self.dtype)
         self.conv2 = nn.Conv(features=self.config.conv_subsample_channel,
-                             kernel_size=(3, 3), strides=(2, 2), dtype=self.dtype)
-        self.dense = nn.Dense(features=self.config.hidden_size, dtype=self.dtype)
+                             kernel_size=(3, 3),
+                             strides=(2, 2),
+                             dtype=self.dtype)
+        self.dense = nn.Dense(features=self.config.hidden_size,
+                              dtype=self.dtype)
         self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
 
     def __call__(self, x, deterministic: bool = True):
@@ -126,7 +131,8 @@ class ConvModule(nn.Module):
         B, T, E = outputs.shape
         outputs = outputs.reshape((B, T, 1, E))
         outputs = nn.Conv(features=self.config.hidden_size * 2,
-                          kernel_size=(1, 1), strides=(1, 1),
+                          kernel_size=(1, 1),
+                          strides=(1, 1),
                           dtype=self.dtype)(outputs)
         outputs = nn.glu(outputs)
         outputs = nn.Conv(features=self.config.hidden_size,
@@ -140,10 +146,12 @@ class ConvModule(nn.Module):
                                dtype=self.dtype)(outputs)
         outputs = nn.swish(outputs)
         outputs = nn.Conv(features=self.config.hidden_size,
-                          kernel_size=(1, 1), strides=(1, 1),
+                          kernel_size=(1, 1),
+                          strides=(1, 1),
                           dtype=self.dtype)(outputs)
         outputs = outputs.reshape((B, T, E))
-        outputs = nn.Dropout(rate=self.config.hidden_dropout_prob)(outputs, deterministic=deterministic)
+        outputs = nn.Dropout(rate=self.config.hidden_dropout_prob)(
+            outputs, deterministic=deterministic)
         return outputs + inputs
 
 
@@ -161,12 +169,10 @@ class MultiHeadSelfAttentionModule(nn.Module):
                 self.config.initializer_range),
         )
         self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
-        self.out_dense = nn.Dense(
-            self.config.hidden_size,
-            dtype=self.dtype,
-            kernel_init=jax.nn.initializers.normal(
-                self.config.initializer_range)
-        )
+        self.out_dense = nn.Dense(self.config.hidden_size,
+                                  dtype=self.dtype,
+                                  kernel_init=jax.nn.initializers.normal(
+                                      self.config.initializer_range))
 
         if self.config.hidden_size % self.config.num_attention_heads != 0:
             raise ValueError(
@@ -242,7 +248,8 @@ class ConformerLayer(nn.Module):
 
     def setup(self):
         self.ffn_1 = FFNModule(config=self.config, dtype=self.dtype)
-        self.mhsa = MultiHeadSelfAttentionModule(config=self.config, dtype=self.dtype)
+        self.mhsa = MultiHeadSelfAttentionModule(config=self.config,
+                                                 dtype=self.dtype)
         self.conv = ConvModule(config=self.config, dtype=self.dtype)
         self.ffn_2 = FFNModule(config=self.config, dtype=self.dtype)
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
@@ -257,7 +264,10 @@ class ConformerLayer(nn.Module):
         train: bool = True,
     ):
         outputs = self.ffn_1(inputs, deterministic=deterministic)
-        outputs = self.mhsa(outputs, pos_encoding, attention_mask, deterministic=deterministic)
+        outputs = self.mhsa(outputs,
+                            pos_encoding,
+                            attention_mask,
+                            deterministic=deterministic)
         outputs = self.conv(outputs, deterministic=deterministic, train=train)
         outputs = self.ffn_2(outputs, deterministic=deterministic)
         outputs = self.layer_norm(outputs)
@@ -272,7 +282,8 @@ class ConformerForASRModule(nn.Module):
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
-        self.conv_subsample = ConvSubSample(config=self.config, dtype=self.dtype)
+        self.conv_subsample = ConvSubSample(config=self.config,
+                                            dtype=self.dtype)
         self.layers = [
             ConformerLayer(config=self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
@@ -288,7 +299,8 @@ class ConformerForASRModule(nn.Module):
     ):
         # Model
         hidden_states = self.conv_subsample(input_frames)
-        pos_encoding = jnp.ones((1, hidden_states.shape[1], hidden_states.shape[2]))
+        pos_encoding = jnp.ones(
+            (1, hidden_states.shape[1], hidden_states.shape[2]))
 
         for layer in self.layers:
             hidden_states = layer(hidden_states,
@@ -300,4 +312,3 @@ class ConformerForASRModule(nn.Module):
         logits = self.decoder(hidden_states)
 
         return logits
-

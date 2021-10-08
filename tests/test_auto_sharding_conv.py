@@ -96,6 +96,7 @@ class AutoShardingConvTest(unittest.TestCase):
         set_parallelize_options(devices=device_mesh)
 
         if not is_depthwise:
+
             class Model(nn.Module):
 
                 @nn.compact
@@ -112,10 +113,12 @@ class AutoShardingConvTest(unittest.TestCase):
                                         strides=(1, 1),
                                         padding="SAME")
                     return x
+
             x = jnp.ones((batch_size, image_size, image_size, channel))
             out_image_size = image_size // (2**num_layers)
             y = jnp.ones((batch_size, out_image_size, out_image_size, channel))
         else:
+
             class Model(nn.Module):
 
                 @nn.compact
@@ -136,9 +139,9 @@ class AutoShardingConvTest(unittest.TestCase):
                     x = nn.relu(x)
                     x = nn.BatchNorm(use_running_average=not train)(x)
                     return x
+
             x = jnp.ones((batch_size, image_size, image_size, channel))
             y = jnp.ones((batch_size, image_size, image_size, channel))
-
 
         @parallelize
         def train_step(state, batch):
@@ -251,14 +254,18 @@ class AutoShardingConvTest(unittest.TestCase):
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            state, hlo_ir, objective = self.run_n_layer_conv(
-                num_layers, batch_size, image_size, channel, device_mesh,
-                is_depthwise=True)
+            state, hlo_ir, objective = self.run_n_layer_conv(num_layers,
+                                                             batch_size,
+                                                             image_size,
+                                                             channel,
+                                                             device_mesh,
+                                                             is_depthwise=True)
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
             assert n_all_reduce == 1
             assert n_total == n_all_reduce
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -267,7 +274,8 @@ def suite():
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
     suite.addTest(
         AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
+    suite.addTest(
+        AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
 
     return suite
 

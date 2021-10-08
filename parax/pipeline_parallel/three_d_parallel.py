@@ -42,6 +42,8 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
         closed_jaxpr.eqns[split_idx + 1:]
     ]
     compute, _, apply = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
+    if len(apply.eqns) == 0:
+        logger.warning('the apply gradient part is None. hint: apply() after parax.grad')
     return compute, apply, split_eqn
 
 
@@ -124,8 +126,8 @@ def split_donate_invars(global_invars, donation_mapping,
             # append dummy invars:
             if not appended_invars:
                 continue
-            logger.warning(f'append into stage {stage_idx} for donation:',
-                           appended_invars)
+            appended_invars = list(appended_invars)
+            logger.warning(f'append into stage {stage_idx} for donation:{appended_invars}')
             stage.invars = stage.invars + appended_invars
             pipe_start = stage.eqns[0]
             stage.eqns[0] = mark_pipeline_jaxpreqn(

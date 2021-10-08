@@ -481,7 +481,7 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
     return new_stages
 
 
-def reschedule_vars(vars, selected, pipe_marker=None, is_input=True):
+def rearange_vars(vars, selected, pipe_marker=None, is_input=True):
     new_vars = list(selected)
     selected = set(selected)
     for var in vars:
@@ -531,8 +531,8 @@ def generate_sharded_xla_stages(name: str,
                 continue
             donation_mapping[stage.invars[idx]] = stage.outvars[idx]
         eqns += stage.eqns
-    invars = reschedule_vars(invars, list(donation_mapping.keys()))
-    outvars = reschedule_vars(outvars, list(donation_mapping.values()))
+    invars = rearange_vars(invars, list(donation_mapping.keys()))
+    outvars = rearange_vars(outvars, list(donation_mapping.values()))
     jaxpr = Jaxpr(
         constvars=list(consts_dir.keys()),
         invars=list(invars),

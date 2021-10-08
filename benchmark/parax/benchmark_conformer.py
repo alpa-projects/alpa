@@ -3,6 +3,7 @@ from functools import partial
 import time
 
 from flax import linen as nn, optim
+from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from flax.training import common_utils
 import jax
 import jax.numpy as jnp
@@ -22,43 +23,9 @@ from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
 GB = 1024 ** 3
 
 
-def compute_metrics(logits, labels):
-    metrics = {
-        "loss": cross_entropy_loss(logits, labels),
-        "accuracy": jnp.mean(jnp.argmax(logits, -1) == labels),
-    }
-    return metrics
-
-
-def cross_entropy_loss(logits, labels):
-    one_hot_labels = common_utils.onehot(labels, num_classes=1000)
-    xentropy = optax.softmax_cross_entropy(logits=logits, labels=one_hot_labels)
-    return jnp.mean(xentropy)
-
-
-def create_learning_rate_fn():
-    """Create learning rate schedule."""
-    base_learning_rate = 0.1
-    warmup_epochs = 5.0
-    steps_per_epoch = 10000
-    num_epochs = 100.0
-
-    warmup_fn = optax.linear_schedule(
-        init_value=0., end_value=base_learning_rate,
-        transition_steps=warmup_epochs * steps_per_epoch)
-    cosine_epochs = max(num_epochs - warmup_epochs, 1)
-    cosine_fn = optax.cosine_decay_schedule(
-        init_value=base_learning_rate,
-        decay_steps=cosine_epochs * steps_per_epoch)
-    schedule_fn = optax.join_schedules(
-        schedules=[warmup_fn, cosine_fn],
-        boundaries=[warmup_epochs * steps_per_epoch])
-    return schedule_fn
-
-
 def create_train_state(rngkey, model, batch):
     params = model.init_dummy(rngkey, batch["input_frames"], batch["attention_mask"])
-    params, batch_stats = params["params"], params["batch_stats"]
+    params, batch_stats = params["params"], params.get("batch_stats", FrozenDictFlax())
 
     tx = optax.chain(
         optax.adam(learning_rate=1e-3)
@@ -76,18 +43,19 @@ def create_train_state(rngkey, model, batch):
 def get_train_step(use_grad_acc):
 
     @parallelize
-    def train_step(state, batch):
+    def train_step(state, batch, rng_key):
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
                 {"params": params, "batch_stats": state.batch_stats},
                 batch["input_frames"],
                 batch["attention_mask"],
-                mutable=["batch_stats"])
+                mutable=["batch_stats"],
+                rngs={"dropout": rng_key})
             label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
             labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
             loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
-            # TODO(lmzheng): implement the correct rnnt loss for transducer
+            # TODO(lmzheng): implement the correct rnn-t loss for transducer.
             return loss, new_model_state
 
         step = state.step
@@ -134,8 +102,10 @@ def benchmark_model_one_case(benchmark_case):
 
     # Model configs
     model_type = "conformer"
-    mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
-    use_remat = 1, 1, 1, False, False
+    batch_size, seq_len, input_dim, num_layers, conv_subsample_channel,\
+        conv_kernel_size, hidden_size, num_heads, vocab_size,\
+        mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
+        use_remat = benchmark_case
 
     dtype = jnp.float32
 
@@ -163,16 +133,6 @@ def benchmark_model_one_case(benchmark_case):
                             num_micro_batches=num_micro_batches)
     print_used_time("Setup device mesh")
 
-    batch_size = 4
-    seq_len = 64
-    input_dim = 128
-    num_layers = 2
-    conv_subsample_channel = 256
-    conv_kernel_size = 32
-    hidden_size = 512
-    num_heads = 8
-    vocab_size = 32
-
     # Prepare input batch
     num_classes = 1000
     batch = {
@@ -196,7 +156,6 @@ def benchmark_model_one_case(benchmark_case):
     else:
         raise ValueError(f"Invalid model {model_type}")
 
-    learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch)
     train_step = get_train_step(use_grad_acc)
@@ -204,7 +163,7 @@ def benchmark_model_one_case(benchmark_case):
     param_count = compute_param_number(state.params)
 
     # Compile executable
-    executable = train_step.get_executable(state, batch)
+    executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
     physical_mesh.sync_workers()
@@ -212,7 +171,7 @@ def benchmark_model_one_case(benchmark_case):
 
     # Benchmark step time
     for i in range(args.niter):
-        state = train_step(state, batch)
+        state = train_step(state, batch, rngkey)
 
     costs = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
@@ -244,27 +203,26 @@ def benchmark_model_one_case(benchmark_case):
     physical_mesh.shutdown()
 
 
-# B = batch_size, I = image_size,
-# L = num_layers, C = num_base_channels, W = width_factor, 
+# B = batch_size, S = seq_len, I = input_dim, L = num_layers,
+# C = conv_subsample_channel, K = conv_kernel_size,
+# H = hidden_size, #head = num_heads, V = vocab_size,
 # D0 = mesh_dimension_0, D1 = mesh_dimension_1,
 # NB = num_micro_batches, FD = force_data_parallel, CK = use_checkpoint
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (),
+    #B,   S,    I,   L, C,   K,  H,    #head      V   D0, D1, NB, FD,    CK
+    (4,   1024, 128, 4, 256, 32, 2048, 2048//64,  32, 1,  1,  1,  False, False),
 ],
 
 8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
+    #B,   S,    I,   L, C,   K,  H,    #head      V   D0, D1, NB, FD,    CK
+    (8,   512,  128, 6, 512, 32, 4096, 4096//128, 32, 8,  1,  1,  False, False),
+    #(8,   512,  128, 2, 512, 32, 4096, 4096//128, 32, 8,  1,  1,  True,  False),
 ],
 }
 
 oom_benchmark_suite = {  # key = number of gpus, value = a list of cases
-8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  True,  False),
-],
 }
 
 benchmark_suites = {
@@ -316,4 +274,3 @@ if __name__ == "__main__":
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all()
-

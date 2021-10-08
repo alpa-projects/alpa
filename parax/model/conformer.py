@@ -112,7 +112,7 @@ class FFNModule(nn.Module):
         outputs = self.dropout_1(outputs, deterministic=deterministic)
         outputs = self.dense_2(outputs)
         outputs = self.dropout_2(outputs, deterministic=deterministic)
-        return outputs + 0.5 * inputs
+        return 0.5 * outputs + inputs
 
 
 class ConvModule(nn.Module):
@@ -160,6 +160,13 @@ class MultiHeadSelfAttentionModule(nn.Module):
             kernel_init=jax.nn.initializers.normal(
                 self.config.initializer_range),
         )
+        self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
+        self.out_dense = nn.Dense(
+            self.config.hidden_size,
+            dtype=self.dtype,
+            kernel_init=jax.nn.initializers.normal(
+                self.config.initializer_range)
+        )
 
         if self.config.hidden_size % self.config.num_attention_heads != 0:
             raise ValueError(
@@ -168,11 +175,11 @@ class MultiHeadSelfAttentionModule(nn.Module):
 
     def __call__(self,
                  inputs,
-                 pos_embedding,
+                 pos_encoding,
                  attention_mask,
                  deterministic=True):
         outputs = self.layer_norm(inputs)
-        outputs = outputs + pos_embed
+        outputs = outputs + pos_encoding
 
         head_dim = self.config.hidden_size // self.config.num_attention_heads
 
@@ -224,9 +231,9 @@ class MultiHeadSelfAttentionModule(nn.Module):
                                  value_states)
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
 
-        outputs = self.dropout(attn_output, deterministic=deterministic)
-        outputs = outputs + inputs
-        return outputs
+        outputs = self.out_dense(attn_output)
+        outputs = self.dropout(outputs, deterministic=deterministic)
+        return outputs + inputs
 
 
 class ConformerLayer(nn.Module):
@@ -250,7 +257,7 @@ class ConformerLayer(nn.Module):
         train: bool = True,
     ):
         outputs = self.ffn_1(inputs, deterministic=deterministic)
-        #outputs = self.mhsa(outputs, pos_encoding, attention_mask, deterministic=deterministic)
+        outputs = self.mhsa(outputs, pos_encoding, attention_mask, deterministic=deterministic)
         outputs = self.conv(outputs, deterministic=deterministic, train=train)
         outputs = self.ffn_2(outputs, deterministic=deterministic)
         outputs = self.layer_norm(outputs)

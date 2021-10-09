@@ -17,7 +17,7 @@ from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
     compute_to_acc_pipe, generate_sharded_xla_stages, get_var_mapping,
     mark_grad_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
-    rearange_vars, slice_apply_gradient,
+    rearrange_vars, slice_apply_gradient,
     slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
@@ -135,12 +135,12 @@ def split_donate_invars(global_invars, donation_mapping,
                 list(map(lambda v: gensym_fn(v.aval), appended_invars)),
                 pipe_start.params['name'], pipe_start.params['mark_type'])
 
-    # reschedule to keep donated invars and outvars have same index
+    # rearrange to keep donated invars and outvars have same index
     for stage_idx, stage in enumerate(stages):
         donate_mapping = donate_mappings[stage_idx]
-        new_invars, new_pipe_start = rearange_vars(
+        new_invars, new_pipe_start = rearrange_vars(
             stage.invars, list(donate_mapping.keys()), stage.eqns[0], True)
-        new_outvars, new_pipe_end = rearange_vars(
+        new_outvars, new_pipe_end = rearrange_vars(
             stage.outvars, list(donate_mapping.values()), stage.eqns[-1], False)
         stage.invars = new_invars
         stage.outvars = new_outvars

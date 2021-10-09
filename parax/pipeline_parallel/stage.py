@@ -481,7 +481,16 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
     return new_stages
 
 
-def rearange_vars(vars, selected, pipe_marker=None, is_input=True):
+def rearrange_vars(vars, selected: Sequence[Var], pipe_marker=None, is_input=True):
+    """
+    Rearrange vars to let those in selected be the first. If the pipe_marker is given,
+    rearrange invars and outvars in pipemarker also.
+    Args:
+        vars (Sequence[Var]): all vars to be rearranged.
+        selected (Sequence[Var]): vars selected to be prior.
+        pipe_marker (JaxprEqn): pipe marker corresponding to vars
+        is_input (bool): the var is input of pipe_marker, if False, it is output
+    """
     new_vars = list(selected)
     selected = set(selected)
     for var in vars:
@@ -531,8 +540,8 @@ def generate_sharded_xla_stages(name: str,
                 continue
             donation_mapping[stage.invars[idx]] = stage.outvars[idx]
         eqns += stage.eqns
-    invars = rearange_vars(invars, list(donation_mapping.keys()))
-    outvars = rearange_vars(outvars, list(donation_mapping.values()))
+    invars = rearrange_vars(invars, list(donation_mapping.keys()))
+    outvars = rearrange_vars(outvars, list(donation_mapping.values()))
     jaxpr = Jaxpr(
         constvars=list(consts_dir.keys()),
         invars=list(invars),

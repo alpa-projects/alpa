@@ -21,9 +21,8 @@ from parax.mesh_executable import PartialGradAccMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
-                                                compile_with_given_strategy,
-                                                get_input_output_sharding_specs)
-from parax.util import get_compile_options, jaxpr_to_hlo_computation
+                                                compile_with_given_strategy)
+from parax.util import get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -210,6 +209,7 @@ class XlaShardedPipelineStage(PipelineStage):
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
         xla_computation = xc.XlaComputation(self.hlo_proto)
+        setup_computation_alias(xla_computation, self.donated_invars)
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
@@ -481,6 +481,43 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
     return new_stages
 
 
+def rearrange_vars(vars, selected: Sequence[Var], pipe_marker=None, is_input=True):
+    """
+    Rearrange vars to let those in selected be the first. If the pipe_marker is given,
+    rearrange invars and outvars in pipemarker also.
+    Args:
+        vars (Sequence[Var]): all vars to be rearranged.
+        selected (Sequence[Var]): vars selected to be prior.
+        pipe_marker (JaxprEqn): pipe marker corresponding to vars
+        is_input (bool): the var is input of pipe_marker, if False, it is output
+    """
+    new_vars = list(selected)
+    selected = set(selected)
+    for var in vars:
+        if var not in selected:
+            new_vars.append(var)
+
+    if pipe_marker is None:
+        return new_vars
+
+    if is_input:
+        new_invars = new_vars
+        invar_idx = {v: idx for idx, v in enumerate(pipe_marker.invars)}
+        new_outvars = [
+            pipe_marker.outvars[invar_idx[var]] for var in new_invars
+        ]
+    else:
+        new_outvars = new_vars
+        outvar_idx = {v: idx for idx, v in enumerate(pipe_marker.outvars)}
+        new_invars = [
+            pipe_marker.invars[outvar_idx[var]] for var in new_outvars
+        ]
+    new_marker = mark_pipeline_jaxpreqn(new_invars, new_outvars,
+                                        pipe_marker.params['name'],
+                                        pipe_marker.params['mark_type'])
+    return new_vars, new_marker
+
+
 def generate_sharded_xla_stages(name: str,
                                 jax_stages: Sequence[JaxPipelineStage],
                                 stage_donate_invars, physical_mesh,
@@ -490,14 +527,21 @@ def generate_sharded_xla_stages(name: str,
     """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
+    donation_mapping = dict()
     eqns = []
     consts_dir = {}
-    for stage in jax_stages:
+    for stage, donation in zip(jax_stages, stage_donate_invars):
         consts_dir.update(stage.consts_dir)
         # Do not add local invars into the invars
         invars.update([var for var in stage.invars if var not in outvars])
         outvars.update(stage.outvars)
+        for idx, var in enumerate(stage.invars):
+            if not donation[idx] or var not in invars:
+                continue
+            donation_mapping[stage.invars[idx]] = stage.outvars[idx]
         eqns += stage.eqns
+    invars = rearrange_vars(invars, list(donation_mapping.keys()))
+    outvars = rearrange_vars(outvars, list(donation_mapping.values()))
     jaxpr = Jaxpr(
         constvars=list(consts_dir.keys()),
         invars=list(invars),
@@ -505,7 +549,8 @@ def generate_sharded_xla_stages(name: str,
         eqns=eqns,
     )
 
-    dummy_donated_invars = (False,) * len(invars)
+    donation_num = len(donation_mapping)
+    dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) - donation_num)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
@@ -621,8 +666,7 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
             new_glob_outvars.append(grad_outs[gradients[outvar]])
             new_glob_invars.append(grad_invars[gradients[outvar]])
             update_outs[outvar] = grad_outs[gradients[outvar]]
-            grad_in_to_out[grad_invars[gradients[outvar]]] = repr(
-                grad_outs[gradients[outvar]])
+            grad_in_to_out[grad_invars[gradients[outvar]]] = grad_outs[gradients[outvar]]
         else:
             raise NotImplemented('gradients cannot be Literal')
     gradients = set(grad_values)

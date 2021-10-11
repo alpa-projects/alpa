@@ -1,8 +1,8 @@
 import jax, jax.numpy as jnp
 
 def func(a, b):
-    #c =  jnp.asarray(a, jnp.float16) @ jnp.asarray(b, jnp.float16)
-    c = a @ b
+    c =  jnp.asarray(a, jnp.int32) @ jnp.asarray(b, jnp.int32)
+    #c = a @ b
     c = c.transpose()
     c += a
     return c

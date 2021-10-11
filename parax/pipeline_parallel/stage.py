@@ -561,14 +561,15 @@ def generate_sharded_xla_stages(name: str,
         invars,
         outvars,
         dummy_donated_invars,
-        physical_mesh.is_distributed,
+        physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,
         memory_budget_per_device,
         search_task,
         record_file,
         multiple_stages=True,
-        grad_acc_num_micro_batches=None)
+        grad_acc_num_micro_batches=None,
+        bypass_device_assignment_check=physical_mesh.is_distributed)
     stages = [
         XlaShardedPipelineStage.from_auto_sharded_stage(
             auto_sharded_hlo_proto=proto,

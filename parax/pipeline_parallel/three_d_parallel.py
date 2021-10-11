@@ -9,13 +9,13 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
-from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
+from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn, pipeline_p)
 from parax.pipeline_parallel.runtime import (
     GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
     gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
-    compute_to_acc_pipe, generate_sharded_xla_stages, get_var_mapping,
+    compute_grad_to_accumulate_grad, generate_sharded_xla_stages, get_var_mapping,
     mark_grad_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
     rearrange_vars, slice_apply_gradient,
     slice_closed_jaxpr_by_full_pipeline_marks)
@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
-    from parax.pipeline_parallel.primitive_def import pipeline_p
+def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
     split_eqn = None
     for idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
@@ -34,7 +33,8 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
             split_idx = idx
     if split_eqn is None:
         logger.warning(
-            'missing barrier between compute and apply, hint: replace jax.grad by parax.grad'
+            'Missing barrier between compute and apply. Assume there is no '
+            'apply gradient step. Hint: replace jax.grad by parax.grad.'
         )
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
@@ -176,14 +176,14 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # the sliced_meshes is set when tracing into forward decorator
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     gensym_func = gensym([closed_jaxpr.jaxpr])
-    compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
-        closed_jaxpr)
-    # TODO(yonghao): The case that barrier is None should be deprecated
+    compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
+        split_compute_grad_and_apply_grad(closed_jaxpr))
+
     if barrier is None:
         acc_grad_jaxpr = compute_grad_jaxpr
     else:
         # compute grad to accumulate grad
-        acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_to_acc_pipe(
+        acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_grad_to_accumulate_grad(
             compute_grad_jaxpr, gensym_func)
     # slice accumulate grad
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
@@ -194,8 +194,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
         jax_pipeline_stages, acc_grad_invars, acc_grad_outvars)
     jax_pipeline_stages = pipeline_dce(jax_pipeline_stages, acc_grad_outvars)
+
+    # TODO(zhuohan): merge pipeline layers into stages here
+
     # TODO(yonghao): move auto mesh slicing until here and get stage_to_mesh
-    # delete the 4 lines below in auto mesh version
+    #                delete the 4 lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)
     stage_to_mesh = {
         i: (i if i < stage_num / 2 else stage_num - i - 1)
@@ -217,6 +220,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         # 2. Add compute mean and slice apply-grad stages
         grad_mesh = mark_grad_mesh(gradients, jax_pipeline_stages,
                                    stage_to_mesh, mask)
+        # FIXME (zhuohan): get_mean only works when we use jax.mean to
+        #                  calculate loss. It will fail if we use sum.
         apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
             apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
             global_outvars)

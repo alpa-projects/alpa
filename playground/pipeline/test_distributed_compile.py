@@ -14,7 +14,7 @@ from parax import (parallelize, global_config, set_parallelize_options,
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 from parax.pipeline_parallel.three_d_parallel import (
-    split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
+    split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 from parax.testing import assert_allclose
 
@@ -96,7 +96,7 @@ corr = train_step(optimizer, batch)
 
 origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch)
 
-compute_jaxpr, _, _ = split_compute_and_apply(origin_jaxpr)
+compute_jaxpr, _, _ = split_compute_grad_and_apply_grad(origin_jaxpr)
 stages = slice_closed_jaxpr_by_full_pipeline_marks(compute_jaxpr)
 stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
                                              compute_jaxpr.jaxpr.outvars)

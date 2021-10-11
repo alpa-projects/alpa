@@ -11,6 +11,7 @@ from jax import jit
 from jax._src.util import partial, safe_map
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
 from jax.interpreters import xla
+from jax.lax import add_p
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
                       gensym, new_jaxpr_eqn, jaxpr_as_fun)
@@ -610,7 +611,7 @@ def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
     return is_gradients
 
 
-def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
+def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     """
     Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
     Args:
@@ -621,7 +622,6 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
         update_outs (Dict[Var, Var]): From original output(grad) to new output(acc grad)
         grad_in_to_out (Dict[Var, Var]): From accumulated gradient inputs to outputs
     """
-    from jax.lax import add_p
     raw_gradients = set([
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
@@ -638,17 +638,17 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
                     gradients[outvar] = eqn.invars[i]
                     reverse_gradients[eqn.invars[i]] = outvar
                 elif outvar in reverse_gradients:
-                    """
-                    in case that:
-                    invar = compute gradient
-                    invar' = pipeline end(invar)
-                    outvar = pipeline start(invar')
-                    final = pipeline end(outvar)
-                    gradients[final] should finally maps invar instead of outvar, then acc grad there
-                    """
+                    # in case that:
+                    #   invar = compute gradient
+                    #   invar' = pipeline end(invar)
+                    #   outvar = pipeline start(invar')
+                    #   final = pipeline end(outvar)
+                    # gradients[final] should finally maps invar instead of
+                    # outvar, then acc grad there
                     final_outvar = reverse_gradients[outvar]
                     gradients[final_outvar] = eqn.invars[i]
                     reverse_gradients[eqn.invars[i]] = final_outvar
+    # FIXME(zhuohan): Should support auxiliary outputs in the future (e.g. loss)
     for outvar in raw_gradients:
         assert outvar in gradients, 'all gradients should be captured by pipeline marker'
     grad_values = list(gradients.values())

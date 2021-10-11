@@ -1,0 +1,62 @@
+# auto-sharding
+weak_scaling_model	p3.24xlarge	1	1	GPT	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 45.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	GPT	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 43.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	GPT	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 42.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	GPT	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 40.1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 45.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 43.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 42.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 40.1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 15.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 13.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 12.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 9.1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	Conformer	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 15.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	Conformer	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 13.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	Conformer	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 12.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	Conformer	parax	auto-sharding	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 9.1}	1633984285
+
+# data-parallel
+weak_scaling_model	p3.24xlarge	1	1	GPT	parax	data-parallel	{"TFLOPS": 45.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	GPT	parax	data-parallel	{"TFLOPS": 43.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	GPT	parax	data-parallel	{"TFLOPS": -1}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	GPT	parax	data-parallel	{"TFLOPS": -1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax	data-parallel	{"TFLOPS": 45.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax	data-parallel	{"TFLOPS": 43.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax	data-parallel	{"TFLOPS": -1}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax	data-parallel	{"TFLOPS": -1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax	data-parallel	{"TFLOPS": 15.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax	data-parallel	{"TFLOPS": 13.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax	data-parallel	{"TFLOPS": -1}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax	data-parallel	{"TFLOPS": -1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	Conformer	parax	data-parallel	{"TFLOPS": 15.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	Conformer	parax	data-parallel	{"TFLOPS": 13.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	Conformer	parax	data-parallel	{"TFLOPS": -1}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	Conformer	parax	data-parallel	{"TFLOPS": -1}	1633984285
+
+# zero-2
+weak_scaling_model	p3.24xlarge	1	1	GPT	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 45.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	GPT	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 43.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	GPT	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 42.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	GPT	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 40.1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 45.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 43.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 42.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 40.1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 15.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 13.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 12.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 9.1}	1633984285
+
+weak_scaling_model	p3.24xlarge	1	1	Conformer	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 22.3, "TFLOPS": 15.3}	1633984285
+weak_scaling_model	p3.24xlarge	1	2	Conformer	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 23.5, "TFLOPS": 13.8}	1633984285
+weak_scaling_model	p3.24xlarge	1	4	Conformer	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 21.9, "TFLOPS": 12.2}	1633984285
+weak_scaling_model	p3.24xlarge	1	8	Conformer	parax	ZeRO-2	{"latency": [0.12, 0.34], "mem": 25.2, "TFLOPS": 9.1}	1633984285

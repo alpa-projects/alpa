@@ -15,6 +15,12 @@ from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+resharding_task_counter = 0
+
+def next_resharding_task_uuid():
+    global resharding_task_counter
+    resharding_task_counter = (resharding_task_counter + 1) % (1 << 60)
+    return resharding_task_counter
 
 class VirtualDistributedArray:
     """
@@ -270,6 +276,133 @@ class ReshardingTask:
                 sender_rank, sender_gpu_idx, self.collective_group.group_name)
             ray.get([send_done_ref, recv_done_ref])
         return result_buf
+
+    def prepare_send_recv_tasks(self):
+        sender_tasks = {host: list() for host in self.src_mesh.workers}
+        receiver_tasks = {host: list() for host in self.dst_mesh.workers}
+        group_name = self.collective_group.group_name
+
+        self.sender_uuid_plan = []
+        self.receiver_uuid_plan = []
+        for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
+                self.task_spec.dst_tile_to_src_tiles_map):
+            s = self.task_spec.strategy[i]
+            for replica_index, receiver in enumerate(
+                    dst_tile.replica_device_strs):
+                # Get args for an empty buffer
+                receiver_device_id = \
+                    self.collective_group.device_str_to_device_id_map[receiver]
+                receiver_worker = \
+                    self.collective_group.device_str_to_mesh_worker_map[receiver]
+                dtype = self.task_spec.src.aval.dtype
+                receiver_task = [receiver_device_id, dst_tile.tile_shape, dtype]
+                # Get args for send/recv
+                senders = [
+                    s[replica_index][src_tile_index]
+                    for src_tile_index, _ in enumerate(src_tiles)
+                ]
+                self.receiver_uuid_plan.append(receiver)
+                receiver_rank, receiver_gpu_idx = \
+                    self.collective_group.device_str_to_rank_map[receiver]
+                receiver_subtasks = []
+                for i, sender in enumerate(senders):
+                    # Sender's task
+                    tile = src_tiles[i]
+                    sender_worker = self.collective_group.device_str_to_mesh_worker_map[
+                        sender]
+                    sender_tasks[sender_worker].append(
+                        (tile.offset, receiver_rank, receiver_gpu_idx))
+                    self.sender_uuid_plan.append(sender)
+                    # Receiver's task
+                    sender_rank, sender_gpu_idx = \
+                        self.collective_group.device_str_to_rank_map[sender]
+
+                    indices_in_dst_tile = indices_in_dst_tiles[i]
+                    receiver_subtasks.append(
+                        (indices_in_dst_tile, sender_rank, sender_gpu_idx))
+                receiver_task.append(receiver_subtasks)
+
+                receiver_tasks[receiver_worker].append(receiver_task)
+
+        self.send_worker_task_ids = dict()
+        task_dones = []
+        for worker, task in sender_tasks.items():
+            uuid = next_resharding_task_uuid()
+            self.send_worker_task_ids[worker] = uuid
+            task_dones.append(
+                worker.put_resharding_send_task.remote(uuid, task, group_name))
+
+        self.recv_worker_task_ids = dict()
+        for worker, task in receiver_tasks.items():
+            uuid = next_resharding_task_uuid()
+            self.recv_worker_task_ids[worker] = uuid
+            task_dones.append(
+                worker.put_resharding_recv_task.remote(uuid, task, group_name))
+        ray.get(task_dones)
+
+    def do_prepared(self, src_array, profiling=False):
+        send_buf_uuids = {host: list() for host in self.src_mesh.workers}
+        recv_buf_uuids = {host: list() for host in self.dst_mesh.workers}
+
+        bufs = [None] * len(self.task_spec.dst_indices)
+        device_str_to_buf_map = dict()
+
+        dtype = self.task_spec.src.aval.dtype
+        for receiver in self.receiver_uuid_plan:
+            receiver_host_id = self.collective_group.device_str_to_host_id_map[
+                receiver]
+            receiver_device_id = self.collective_group.device_str_to_device_id_map[
+                receiver]
+            receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
+                receiver]
+            result_buf = RemoteBufferRef(self.dst_mesh,
+                                         receiver_host_id,
+                                         receiver_device_id,
+                                         dtype=dtype)
+            recv_buf_uuids[receiver_worker].append(result_buf.uuid)
+            device_str_to_buf_map[receiver] = result_buf
+
+        for sender in self.sender_uuid_plan:
+            sender_worker = self.collective_group.device_str_to_mesh_worker_map[
+                sender]
+            send_buf = src_array.remote_buffers[
+                self.task_spec.src.device_str_to_flat_index[sender]]
+            send_buf_uuids[sender_worker].append(send_buf.uuid)
+
+        results = []
+        if profiling:
+            for worker, uuid in self.send_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_send_task_profiling.remote(
+                        uuid, send_buf_uuids[worker]))
+            for worker, uuid in self.recv_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_recv_task_profiling.remote(
+                        uuid, recv_buf_uuids[worker]))
+        else:
+            for worker, uuid in self.send_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_send_task.remote(
+                        uuid, send_buf_uuids[worker]))
+            for worker, uuid in self.recv_worker_task_ids.items():
+                results.append(
+                    worker.run_resharding_recv_task.remote(
+                        uuid, recv_buf_uuids[worker]))
+        results = ray.get(results)
+
+        for i, device_str in enumerate(
+                self.task_spec.dst.device_mesh.device_strs):
+            # for each replica
+            bufs[self.task_spec.dst.device_str_to_flat_index[
+                device_str]] = device_str_to_buf_map[device_str]
+
+        # Now construct the distributed array
+        dst_array = DistributedArray(self.dst_mesh, self.src_array.aval,
+                                     self.task_spec.dst_sharding_spec, bufs,
+                                     self.task_spec.dst_indices)
+        if profiling:
+            return results
+        return dst_array
 
 
 @dataclass

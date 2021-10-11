@@ -9,8 +9,10 @@ from typing import List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
+from ray.util import ActorPool
 import ray.util.collective as col
 
+import jax
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
@@ -19,7 +21,7 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
-from jax.lib import xla_client
+from jax.lib import xla_client, xla_bridge
 import jax.numpy as jnp
 
 from parax.global_env import global_config
@@ -27,7 +29,8 @@ from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWor
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
-from parax.util import (get_dim_last_value, list_gpu_info, GB, to_cupy,
+from parax.util import (benchmark_func, get_dim_last_value,
+                        jaxpr_to_hlo_computation, list_gpu_info, GB, to_cupy,
                         to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
                         jax_buffer_to_xla_buffer)
 
@@ -60,6 +63,8 @@ class MeshHostWorker:
         self.local_devices = self.backend.local_devices()
         self.buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
+        self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
+        self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         set_override_backend(self.backend)
 
     ##### Buffer Related Functions #####
@@ -285,9 +290,135 @@ class MeshHostWorker:
         self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
         return True
 
+    def put_resharding_send_task(self, uuid, tasks, group_name):
+        self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+
+    def put_resharding_recv_task(self, uuid, tasks, group_name):
+        self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+
+    def run_resharding_send_task(self, uuid, buf_uuids):
+        task = self.send_tasks[uuid]
+        for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
+            self.send_tile(buf_uuid,
+                           *tile_detail,
+                           group_name=task['group_name'])
+        return True
+
+    def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
+        task = self.recv_tasks[uuid]
+        for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
+            if set_empty_buffer:
+                self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
+            for recv_subtask in recv_detail[-1]:
+                self.recv_tile(buf_uuid,
+                               recv_detail[0],
+                               *recv_subtask,
+                               group_name=task['group_name'])
+        return True
+
+    # TODO(yonghao): the sync function should be carefully reconsidered
+    def run_resharding_send_task_profiling(self,
+                                           uuid,
+                                           buf_uuids,
+                                           warmup=1,
+                                           repeat=3,
+                                           number=3,
+                                           sync=False):
+        run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
+        sync_fn = self.sync if sync else None
+        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
+        return np.mean(costs)
+
+    def run_resharding_recv_task_profiling(self,
+                                           uuid,
+                                           buf_uuids,
+                                           warmup=1,
+                                           repeat=3,
+                                           number=3,
+                                           sync=False):
+        set_empty_buffer = True
+
+        def run_fn():
+            nonlocal set_empty_buffer
+            self.run_resharding_recv_task(uuid, buf_uuids, set_empty_buffer)
+            set_empty_buffer = False
+
+        sync_fn = self.sync if sync else None
+        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
+        return np.mean(costs)
+
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)
         return True
+
+
+class CompileWorker:
+    """
+    A ray actor to distributedly compile Jaxpr to HLO Proto.
+    To activaite the worker, a gpu resource is required.
+    """
+
+    def __init__(self):
+        self.cnt = 0
+        self.backend = xla_bridge.get_backend("gpu")
+
+    def compile_single_layer_with_search(self, new_global_config, logical_mesh,
+                                         proto, avals, out_avals,
+                                         donate_invars):
+        """
+        Compile a single layer with auto sharding.
+        Args:
+            new_global_config: the global config for compilation setting.
+            logical_mesh: the logical mesh for compilation.
+            proto: the proto of XlaComputation to be compiled
+            avals: input avals
+            out_avals: output avals
+            donate_invars: donate invars of the computation to be compiled
+        Returns:
+            proto: The proto of compiled executable
+            strategy_config: The sharding strategy from auto sharding
+        """
+        from parax.shard_parallel.auto_sharding import compile_with_search
+        global_config.restore(new_global_config)
+        xla_computation = xla_client.XlaComputation(proto)
+        self.cnt += 1
+
+        logical_mesh_choices = [logical_mesh]
+        search_task = None
+        record_file = None
+
+        protos, strategy_config = compile_with_search(
+            self.backend,
+            xla_computation,
+            avals,
+            out_avals,
+            donate_invars,
+            True,
+            logical_mesh_choices,
+            global_config.mesh_shape_search_mode,
+            global_config.memory_budget_per_device,
+            search_task,
+            record_file,
+            multiple_stages=True,
+            grad_acc_num_micro_batches=None)
+        assert len(
+            protos) == 1, "compile worker compiles multiple stages in a time"
+        return protos[0], strategy_config
+
+
+class CompileWorkerPool:
+    """wrapped ray.util.ActorPool"""
+
+    def __init__(self, num_cpus, num_gpus):
+        gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
+        worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
+        self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
+
+    def push(self, actor):
+        self.pool.push(actor)
+
+    def pop_idle(self):
+        return self.pool.pop_idle()
 
 
 class PhysicalDeviceMesh:
@@ -765,6 +896,10 @@ class LogicalDeviceMesh:
 
         return ShardingSpec(sharding, mesh_mapping)
 
+    @property
+    def total_devices(self):
+        return np.prod(self.id_mesh.shape)
+
     def __hash__(self):
         return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                      self.mesh_beta))
@@ -987,6 +1122,11 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.num_devices.append(int(number))
+
+    @property
+    def num_cpus(self):
+        return sum(
+            map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
 
     def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
         """

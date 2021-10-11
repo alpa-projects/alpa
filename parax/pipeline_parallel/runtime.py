@@ -396,6 +396,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     task_spec = self._communicator.resharding_specs[
                         src_mesh_idx][mesh_idx][key]
                     assert task_spec
+                    # TODO(yonghao): create the resharding task at prepare function
                     task = ReshardingTask(
                         task_spec,
                         self._collective_groups[src_mesh_idx][mesh_idx], val)

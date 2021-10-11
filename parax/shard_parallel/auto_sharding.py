@@ -31,7 +31,7 @@ class HloProtoStatus(enum.IntEnum):
 
 
 def compile_with_search(backend, xla_computation, avals, out_avals,
-                        donated_invars, physical_mesh, logical_mesh_choices,
+                        donated_invars, bypass_device_assignment_check, logical_mesh_choices,
                         logical_mesh_search_mode, memory_budget_per_device,
                         search_task, record_file, multiple_stages,
                         grad_acc_num_micro_batches):
@@ -44,7 +44,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
       avals (Sequence[ShapedArray]): The abstract values of input arguments.
       out_avals (Sequence[ShapedArray]): The abstract values of outputs.
       donated_invars (Sequence[bool]): Whether the arguments are donated.
-      physical_mesh (PhysicalDeviceMesh): The physical device mesh.
+      bypass_device_assignment_check (bool): Whether compile without exact devices.
       logical_mesh_choices (List[Tuple[int]]): The candidates of logical mesh shape.
         If there is only one choice, use the given one. If there are multple choices,
         we will try all of them and pick the best.
@@ -67,14 +67,14 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
-    bypass_device_assignment_check = physical_mesh.is_distributed
-    run_backend_codegen = not physical_mesh.is_distributed and not multiple_stages
+    run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
 
+    total_devices = logical_mesh_choices[0].total_devices
     build_random_seed = 42
     compile_options = get_compile_options(
         num_replicas=1,
-        num_partitions=physical_mesh.total_devices,
-        device_assignment=np.arange(physical_mesh.total_devices).reshape(
+        num_partitions=total_devices,
+        device_assignment=np.arange(total_devices).reshape(
             (1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,

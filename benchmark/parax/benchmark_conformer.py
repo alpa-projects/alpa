@@ -3,6 +3,7 @@ from functools import partial
 import time
 
 from flax import linen as nn, optim
+from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from flax.training import common_utils
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import optax
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
-from parax.model.wide_resnet import get_wide_resnet, TrainState
+from parax.model.conformer import ConformerForASRModule, ConformerConfig, TrainState
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
                         count_communication_primitives, print_used_time,
                         compute_param_number)
@@ -22,52 +23,14 @@ from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
 GB = 1024 ** 3
 
 
-def compute_metrics(logits, labels):
-    metrics = {
-        "loss": cross_entropy_loss(logits, labels),
-        "accuracy": jnp.mean(jnp.argmax(logits, -1) == labels),
-    }
-    return metrics
+def create_train_state(rngkey, model, batch):
+    params = model.init_dummy(rngkey, batch["input_frames"], batch["attention_mask"])
+    params, batch_stats = params["params"], params.get("batch_stats", FrozenDictFlax())
 
-
-def cross_entropy_loss(logits, labels):
-    one_hot_labels = common_utils.onehot(labels, num_classes=1000)
-    xentropy = optax.softmax_cross_entropy(logits=logits, labels=one_hot_labels)
-    return jnp.mean(xentropy)
-
-
-def create_learning_rate_fn():
-    """Create learning rate schedule."""
-    base_learning_rate = 0.1
-    warmup_epochs = 5.0
-    steps_per_epoch = 10000
-    num_epochs = 100.0
-
-    warmup_fn = optax.linear_schedule(
-        init_value=0., end_value=base_learning_rate,
-        transition_steps=warmup_epochs * steps_per_epoch)
-    cosine_epochs = max(num_epochs - warmup_epochs, 1)
-    cosine_fn = optax.cosine_decay_schedule(
-        init_value=base_learning_rate,
-        decay_steps=cosine_epochs * steps_per_epoch)
-    schedule_fn = optax.join_schedules(
-        schedules=[warmup_fn, cosine_fn],
-        boundaries=[warmup_epochs * steps_per_epoch])
-    return schedule_fn
-
-
-def create_train_state(rngkey, model, input_images, learning_rate_fn):
-    params = model.init_dummy(rngkey, input_images)
-    params, batch_stats = params["params"], params["batch_stats"]
-
-    # dynamic_scale = optim.DynamicScale()
-    dynamic_scale = None
-
-    tx = optax.sgd(
-        learning_rate=learning_rate_fn,
-        momentum=0.9,
-        nesterov=True,
+    tx = optax.chain(
+        optax.adam(learning_rate=1e-3)
     )
+
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
@@ -77,28 +40,23 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc):
+def get_train_step(use_grad_acc):
 
     @parallelize
-    def train_step(state, batch):
+    def train_step(state, batch, rng_key):
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
                 {"params": params, "batch_stats": state.batch_stats},
-                batch["images"],
-                mutable=["batch_stats"])
-            loss = cross_entropy_loss(logits, batch["labels"])
-            weight_penalty_params = jax.tree_leaves(params)
-            weight_decay = 0.0001
-            weight_l2 = sum([jnp.sum(x ** 2)
-                             for x in weight_penalty_params
-                             if x.ndim > 1])
-            weight_penalty = weight_decay * 0.5 * weight_l2
-            metrics = {
-              "loss": loss,
-              "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
-              "lr": learning_rate_fn(step)
-            }
-            return loss + weight_penalty, (new_model_state, metrics)
+                batch["input_frames"],
+                batch["attention_mask"],
+                mutable=["batch_stats"],
+                rngs={"dropout": rng_key})
+            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+            loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+            loss = (label_mask * loss).sum() / label_mask.sum()
+            # TODO(lmzheng): implement the correct rnn-t loss for transducer.
+            return loss, new_model_state
 
         step = state.step
         dynamic_scale = state.dynamic_scale
@@ -116,13 +74,13 @@ def get_train_step(learning_rate_fn, use_grad_acc):
 
             grad_fn = get_grad_fn(loss_fn, has_aux=True)
             grads, aux = grad_fn(state.params)
-        new_model_state, metrics = aux
+        new_model_state = aux
 
         new_state = state.apply_gradients(
             grads=grads, batch_stats=new_model_state["batch_stats"])
         if dynamic_scale:
-            # if is_fin == False the gradients contain Inf/NaNs and optimizer
-            # state and params should be restored (= skip this step).
+            # if is_fin == False the gradients contain Inf/NaNs and optimizer state and
+            # params should be restored (= skip this step).
             new_state = new_state.replace(
                 opt_state=jax.tree_multimap(
                     functools.partial(jnp.where, is_fin),
@@ -134,7 +92,7 @@ def get_train_step(learning_rate_fn, use_grad_acc):
                     state.params))
             metrics["scale"] = dynamic_scale.scale
 
-        return new_state, metrics
+        return new_state
 
     return train_step
 
@@ -143,16 +101,13 @@ def benchmark_model_one_case(benchmark_case):
     print_used_time(None)
 
     # Model configs
-    model_type = "wide_resnet"
-    batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
+    model_type = "conformer"
+    batch_size, seq_len, input_dim, num_layers, conv_subsample_channel,\
+        conv_kernel_size, hidden_size, num_heads, vocab_size,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
         use_remat = benchmark_case
-    if dtype == "fp32":
-        dtype = jnp.float32
-    elif dtype == "fp16":
-        dtype = jnp.float16
-    else:
-        raise ValueError(f"Invalid dtype: {dtype}")
+
+    dtype = jnp.float32
 
     # Parallel configs
     global_config.force_data_parallel = force_data_parallel
@@ -181,28 +136,34 @@ def benchmark_model_one_case(benchmark_case):
     # Prepare input batch
     num_classes = 1000
     batch = {
-        "images": jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
-        "labels": jnp.ones((batch_size), dtype=jnp.int32),
+        "input_frames": jnp.ones((batch_size, seq_len * 4, input_dim, 1), dtype=dtype),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
 
     # Init train state
-    if model_type == "wide_resnet":
-        model = get_wide_resnet(num_layers, width_factor,
-                                num_channels, num_classes,
-                                dtype)
+    if model_type == "conformer":
+        model = ConformerForASRModule(ConformerConfig(
+            num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            conv_subsample_channel=conv_subsample_channel,
+            conv_kernel_size=conv_kernel_size,
+        ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
-    learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
-    state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc)
+    state = create_train_state(rngkey, model, batch)
+    train_step = get_train_step(use_grad_acc)
     print_used_time("Create train state")
     param_count = compute_param_number(state.params)
 
     # Compile executable
-    executable = train_step.get_executable(state, batch)
+    executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
     physical_mesh.sync_workers()
@@ -210,7 +171,7 @@ def benchmark_model_one_case(benchmark_case):
 
     # Benchmark step time
     for i in range(args.niter):
-        state, metrics = train_step(state, batch)
+        state = train_step(state, batch, rngkey)
 
     costs = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
@@ -242,31 +203,26 @@ def benchmark_model_one_case(benchmark_case):
     physical_mesh.shutdown()
 
 
-# B = batch_size, I = image_size,
-# L = num_layers, C = num_base_channels, W = width_factor, 
+# B = batch_size, S = seq_len, I = input_dim, L = num_layers,
+# C = conv_subsample_channel, K = conv_kernel_size,
+# H = hidden_size, #head = num_heads, V = vocab_size,
 # D0 = mesh_dimension_0, D1 = mesh_dimension_1,
 # NB = num_micro_batches, FD = force_data_parallel, CK = use_checkpoint
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, False),
+    #B,   S,    I,   L, C,   K,  H,    #head      V   D0, D1, NB, FD,    CK
+    (4,   1024, 128, 4, 256, 32, 2048, 2048//64,  32, 1,  1,  1,  False, False),
 ],
 
 8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (256,  224, 50,  256, 4, "fp32", 8,  1,  1,  False, False),
-    (64,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, False),
-    (128,  224, 50,  512, 4, "fp32", 2,  4,  2,  False, False),
-    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, False),
+    #B,   S,    I,   L, C,   K,  H,    #head      V   D0, D1, NB, FD,    CK
+    (8,   512,  128, 4, 512, 32, 4096, 4096//128, 32, 8,  1,  1,  False, False),
+    #(8,   512,  128, 4, 512, 32, 4096, 4096//128, 32, 8,  1,  1,  True,  False),
 ],
 }
 
 oom_benchmark_suite = {  # key = number of gpus, value = a list of cases
-8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    CK,
-    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  True,  False),
-],
 }
 
 benchmark_suites = {

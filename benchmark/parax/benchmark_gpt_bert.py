@@ -1,5 +1,4 @@
 import argparse
-import copy
 import os
 import time
 from functools import partial
@@ -80,7 +79,16 @@ def load_profiling_result(physical_mesh):
 def create_train_state(rngkey, model, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
-    tx = optax.adam(learning_rate=1e-2)
+
+    def weight_decay_mask(pytree):
+        # do not use weight decay on layer norm and bias.
+        return jax.tree_map(lambda x: x.ndim > 1, pytree)
+
+    tx = optax.chain(
+        #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
+        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+    )
+
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
@@ -210,7 +218,7 @@ def benchmark_model_one_case(benchmark_case):
 
     # Check sharding strategy
     objective = testing.last_compiled_auto_sharding_objective or 0.0
-    real_mem = executable.get_total_allocation_size()
+    alloc_mem = executable.get_total_allocation_size()
     hlo_text = executable.get_hlo_text()
 
     with open("last.hlo", "w") as fout:
@@ -225,11 +233,11 @@ def benchmark_model_one_case(benchmark_case):
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
                             np.mean(costs))
-    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
-    heads = ["Type", "Model Config", "Parallel Config", "Parameter Count",
-             "Peak Mem", "Objective", "Mean Time", "Std Time", "TFLOPS"]
+    param_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
+    heads = ["Type", "Model Config", "Parallel Config", "Param Count",
+             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
-              f"{parameter_count/1e9:.3f}", f"{real_mem/GB:.3f}", f"{objective:.2f}",
+              f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 

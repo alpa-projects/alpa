@@ -18,9 +18,7 @@ from parax.pipeline_parallel.stage import JaxPipelineStage
 ##### Profile tools
 ########################################
 def split_global_use_and_donate(layers, layer_indices,
-                                all_invars: Sequence[Set['Var']],
-                                donated_global_invars: Set['Var'],
-                                global_outvars: Set['Var']):
+                                all_invars, donation_mapping, global_outvars):
     '''
     This function pessimisticly get outvars used in global and
     invars donated for the layer group.
@@ -31,9 +29,9 @@ def split_global_use_and_donate(layers, layer_indices,
         layers (Sequence[JaxPipelineStage]): selected layers
         layer_indices (Set[int]): indices of selected layers, they are
         assumed to be in the same stage
-        all_invars (Sequence[Set[Var]]): invars of each stage(layer) in order
-        not_donated_global_invars (Set[Var]): not donated global invars
-        global_outvars (Set[Var]): donated outvars
+        all_invars (Set[int]): global invars and buffers for grad acc
+        donation_mapping (Dict[Var, Var]): donation mapping for global invar and grad acc
+        global_outvars (Sequence[Var]): global outvars
     Returns:
         donate_invars_list, global_used_list:
             see compile_and_profile_layer_cost_c
@@ -49,11 +47,8 @@ def split_global_use_and_donate(layers, layer_indices,
             donate_invars = []
             global_used = []
             layer = layers[-1 * (len(donate_invars_list) + 1)]
-            # TODO(yonghao): current donation is incorrect: 
-            # find corresponding donation outvar, 
-            # then add donated invar into the outvar's stage
             donate_invars = [
-                var in donated_global_invars and
+                var in donation_mapping and
                 var not in used and var not in local_used
                 for var in layer.invars
             ]

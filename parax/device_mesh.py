@@ -361,51 +361,62 @@ class CompileWorker:
     def __init__(self):
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
-        self.physical_mesh = PhysicalDeviceMesh()
-        pass
 
     def compile_single_layer_with_search(self, new_global_config, logical_mesh,
-                                         layer, donated_invars, *args):
+                                         proto, avals, out_avals,
+                                         donate_invars):
+        """
+        Compile a single layer with auto sharding.
+        Args:
+            new_global_config: the global config for compilation setting.
+            logical_mesh: the logical mesh for compilation.
+            proto: the proto of XlaComputation to be compiled
+            avals: input avals
+            out_avals: output avals
+            donate_invars: donate invars of the computation to be compiled
+        Returns:
+            proto: The proto of compiled executable
+            strategy_config: The sharding strategy from auto sharding
+        """
         from parax.shard_parallel.auto_sharding import compile_with_search
         global_config.restore(new_global_config)
-        closed_jaxpr = layer.closed_jaxpr()
-        name = f'profile_{self.cnt}_shard_parallel'
+        xla_computation = xla_client.XlaComputation(proto)
         self.cnt += 1
-        built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
-                                         self.backend)
 
-        avals = [var.aval for var in layer.invars]
-        out_avals = [var.aval for var in layer.outvars]
         logical_mesh_choices = [logical_mesh]
         search_task = None
         record_file = None
 
-        physical_mesh = PhysicalDeviceMesh(jax.devices(), use_ray=True)
-
-        proto, strategy_config = compile_with_search(
+        protos, strategy_config = compile_with_search(
             self.backend,
-            built,
+            xla_computation,
             avals,
             out_avals,
-            donated_invars,
-            physical_mesh,
+            donate_invars,
+            True,
             logical_mesh_choices,
             global_config.mesh_shape_search_mode,
+            global_config.memory_budget_per_device,
             search_task,
             record_file,
-            multiple_stages=False,
+            multiple_stages=True,
             grad_acc_num_micro_batches=None)
-        return proto, strategy_config
+        assert len(
+            protos) == 1, "compile worker compiles multiple stages in a time"
+        return protos[0], strategy_config
 
 
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
+
     def __init__(self, num_cpus, num_gpus):
-        gpu_per_cpu = num_gpus / num_cpus * 0.5
+        gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
         self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
+
     def push(self, actor):
         self.pool.push(actor)
+
     def pop_idle(self):
         return self.pool.pop_idle()
 
@@ -885,6 +896,10 @@ class LogicalDeviceMesh:
 
         return ShardingSpec(sharding, mesh_mapping)
 
+    @property
+    def total_devices(self):
+        return np.prod(self.id_mesh.shape)
+
     def __hash__(self):
         return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                      self.mesh_beta))
@@ -1008,7 +1023,7 @@ class VirtualMesh:
 
         Args:
             dim (int): which dimension to slice from, 0 is host or 1 is the gpu
-            indices (List[List[int]]): indices to include along this dimension.
+            indices (List[int]): indices to include along this dimension.
 
         Returns:
             mesh (PhysicalDeviceMesh)
@@ -1028,15 +1043,6 @@ class VirtualMesh:
                                head_ip=self.head_ip,
                                num_devices_per_host=len(indices[0]),
                                devices=indices)
-
-    def slice_2d(self, host_indices, device_indices):
-        host_ids = [self.host_ids[x] for x in host_indices]
-        host_info = [self.host_info[x] for x in host_indices]
-        return VirtualMesh(host_ids=host_ids,
-                           host_info=host_info,
-                           head_ip=self.head_ip,
-                           num_devices_per_host=len(device_indices[0]),
-                           devices=device_indices)
 
     @property
     def total_devices(self):
@@ -1116,6 +1122,11 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.num_devices.append(int(number))
+
+    @property
+    def num_cpus(self):
+        return sum(
+            map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
 
     def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
         """

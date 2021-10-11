@@ -1044,6 +1044,15 @@ class VirtualMesh:
                                num_devices_per_host=len(indices[0]),
                                devices=indices)
 
+    def slice_2d(self, host_indices, device_indices):
+        host_ids = [self.host_ids[x] for x in host_indices]
+        host_info = [self.host_info[x] for x in host_indices]
+        return VirtualMesh(host_ids=host_ids,
+                           host_info=host_info,
+                           head_ip=self.head_ip,
+                           num_devices_per_host=len(device_indices[0]),
+                           devices=device_indices)
+
     @property
     def total_devices(self):
         """Return the total number of GPUs on this mesh."""

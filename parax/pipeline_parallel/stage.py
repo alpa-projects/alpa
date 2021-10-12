@@ -18,7 +18,7 @@ from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable
-from parax.pipeline_parallel.primitive_def import (pipeline_p,
+from parax.pipeline_parallel.primitive_def import (mark_pipeline, pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy)

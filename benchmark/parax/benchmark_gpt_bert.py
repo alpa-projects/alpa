@@ -126,11 +126,12 @@ def get_train_step(grad_func, num_layers, use_remat, dtype):
     return train_step
 
 
-def benchmark_model_one_case(benchmark_case):
+def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter):
+    # Backup global config
+    backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
-    model_type = args.model
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
         use_remat = benchmark_case
@@ -147,20 +148,12 @@ def benchmark_model_one_case(benchmark_case):
         grad_func = jax.grad
         global_config.prefer_reduce_scatter = True
 
-    if args.local:
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
-    else:
-        device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.get_physical_mesh()
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
     set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
-    # Load profiling results
-    if args.use_profiling:
-        load_profiling_result(physical_mesh)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
@@ -210,14 +203,14 @@ def benchmark_model_one_case(benchmark_case):
     print_used_time("Compile (workers)")
 
     # Benchmark step time
-    for i in range(args.niter):
+    for i in range(niter):
         state = train_step(state, batch, rngkey)
 
-    costs = executable.get_execution_time_costs(warmup=2)
+    latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
 
     # Check sharding strategy
-    objective = testing.last_compiled_auto_sharding_objective or 0.0
+    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
     alloc_mem = executable.get_total_allocation_size()
     hlo_text = executable.get_hlo_text()
 
@@ -228,18 +221,38 @@ def benchmark_model_one_case(benchmark_case):
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
           f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")
 
-    # Log benchmark results
+    # Compute statistics
     tflops = compute_tflops(batch_size, seq_len, num_layers,
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
-                            np.mean(costs))
+                            np.mean(latencies))
     param_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
+
+    # Restore global config
+    global_config.restore(backup)
+
+    return latencies, alloc_mem, tflops, param_count, ilp_objective
+
+
+def benchmark_one_case(case):
+    # Launch physical mesh
+    if args.local:
+        physical_mesh = PhysicalDeviceMesh(jax.devices())
+    else:
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
+
+    # Run benchmark
+    result = benchmark_gpt_bert_internal(physical_mesh, args.model, case, args.niter)
+    latencies, alloc_mem, tflops, param_count, ilp_objective = result
+
+    # Log results
     heads = ["Type", "Model Config", "Parallel Config", "Param Count",
-             "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "TFLOPS"]
-    values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
-              f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{objective:.2f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
-    write_tsv(heads, values, f"result_{model_type}.tsv")
+             "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
+    values = [args.model, case[:-5], case[-5:],
+              f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{ilp_objective:.2f}",
+              f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
+    write_tsv(heads, values, f"result_{args.model}.tsv")
 
     physical_mesh.shutdown()
 
@@ -252,7 +265,7 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
     # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
     (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False),
-    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,  1,  False, False),
+    (8,  1024,  1536, 10, 1536//96,  25600, 1,  1,  1,  False, False),
 ],
 
 4: [
@@ -281,30 +294,6 @@ benchmark_suites = {
     "default": default_benchmark_suite,
 }
 
-def benchmark_all():
-    if args.local:
-        num_gpus = list_gpu_info().count("UUID")
-    else:
-        num_gpus = int(ray.cluster_resources()["GPU"])
-
-    try:
-        suite = benchmark_suites[args.suite][num_gpus]
-    except KeyError:
-        suite = None
-
-    if not suite:
-        print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
-        return
-
-    for case in suite:
-        # Backup global config
-        backup = global_config.backup()
-
-        benchmark_model_one_case(case)
-
-        # Restore global config
-        global_config.restore(backup)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -317,10 +306,25 @@ if __name__ == "__main__":
         help="Run on local GPUs. Do not use ray actors.")
     args = parser.parse_args()
 
-    if not args.local:
+    # Set global environments
+    if args.local:
+        num_gpus = list_gpu_info().count("UUID")
+    else:
         ray.init(address="auto")
         jax.config.update('jax_platform_name', 'cpu')
+        num_gpus = int(ray.cluster_resources()["GPU"])
 
     global_config.use_dummy_value_for_benchmarking = True
 
-    benchmark_all()
+    # Get benchmark suite and run all cases
+    try:
+        suite = benchmark_suites[args.suite][num_gpus]
+    except KeyError:
+        suite = None
+
+    if not suite:
+        print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
+        exit()
+
+    for case in suite:
+        benchmark_one_case(case)

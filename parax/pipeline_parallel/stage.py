@@ -582,8 +582,8 @@ def generate_sharded_xla_stages(name: str,
     return stages
 
 
-def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
-                   stage_to_mesh, mask):
+def mark_gradvar_to_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
+                         stage_to_mesh, mask):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
     for i, stage in enumerate(stages):

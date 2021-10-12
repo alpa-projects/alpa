@@ -108,9 +108,9 @@ w_resnet_zero_2 = [
 ]
 
 suites = [
-    #("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
-    #("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
-    #("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_internal),
+    ("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
+    ("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
+    ("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_internal),
     ("W-ResNet", "parax.auto_sharding", w_resnet_auto_sharding, benchmark_wide_resnet_internal),
     ("W-ResNet", "parax.data_parallel", w_resnet_data_parallel, benchmark_wide_resnet_internal),
     ("W-ResNet", "parax.zero_2", w_resnet_zero_2, benchmark_wide_resnet_internal),

@@ -207,7 +207,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     alloc_mem = executable.get_total_allocation_size()
 
     # Benchmark step time
-    if alloc_mem > 30 * GB:
+    if alloc_mem > 28 * GB:
         # out of memory
         latencies = [-1]
     else:

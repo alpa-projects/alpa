@@ -204,7 +204,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     alloc_mem = executable.get_total_allocation_size()
 
     # Benchmark step time
-    if alloc_mem > 30 * 1024 ** 3:
+    if alloc_mem > 30 * GB:
         # out of memory
         latencies = [-1]
     else:
@@ -212,7 +212,6 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
             state = train_step(state, batch, rngkey)
 
         latencies = executable.get_execution_time_costs(warmup=2)
-
     print_used_time("Benchmark")
 
     # Check sharding strategy
@@ -253,9 +252,9 @@ def benchmark_one_case(case):
     latencies, alloc_mem, tflops, param_count, ilp_objective = result
 
     # Log results
-    heads = ["Type", "Model Config", "Parallel Config", "Param Count",
+    heads = ["Model", "Model Config", "Parallel Config", "Param Count",
              "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
-    values = [args.model, case[:-5], case[-5:],
+    values = [args.model, case[:-6], case[-6:],
               f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{ilp_objective:.2f}",
               f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
     write_tsv(heads, values, f"result_{args.model}.tsv")

@@ -5,8 +5,58 @@ import jax
 import ray
 
 from parax import DeviceCluster, global_config
-from benchmark_gpt_bert import benchmark_gpt_bert_internal
 from parax.util import write_tsv, to_str_round
+from benchmark_gpt_bert import benchmark_gpt_bert_internal
+from benchmark_wide_resnet import benchmark_wide_resnet_internal
+
+benchmark_gpt_internal = lambda physical_mesh, args, niter : \
+    benchmark_gpt_bert_internal(physical_mesh, "gpt", args, niter)
+
+Case = namedtuple("Case", ["exp_name", "instance", "num_nodes", "num_gpus_per_node",
+                           "model_name", "method", "func", "args"])
+
+
+def benchmark_one_case(case):
+    device_cluster = DeviceCluster()
+    physical_mesh = device_cluster.get_physical_mesh(
+        list(range(case.num_nodes)), case.num_gpus_per_node)
+
+    result = case.func(physical_mesh, case.args, 5)
+    latencies, alloc_mem, tflops, param_count, ilp_objective = result
+    value_dict = {
+        "latencies": latencies,
+        "tflops": tflops,
+        "alloc_mem": alloc_mem / (1024 ** 3),
+        "param_count": param_count / 1e9,
+    }
+
+    # Log results
+    heads = ["Exp", "Instance", "num_nodes", "num_gpus_per_node", "model_name", 
+             "method", "value", "tstamp"]
+    values = [case.exp_name, case.instance, case.num_nodes, case.num_gpus_per_node,
+              case.model_name, case.method, to_str_round(value_dict, 4),
+              int(time.time())]
+    write_tsv(heads, values, f"result.tsv")
+
+    physical_mesh.shutdown()
+
+
+def build_cases():
+    instance = "p3.24xlarge"
+    exp_name = "weak_scaling_model"
+    num_gpus_list = [1, 2, 4, 8]
+
+    cases = []
+    for suite in suites:
+        model_name, method, args_list, benchmark_func = suite
+        for i, args in enumerate(args_list):
+            num_gpus = num_gpus_list[i]
+            num_nodes = ((num_gpus + 7) // 8)
+            num_gpus_per_node = min(num_gpus, 8)
+            cases.append(Case(exp_name, instance, num_nodes, num_gpus_per_node,
+                              model_name, method, benchmark_func, args))
+
+    return cases
 
 
 gpt_auto_sharding = [
@@ -33,58 +83,38 @@ gpt_zero_2 = [
     (8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  True,  True,  False),
 ]
 
+w_resnet_auto_sharding = [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, True,  False),
+    (32,   224, 50,  384, 4, "fp32", 1,  2,  1,  False, True,  False),
+    (32,   224, 50,  512, 4, "fp32", 1,  4,  1,  False, True,  False),
+    (32,   224, 50,  704, 4, "fp32", 1,  8,  1,  False, True,  False),
+]
 
-Case = namedtuple("Case", ["exp_name", "instance", "num_nodes", "num_gpus_per_node",
-                           "model_name", "method", "func", "args"])
+w_resnet_data_parallel = [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  True,  False, False),
+    (32,   224, 50,  384, 4, "fp32", 1,  2,  1,  True,  False, False),
+    (32,   224, 50,  512, 4, "fp32", 1,  4,  1,  True,  False, False),
+    (32,   224, 50,  704, 4, "fp32", 1,  8,  1,  True,  False, False),
+]
 
+w_resnet_zero_2 = [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  True,  True, False),
+    (32,   224, 50,  384, 4, "fp32", 1,  2,  1,  True,  True, False),
+    (32,   224, 50,  512, 4, "fp32", 1,  4,  1,  True,  True, False),
+    (32,   224, 50,  704, 4, "fp32", 1,  8,  1,  True,  True, False),
+]
 
-def benchmark_gpt_one_case(case):
-    device_cluster = DeviceCluster()
-    physical_mesh = device_cluster.get_physical_mesh(
-        list(range(case.num_nodes)), case.num_gpus_per_node)
-
-    result = benchmark_gpt_bert_internal(physical_mesh, "gpt", case.args, 5)
-    latencies, alloc_mem, tflops, param_count, ilp_objective = result
-    value_dict = {
-        "latencies": latencies,
-        "tflops": tflops,
-        "alloc_mem": alloc_mem / (1024 ** 3),
-        "param_count": param_count / 1e9,
-    }
-
-    # Log results
-    heads = ["Exp", "Instance", "num_nodes", "num_gpus_per_node", "model_name", 
-             "method", "value", "tstamp"]
-    values = [case.exp_name, case.instance, case.num_nodes, case.num_gpus_per_node,
-              case.model_name, case.method, to_str_round(value_dict, 4),
-              int(time.time())]
-    write_tsv(heads, values, f"result.tsv")
-
-    physical_mesh.shutdown()
-
-
-def build_cases():
-    instance = "p3.24xlarge"
-    exp_name = "weak_scaling_model"
-    num_gpus_list = [1, 2, 4, 8]
-
-    suites = [
-        ("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_one_case),
-        ("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_one_case),
-        ("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_one_case),
-    ]
-
-    cases = []
-    for suite in suites:
-        model_name, method, args_list, benchmark_func = suite
-        for i, args in enumerate(args_list):
-            num_gpus = num_gpus_list[i]
-            num_nodes = ((num_gpus + 7) // 8)
-            num_gpus_per_node = min(num_gpus, 8)
-            cases.append(Case(exp_name, instance, num_nodes, num_gpus_per_node,
-                              model_name, method, benchmark_func, args))
-
-    return cases
+suites = [
+    #("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
+    #("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
+    #("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_internal),
+    ("W-ResNet", "parax.auto_sharding", w_resnet_auto_sharding, benchmark_wide_resnet_internal),
+    ("W-ResNet", "parax.data_parallel", w_resnet_data_parallel, benchmark_wide_resnet_internal),
+    ("W-ResNet", "parax.zero_2", w_resnet_zero_2, benchmark_wide_resnet_internal),
+]
 
 
 if __name__ == "__main__":
@@ -95,4 +125,4 @@ if __name__ == "__main__":
     cases = build_cases()
 
     for case in cases:
-        case.func(case)
+        benchmark_one_case(case)

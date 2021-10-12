@@ -9,6 +9,8 @@ method_color_dict = {
     "parax.auto_sharding" : "C0",
     "parax.zero_2"        : "C1",
     "parax.data_parallel" : "C2",
+
+    "OOM": "gray",
 }
 
 def method2color(method):
@@ -93,23 +95,38 @@ def plot_scaling(raw_data, suffix):
         for num_gpu in num_gpus:
             ys = []
             colors = []
+            hatches = []
 
             for method in methods:
                 value = raw_data[network][num_gpu][method]["tflops"]
                 if value < 0:
-                    continue
-                ys.append(value)
-                colors.append(method2color(method))
+                    ys.append(base_y_max / 10)
+                    colors.append(method2color("OOM"))
+                    hatches.append("/////")
+                else:
+                    ys.append(value)
+                    colors.append(method2color(method))
+                    hatches.append(None)
 
             if num_gpu == 1:
                 base_y_max = max(ys)
 
+            # Draw normal bars
             xs = np.arange(x0, x0 + len(ys))
             bars = ax.bar(xs, ys, width=width, color=colors)
             for method, bar_obj in zip(methods, bars):
                 all_methods.add(method)
                 if method not in legend_set:
                     legend_set[method] = bar_obj
+
+            # Draw OOM bars
+            for i, (hatch, bar) in enumerate(zip(hatches, bars)):
+                if hatch:
+                    bar.set_edgecolor('white')
+                    bar.set_hatch(hatch)
+                    ax.text(xs[i], ys[i], "OOM",
+                            horizontalalignment='center', verticalalignment='bottom',
+                            fontsize=fontsize // 2)
 
             x0 += len(ys) + gap
             xticks.append(x0 - gap - len(ys)*width/2.0 - width/2.0)
@@ -145,16 +162,23 @@ def plot_scaling(raw_data, suffix):
                   columnspacing=1.1)
 
         # Save the figure
-        output = f"weak-scaling-{network}.{suffix}"
-        fig.set_size_inches(figure_size)
-        fig.savefig(output, bbox_inches='tight')
-        print("Output the plot to %s" % output)
+        if args.show:
+            plt.show()
+            return
+        else:
+            output = f"weak-scaling-{network}.{suffix}"
+            fig.set_size_inches(figure_size)
+            fig.savefig(output, bbox_inches='tight')
+            print("Output the plot to %s" % output)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--show", action="store_true")
+    args = parser.parse_args()
+
     filename = "result.tsv"
     suffix = "png"
     raw_data = read_raw_data(filename)
 
     plot_scaling(raw_data, suffix)
-

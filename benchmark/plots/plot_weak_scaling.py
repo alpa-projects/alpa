@@ -6,9 +6,9 @@ import numpy as np
 
 ########## Color
 method_color_dict = {
-    "parax.auto-sharding" : "C0",
-    "parax.zero-2"        : "C1",
-    "parax.data-parallel" : "C2",
+    "parax.auto_sharding" : "C0",
+    "parax.zero_2"        : "C1",
+    "parax.data_parallel" : "C2",
 }
 
 def method2color(method):
@@ -17,9 +17,9 @@ def method2color(method):
 
 ########## Order
 method_order_list = [
-    "parax.data-parallel",
-    "parax.zero-2",
-    "parax.auto-sharding",
+    "parax.data_parallel",
+    "parax.zero_2",
+    "parax.auto_sharding",
 ]
 
 def method2order(method):
@@ -28,9 +28,11 @@ def method2order(method):
 
 ########## Name
 show_name_dict = {
-    "parax.auto-sharding" : "auto-sharding (ours)",
-    "parax.data-parallel" : "data-parallel",
-    "parax.zero-2"        : "zero-2",
+    "parax.auto_sharding" : "auto-sharding (ours)",
+    "parax.data_parallel" : "data-parallel",
+    "parax.zero_2"        : "zero-2",
+    "gpt"                 : "GPT",
+    "moe"                 : "MoE",
 }
 
 def show_name(name):
@@ -48,22 +50,21 @@ def read_raw_data(filename):
         if line.startswith("#") or len(line) < 1:
             continue
 
-        exp_name, instance, num_nodes, num_gpu_per_node, network_name, system, algorithm, value, time_stamp = \
+        exp_name, instance, num_nodes, num_gpu_per_node, network_name, method, value, time_stamp = \
             line.split('\t')
 
         if exp_name != "weak_scaling_model":
             continue
 
         num_gpus = int(num_nodes) * int(num_gpu_per_node)
-        method = system + "." + algorithm
         data[network_name][num_gpus][method] = eval(value)
 
     return data
 
 
 def plot_scaling(raw_data, suffix):
-    networks = ["GPT", "MoE", "W-ResNet", "Conformer"]
-    methods = ["parax.auto-sharding", "parax.data-parallel", "parax.zero-2"]
+    networks = ["GPT", "moe", "w-resnet", "conformer"]
+    methods = ["parax.auto_sharding", "parax.data_parallel", "parax.zero_2"]
     num_gpus = [1, 2, 4, 8]
 
     # Parameters of the figure
@@ -94,7 +95,7 @@ def plot_scaling(raw_data, suffix):
             colors = []
 
             for method in methods:
-                value = raw_data[network][num_gpu][method]["TFLOPS"]
+                value = raw_data[network][num_gpu][method]["tflops"]
                 if value < 0:
                     continue
                 ys.append(value)
@@ -148,6 +149,8 @@ def plot_scaling(raw_data, suffix):
         fig.set_size_inches(figure_size)
         fig.savefig(output, bbox_inches='tight')
         print("Output the plot to %s" % output)
+
+        return
 
 
 if __name__ == "__main__":

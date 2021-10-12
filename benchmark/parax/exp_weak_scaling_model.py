@@ -10,27 +10,27 @@ from parax.util import write_tsv, to_str_round
 
 
 gpt_auto_sharding = [
-    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    CK
-    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  False, False),
-    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  False, False),
-    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  False, False),
-    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  False, False),
+    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    RS,   CK
+    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  False, True, False),
+    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  False, True, False),
+    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  False, True, False),
+    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  False, True, False),
 ]
 
 gpt_data_parallel = [
-    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    CK
-    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  True, False),
-    #(8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  True, False),
-    #(8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  True, False),
-    #(8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  True, False),
+    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  True,  False, False),
+    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  True,  False, False),
+    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  True,  False, False),
+    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  True,  False, False),
 ]
 
 gpt_zero_2 = [
-    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    CK
-    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  False, False),
-    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  False, False),
-    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  False, False),
-    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  False, False),
+    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    RS,   CK
+    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  True,  True, False),
+    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  True,  True, False),
+    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  True,  True, False),
+    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  True,  True, False),
 ]
 
 
@@ -68,24 +68,31 @@ def build_cases():
     exp_name = "weak_scaling_model"
     num_gpus_list = [1, 2, 4, 8]
 
-    cases = []
-    for i, args in enumerate(gpt_auto_sharding):
-        num_gpus = num_gpus_list[i]
-        num_nodes = ((num_gpus + 7) // 8)
-        num_gpus_per_node = min(num_gpus, 8)
+    suites = [
+        #("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_one_case),
+        ("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_one_case),
+        #("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_one_case),
+    ]
 
-        cases.append(Case(exp_name, instance, num_nodes, num_gpus_per_node,
-                          "GPT", "parax.auto_sharding", benchmark_gpt_one_case, args))
+    cases = []
+    for suite in suites:
+        model_name, method, args_list, benchmark_func = suite
+        for i, args in enumerate(args_list):
+            num_gpus = num_gpus_list[i]
+            num_nodes = ((num_gpus + 7) // 8)
+            num_gpus_per_node = min(num_gpus, 8)
+            cases.append(Case(exp_name, instance, num_nodes, num_gpus_per_node,
+                              model_name, method, benchmark_func, args))
 
     return cases
 
 
 if __name__ == "__main__":
-    cases = build_cases()
-
     ray.init(address="auto")
     jax.config.update('jax_platform_name', 'cpu')
     global_config.use_dummy_value_for_benchmarking = True
+
+    cases = build_cases()
 
     for case in cases:
         case.func(case)

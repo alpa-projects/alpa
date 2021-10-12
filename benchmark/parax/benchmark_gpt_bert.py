@@ -134,19 +134,19 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
-        use_remat = benchmark_case
+        prefer_reduce_scatter, use_remat = benchmark_case
     dtype = jnp.float16
 
     # Parallel configs
-    global_config.force_data_parallel = force_data_parallel
-
     if num_micro_batches > 1:
         grad_func = parax.grad
-        global_config.prefer_reduce_scatter = False
+        prefer_reduce_scatter = False
     else:
         num_micro_batches = None
         grad_func = jax.grad
-        global_config.prefer_reduce_scatter = True
+
+    global_config.force_data_parallel = force_data_parallel
+    global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -201,17 +201,22 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     physical_mesh.sync_workers()
     print_used_time("Compile (workers)")
+    alloc_mem = executable.get_total_allocation_size()
 
     # Benchmark step time
-    for i in range(niter):
-        state = train_step(state, batch, rngkey)
+    if alloc_mem > 30 * 1024 ** 3:
+        # out of memory
+        latencies = [-1]
+    else:
+        for i in range(niter):
+            state = train_step(state, batch, rngkey)
 
-    latencies = executable.get_execution_time_costs(warmup=2)
+        latencies = executable.get_execution_time_costs(warmup=2)
+
     print_used_time("Benchmark")
 
     # Check sharding strategy
     ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
-    alloc_mem = executable.get_total_allocation_size()
     hlo_text = executable.get_hlo_text()
 
     with open("last.hlo", "w") as fout:

@@ -221,10 +221,11 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     with open("last.hlo", "w") as fout:
         fout.write(hlo_text)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
     print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}")
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+          f"#all-to-all: {n_all_to_all}")
 
     # Compute statistics
     tflops = compute_tflops(batch_size, seq_len, num_layers,
@@ -264,33 +265,36 @@ def benchmark_one_case(case):
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1,
-# NB = num_micro_batches, FD = force_data_parallel, CK = use_checkpoint
+# NB = num_micro_batches, FD = force_data_parallel,
+# RS = prefer_reduce_scatter, CK = use_checkpoint
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False),
-    (8,  1024,  1536, 10, 1536//96,  25600, 1,  1,  1,  False, False),
+    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False, False),
+    (8,  1024,  1536, 10, 1536//96,  25600, 1,  1,  1,  False, False, False),
 ],
 
 4: [
-    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
+    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
 ],
 
 8: [
-    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False, False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, False),
+    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False,  True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,   True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False,  True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False,  True,  False),
+    #(8,   1024, 5760, 10, 5760//128, 25600, 1,  8,  1,  False,  True,  False),
+    #(8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  False,  True,  False),
 ],
 
 16: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    CK
-    (512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, False),
-    (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, False),
-    (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, False),
-    (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, False),
+    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, True,  False),
+    (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
+    (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
+    (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
 ]
 }
 

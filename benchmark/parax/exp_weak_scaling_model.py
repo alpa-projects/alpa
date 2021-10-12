@@ -10,27 +10,27 @@ from parax.util import write_tsv, to_str_round
 
 
 gpt_auto_sharding = [
-    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    RS,   CK
-    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  False, True, False),
-    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  False, True, False),
-    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  False, True, False),
-    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  False, True, False),
+    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (8,   1024, 2048, 10, 2048//128, 25600, 1,  1,  1,  False, True,  False),
+    (8,   1024, 3072, 10, 3072//128, 25600, 1,  2,  1,  False, True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  4,  1,  False, True,  False),
+    (8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  False, True,  False),
 ]
 
 gpt_data_parallel = [
-    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  True,  False, False),
-    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  True,  False, False),
-    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  True,  False, False),
-    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  True,  False, False),
+    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (8,   1024, 2048, 10, 2048//128, 25600, 1,  1,  1,  True,  False, False),
+    (8,   1024, 3072, 10, 3072//128, 25600, 1,  2,  1,  True,  False, False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  4,  1,  True,  False, False),
+    (8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  True,  False, False),
 ]
 
 gpt_zero_2 = [
-    # B,  S,     H,    L,  #head,     V,     D0, D1, NB, FD,    RS,   CK
-    (8,   1024,  2048, 10, 2048//128, 25600, 1,  1,  1,  True,  True, False),
-    (8,   1024,  3072, 10, 3072//128, 25600, 1,  2,  1,  True,  True, False),
-    (8,   1024,  4096, 10, 4096//128, 25600, 1,  4,  1,  True,  True, False),
-    (8,   1024,  5760, 10, 5760//128, 25600, 1,  8,  1,  True,  True, False),
+    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (8,   1024, 2048, 10, 2048//128, 25600, 1,  1,  1,  True,  True,  False),
+    (8,   1024, 3072, 10, 3072//128, 25600, 1,  2,  1,  True,  True,  False),
+    (8,   1024, 4096, 10, 4096//128, 25600, 1,  4,  1,  True,  True,  False),
+    (8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  True,  True,  False),
 ]
 
 
@@ -69,9 +69,9 @@ def build_cases():
     num_gpus_list = [1, 2, 4, 8]
 
     suites = [
-        #("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_one_case),
+        ("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_one_case),
         ("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_one_case),
-        #("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_one_case),
+        ("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_one_case),
     ]
 
     cases = []

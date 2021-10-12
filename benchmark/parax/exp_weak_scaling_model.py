@@ -85,26 +85,26 @@ gpt_zero_2 = [
 
 w_resnet_auto_sharding = [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, True,  False),
-    (32,   224, 50,  384, 4, "fp32", 1,  2,  1,  False, True,  False),
-    (32,   224, 50,  512, 4, "fp32", 1,  4,  1,  False, True,  False),
-    (32,   224, 50,  704, 4, "fp32", 1,  8,  1,  False, True,  False),
+    (32,   224, 50,  224, 4, "fp32", 1,  1,  1,  False, True,  False),
+    (32,   224, 50,  320, 4, "fp32", 1,  2,  1,  False, True,  False),
+    (32,   224, 50,  448, 4, "fp32", 1,  4,  1,  False, True,  False),
+    (32,   224, 50,  640, 4, "fp32", 1,  8,  1,  False, True,  False),
 ]
 
 w_resnet_data_parallel = [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  True,  False, False),
-    (32,   224, 50,  384, 4, "fp32", 1,  2,  1,  True,  False, False),
-    (32,   224, 50,  512, 4, "fp32", 1,  4,  1,  True,  False, False),
-    (32,   224, 50,  704, 4, "fp32", 1,  8,  1,  True,  False, False),
+    (32,   224, 50,  224, 4, "fp32", 1,  1,  1,  True,  False, False),
+    (32,   224, 50,  320, 4, "fp32", 1,  2,  1,  True,  False, False),
+    (32,   224, 50,  448, 4, "fp32", 1,  4,  1,  True,  False, False),
+    (32,   224, 50,  640, 4, "fp32", 1,  8,  1,  True,  False, False),
 ]
 
 w_resnet_zero_2 = [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  True,  True, False),
-    (32,   224, 50,  384, 4, "fp32", 1,  2,  1,  True,  True, False),
-    (32,   224, 50,  512, 4, "fp32", 1,  4,  1,  True,  True, False),
-    (32,   224, 50,  704, 4, "fp32", 1,  8,  1,  True,  True, False),
+    (32,   224, 50,  224, 4, "fp32", 1,  1,  1,  True,  True, False),
+    (32,   224, 50,  320, 4, "fp32", 1,  2,  1,  True,  True, False),
+    (32,   224, 50,  448, 4, "fp32", 1,  4,  1,  True,  True, False),
+    (32,   224, 50,  640, 4, "fp32", 1,  8,  1,  True,  True, False),
 ]
 
 suites = [

@@ -284,9 +284,14 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 }
 
 oom_benchmark_suite = {  # key = number of gpus, value = a list of cases
+2: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    (32,   224, 50,  320, 4, "fp32", 2,  1,  1,  True,  True,  False),
+],
+
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  True,  True,  False),
+    (32,   224, 50,  640, 4, "fp32", 8,  1,  1,  True,  True,  False),
 ],
 }
 

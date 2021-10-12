@@ -63,7 +63,7 @@ def read_raw_data(filename):
 
 
 def plot_scaling(raw_data, suffix):
-    networks = ["GPT", "moe", "w-resnet", "conformer"]
+    networks = ["GPT", "W-ResNet"]
     methods = ["parax.auto_sharding", "parax.data_parallel", "parax.zero_2"]
     num_gpus = [1, 2, 4, 8]
 
@@ -149,8 +149,6 @@ def plot_scaling(raw_data, suffix):
         fig.set_size_inches(figure_size)
         fig.savefig(output, bbox_inches='tight')
         print("Output the plot to %s" % output)
-
-        return
 
 
 if __name__ == "__main__":

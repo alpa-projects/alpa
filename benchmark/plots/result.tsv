@@ -25,3 +25,13 @@ weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax.zero_2	{'latencies': [3.113702
 weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax.zero_2	{'latencies': [3.451629, 3.454241, 3.452497], 'tflops': 7.954481, 'alloc_mem': 22.960499, 'param_count': 1.82284}	1634075823
 weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax.zero_2	{'latencies': [-1], 'tflops': -26.905154, 'alloc_mem': 33.781905, 'param_count': 3.566792}	1634075864
 weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax.zero_2	{'latencies': [-1], 'tflops': -27.446059, 'alloc_mem': 61.647597, 'param_count': 7.270024}	1634075908
+
+# MoE
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax.auto_sharding	{'latencies': [0.598375, 0.596105, 0.597014], 'tflops': 43.809686, 'alloc_mem': 23.087348, 'param_count': 0.558546}	1634140556
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax.auto_sharding	{'latencies': [0.722646, 0.723813, 0.722899], 'tflops': 45.115809, 'alloc_mem': 20.647875, 'param_count': 1.528581}	1634140749
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax.auto_sharding	{'latencies': [0.759554, 0.756561, 0.762962], 'tflops': 51.451148, 'alloc_mem': 17.215957, 'param_count': 3.880166}	1634141015
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax.auto_sharding	{'latencies': [0.502322, 0.501313, 0.503957], 'tflops': 59.381438, 'alloc_mem': 14.799929, 'param_count': 6.045578}	1634141220
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax.data_parallel	{'latencies': [0.596461, 0.596838, 0.597196], 'tflops': 43.834128, 'alloc_mem': 23.087348, 'param_count': 0.558546}	1634141276
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax.data_parallel	{'latencies': [0.99706, 0.995262, 0.996988], 'tflops': 32.740773, 'alloc_mem': 24.165561, 'param_count': 1.528581}	1634141469
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -39.087023, 'alloc_mem': 30.782653, 'param_count': 3.880166}	1634141718
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -29.840998, 'alloc_mem': 45.842464, 'param_count': 6.045578}	1634141902

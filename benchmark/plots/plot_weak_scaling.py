@@ -65,8 +65,8 @@ def read_raw_data(filename):
 
 
 def plot_scaling(raw_data, suffix):
-    networks = ["GPT", "W-ResNet"]
-    methods = ["parax.auto_sharding", "parax.data_parallel", "parax.zero_2"]
+    networks = ["MoE"]
+    methods = ["parax.auto_sharding", "parax.data_parallel"]
     num_gpus = [1, 2, 4, 8]
 
     # Parameters of the figure

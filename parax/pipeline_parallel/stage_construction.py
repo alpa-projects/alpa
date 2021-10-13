@@ -3,9 +3,12 @@ import jax.numpy as jnp
 import ray
 import numba
 import numpy as np
+from time import time
 from typing import Sequence, Set, Tuple
 from parax.pipeline_parallel.stage import JaxPipelineStage
 from parax.device_mesh import VirtualMesh
+from parax.pipeline_parallel.mesh_slicing import (
+    compile_and_profile_layer_cost_c, split_global_use_and_donate)
 
 
 @numba.jit(nopython=True)
@@ -87,6 +90,47 @@ def get_submesh_choices(mesh: VirtualMesh):
 
     return submesh_choices
 
+
+def profile_on_mesh(layers, mesh, donation_mapping, global_outvars):
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    all_invars = [set(layer.invars) for layer in layers]
+    indices = list(range(2 * num_layers))
+    compute_cost = np.full((num_layers, num_layers), np.inf)
+    for start in range(0, num_layers):
+        for end in range(start, num_layers):
+            layer_collections = layers[start:end + 1] + layers[2 * num_layers - end - 1:2 * num_layers - start]
+            layer_indices = indices[start:end + 1] + indices[2 * num_layers - end - 1:2 * num_layers - start]
+            _, global_used_list = split_global_use_and_donate(layer_collections, layer_indices, all_invars, donation_mapping, global_outvars)
+            donate_invars_list = [[False for _ in stage.invars] for stage in layer_collections]
+            cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layer_collections, mesh, donate_invars_list, global_used_list)
+            compute_cost[start, end] = np.mean(cost)
+    return compute_cost
+
+
+def get_compute_cost(layers, submesh_choices, virtual_mesh, donation_mapping, global_outvars):
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    num_submesh_choices = len(submesh_choices)
+    compute_cost = np.full((num_layers, num_layers, num_submesh_choices), np.inf)
+    for mesh_id, submesh in enumerate(submesh_choices):
+        num_hosts, num_devices = submesh
+        sliced_virtual_mesh = virtual_mesh.slice_2d(list(range(num_hosts)), [list(range(num_devices)) for _ in range(num_hosts)])
+        mesh = sliced_virtual_mesh.get_physical_mesh()
+        tic = time()
+        mesh_compute_cost = profile_on_mesh(layers, mesh, donation_mapping, global_outvars)
+        compute_cost[:, :, mesh_id] = mesh_compute_cost
+        toc = time()
+        mesh.shutdown()
+        print(f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds')
+        print(f'profiled costs are: {compute_cost[:, :, mesh_id]}')
+        print('=' * 30)
+
+def get_mesh_slicing_scheme(virtual_mesh, submesh_choices, solution):
+    submeshes = [submesh_choices[choice] for _, choice in solution]
+    submesh_sizes = [np.prod(submesh) for submesh in submeshes]
+    assert sum(submesh_sizes) == virtual_mesh
+    # TODO(zhuohan): Finish here
 
 
 def get_stage_and_mesh_assignments(layers: Sequence[JaxPipelineStage], mesh: VirtualMesh):

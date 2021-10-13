@@ -185,6 +185,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             compute_grad_jaxpr, gensym_func)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
+        acc_grad_dict = {}
+        grad_in_to_out = {}
 
     # slice accumulate grad
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
@@ -198,6 +200,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # TODO(zhuohan): merge pipeline layers into stages here
     if global_config.pipeline_stage_mode == "auto":
+        # TODO(zhuohan): get stage_to_mesh, dependency with the auto pass
         pass
     elif global_config.pipeline_stage_mode == "uniform_layer_gpipe":
         num_acc_grad_stages = len(jax_pipeline_stages)
@@ -248,7 +251,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         n_stages = len(jax_pipeline_stages)
         dependency = gen_linear_pipeline_dependency(n_stages)
         apply_grad_schedule = {}
-        grad_in_to_out = {}
     # Generate schedule and placement
     schedule = GpipeSchedule(dependency=dependency,
                              mesh=virtual_mesh,

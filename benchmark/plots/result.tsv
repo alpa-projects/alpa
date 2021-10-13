@@ -35,3 +35,5 @@ weak_scaling_model	p3.24xlarge	1	1	MoE	parax.data_parallel	{'latencies': [0.5964
 weak_scaling_model	p3.24xlarge	1	2	MoE	parax.data_parallel	{'latencies': [0.99706, 0.995262, 0.996988], 'tflops': 32.740773, 'alloc_mem': 24.165561, 'param_count': 1.528581}	1634141469
 weak_scaling_model	p3.24xlarge	1	4	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -39.087023, 'alloc_mem': 30.782653, 'param_count': 3.880166}	1634141718
 weak_scaling_model	p3.24xlarge	1	8	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -29.840998, 'alloc_mem': 45.842464, 'param_count': 6.045578}	1634141902
+
+

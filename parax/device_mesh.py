@@ -415,12 +415,9 @@ class CompileWorkerPool:
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
         self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
-
-    def push(self, actor):
-        self.pool.push(actor)
-
-    def pop_idle(self):
-        return self.pool.pop_idle()
+    
+    def submit(self, fn, value):
+        self.pool.submit(fn, value)
 
     def shutdown(self):
         self.pool = None

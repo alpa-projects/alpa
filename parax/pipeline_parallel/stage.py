@@ -18,7 +18,7 @@ from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable
-from parax.pipeline_parallel.primitive_def import (mark_pipeline, pipeline_p,
+from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy)
@@ -1083,7 +1083,12 @@ def merge_stages(jaxprs: Sequence[ClosedJaxpr],
     new_outvars = list(new_outvars.keys())
     if donation_mapping:
         new_invars_set = set(new_invars)
-        donation_mapping = {k: v for k, v in donation_mapping.items() if k in new_invars_set}
+        new_outvars_set = set(new_outvars)
+        donation_mapping = {
+            k: v
+            for k, v in donation_mapping.items()
+            if k in new_invars_set and v in new_outvars_set
+        }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
     return ClosedJaxpr(

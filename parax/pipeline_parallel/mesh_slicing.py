@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Sequence, Set, Tuple
+from typing import Dict, Sequence, Set, Tuple
 
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
@@ -85,7 +85,7 @@ def split_sharding_specs(layers: Sequence[JaxPipelineStage],
 
 def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
                                      mesh: PhysicalDeviceMesh,
-                                     donation_mapping: Sequence[Sequence[bool]],
+                                     donation_mapping: Dict[Var, Var],
                                      global_used: Set[Var]):
     """
     Args:

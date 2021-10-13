@@ -101,7 +101,7 @@ def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
         donate_invars_dict:List[Sequence[bool]]: donate_invars for each stage
     """
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
-    gensym_fn = gensym([stage.closed_jaxpr() for stage in stages])
+    gensym_fn = gensym([stage.closed_jaxpr().jaxpr for stage in stages])
     # global last use to consider if the main copy can be discarded
 
     ans = [None for _ in range(len(stages))]
@@ -121,15 +121,16 @@ def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
                 appended_invars.add(invar)
         # append invars for donation
         appended_invars = list(appended_invars)
-        logger.warning(
-            f" invarsappend into stage {stage_idx} for donation:{appended_invars}"
-        )
-        stage.invars = stage.invars + appended_invars
-        pipe_start = stage.eqns[0]
-        stage.eqns[0] = mark_pipeline_jaxpreqn(
-            pipe_start.invars + appended_invars, pipe_start.outvars +
-            list(map(lambda v: gensym_fn(v.aval), appended_invars)),
-            pipe_start.params['name'], pipe_start.params['mark_type'])
+        if appended_invars:
+            logger.warning(
+                f" invars append into stage {stage_idx} for donation:{appended_invars}"
+            )
+            stage.invars = stage.invars + appended_invars
+            pipe_start = stage.eqns[0]
+            stage.eqns[0] = mark_pipeline_jaxpreqn(
+                pipe_start.invars + appended_invars, pipe_start.outvars +
+                list(map(lambda v: gensym_fn(v.aval), appended_invars)),
+                pipe_start.params['name'], pipe_start.params['mark_type'])
         # rearrange to keep donated invars and outvars have same index
         new_invars, new_pipe_start = rearrange_vars(
             stage.invars, list(donation_mapping.keys()), stage.eqns[0], True)

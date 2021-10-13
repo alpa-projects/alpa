@@ -44,7 +44,7 @@ def show_name(name):
 
 def read_raw_data(filename):
     # data[network][num_gpus][method] = {"TFLOPS": xxx}
-    data = defaultdict(lambda : defaultdict(lambda : defaultdict(lambda : -1.0)))
+    data = defaultdict(lambda : defaultdict(lambda : defaultdict(lambda : defaultdict(lambda: -1))))
 
     # read raw data
     for line in open(filename):
@@ -65,8 +65,8 @@ def read_raw_data(filename):
 
 
 def plot_scaling(raw_data, suffix):
-    networks = ["MoE"]
-    methods = ["parax.auto_sharding", "parax.data_parallel"]
+    networks = ["GPT", "W-ResNet", "MoE"]
+    methods = ["parax.auto_sharding", "parax.data_parallel", "parax.zero_2"]
     num_gpus = [1, 2, 4, 8]
 
     # Parameters of the figure
@@ -98,6 +98,9 @@ def plot_scaling(raw_data, suffix):
             hatches = []
 
             for method in methods:
+                if method not in raw_data[network][num_gpu]:
+                    continue
+
                 value = raw_data[network][num_gpu][method]["tflops"]
                 if value < 0:
                     ys.append(base_y_max / 10)

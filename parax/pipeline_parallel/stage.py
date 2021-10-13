@@ -1013,3 +1013,61 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
                               new_eqns)
             results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
     return results, outvar_map
+
+
+def merge_stages(jaxprs: Sequence[ClosedJaxpr], used: Set[Var],
+                 new_marker_name) -> ClosedJaxpr:
+    """
+    Merge continuous jaxprs and remove pipe markers
+    Args:
+        jaxprs (Sequence[ClosedJaxpr]): jaxprs to be merged
+        used (Set[Var]): out variables used later
+        new_marker_name (str): name of merged pipeline used in marker
+    """
+    new_invars = dict()
+    new_outvars = dict()
+    new_eqns = []
+    var_map = dict()
+
+    # handle const vars:
+    new_constvars = dict()
+    for jaxpr in jaxprs:
+        new_constvars.update(dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts)))
+
+    for jaxpr in jaxprs:
+        # handle pipeline start marker:
+        pipe_start = jaxpr.eqns[0]
+        for invar, outvar in zip(pipe_start.invars, pipe_start.outvars):
+            if invar not in var_map:
+                # is not local output, the outvar is kept
+                if invar not in new_constvars:
+                    new_invars[invar] = outvar
+            else:
+                # is local output, the outvar is redirected
+                var_map[outvar] = var_map[invar]
+        # handle normal eqns
+        for eqn in jaxpr.eqns[1:-1]:
+            new_local_invars = [get_var_mapping(var_map, v) for v in eqn.invars]
+            new_eqns.append(
+                new_jaxpr_eqn(new_local_invars, eqn.outvars, eqn.primitive,
+                              eqn.params, eqn.source_info))
+        # handle pipeline end marker
+        pipe_end = jaxpr.eqns[-1]
+        for invar, outvar in zip(pipe_end.invars, pipe_end.outvars):
+            if outvar in used:
+                new_outvars[outvar] = get_var_mapping(var_map, invar)
+            var_map[outvar] = get_var_mapping(var_map, invar)
+
+    new_pipe_start = mark_pipeline_jaxpreqn(list(new_invars.keys()),
+                                            list(new_invars.values()),
+                                            new_marker_name, 'start')
+    new_pipe_end = mark_pipeline_jaxpreqn(list(new_outvars.values()),
+                                          list(new_outvars.keys()),
+                                          new_marker_name, 'end')
+    new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
+    constvars = set(new_constvars.keys())
+    new_invars = [k for k in new_invars.keys() if k not in constvars]
+    new_outvars = list(new_outvars.keys())
+    return ClosedJaxpr(
+        Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
+        list(new_constvars.values()))

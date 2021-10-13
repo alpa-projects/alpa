@@ -20,21 +20,20 @@ from parax.pipeline_parallel.stage import JaxPipelineStage
 def split_global_use_and_donate(layers, layer_indices,
                                 all_invars, donation_mapping, global_outvars):
     '''
-    This function pessimisticly get outvars used in global and
-    invars donated for the layer group.
-    Actually we can process each (fwd-bwd) together just like
-    what in three_d_parallel, but this is designed to support not only
-    (fwd-bwd) group, but also many layers.
+    Pick some layers(no need to be consecutive) and assume they are on a mesh, 
+    this function then returns donation_mapping and global_use of each selected layer.
     Args:
-        layers (Sequence[JaxPipelineStage]): selected layers
+        layers (Sequence[JaxPipelineStage]): all layers
         layer_indices (Set[int]): indices of selected layers, they are
         assumed to be in the same stage
         all_invars (Set[int]): global invars and buffers for grad acc
-        donation_mapping (Dict[Var, Var]): donation mapping for global invar and grad acc
+        donation_mapping (Dict[Var, Var]): known global donation mapping
         global_outvars (Sequence[Var]): global outvars
     Returns:
-        donate_invars_list, global_used_list:
-            see compile_and_profile_layer_cost_c
+        donation_mapping_list: 
+            a list of donation mapping
+        global_used_list:
+            a list of global use: outvars used in unselected layers
     '''
     layer_indices = set(layer_indices)
     num_layers = len(all_invars)
@@ -47,6 +46,12 @@ def split_global_use_and_donate(layers, layer_indices,
             donate_invars = []
             global_used = []
             layer = layers[-1 * (len(donate_invars_list) + 1)]
+            for var in layer.invars:
+                if var in used or var in local_used:
+                    continue
+                if var not in donation_mapping:
+                    continue
+                
             donate_invars = [
                 var in donation_mapping and
                 var not in used and var not in local_used

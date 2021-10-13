@@ -31,10 +31,11 @@ class HloProtoStatus(enum.IntEnum):
 
 
 def compile_with_search(backend, xla_computation, avals, out_avals,
-                        donated_invars, bypass_device_assignment_check, logical_mesh_choices,
+                        donated_invars, physical_mesh, logical_mesh_choices,
                         logical_mesh_search_mode, memory_budget_per_device,
                         search_task, record_file, multiple_stages,
-                        grad_acc_num_micro_batches):
+                        grad_acc_num_micro_batches,
+                        bypass_device_assignment_check):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
@@ -74,8 +75,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=total_devices,
-        device_assignment=np.arange(total_devices).reshape(
-            (1, -1)),
+        device_assignment=np.arange(total_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)

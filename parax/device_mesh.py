@@ -393,14 +393,15 @@ class CompileWorker:
             avals,
             out_avals,
             donate_invars,
-            True,
+            None,
             logical_mesh_choices,
             global_config.mesh_shape_search_mode,
             global_config.memory_budget_per_device,
             search_task,
             record_file,
             multiple_stages=True,
-            grad_acc_num_micro_batches=None)
+            grad_acc_num_micro_batches=None,
+            bypass_device_assignment_check=True)
         assert len(
             protos) == 1, "compile worker compiles multiple stages in a time"
         return protos[0], strategy_config

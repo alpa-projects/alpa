@@ -171,14 +171,15 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             avals,
             out_avals,
             donated_invars,
-            physical_mesh.is_distributed,
+            physical_mesh,
             logical_mesh_choices,
             logical_mesh_search_mode,
             memory_budget_per_device,
             search_task,
             record_file,
             multiple_stages=False,
-            grad_acc_num_micro_batches=None)
+            grad_acc_num_micro_batches=None,
+            bypass_device_assignment_check=physical_mesh.is_distributed)
     else:
         compiled = compile_with_given_strategy(backend, built, strategy_config,
                                                physical_mesh.total_devices,
@@ -236,14 +237,15 @@ def shard_parallel_internal_gradient_accumulation(
         avals,
         out_avals,
         donated_invars,
-        physical_mesh.is_distributed,
+        physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,
         memory_budget_per_device,
         search_task,
         record_file,
         multiple_stages=True,
-        grad_acc_num_micro_batches=num_micro_batches)
+        grad_acc_num_micro_batches=num_micro_batches,
+        bypass_device_assignment_check=physical_mesh.is_distributed)
     assert len(hlo_protos) == 2
 
     # Compile these two HLOs separately to get two XLA executables

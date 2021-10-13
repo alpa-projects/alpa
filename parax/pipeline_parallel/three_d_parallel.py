@@ -84,9 +84,50 @@ def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
     return donation_mapping
 
 
+def get_donation_mapping_and_modify(stage, reversed_donation_mapping,
+                                    gensym_fn):
+    invars = set(stage.invars)
+    donation_mapping = dict()
+    appended_invars = set()
+    for var in stage.outvars:
+        if var not in reversed_donation_mapping:
+            continue
+        invar = reversed_donation_mapping[var]
+        assert invar.aval.shape == var.aval.shape
+        donation_mapping[invar] = var
+        if invar not in invars:
+            appended_invars.add(invar)
+    if not donation_mapping:
+        return donation_mapping, stage
+    # append invars for donation
+    new_invars = list(stage.invars)
+    new_outvars = list(stage.outvars)
+    new_eqns = list(stage.eqns)
+    appended_invars = list(appended_invars)
+    if appended_invars:
+        new_invars = new_invars + appended_invars
+        pipe_start = new_eqns[0]
+        new_eqns[0] = mark_pipeline_jaxpreqn(
+            pipe_start.invars + appended_invars, pipe_start.outvars +
+            list(map(lambda v: gensym_fn(v.aval), appended_invars)),
+            pipe_start.params['name'], pipe_start.params['mark_type'])
+    # rearrange to keep donated invars and outvars have same index
+    new_invars, new_pipe_start = rearrange_vars(new_invars,
+                                                list(donation_mapping.keys()),
+                                                new_eqns[0], True)
+    new_outvars, new_pipe_end = rearrange_vars(new_outvars,
+                                               list(donation_mapping.values()),
+                                               new_eqns[-1], False)
+    new_eqns[0] = new_pipe_start
+    new_eqns[-1] = new_pipe_end
+    new_stage = JaxPipelineStage(stage.name, new_invars, new_outvars, new_eqns,
+                                 stage.consts_dir)
+    return donation_mapping, new_stage
+
+
 def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
     """
-    Split donated invars for sliced jaxprs.
+    Split donated invars for sliced jaxprs, then rewrite stages.
     Currently, we only donate:
     1. global invars that can be donated(set by users);
     2. buffers for accumulated gradients.
@@ -105,47 +146,18 @@ def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
     # global last use to consider if the main copy can be discarded
 
     ans = [None for _ in range(len(stages))]
+    new_stages = []
 
     for stage_idx, stage in enumerate(stages):
         # find donation mapping of the stage
-        invars = set(stage.invars)
-        donation_mapping = dict()
-        appended_invars = set()
-        for var in stage.outvars:
-            if var not in reversed_donation_mapping:
-                continue
-            invar = reversed_donation_mapping[var]
-            assert invar.aval.shape == var.aval.shape
-            donation_mapping[invar] = var
-            if invar not in invars:
-                appended_invars.add(invar)
-        # append invars for donation
-        appended_invars = list(appended_invars)
-        if appended_invars:
-            logger.warning(
-                f" invars append into stage {stage_idx} for donation:{appended_invars}"
-            )
-            stage.invars = stage.invars + appended_invars
-            pipe_start = stage.eqns[0]
-            stage.eqns[0] = mark_pipeline_jaxpreqn(
-                pipe_start.invars + appended_invars, pipe_start.outvars +
-                list(map(lambda v: gensym_fn(v.aval), appended_invars)),
-                pipe_start.params['name'], pipe_start.params['mark_type'])
-        # rearrange to keep donated invars and outvars have same index
-        new_invars, new_pipe_start = rearrange_vars(
-            stage.invars, list(donation_mapping.keys()), stage.eqns[0], True)
-        new_outvars, new_pipe_end = rearrange_vars(
-            stage.outvars, list(donation_mapping.values()), stage.eqns[-1],
-            False)
-        stage.invars = new_invars
-        stage.outvars = new_outvars
-        stage.eqns[0] = new_pipe_start
-        stage.eqns[-1] = new_pipe_end
+        donation_mapping, new_stage = get_donation_mapping_and_modify(
+            stage, reversed_donation_mapping, gensym_fn)
         donated_num = len(donation_mapping)
-        ans[stage_idx] = (True,) * donated_num + (False,) * (len(new_invars) -
-                                                             donated_num)
+        ans[stage_idx] = (True,) * donated_num + (False,) * (
+            len(new_stage.invars) - donated_num)
+        new_stages.append(new_stage)
 
-    return ans
+    return ans, new_stages
 
 
 @lu.cache
@@ -257,16 +269,17 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     stage_dict = [[] for _ in range(n_meshes)]
     stage_id_dict = [[] for _ in range(n_meshes)]
+    # create donation mapping again, as apply gradients are considered
+    donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
+                                               global_invars, global_outvars)
+    donate_invars_dict, jax_all_stages = split_donate_invars(
+        donation_mapping, jax_all_stages)
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)
         stage_dict[mesh_idx].append(stage)
-    # create donation mapping again, as apply gradients are considered
-    donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
-                                               global_invars, global_outvars)
-    donate_invars_dict = split_donate_invars(donation_mapping, jax_all_stages)
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages

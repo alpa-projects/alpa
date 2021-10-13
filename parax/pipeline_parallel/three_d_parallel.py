@@ -9,15 +9,16 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
+from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.pipeline_parallel.runtime import (
     GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
     gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
-    JaxPipelineStage, apply_grad_add_marker, compute_to_acc_pipe,
-    generate_sharded_xla_stages, get_var_mapping,
-    slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks, slice_apply_gradient, mark_grad_mesh,
-    apply_grad_get_mean, pipeline_dce)
+    JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
+    compute_to_acc_pipe, generate_sharded_xla_stages, get_var_mapping,
+    mark_grad_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
+    rearrange_vars, slice_apply_gradient,
+    slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -41,11 +42,27 @@ def split_compute_and_apply(closed_jaxpr: ClosedJaxpr):
         closed_jaxpr.eqns[split_idx + 1:]
     ]
     compute, _, apply = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
+    if len(apply.eqns) == 0:
+        logger.warning('the apply gradient part is None. hint: apply() after parax.grad')
     return compute, apply, split_eqn
 
 
-def split_donate_invars(donated_invars: Sequence[bool], global_invars,
-                        stages: Sequence[JaxPipelineStage], pattern):
+def has_corresponding_outvar(var, stage):
+    pure_invar = None
+    for invar, invar_sym in zip(stage.eqns[0].invars, stage.eqns[0].outvars):
+        if invar == var:
+            pure_invar = invar_sym
+            break
+    assert pure_invar
+    for outvar_sym, outvar in zip(stage.eqns[-1].invars,
+                                  stage.eqns[-1].outvars):
+        if outvar_sym == pure_invar:
+            return outvar
+    return None
+
+
+def split_donate_invars(global_invars, donation_mapping,
+                        stages: Sequence[JaxPipelineStage], pattern, gensym_fn):
     """
     Split donated invars for sliced jaxprs. The pattern is in form of:
     1. parallel. jaxprs are in different meshes.
@@ -53,20 +70,21 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
     3. Inside a mesh is serial, between a mesh is parallel.
     In the third pattern, we should consider main buffer and copy buffer.
     A main buffer should not be donated unless no other mesh requires its result.
+    Currently, we only donate:
+    1. global invars that can be donated(set by users);
+    2. buffers for accumulated gradients.
+    But if auto-sharding supports, we can add:
+    1. local invars not used later in this mesh, not main copy
+    2. local invars not used later in all meshes, main copy
     Args:
-        donated_invars: whether a global invar is donated.
-        global_invars: global invars for the whole jaxpr.
+        donation_mapping (Dict[Var, Var]): known mapping of donations, including 
+            global invar-outvar and accumulate gradients
         stages: slices in topology order of execution.
         pattern: The outter list is for parallel, and inner for serial.
     Returns:
         donate_invars_dict:List[Sequence[bool]]: donate_invars for each stage
     """
-    not_donated = [
-        global_invars[i]
-        for i in range(len(donated_invars))
-        if not donated_invars[i]
-    ]
-    not_donated = set(not_donated)
+    reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
     # global last use to consider if the main copy can be discarded
     global_last_use = dict()
     for stage_idx, stage in enumerate(stages):
@@ -74,29 +92,64 @@ def split_donate_invars(donated_invars: Sequence[bool], global_invars,
             global_last_use[invar] = stage_idx
 
     ans = [None for _ in range(len(stages))]
+    donate_mappings = [None for _ in range(len(stages))]
 
     for serial_group in pattern:
         serial_group = sorted(serial_group)
         main_copy_vars = set()
         for stage_idx in serial_group:
-            main_copy_vars.update(stages[stage_idx].outvars)
+            stage = stages[stage_idx]
+            main_copy_vars.update(
+                [v for v in stage.invars if v in global_invars])
+            main_copy_vars.update(stage.outvars)
         serial_group = reversed(serial_group)
         use_later = set()
         for stage_idx in serial_group:
-            invars = stages[stage_idx].invars
-            donate_status = []
-            for var in invars:
-                # global invar not allowed to donate or use in later stages
-                if var in not_donated or var in use_later:
-                    donate_status.append(False)
-                # var is not used in later cases of the mesh.
-                # But if it's main copy, consider global_last_use
-                elif var in main_copy_vars and global_last_use[var] > stage_idx:
-                    donate_status.append(False)
-                else:
-                    donate_status.append(True)
+            stage = stages[stage_idx]
+            invars = set(stage.invars)
+            donate_mapping = dict()
+            appended_invars = set()
+            for var in stage.outvars:
+                if var not in reversed_donation_mapping:
+                    continue
+                invar = reversed_donation_mapping[var]
+                assert global_last_use[
+                    invar] <= stage_idx, "invar is donated before last use"
+                assert invar in main_copy_vars, f"donate invar {invar} not at the mesh"
+                assert invar.aval.shape == var.aval.shape
+                donate_mapping[invar] = var
+                if invar in invars:
+                    continue
+                appended_invars.add(invar)
             use_later.update(invars)
-            ans[stage_idx] = donate_status
+            donate_mappings[stage_idx] = donate_mapping
+            # append dummy invars:
+            if not appended_invars:
+                continue
+            appended_invars = list(appended_invars)
+            logger.warning(f'append into stage {stage_idx} for donation:{appended_invars}')
+            stage.invars = stage.invars + appended_invars
+            pipe_start = stage.eqns[0]
+            stage.eqns[0] = mark_pipeline_jaxpreqn(
+                pipe_start.invars + appended_invars, pipe_start.outvars +
+                list(map(lambda v: gensym_fn(v.aval), appended_invars)),
+                pipe_start.params['name'], pipe_start.params['mark_type'])
+
+    # rearrange to keep donated invars and outvars have same index
+    for stage_idx, stage in enumerate(stages):
+        donate_mapping = donate_mappings[stage_idx]
+        new_invars, new_pipe_start = rearrange_vars(
+            stage.invars, list(donate_mapping.keys()), stage.eqns[0], True)
+        new_outvars, new_pipe_end = rearrange_vars(
+            stage.outvars, list(donate_mapping.values()), stage.eqns[-1], False)
+        stage.invars = new_invars
+        stage.outvars = new_outvars
+        stage.eqns[0] = new_pipe_start
+        stage.eqns[-1] = new_pipe_end
+        donated_num = len(donate_mapping)
+        ans[stage_idx] = (True,) * donated_num + (False,) * (len(new_invars) -
+                                                             donated_num)
+
     return ans
 
 
@@ -212,14 +265,30 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if barrier is not None:
         grad_invars = list(grad_in_to_out.keys())
         all_invars = closed_jaxpr.jaxpr.invars + grad_invars
-        all_donation = donated_invars + (True,) * len(grad_invars)
-        # forward, backward and apply gradient is serialized in a batch.
+        donation_mapping = dict(grad_in_to_out)
     else:
         all_invars = closed_jaxpr.jaxpr.invars
-        all_donation = donated_invars
+        donation_mapping = dict()
+    # infer donation of global invar-outvars
+    donated_outvars = set()
+
+    for donate, invar in zip(donated_invars, global_invars):
+        if not donate:
+            continue
+        for outvar in global_outvars:
+            if outvar in donated_outvars:
+                continue
+            if invar.aval.shape != outvar.aval.shape:
+                continue
+            donated_outvars.add(outvar)
+            donation_mapping[invar] = outvar
+            break
+        if invar not in donation_mapping:
+            logger.warning(f"{invar} is marked as donated but actually no match outvar")
     pattern = [stage_id_dict[mesh_idx] for mesh_idx in range(mesh_num)]
-    donate_invars_dict = split_donate_invars(all_donation, all_invars,
-                                             jax_all_stages, pattern)
+    donate_invars_dict = split_donate_invars(all_invars, donation_mapping,
+                                             jax_all_stages, pattern,
+                                             gensym_func)
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
@@ -242,6 +311,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 
+    grad_in_to_out = {k:repr(v) for k, v in grad_in_to_out.items()}
     jp = Jax3DPipeline(pipeline_stages=xla_stages,
                        global_invars=global_invars,
                        grad_dummy_invars=grad_in_to_out,

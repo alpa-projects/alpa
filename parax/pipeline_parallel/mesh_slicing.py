@@ -1,8 +1,8 @@
 import numpy as np
-from typing import Sequence, Set, Tuple
+from typing import Dict, Sequence, Set, Tuple
 
 import jax.numpy as jnp
-from jax.core import ClosedJaxpr, Jaxpr, jaxpr_as_fun
+from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
 
 from parax.api import parallelize
@@ -11,69 +11,56 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
-from parax.pipeline_parallel.stage import JaxPipelineStage
+from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages, rearrange_vars
+from parax.pipeline_parallel.three_d_parallel import get_donation_mapping_and_modify
 
 
 ########################################
 ##### Profile tools
 ########################################
-def split_global_use_and_donate(layers, layer_indices,
-                                all_invars, donation_mapping, global_outvars):
+def split_global_use_and_donate(layers, layer_indices, donation_mapping,
+                                global_outvars):
     '''
-    This function pessimisticly get outvars used in global and
-    invars donated for the layer group.
-    Actually we can process each (fwd-bwd) together just like
-    what in three_d_parallel, but this is designed to support not only
-    (fwd-bwd) group, but also many layers.
+    Pick some layers(no need to be consecutive) and assume they are on a mesh, 
+    this function then returns donation_mapping and global_use of each selected layer.
     Args:
-        layers (Sequence[JaxPipelineStage]): selected layers
+        layers (Sequence[JaxPipelineStage]): all layers
         layer_indices (Set[int]): indices of selected layers, they are
-        assumed to be in the same stage
-        all_invars (Set[int]): global invars and buffers for grad acc
-        donation_mapping (Dict[Var, Var]): donation mapping for global invar and grad acc
+        assumed to be in the same mesh
+        donation_mapping (Dict[Var, Var]): known global donation mapping
         global_outvars (Sequence[Var]): global outvars
     Returns:
-        donate_invars_list, global_used_list:
-            see compile_and_profile_layer_cost_c
+        donation_mapping: donation mapping of all picked layers
+        global_used: a set of outvars used not only in selected layers
+        layers: layers rearranged for donate invar
     '''
+    reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
     layer_indices = set(layer_indices)
-    num_layers = len(all_invars)
-    donate_invars_list = []
-    global_used_list = []
+    gensym_fn = gensym([layer.closed_jaxpr().jaxpr for layer in layers])
+    num_layers = len(layers)
+    out_donation_mapping = dict()
+    out_global_used = set()
     used = set(global_outvars)
     local_used = set()  # limit donation
+    new_layers = []
     for idx in reversed(range(num_layers)):
+        layer = layers[idx]
         if idx in layer_indices:
-            donate_invars = []
-            global_used = []
-            layer = layers[-1 * (len(donate_invars_list) + 1)]
-            donate_invars = [
-                var in donation_mapping and
-                var not in used and var not in local_used
-                for var in layer.invars
-            ]
-            donate_invars = tuple()
-            global_used = [var in used for var in layer.outvars]
-            donate_invars_list.append(donate_invars)
-            global_used_list.append(global_used)
-            local_used.update(layer.invars)
+            global_used = set()
+            local_donation, new_layer = get_donation_mapping_and_modify(
+                layer, reversed_donation_mapping, gensym_fn)
+            for invar in local_donation.keys():
+                assert invar not in global_used and invar not in local_used
+
+            global_used = [var for var in new_layer.outvars if var in used]
+            out_donation_mapping.update(local_donation)
+            out_global_used.update(global_used)
+            local_used.update(new_layer.invars)
+            new_layers.append(new_layer)
             continue
-        used.update(all_invars[idx])
-    return list(reversed(donate_invars_list)), list(reversed(global_used_list))
-
-
-def merge_invar_donation(layers, mixed_jaxpr, donate_invars_list):
-    '''
-    Merge invar donation for invars of layers to the merged stage.
-    '''
-    can_donate = set()
-    for layer, donate_invars in zip(layers, donate_invars_list):
-        can_donate.update(
-            [var for var, donate in zip(layer.invars, donate_invars) if donate])
-    mixed_donation = [
-        i for i, var in enumerate(mixed_jaxpr.jaxpr.invars) if var in can_donate
-    ]
-    return mixed_donation
+        used.update(layer.invars)
+    new_layers = list(reversed(new_layers))
+    return out_donation_mapping, out_global_used, new_layers
 
 
 def split_sharding_specs(layers: Sequence[JaxPipelineStage],
@@ -96,16 +83,16 @@ def split_sharding_specs(layers: Sequence[JaxPipelineStage],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def compile_and_profile_layer_cost_c(
-        layers: Sequence[JaxPipelineStage], mesh: PhysicalDeviceMesh,
-        donate_invars_list: Sequence[Sequence[bool]],
-        global_used_list: Sequence[Sequence[bool]]):
+def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
+                                     mesh: PhysicalDeviceMesh,
+                                     donation_mapping: Dict[Var, Var],
+                                     global_used: Set[Var]):
     """
     Args:
         layers (Sequence[JaxPipelineStage]): forward and corresponding backward
         mesh (PhysicalDeviceMesh): the assigned mesh
-        donate_invars_list (Sequence[Sequence[bool]]): donate_invar of each layer
-        global_used_list (Sequence[Sequence[bool]]): for each layer, record if each
+        donation_mapping (Dict[Var, Var]): donation mapping of all selected layers
+        global_used_list (Set[Var]): for each layer, record if each
             outvar is used outside the compiled layers
     """
     backup_config = global_config.backup()
@@ -115,33 +102,19 @@ def compile_and_profile_layer_cost_c(
     global_config.strategy = "shard_parallel"
     global_config.use_dummy_value_for_benchmarking = True
 
-    invars = set()
-    outvars = set()
-    eqns = []
-    consts_dir = {}
-    local_outvars = set()
-    for stage, global_used in zip(layers, global_used_list):
-        consts_dir.update(stage.consts_dir)
-        # Do not add local invars into the invars
-        invars.update([var for var in stage.invars if var not in local_outvars])
-        local_outvars.update(stage.outvars)
-        outvars.update(
-            [var for var, used in zip(stage.outvars, global_used) if used])
-        eqns += stage.eqns
-    jaxpr = Jaxpr(
-        constvars=list(consts_dir.keys()),
-        invars=list(invars),
-        outvars=list(outvars),
-        eqns=eqns,
-    )
-    mixed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
+    jaxprs = [layer.closed_jaxpr() for layer in layers]
+
+    mixed_jaxpr = merge_stages(jaxprs, global_used, 'profile_tmp',
+                               donation_mapping)
+    donate_argnums = [
+        idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
+        if var in donation_mapping
+    ]
+
     fn = jaxpr_as_fun(mixed_jaxpr)
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
-    donate_argnums = merge_invar_donation(layers, mixed_jaxpr,
-                                          donate_invars_list)
-    # donate_argnums = tuple()
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)
     ret = executable.profile_with_dummy_inputs()

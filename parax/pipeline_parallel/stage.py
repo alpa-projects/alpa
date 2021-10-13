@@ -481,7 +481,10 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
     return new_stages
 
 
-def rearrange_vars(vars, selected: Sequence[Var], pipe_marker=None, is_input=True):
+def rearrange_vars(vars,
+                   selected: Sequence[Var],
+                   pipe_marker=None,
+                   is_input=True):
     """
     Rearrange vars to let those in selected be the first. If the pipe_marker is given,
     rearrange invars and outvars in pipemarker also.
@@ -540,8 +543,8 @@ def generate_sharded_xla_stages(name: str,
                 continue
             donation_mapping[stage.invars[idx]] = stage.outvars[idx]
         eqns += stage.eqns
-    invars = rearrange_vars(invars, list(donation_mapping.keys()))
-    outvars = rearrange_vars(outvars, list(donation_mapping.values()))
+    invars = rearrange_vars(invars, donation_mapping.keys())
+    outvars = rearrange_vars(outvars, donation_mapping.values())
     jaxpr = Jaxpr(
         constvars=list(consts_dir.keys()),
         invars=list(invars),
@@ -550,7 +553,8 @@ def generate_sharded_xla_stages(name: str,
     )
 
     donation_num = len(donation_mapping)
-    dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) - donation_num)
+    dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) -
+                                                                donation_num)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
@@ -667,7 +671,8 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
             new_glob_outvars.append(grad_outs[gradients[outvar]])
             new_glob_invars.append(grad_invars[gradients[outvar]])
             update_outs[outvar] = grad_outs[gradients[outvar]]
-            grad_in_to_out[grad_invars[gradients[outvar]]] = grad_outs[gradients[outvar]]
+            grad_in_to_out[grad_invars[gradients[outvar]]] = grad_outs[
+                gradients[outvar]]
         else:
             raise NotImplemented('gradients cannot be Literal')
     gradients = set(grad_values)
@@ -773,8 +778,8 @@ def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
         # handle pipe end
         pipe_end = stage.eqns[-1]
         assert (pipe_end.primitive is pipeline_p and
-                pipe_end.params['mark_type'] == 'end'
-               ), 'stage not ended by a pipeline marker'
+                pipe_end.params['mark_type']
+                == 'end'), 'stage not ended by a pipeline marker'
         new_pipe_end = dce_pipe_marker(pipe_end, global_used)
         new_eqns.append(new_pipe_end)
         # handle normal instructions
@@ -789,8 +794,8 @@ def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
         # handle pipe start
         pipe_start = stage.eqns[0]
         assert (pipe_start.primitive is pipeline_p and
-                pipe_start.params['mark_type'] == 'start'
-               ), 'stage not started by a pipeline marker'
+                pipe_start.params['mark_type']
+                == 'start'), 'stage not started by a pipeline marker'
         new_pipe_start = dce_pipe_marker(pipe_start, local_used)
         new_eqns.append(new_pipe_start)
         global_used.update(new_pipe_start.invars)
@@ -1013,3 +1018,74 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
                               new_eqns)
             results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
     return results, outvar_map
+
+
+def merge_stages(jaxprs: Sequence[ClosedJaxpr],
+                 used: Set[Var],
+                 new_marker_name,
+                 donation_mapping=None) -> ClosedJaxpr:
+    """
+    Merge continuous jaxprs and remove pipe markers
+    Args:
+        jaxprs (Sequence[ClosedJaxpr]): jaxprs to be merged
+        used (Set[Var]): out variables used later
+        new_marker_name (str): name of merged pipeline used in marker
+        donation_mapping (Dict[Var, Var]): donation mapping of merged jaxpr, may have redundant items
+    """
+    new_invars = dict()
+    new_outvars = dict()
+    new_eqns = []
+    var_map = dict()
+
+    # handle const vars:
+    new_constvars = dict()
+    for jaxpr in jaxprs:
+        new_constvars.update(dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts)))
+
+    for idx, jaxpr in enumerate(jaxprs):
+        # handle pipeline start marker:
+        pipe_start = jaxpr.eqns[0]
+        for invar, outvar in zip(pipe_start.invars, pipe_start.outvars):
+            if invar not in var_map:
+                # is not local output, the outvar is kept
+                if invar in new_constvars:
+                    continue
+                # is already set in earlier stages
+                if invar in new_invars:
+                    var_map[outvar] = new_invars[invar]
+                    continue
+                new_invars[invar] = outvar
+            else:
+                # is local output, the outvar is redirected
+                var_map[outvar] = var_map[invar]
+        # handle normal eqns
+        for eqn in jaxpr.eqns[1:-1]:
+            new_local_invars = [get_var_mapping(var_map, v) for v in eqn.invars]
+            new_eqns.append(
+                new_jaxpr_eqn(new_local_invars, eqn.outvars, eqn.primitive,
+                              eqn.params, eqn.source_info))
+        # handle pipeline end marker
+        pipe_end = jaxpr.eqns[-1]
+        for invar, outvar in zip(pipe_end.invars, pipe_end.outvars):
+            if outvar in used:
+                new_outvars[outvar] = get_var_mapping(var_map, invar)
+            var_map[outvar] = get_var_mapping(var_map, invar)
+
+    new_pipe_start = mark_pipeline_jaxpreqn(list(new_invars.keys()),
+                                            list(new_invars.values()),
+                                            new_marker_name, 'start')
+    new_pipe_end = mark_pipeline_jaxpreqn(list(new_outvars.values()),
+                                          list(new_outvars.keys()),
+                                          new_marker_name, 'end')
+    new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
+    constvars = set(new_constvars.keys())
+    new_invars = [k for k in new_invars.keys() if k not in constvars]
+    new_outvars = list(new_outvars.keys())
+    if donation_mapping:
+        new_invars_set = set(new_invars)
+        donation_mapping = {k: v for k, v in donation_mapping.items() if k in new_invars_set}
+        new_invars = rearrange_vars(new_invars, donation_mapping.keys())
+        new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
+    return ClosedJaxpr(
+        Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
+        list(new_constvars.values()))

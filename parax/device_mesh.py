@@ -1,6 +1,7 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
 from collections.abc import Iterable
 from collections import defaultdict
+import gc
 import logging
 from operator import attrgetter
 import pickle
@@ -421,6 +422,10 @@ class CompileWorkerPool:
     def pop_idle(self):
         return self.pool.pop_idle()
 
+    def shutdown(self):
+        self.pool = None
+        gc.collect()
+        
 
 class PhysicalDeviceMesh:
     """

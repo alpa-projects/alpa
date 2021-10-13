@@ -1,12 +1,15 @@
+from parax.util import jaxpr_to_hlo_computation
+import ray
 import numpy as np
 from typing import Dict, Sequence, Set, Tuple
 
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
+from jax.lib import xla_bridge
 
 from parax.api import parallelize
-from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
+from parax.device_mesh import CompileWorkerPool, DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
@@ -124,6 +127,60 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
         layers, mixed_jaxpr, executable.input_sharding_specs,
         executable.output_sharding_specs)
     return ret, split_in_specs, split_out_specs
+
+
+def generate_layer_info(stages, donate_invars_list, global_used_list, name):
+    backend = xla_bridge.get_backend('gpu')
+
+    jaxprs = [stage.closed_jaxpr() for stage in stages]
+    tot_global_used = set()
+    for jaxpr, global_used in zip(jaxprs, global_used_list):
+        tot_global_used.update([
+            outvar for outvar, used in zip(jaxpr.jaxpr.outvars, global_used)
+            if used
+        ])
+    tot_donation_set = set()
+    for jaxpr, donate_invars in zip(jaxprs, donate_invars_list):
+        tot_donation_set.update([
+            invar for invar, donate in zip(jaxpr.jaxpr.invars, donate_invars)
+            if donate
+        ])
+
+    merged = merge_stages(jaxprs, tot_global_used, '0')
+    avals = [var.aval for var in merged.jaxpr.invars]
+    out_avals = [var.aval for var in merged.jaxpr.outvars]
+    tot_donation = [invar in tot_donation_set for invar in merged.jaxpr.invars]
+
+    built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
+    proto = built.as_serialized_hlo_module_proto()
+    return (proto, avals, out_avals, tot_donation)
+
+
+def compile_all(layer_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
+    """
+    Args:
+        layer_info_list: List of info for compilation. Each info is a tuple with:
+            (proto, in_avals, out_avals, donate_invars)
+    """
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    backup_config = global_config.backup()
+    global_config.num_micro_batches = None
+    global_config.devices = logical_mesh
+    global_config.strategy = "shard_parallel"
+    global_config.use_dummy_value_for_benchmarking = True
+    compile_config = global_config.backup()
+    compiled = []
+    for layer_info in layer_info_list:
+        proto, avals, out_avals, donate_invars = layer_info
+        w = compile_workers.pop_idle()
+        compiled.append(
+            w.compile_single_layer_with_search.remote(compile_config,
+                                                      logical_mesh, proto,
+                                                      avals, out_avals,
+                                                      donate_invars))
+    ray.get(compiled)
+    compile_workers.shutdown()
+    global_config.restore(backup_config)
 
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,

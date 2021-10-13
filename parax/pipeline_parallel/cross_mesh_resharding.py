@@ -243,11 +243,17 @@ class ReshardingTask:
                                      receiver_device_id,
                                      dtype=dtype)
         # Put an empty buffer first.
-        ray.get(
+        if global_config.pipeline_aggressively_sync:
+            ray.get(
+                receiver_worker.put_empty_buffer.remote(result_buf.uuid,
+                                                        result_buf.device_id,
+                                                        dst_tile.tile_shape,
+                                                        result_buf.dtype))
+        else:
             receiver_worker.put_empty_buffer.remote(result_buf.uuid,
                                                     result_buf.device_id,
                                                     dst_tile.tile_shape,
-                                                    result_buf.dtype))
+                                                    result_buf.dtype)
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
             receiver]
         for i, sender in enumerate(senders):

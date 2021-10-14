@@ -31,7 +31,7 @@ def create_train_state(rngkey, model, batch):
 
 def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
 
-    @parallelize
+    @partial(parallelize, donate_argnums=())
     def train_step(state, batch, rng_key):
         def loss_func(params):
             rngs = {"dropout": rng_key}
@@ -137,14 +137,14 @@ def benchmark_transformer_one_case(benchmark_case):
 benchmark_suite_2_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
 
-    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
-    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
-    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
-    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
     #
-    (4,  512, 1536, 2,  1536//96,  1,  1, 2, 1, False, False),
-    (4,  512, 1536, 2,  1536//96,  1,  1, 2, 2, False, False),
-    (4,  512, 1536, 2,  1536//96,  1,  1, 2, 4, False, False),
+    # (4,  512, 1536, 2,  1536//96,  1,  1, 2, 1, False, False),
+    # (4,  512, 1536, 2,  1536//96,  1,  1, 2, 2, False, False),
+    # (4,  512, 1536, 2,  1536//96,  1,  1, 2, 4, False, False),
     #
     # (8,  512, 1536, 2,  1536//96,  1,  1, 2, 1, False, False),
     # (8,  512, 1536, 2,  1536//96,  1,  1, 2, 2, False, False),

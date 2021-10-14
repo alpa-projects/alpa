@@ -249,7 +249,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # pylint: disable=too-many-locals
         assert not kwargs, "kwargs not supported"
 
-        timers("overall").start()
+        timers("overall").start(sync_func=self.sync)
+
+        # timers("overall").start()
         timers("initialize_microbatch").start()
         self._prepare_env(*args)
         timers("initialize_microbatch").stop()
@@ -302,7 +304,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 val = self._pop_var(key)
                 global_outvals_list.append(val)
         logger.debug(">>> All pipeline jobs done.")
-        timers("overall").stop()
+        timers("overall").stop(sync_func=self.sync)
+        # timers("overall").stop()
         # report_pipeline_runtime_benchmark_timers(reset=True)
 
         # Make sure reference counting is correct
@@ -409,6 +412,10 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         for var, val in zip(stage.outvars, outputs):
             key = (batch_idx, repr(var))
             self._env[key] = val
+
+    def sync(self):
+        all_workers = [w for mesh in self.physical_meshes for w in mesh.workers]
+        ray.get([w.sync.remote() for w in all_workers])
 
     def shutdown(self):
         """Shutdown the pipeline runtime."""

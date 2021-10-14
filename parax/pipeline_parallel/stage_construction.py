@@ -157,7 +157,7 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
                 [range(current_device_id, current_device_id + required_num_devices)])
             current_device_id += required_num_devices
             if current_device_id == num_devices_per_host:
-                current_device_id += 1
+                current_host_id += 1
                 current_device_id = 0
     assert current_host_id == num_hosts
     assert current_device_id == 0

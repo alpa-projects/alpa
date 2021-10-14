@@ -126,11 +126,38 @@ def get_compute_cost(layers, submesh_choices, virtual_mesh, donation_mapping, gl
         print(f'profiled costs are: {compute_cost[:, :, mesh_id]}')
         print('=' * 30)
 
-def get_mesh_slicing_scheme(virtual_mesh, submesh_choices, solution):
+
+def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
+    num_hosts = virtual_mesh.num_hosts
+    num_devices_per_host = virtual_mesh.num_devices_per_host
     submeshes = [submesh_choices[choice] for _, choice in solution]
     submesh_sizes = [np.prod(submesh) for submesh in submeshes]
-    assert sum(submesh_sizes) == virtual_mesh
-    # TODO(zhuohan): Finish here
+    virtual_submeshes = [None] * len(submeshes)
+    assert sum(submesh_sizes) == virtual_mesh.total_devices
+    sorted_submesh_indices = np.argsort(submesh_sizes)
+    current_host_id = 0
+    current_device_id = 0
+    for i in reversed(sorted_submesh_indices):
+        required_num_hosts, required_num_devices = submeshes[i]
+        if required_num_devices == num_devices_per_host:
+            assert current_device_id == 0
+            assert required_num_devices + required_num_hosts <= num_hosts, (
+                "Do not have enough hosts for the solution.")
+            virtual_submeshes[i] = virtual_mesh.slice_2d(range(current_host_id, current_host_id + required_num_hosts), range(num_devices_per_host))
+            current_host_id += required_num_hosts
+        else:
+            assert required_num_hosts == 1
+            assert required_num_devices < num_devices_per_host
+            assert (current_device_id + required_num_devices <= num_devices_per_host), (
+                "Do not have enough devices in a host for the solution")
+            virtual_submeshes[i] = virtual_mesh.slice_2d([current_host_id], range(current_device_id, current_device_id + required_num_devices))
+            current_device_id += required_num_devices
+            if current_device_id == num_devices_per_host:
+                current_device_id += 1
+                current_device_id = 0
+    assert current_host_id == num_hosts
+    assert current_device_id == 0
+    return virtual_submeshes
 
 
 def get_stage_and_mesh_assignments(layers: Sequence[JaxPipelineStage], mesh: VirtualMesh):

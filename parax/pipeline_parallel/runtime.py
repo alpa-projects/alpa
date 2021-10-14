@@ -23,7 +23,6 @@ timer_names = {
     "overall": "average",
     "compute": "sum",
     "resharding": "sum",
-    "identify_input": "sum",
 }
 
 

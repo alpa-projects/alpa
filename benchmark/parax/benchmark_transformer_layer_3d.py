@@ -18,6 +18,31 @@ MB = 1024 ** 2
 GB = 1024 ** 3
 
 
+def report_pipeline_breakdown(executable, timer_names):
+    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
+
+    print(">>> overall: {}...".format(overall_costs))
+    other_percentage = [100.0] * args.niter
+    other = overall_costs
+    for timer_name in timer_names:
+        costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+        percentage = [cost / overall_costs[i] * 100 for i, cost in enumerate(costs)]
+        other = [remain - costs[i] for i, remain in enumerate(other)]
+        other_percentage = [remain - percentage[i] for i, remain in enumerate(other_percentage)]
+        strs = []
+        for i, cost in enumerate(costs):
+            strs.append(str(cost) + f" ({percentage[i]:.1f}) ")
+        print_string = ",".join(strs)
+        print(">>> {}: {}".format(timer_name, print_string))
+
+    # print unknown overhead
+    strs = []
+    for i, remain in enumerate(other):
+        strs.append(" " + str(remain) + f" ({other_percentage[i]:.1f})")
+    print_string = ",".join(strs)
+    print(">>> {}: {}".format("Others: ", print_string))
+
+
 def create_train_state(rngkey, model, batch):
     params = model.init_dummy(rngkey, batch["hidden_states"], batch["attention_mask"])
     tx = optax.adam(learning_rate=1e-2)
@@ -29,10 +54,12 @@ def create_train_state(rngkey, model, batch):
     return state
 
 
-def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
+def get_train_step(grad_func, pipeline_mp_size):
 
-    @partial(parallelize, donate_argnums=())
+    @parallelize
+    # @partial(parallelize, donate_argnums=())
     def train_step(state, batch, rng_key):
+
         def loss_func(params):
             rngs = {"dropout": rng_key}
             if pipeline_mp_size > 1:
@@ -63,10 +90,11 @@ def benchmark_transformer_one_case(benchmark_case):
     batch_size, seq_len, hidden_size, num_layers, num_heads, \
     mesh_dim0, mesh_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel, \
     use_remat = benchmark_case
-    dtype = jnp.float16
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = False
+
+    # Control whether we want to do sync more aggressively
     global_config.pipeline_aggressively_sync = False
     if num_micro_batches > 1:
         grad_func = parax.grad
@@ -102,7 +130,7 @@ def benchmark_transformer_one_case(benchmark_case):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size)
+    train_step = get_train_step(grad_func, pipeline_mp_size)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -112,17 +140,8 @@ def benchmark_transformer_one_case(benchmark_case):
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")
 
-    timer_names = ["resharding", "compute"]
-    print(">>> overall: {}...".format(overall_costs))
-    for timer_name in timer_names:
-        costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
-        percentage = [cost/overall_costs[i] * 100 for i, cost in enumerate(costs)]
-        strs = []
-        for i, cost in enumerate(costs):
-            strs.append(str(cost) + f" ({percentage[i]:.1f})")
-        print_string = ",".join(strs)
-        print(">>> {}: {}...".format(timer_name, print_string))
 
+    report_pipeline_breakdown(executable, ["resharding", "compute"])
     # Log benchmark results
     heads = ["Type", "Model Config", "Parallel Config", "# Microbatch", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:5]), str(benchmark_case[5:]),
@@ -136,47 +155,27 @@ def benchmark_transformer_one_case(benchmark_case):
 
 benchmark_suite_2_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-
+    # sanity check case
     (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
     (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
     (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
     (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
-    #
-    # (4,  512, 1536, 2,  1536//96,  1,  1, 2, 1, False, False),
-    # (4,  512, 1536, 2,  1536//96,  1,  1, 2, 2, False, False),
-    # (4,  512, 1536, 2,  1536//96,  1,  1, 2, 4, False, False),
-    #
-    # (8,  512, 1536, 2,  1536//96,  1,  1, 2, 1, False, False),
-    # (8,  512, 1536, 2,  1536//96,  1,  1, 2, 2, False, False),
-    # (8,  512, 1536, 2,  1536//96,  1,  1, 2, 4, False, False),
-    # (8,  512, 1536, 2,  1536//96,  1,  1, 2, 8, False, False),
-
-    # (4,  512, 1536, 2,  1536//96,  4,  1, 1, 1, False, False),
-    # (4,  512, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    # (4,  512, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
-    # (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
-    # (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
 ]
 
 
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
     (4,  512, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (4,  512, 1536, 2,  1536//96,  4,  1, 1, 1, False, False),
-    # (4,  512, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    # (4,  512, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    # (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    # (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
-    # (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
-    # (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
+    (4,  512, 1536, 2,  1536//96,  4,  1, 1, 1, False, False),
+    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
+    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
+    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
+    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
+    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
+    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
+    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
 ]
 
 benchmark_suite_8_gpu = [
@@ -194,7 +193,6 @@ def benchmark_all(use_profiling):
         num_gpus = list_gpu_info().count("UUID")
     else:
         num_gpus = int(ray.cluster_resources()["GPU"])
-        # num_gpus = 2
 
     benchmark_suites = {
         2: benchmark_suite_2_gpu,

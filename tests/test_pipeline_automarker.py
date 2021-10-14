@@ -140,7 +140,7 @@ class PipelineAutoMarkerTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    # suite.addTest(PipelineAutoMarkerTest('test_mlp'))
+    suite.addTest(PipelineAutoMarkerTest('test_mlp'))
     suite.addTest(PipelineAutoMarkerTest('test_2_layer_bert'))
     return suite
 

@@ -141,10 +141,10 @@ class AutoShardingMoETest(unittest.TestCase):
             # do not use weight decay on layer norm and bias.
             return jax.tree_map(lambda x: x.ndim > 1, pytree)
 
-        #tx = optax_adafactor(
-        #    learning_rate=1e-2, weight_decay_mask=weight_decay_mask
-        #)
-        tx = optax.adam(learning_rate=1e-2)
+        tx = optax_adafactor(
+            learning_rate=1e-2, weight_decay_mask=weight_decay_mask,
+            min_dim_size_to_factor=4,
+        )
 
         state = TrainState.create(
             apply_fn=model.apply,
@@ -235,18 +235,27 @@ class AutoShardingMoETest(unittest.TestCase):
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
                 count_communication_primitives(hlo_ir)
-            #print(n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all)
-            #return
 
-            assert n_all_reduce <= 2
-            assert n_all_to_all == 4
-            assert n_total == n_all_reduce + n_all_to_all
+            if global_config.prefer_reduce_scatter:
+                assert n_all_gather <= 2
+                assert n_reduce_scatter == 1
+                assert n_all_to_all == 4
+                assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
+            else:
+                assert n_all_reduce <= 3
+                assert n_all_to_all == 4
+                assert n_total == n_all_reduce + n_all_to_all
+
+    def test_moe_lm_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_moe_lm()
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMoETest("test_moe_layer"))
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
 
     return suite
 

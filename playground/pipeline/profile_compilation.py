@@ -14,7 +14,7 @@ from parax.pipeline_parallel.three_d_parallel import (
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.mesh_slicing import (
     compile_and_profile_layer_cost_c, split_global_use_and_donate)
-from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp
+from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
@@ -80,7 +80,7 @@ stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
                                              compute_jaxpr.jaxpr.outvars)
 
 
-donated_global_invars = compute_jaxpr.jaxpr.invars[:-2]
+donation_mapping = {}
 global_invars = compute_jaxpr.jaxpr.invars
 global_outvars = compute_jaxpr.jaxpr.outvars
 all_invars = [set(stage.invars) for stage in stages]
@@ -100,9 +100,9 @@ def profile(mesh, mesh_id):
         for end in range(start, N):
             layer_collections = stages[start:end + 1] + stages[2 * N - end - 1:2 * N - start]
             layer_indices = indices[start:end + 1] + indices[2 * N - end - 1:2 * N - start]
-            _, global_used_list = split_global_use_and_donate(layer_collections, layer_indices, all_invars, donated_global_invars, global_outvars)
+            local_donation_mapping, global_used_list, layers = split_global_use_and_donate(layer_collections, layer_indices, donation_mapping, global_outvars)
             donate_invars_list = [[False for _ in stage.invars] for stage in layer_collections]
-            cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layer_collections, mesh, donate_invars_list, global_used_list)
+            cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layers, mesh, donate_invars_list, global_used_list)
             compute_cost[start, end, mesh_id] = np.mean(cost)
 
 def get_compute_cost():
@@ -160,4 +160,8 @@ cost, solution = dp(N, virtual_mesh.total_devices, batch_size, submesh_choices, 
 print("-" * 30, "Solution", "-" * 30)
 print("Cost:", cost)
 print(solution)
+
+sliced_meshes = get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution)
+print("sliced_meshes", sliced_meshes)
+
 ray.shutdown()

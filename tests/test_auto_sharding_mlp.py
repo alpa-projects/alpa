@@ -7,7 +7,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax import linen as nn
 from flax import optim
+from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
+import optax
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 from parax.global_env import global_config
@@ -124,7 +126,7 @@ def assert_data_parallel_cost(state,
 
         num_not_sharded = 0
         for weight in opt_state:
-            if not is_sharded(weight):
+            if not is_sharded(weight) and len(weight.shape) > 0:
                 num_not_sharded += 1
         assert num_not_sharded <= allow_not_sharded_params * 2
     else:
@@ -170,32 +172,33 @@ class AutoShardingMLPTest(unittest.TestCase):
                 return x
 
         @parallelize
-        def train_step(optimizer, batch, apply_fn):
+        def train_step(state, batch):
 
             def loss_func(params):
-                out = apply_fn(params, batch["x"])
+                out = state.apply_fn(params, batch["x"])
                 return jnp.mean((out - batch["y"])**2)
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grads = jax.grad(loss_func)(state.params)
+            new_state = state.apply_gradients(grads=grads)
+            return new_state
 
         x = jnp.ones((batch_size, input_dim))
         y = jnp.ones((batch_size, output_dim))
 
-        # Init model and optimizer
+        # Init train state
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        optimizer = optim.Adam(1e-2).create(params)
+        tx = optax.adam(learning_rate=1e-2)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         # JIT compile
-        optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
+        state = train_step(state, {"x": x, "y": y})
 
         # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
-        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
+        return state, hlo_ir, testing.last_compiled_auto_sharding_objective
 
     def test_n_layer_mlp_data_parallel(self):
         num_layers = 6
@@ -205,12 +208,11 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_n_layer_mlp(
+            state, hlo_ir, objective = self.run_n_layer_mlp(
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
-                                      i)
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
@@ -220,7 +222,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_n_layer_mlp(
+            state, hlo_ir, objective = self.run_n_layer_mlp(
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
@@ -241,7 +243,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             # Check sharding specification
             for k in range(num_layers):
-                weight = optimizer.target["params"][f"Dense_{k}"]["kernel"]
+                weight = state.params["params"][f"Dense_{k}"]["kernel"]
                 if k % 2 == 0:
                     assert_column_partitioned(weight, mesh_shape[i], i)
                 else:
@@ -255,7 +257,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Test on different device meshes
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.1])
-        optimizer, hlo_ir, objective = self.run_n_layer_mlp(
+        state, hlo_ir, objective = self.run_n_layer_mlp(
             num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
             device_mesh)
 
@@ -281,12 +283,12 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Check sharding specification
         if global_config.prefer_reduce_scatter:
             for weight in jax.tree_util.tree_leaves(
-                    optimizer.state.param_states):
+                    state.opt_state):
                 if len(weight.shape) > 1:
                     assert_fully_sharded(weight)
         else:
             for k in range(num_layers):
-                weight = optimizer.target["params"][f"Dense_{k}"]["kernel"]
+                weight = state.params["params"][f"Dense_{k}"]["kernel"]
                 if k % 2 == 0:
                     assert_replicated_column_partitioned(weight, mesh_shape)
                 else:
@@ -302,12 +304,11 @@ class AutoShardingMLPTest(unittest.TestCase):
             global_config.force_data_parallel = True
 
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_n_layer_mlp(
+            state, hlo_ir, objective = self.run_n_layer_mlp(
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
-                                      i)
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
@@ -320,6 +321,11 @@ class AutoShardingMLPTest(unittest.TestCase):
     def test_n_layer_mlp_2d_mesh_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_n_layer_mlp_2d_mesh()
+
+    def test_n_layer_mlp_data_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.use_adafactor = False
+        self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):
         set_parallelize_options(devices=self.devices)
@@ -342,19 +348,18 @@ class AutoShardingMLPTest(unittest.TestCase):
         @parallelize
         def init_weight(rngkey):
             params = model.init(rngkey, x, True)
-            optimizer = optim.Adam(1e-2).create(params)
-            return optimizer
+            tx = optax.adam(learning_rate=1e-2)
+            state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+            return state
 
-        optimizer = init_weight(rngkey)
+        state = init_weight(rngkey)
 
         # Check sharding specification
-        assert_all_replicated(optimizer.state.step, len(self.devices))
-        assert_sharded(optimizer.target["params"]["Dense_0"]["kernel"])
-        assert_sharded(optimizer.target["params"]["Dense_1"]["kernel"])
-        assert_sharded(optimizer.state.param_states["params"]["Dense_0"]
-                       ["kernel"].grad_ema)
-        assert_sharded(optimizer.state.param_states["params"]["Dense_1"]
-                       ["kernel"].grad_sq_ema)
+        assert_all_replicated(state.step, len(self.devices))
+        assert_sharded(state.params["params"]["Dense_0"]["kernel"])
+        assert_sharded(state.params["params"]["Dense_1"]["kernel"])
+        assert_sharded(state.opt_state[0].mu["params"]["Dense_0"]["kernel"])
+        assert_sharded(state.opt_state[0].nu["params"]["Dense_1"]["kernel"])
 
 
 def suite():
@@ -370,6 +375,9 @@ def suite():
         AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
+
+    #suite.addTest(
+    #    AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
 
     suite.addTest(AutoShardingMLPTest("test_weight_init"))
 

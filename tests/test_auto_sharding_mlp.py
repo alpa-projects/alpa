@@ -85,7 +85,8 @@ def assert_data_parallel_cost(state,
                               objective,
                               device_mesh,
                               mesh_dim,
-                              allow_not_sharded_params=0):
+                              allow_not_sharded_params=0,
+                              optimizer_type=None):
     if isinstance(state, optim.base.Optimizer):
         params = jax.tree_util.tree_leaves(state.target)
         opt_state = jax.tree_util.tree_leaves(state.state.param_states)
@@ -104,6 +105,13 @@ def assert_data_parallel_cost(state,
     # Check number of communication primitives
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+
+    if optimizer_type == "adafactor" and global_config.prefer_reduce_scatter:
+        assert n_reduce_scatter == 1
+        assert n_all_gather <= 2
+        assert n_all_reduce <= 2
+        return
+
     if global_config.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
         assert n_all_gather == 1
@@ -139,6 +147,7 @@ class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
+        self.optimizer_type = "adam"
 
         # Backup global config
         self.old_global_config = global_config.backup()
@@ -189,7 +198,12 @@ class AutoShardingMLPTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        tx = optax.adam(learning_rate=1e-2)
+        if self.optimizer_type == "adam":
+            tx = optax.adam(learning_rate=1e-2)
+        elif self.optimizer_type == "adafactor":
+            tx = optax.adafactor(learning_rate=1e-2, min_dim_size_to_factor=4)
+        else:
+            raise ValueError(f"Invalid optimizer_type: {self.optimizer_type}")
         state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         # JIT compile
@@ -212,7 +226,8 @@ class AutoShardingMLPTest(unittest.TestCase):
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i,
+                                      optimizer_type=self.optimizer_type)
 
     def test_n_layer_mlp_model_parallel(self):
         num_layers = 6
@@ -324,7 +339,11 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
-        self.use_adafactor = False
+        self.test_n_layer_mlp_data_parallel()
+
+    def test_n_layer_mlp_data_parallel_reduce_scatter_adafactor(self):
+        global_config.prefer_reduce_scatter = True
+        self.optimizer_type = "adafactor"
         self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):
@@ -376,8 +395,8 @@ def suite():
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
 
-    #suite.addTest(
-    #    AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
+    suite.addTest(
+        AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
 
     suite.addTest(AutoShardingMLPTest("test_weight_init"))
 

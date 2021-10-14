@@ -143,14 +143,18 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
             assert current_device_id == 0
             assert required_num_devices + required_num_hosts <= num_hosts, (
                 "Do not have enough hosts for the solution.")
-            virtual_submeshes[i] = virtual_mesh.slice_2d(range(current_host_id, current_host_id + required_num_hosts), range(num_devices_per_host))
+            virtual_submeshes[i] = virtual_mesh.slice_2d(
+                range(current_host_id, current_host_id + required_num_hosts),
+                [range(num_devices_per_host) for _ in range(required_num_hosts)])
             current_host_id += required_num_hosts
         else:
             assert required_num_hosts == 1
             assert required_num_devices < num_devices_per_host
             assert (current_device_id + required_num_devices <= num_devices_per_host), (
                 "Do not have enough devices in a host for the solution")
-            virtual_submeshes[i] = virtual_mesh.slice_2d([current_host_id], range(current_device_id, current_device_id + required_num_devices))
+            virtual_submeshes[i] = virtual_mesh.slice_2d(
+                [current_host_id],
+                [range(current_device_id, current_device_id + required_num_devices)])
             current_device_id += required_num_devices
             if current_device_id == num_devices_per_host:
                 current_device_id += 1

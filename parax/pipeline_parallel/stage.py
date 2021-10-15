@@ -21,7 +21,8 @@ from parax.mesh_executable import PartialGradAccMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
-                                                compile_with_given_strategy)
+                                                compile_with_given_strategy,
+                                                hlo_sharding_to_sharding_spec)
 from parax.util import get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias
 
 # pylint: disable=redefined-builtin
@@ -196,6 +197,53 @@ class XlaShardedPipelineStage(PipelineStage):
                    invars=jax_pipeline_stage.invars,
                    outvars=jax_pipeline_stage.outvars,
                    output_acc_grad_indices=acc_grad_indices)
+
+    def donate_intermediates(self, computation, donatable):
+        # get sharding annotated hlo module
+        hlo_module = computation.as_hlo_module()
+        donatable = set(donatable)
+        # get sharding specs
+        hlo_module.infer_spmd_shardings()
+        avals = [var.aval for var in self.invars]
+        out_avals = [var.aval for var in self.outvars]
+        logical_mesh_shape = self.strategy_config.logical_mesh_shape
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        input_sharding_specs = [
+            hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
+            for (proto_tuple, aval) in zip(input_shardings, avals)
+        ]
+        output_shardings = hlo_module.spmd_output_sharding()
+        output_sharding_specs = hlo_sharding_to_sharding_spec(
+            output_shardings, out_avals, logical_mesh_shape)
+
+        num_donated = np.count_nonzero(self.donated_invars)
+        donatable_outvars = set(self.outvars[num_donated:])
+        donated_invars = list()
+        donated_outvars = list()
+        var_indices = dict(zip(self.outvars, range(len(self.outvars))))
+        var_indices.update(dict(zip(self.invars, range(len(self.invars)))))
+        for idx, invar in enumerate(self.invars):
+            if invar not in donatable:
+                # not donatable
+                continue
+            elif self.donated_invars[idx]:
+                # already donated
+                continue
+            for outvar in donatable_outvars:
+                if (invar.aval.shape == outvar.aval.shape and
+                        input_sharding_specs[var_indices[invar]]
+                        == output_sharding_specs[var_indices[outvar]]):
+                    donated_invars.append(invar)
+                    donated_outvars.append(outvar)
+                    donatable_outvars.discard(outvar)
+                    break
+        # set alias
+        for invar, outvar in zip(donated_invars, donated_outvars):
+            invar_idx, outvar_idx = var_indices[invar], var_indices[outvar]
+            computation.setup_alias((outvar_idx,), invar_idx, ())
+        for invar in donated_invars:
+            self.donated_invars[var_indices[invar]] = True
+
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline stage."""
@@ -1083,7 +1131,9 @@ def merge_stages(jaxprs: Sequence[ClosedJaxpr],
     new_outvars = list(new_outvars.keys())
     if donation_mapping:
         new_invars_set = set(new_invars)
-        donation_mapping = {k: v for k, v in donation_mapping.items() if k in new_invars_set}
+        donation_mapping = {
+            k: v for k, v in donation_mapping.items() if k in new_invars_set
+        }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
     return ClosedJaxpr(

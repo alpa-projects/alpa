@@ -91,24 +91,22 @@ def get_submesh_choices(mesh: VirtualMesh):
     return submesh_choices
 
 
-def profile_on_mesh(layers, mesh, donation_mapping, global_outvars):
+def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
-    all_invars = [set(layer.invars) for layer in layers]
     indices = list(range(2 * num_layers))
     compute_cost = np.full((num_layers, num_layers), np.inf)
     for start in range(0, num_layers):
         for end in range(start, num_layers):
             layer_collections = layers[start:end + 1] + layers[2 * num_layers - end - 1:2 * num_layers - start]
             layer_indices = indices[start:end + 1] + indices[2 * num_layers - end - 1:2 * num_layers - start]
-            _, global_used_list = split_global_use_and_donate(layer_collections, layer_indices, all_invars, donation_mapping, global_outvars)
-            donate_invars_list = [[False for _ in stage.invars] for stage in layer_collections]
-            cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layer_collections, mesh, donate_invars_list, global_used_list)
+            local_donation_mapping, global_used_list, layers = split_global_use_and_donate(layer_collections, layer_indices, donation_mapping, global_outvars)
+            cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layers, mesh, local_donation_mapping, global_used_list)
             compute_cost[start, end] = np.mean(cost)
     return compute_cost
 
 
-def get_compute_cost(layers, submesh_choices, virtual_mesh, donation_mapping, global_outvars):
+def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping, global_outvars):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -123,7 +121,7 @@ def get_compute_cost(layers, submesh_choices, virtual_mesh, donation_mapping, gl
         toc = time()
         mesh.shutdown()
         print(f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds')
-        print(f'profiled costs are: {compute_cost[:, :, mesh_id]}')
+        print(f'profiled costs are: {mesh_compute_cost}')
         print('=' * 30)
 
 

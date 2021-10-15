@@ -14,7 +14,7 @@ from parax.pipeline_parallel.three_d_parallel import (
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.mesh_slicing import (
     compile_and_profile_layer_cost_c, split_global_use_and_donate)
-from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes
+from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes, get_compute_cost
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
@@ -94,31 +94,9 @@ submesh_choices = get_submesh_choices(virtual_mesh)
 M = len(submesh_choices)
 compute_cost = np.full((N, N, M), np.inf)
 
-def profile(mesh, mesh_id):
-    indices = list(range(2 * N))
-    for start in range(0, N):
-        for end in range(start, N):
-            layer_collections = stages[start:end + 1] + stages[2 * N - end - 1:2 * N - start]
-            layer_indices = indices[start:end + 1] + indices[2 * N - end - 1:2 * N - start]
-            local_donation_mapping, global_used_list, layers = split_global_use_and_donate(layer_collections, layer_indices, donation_mapping, global_outvars)
-            donate_invars_list = [[False for _ in stage.invars] for stage in layer_collections]
-            cost, in_specs, out_specs = compile_and_profile_layer_cost_c(layers, mesh, donate_invars_list, global_used_list)
-            compute_cost[start, end, mesh_id] = np.mean(cost)
+compute_cost = get_compute_cost(virtual_mesh, submesh_choices, stages, donation_mapping, global_outvars)
 
-def get_compute_cost():
-    for mesh_id, submesh in enumerate(submesh_choices):
-        print('-' * 30, submesh, '-' * 30)
-        num_hosts, num_devices = submesh
-        sliced_virtual_mesh = virtual_mesh.slice_2d(list(range(num_hosts)), [list(range(num_devices)) for _ in range(num_hosts)])
-        mesh = sliced_virtual_mesh.get_physical_mesh()
-        tic = time()
-        profile(mesh, mesh_id)
-        toc = time()
-        mesh.shutdown()
-        print(f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds')
-        print(f'profiled costs are: {compute_cost[:, :, mesh_id]}')
-        print('=' * 30)
-
+print("profiled compute cost", compute_cost)
 
 compute_cost = np.array(
 [[[0.00112862, 0.00207896, 0.00304582, 0.00409389, 0.00481757, 0.0058842 , 0.00729934, 0.00901646, 0.01083485, 0.01064126],
@@ -154,7 +132,7 @@ compute_cost = np.array(
 ).transpose((1, 2, 0))
 
 print(compute_cost.shape, (N, N, M))
-print(compute_cost)
+print("previously tested compute cost", compute_cost)
 
 cost, solution = dp(N, virtual_mesh.total_devices, batch_size, submesh_choices, compute_cost)
 print("-" * 30, "Solution", "-" * 30)

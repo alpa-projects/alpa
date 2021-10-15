@@ -122,6 +122,7 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping, gl
         print(f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds')
         print(f'profiled costs are: {mesh_compute_cost}')
         print('=' * 30)
+    return compute_cost
 
 
 def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
@@ -161,8 +162,16 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
     return virtual_submeshes
 
 
-def get_stage_and_mesh_assignments(layers: Sequence[JaxPipelineStage], mesh: VirtualMesh):
-    num_layers = len(layers)
+def get_stage_and_mesh_assignments(mesh: VirtualMesh, layers: Sequence[JaxPipelineStage], donation_mapping, global_outvars, num_microbatches, compute_cost=None):
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
     submesh_choices = get_submesh_choices(mesh)
-    submesh_sizes = [np.prod(submesh) for submesh in submesh_choices]
+    if compute_cost is None:
+        compute_cost = get_compute_cost(mesh, submesh_choices, layers, donation_mapping, global_outvars)
+    cost, solution = dp(num_layers, mesh.total_devices, num_microbatches,
+                        submesh_choices, compute_cost)
+    sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_choices, solution)
+    return solution, sliced_meshes
+
+
 

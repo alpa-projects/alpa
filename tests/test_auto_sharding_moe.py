@@ -237,10 +237,15 @@ class AutoShardingMoETest(unittest.TestCase):
                 count_communication_primitives(hlo_ir)
 
             if global_config.prefer_reduce_scatter:
-                assert n_all_gather <= 2
-                assert n_reduce_scatter == 1
-                assert n_all_to_all == 4
-                assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
+                if global_config.force_data_parallel:
+                    assert n_all_gather <= 2
+                    assert n_reduce_scatter <= 2
+                    assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
+                else:
+                    assert n_all_gather <= 2
+                    assert n_reduce_scatter == 1
+                    assert n_all_to_all == 4
+                    assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
             else:
                 assert n_all_reduce <= 3
                 assert n_all_to_all == 4
@@ -250,12 +255,18 @@ class AutoShardingMoETest(unittest.TestCase):
         global_config.prefer_reduce_scatter = True
         self.test_moe_lm()
 
+    def test_moe_lm_data_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        global_config.force_data_parallel = True
+        self.test_moe_lm()
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMoETest("test_moe_layer"))
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
     suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
 
     return suite
 

@@ -78,6 +78,10 @@ class MeshHostWorker:
                          device_id: int,
                          shape: Tuple[int, ...],
                          dtype=np.float32):
+        """Put an all-zero empty buffer on the given device.
+
+        Note: This function is blocking (synchronous).
+        """
         assert uuid not in self.buffers
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),

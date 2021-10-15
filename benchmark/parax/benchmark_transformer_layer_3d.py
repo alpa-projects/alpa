@@ -10,12 +10,37 @@ from functools import partial
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
-                   mark_pipeline, manual_pipeline, forward)
+                   mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayerCollection, TrainState
 from parax.util import write_tsv, list_gpu_info, print_used_time
 
 MB = 1024 ** 2
 GB = 1024 ** 3
+
+
+def report_pipeline_breakdown(executable, timer_names):
+    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
+
+    print(">>> overall: {}...".format(overall_costs))
+    other_percentage = [100.0] * args.niter
+    other = overall_costs
+    for timer_name in timer_names:
+        costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+        percentage = [cost / overall_costs[i] * 100 for i, cost in enumerate(costs)]
+        other = [remain - costs[i] for i, remain in enumerate(other)]
+        other_percentage = [remain - percentage[i] for i, remain in enumerate(other_percentage)]
+        strs = []
+        for i, cost in enumerate(costs):
+            strs.append(str(cost) + f" ({percentage[i]:.1f}) ")
+        print_string = ",".join(strs)
+        print(">>> {}: {}".format(timer_name, print_string))
+
+    # print unknown overhead
+    strs = []
+    for i, remain in enumerate(other):
+        strs.append(" " + str(remain) + f" ({other_percentage[i]:.1f})")
+    print_string = ",".join(strs)
+    print(">>> {}: {}".format("Others: ", print_string))
 
 
 def create_train_state(rngkey, model, batch):
@@ -29,11 +54,12 @@ def create_train_state(rngkey, model, batch):
     return state
 
 
-def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
+def get_train_step(grad_func, pipeline_mp_size):
 
     @parallelize
+    # @partial(parallelize, donate_argnums=())
     def train_step(state, batch, rng_key):
-        @partial(forward, layer_num=num_layers, use_remat=use_remat)
+
         def loss_func(params):
             rngs = {"dropout": rng_key}
             if pipeline_mp_size > 1:
@@ -48,7 +74,7 @@ def get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size):
                 mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
             return loss
         if pipeline_mp_size > 1:
-            loss_func = manual_pipeline(loss_func)
+            loss_func = manual_layer_slicing(loss_func)
         # grad, grad_x = jax.grad(loss_func, argnums=(0, 1))(optimizer.target, batch["hidden_states"])
         grad = grad_func(loss_func, argnums=(0))(state.params)
         # new_state = state.apply_gradients(grads=grads)
@@ -64,10 +90,12 @@ def benchmark_transformer_one_case(benchmark_case):
     batch_size, seq_len, hidden_size, num_layers, num_heads, \
     mesh_dim0, mesh_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel, \
     use_remat = benchmark_case
-    dtype = jnp.float16
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = False
+
+    # Control whether we want to do sync more aggressively
+    global_config.pipeline_aggressively_sync = False
     if num_micro_batches > 1:
         grad_func = parax.grad
     else:
@@ -102,22 +130,22 @@ def benchmark_transformer_one_case(benchmark_case):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, dtype, pipeline_mp_size)
+    train_step = get_train_step(grad_func, pipeline_mp_size)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
-
 
     for i in range(args.niter):
         train_step(state, batch, rngkey)
 
-    costs = executable.get_execution_time_costs(warmup=2)
+    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")
 
-    print(costs)
+
+    report_pipeline_breakdown(executable, ["resharding", "compute"])
     # Log benchmark results
     heads = ["Type", "Model Config", "Parallel Config", "# Microbatch", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:5]), str(benchmark_case[5:]),
-             f"{benchmark_case[8]:.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+             f"{benchmark_case[8]:.3f}", f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}"]
     write_tsv(heads, values, "result_trans.tsv")
 
     executable.shutdown()
@@ -125,8 +153,25 @@ def benchmark_transformer_one_case(benchmark_case):
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
 # #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1
 
+benchmark_suite_2_gpu = [
+    # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
+    # sanity check case
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
+    (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
+]
+
+
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
+    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (4,  512, 1536, 2,  1536//96,  4,  1, 1, 1, False, False),
+    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
+    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
+    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
+    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
     (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
     (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
@@ -150,10 +195,11 @@ def benchmark_all(use_profiling):
         num_gpus = int(ray.cluster_resources()["GPU"])
 
     benchmark_suites = {
+        2: benchmark_suite_2_gpu,
         4: benchmark_suite_4_gpu,
         8: benchmark_suite_8_gpu,
     }
-
+    print(">>> num_gpus: ", num_gpus)
     for case in benchmark_suites[num_gpus]:
         # Backup global config
         backup = global_config.backup()
@@ -165,7 +211,6 @@ def benchmark_all(use_profiling):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
-    parser.add_argument("--number", type=int, default=5)
     parser.add_argument("--local", action="store_true",
                         help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--niter", type=int, default=10,

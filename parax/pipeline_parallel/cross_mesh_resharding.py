@@ -11,6 +11,7 @@ from jax.interpreters.pxla import Replicated
 
 from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -248,11 +249,20 @@ class ReshardingTask:
                                      receiver_device_id,
                                      dtype=dtype)
         # Put an empty buffer first.
-        ray.get(
+        if global_config.pipeline_aggressively_sync:
+            ray.get(
+                receiver_worker.put_empty_buffer.remote(result_buf.uuid,
+                                                        result_buf.device_id,
+                                                        dst_tile.tile_shape,
+                                                        result_buf.dtype))
+            logger.debug("We are synchronizing for `put_empty_buffer`.")
+        else:
             receiver_worker.put_empty_buffer.remote(result_buf.uuid,
                                                     result_buf.device_id,
                                                     dst_tile.tile_shape,
-                                                    result_buf.dtype))
+                                                    result_buf.dtype)
+            logger.debug("We are NOT synchronizing for `put_empty_buffer`.")
+
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
             receiver]
         for i, sender in enumerate(senders):
@@ -274,7 +284,12 @@ class ReshardingTask:
             recv_done_ref = receiver_worker.recv_tile.remote(
                 result_buf.uuid, result_buf.device_id, indices_in_dst_tile,
                 sender_rank, sender_gpu_idx, self.collective_group.group_name)
-            ray.get([send_done_ref, recv_done_ref])
+
+            if global_config.pipeline_aggressively_sync:
+                ray.get([send_done_ref, recv_done_ref])
+                logger.debug("We are synchronizing for `send_tile`/`recv_tile`.")
+            else:
+                logger.debug("We are NOT synchronizing for `send_tile`/`recv_tile`.")
         return result_buf
 
     def prepare_send_recv_tasks(self):

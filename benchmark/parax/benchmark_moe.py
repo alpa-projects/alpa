@@ -107,8 +107,10 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Compile (workers)")
     alloc_mem = executable.get_total_allocation_size()
 
+    print(alloc_mem / GB)
+
     # Benchmark step time
-    if alloc_mem > 28 * GB:
+    if alloc_mem > 26 * GB:
         # out of memory
         latencies = [-1]
     else:
@@ -171,16 +173,19 @@ def benchmark_one_case(case):
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,   S,    H,    L,  #head,    V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (8,   1024, 1024, 12, 1024//64, 25600, 1024, 4,  1,  1,  1,  False, True,  False),
+    #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
+    (8,   1024, 1024, 12, 1024//64,  25600, 1024, 4,  1,  1,  1,  False, True,  False),
 ],
 
 4: [
+    #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
+    (16,  1024, 1792, 10, 1792//128, 25600, 1024, 8,  1,  4,  1,  True,  False, False),
 ],
 
 8: [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 2048, 12, 2048//128, 25600, 1024, 8,  1,  8,  1,  True,  False, False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  False, True, False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  True, False),
 ],
 
 16: [

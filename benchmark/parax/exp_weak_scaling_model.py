@@ -110,38 +110,38 @@ w_resnet_zero_2 = [
 
 moe_auto_sharding = [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 768,  12, 768//64,   25600, 1024, 8,  1,  1,  1,  False, False, False),
-    (16,  1024, 1280, 12, 1280//64,  25600, 1024, 8,  1,  2,  1,  False, False, False),
-    (16,  1024, 2048, 12, 2048//128, 25600, 1024, 8,  1,  4,  1,  False, False, False),
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 8,  1,  8,  1,  False, False, False),
+    (16,  1024, 768,  12, 768//128,  25600, 1024, 16, 1,  1,  1,  False, True, False),
+    (16,  1024, 1280, 12, 1280//128, 25600, 1024, 16, 1,  2,  1,  False, True, False),
+    (16,  1024, 1920, 12, 1920//128, 25600, 1024, 16, 1,  4,  1,  False, True, False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  False, True, False),
 ]
 
 moe_data_parallel = [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 768,  12, 768//64,   25600, 1024, 8,  1,  1,  1,  True,  False, False),
-    (16,  1024, 1280, 12, 1280//64,  25600, 1024, 8,  1,  2,  1,  True,  False, False),
-    (16,  1024, 2048, 12, 2048//128, 25600, 1024, 8,  1,  4,  1,  True,  False, False),
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 8,  1,  8,  1,  True,  False, False),
+    (16,  1024, 768, 12,  768//128,  25600, 1024, 16, 1,  1,  1,  True,  False, False),
+    (16,  1024, 1280, 12, 1280//128, 25600, 1024, 16, 1,  2,  1,  True,  False, False),
+    (16,  1024, 1920, 12, 1920//128, 25600, 1024, 16, 1,  4,  1,  True,  False, False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  False, False),
 ]
 
 moe_zero_2 = [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 768,  12, 768//64,   25600, 1024, 8,  1,  1,  1,  True,  True,  False),
-    (16,  1024, 1280, 12, 1280//64,  25600, 1024, 8,  1,  2,  1,  True,  True,  False),
-    (16,  1024, 2048, 12, 2048//128, 25600, 1024, 8,  1,  4,  1,  True,  True,  False),
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 8,  1,  8,  1,  True,  True,  False),
+    (16,  1024, 768,  12, 768//128,  25600, 1024, 16, 1,  1,  1,  True,  True,  False),
+    (16,  1024, 1280, 12, 1280//128, 25600, 1024, 16, 1,  2,  1,  True,  True,  False),
+    (16,  1024, 1920, 12, 1920//128, 25600, 1024, 16, 1,  4,  1,  True,  True,  False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  True,  False),
 ]
 
 suites = [
-    #("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
-    #("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
-    #("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_internal),
-    #("W-ResNet", "parax.auto_sharding", w_resnet_auto_sharding, benchmark_wide_resnet_internal),
-    #("W-ResNet", "parax.data_parallel", w_resnet_data_parallel, benchmark_wide_resnet_internal),
-    #("W-ResNet", "parax.zero_2", w_resnet_zero_2, benchmark_wide_resnet_internal),
+    ("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
+    ("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
+    ("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_internal),
+    ("W-ResNet", "parax.auto_sharding", w_resnet_auto_sharding, benchmark_wide_resnet_internal),
+    ("W-ResNet", "parax.data_parallel", w_resnet_data_parallel, benchmark_wide_resnet_internal),
+    ("W-ResNet", "parax.zero_2", w_resnet_zero_2, benchmark_wide_resnet_internal),
     ("MoE", "parax.auto_sharding", moe_auto_sharding, benchmark_moe_internal),
     ("MoE", "parax.data_parallel", moe_data_parallel, benchmark_moe_internal),
-    #("MoE", "parax.zero_2", moe_zero_2, benchmark_moe_internal),
+    ("MoE", "parax.zero_2", moe_zero_2, benchmark_moe_internal),
 ]
 
 

@@ -116,7 +116,7 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping, gl
         sliced_virtual_mesh = virtual_mesh.slice_2d(list(range(num_hosts)), [list(range(num_devices)) for _ in range(num_hosts)])
         mesh = sliced_virtual_mesh.get_physical_mesh()
         tic = time()
-        mesh_compute_cost = profile_on_mesh(layers, mesh, donation_mapping, global_outvars)
+        mesh_compute_cost = profile_on_mesh(mesh, layers, donation_mapping, global_outvars)
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
         mesh.shutdown()

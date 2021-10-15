@@ -131,9 +131,6 @@ def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
     Currently, we only donate:
     1. global invars that can be donated(set by users);
     2. buffers for accumulated gradients.
-    But if auto-sharding supports, we can add:
-    1. local invars not used later in this mesh, not main copy
-    2. local invars not used later in all meshes, main copy
     Args:
         donation_mapping (Dict[Var, Var]): known mapping of donations, including 
             global invar-outvar and accumulate gradients
@@ -153,11 +150,52 @@ def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
         donation_mapping, new_stage = get_donation_mapping_and_modify(
             stage, reversed_donation_mapping, gensym_fn)
         donated_num = len(donation_mapping)
-        ans[stage_idx] = (True,) * donated_num + (False,) * (
-            len(new_stage.invars) - donated_num)
+        ans[stage_idx] = list((True,) * donated_num + (False,) *
+                              (len(new_stage.invars) - donated_num))
         new_stages.append(new_stage)
 
     return ans, new_stages
+
+
+def get_donatable_intermediate(stages: Sequence[JaxPipelineStage],
+                               worker_stage_mapping, global_invars):
+    """
+    Get donatable invars of each stage. A donatable invar is:
+    1. An intermediate;
+    2. Either a main copy never used, or not a main copy.
+    Args:
+        stages (Sequence[JaxPipelineStage]): all stages
+        worker_stage_mapping (Dict[int, Set[int]]): indices of stages in each mesh
+        global_invars (Sequence[Var] | Set[Var]): global input variables
+    Returns:
+        donatable_list (Sequence[Set[Var]]): donatable invars of each stage
+    """
+    global_invars = set(global_invars)
+    main_copy_at = dict()
+    stage_at = dict()
+    for mesh_idx, stage_indices in worker_stage_mapping.items():
+        for stage_idx in stage_indices:
+            stage = stages[stage_idx]
+            for outvar in stage.outvars:
+                main_copy_at[outvar] = mesh_idx
+            stage_at[stage_idx] = mesh_idx
+
+    donatable_list = []
+    used = set()
+    for stage_idx in reversed(range(len(stages))):
+        stage = stages[stage_idx]
+        donatable = set()
+        for invar in stage.invars:
+            if invar in global_invars:
+                continue  # do not consider global inputs
+            if main_copy_at[invar] != stage_at[stage_idx]:
+                donatable.add(invar)  # not a main copy
+            if invar not in used:
+                donatable.add(invar)  # is a main copy never used
+        used.update(stage.invars)
+        donatable_list.append(donatable)
+    donatable_list = list(reversed(donatable_list))
+    return donatable_list
 
 
 @lu.cache
@@ -269,17 +307,25 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     stage_dict = [[] for _ in range(n_meshes)]
     stage_id_dict = [[] for _ in range(n_meshes)]
+    donatable_dict = [[] for _ in range(n_meshes)]
     # create donation mapping again, as apply gradients are considered
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
                                                global_invars, global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
         donation_mapping, jax_all_stages)
+
+    worker_stage_mapping = schedule.worker_stage_mapping
+    donatable_list = get_donatable_intermediate(
+        jax_all_stages, worker_stage_mapping,
+        set(global_invars).union(grad_in_to_out.keys()))
+
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
         mesh_idx = mesh_indices[0]
         stage_id_dict[mesh_idx].append(i)
         stage_dict[mesh_idx].append(stage)
+        donatable_dict[mesh_idx].append(donatable_list[i])
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
@@ -297,8 +343,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         sharded_xla_stages = generate_sharded_xla_stages(
             str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
             physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
-            memory_budget_per_device, acc_grad_outvars, search_task,
-            record_file)
+            memory_budget_per_device, acc_grad_outvars,
+            donatable_dict[mesh_idx], search_task, record_file)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
 

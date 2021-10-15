@@ -171,6 +171,7 @@ class XlaShardedPipelineStage(PipelineStage):
     input_sharding_specs: Any = None
     output_sharding_specs: Any = None
     output_acc_grad_indices: Sequence[int] = None
+    donatables: Set[Var] = None
 
     @classmethod
     def from_auto_sharded_stage(cls,
@@ -179,7 +180,8 @@ class XlaShardedPipelineStage(PipelineStage):
                                 auto_sharded_hlo_proto: xc.XlaComputation,
                                 strategy_config: StrategyConfig,
                                 donated_invars=None,
-                                acc_grad_outvars=set()):
+                                acc_grad_outvars=set(),
+                                donatables=set()):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline stage."""
         if not donated_invars:
@@ -196,12 +198,13 @@ class XlaShardedPipelineStage(PipelineStage):
                    donated_invars=donated_invars,
                    invars=jax_pipeline_stage.invars,
                    outvars=jax_pipeline_stage.outvars,
-                   output_acc_grad_indices=acc_grad_indices)
+                   output_acc_grad_indices=acc_grad_indices,
+                   donatables=donatables)
 
-    def donate_intermediates(self, computation, donatable):
+    def donate_intermediates(self, computation):
         # get sharding annotated hlo module
         hlo_module = computation.as_hlo_module()
-        donatable = set(donatable)
+        donatable = set(self.donatables)
         # get sharding specs
         hlo_module.infer_spmd_shardings()
         avals = [var.aval for var in self.invars]
@@ -258,6 +261,7 @@ class XlaShardedPipelineStage(PipelineStage):
         logical_mesh_shape = strategy_config.logical_mesh_shape
         xla_computation = xc.XlaComputation(self.hlo_proto)
         setup_computation_alias(xla_computation, self.donated_invars)
+        self.donate_intermediates(xla_computation)
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
@@ -574,7 +578,7 @@ def generate_sharded_xla_stages(name: str,
                                 stage_donate_invars, physical_mesh,
                                 logical_mesh_choices, logical_mesh_search_mode,
                                 memory_budget_per_device, acc_grad_outvars,
-                                search_task, record_file):
+                                donatables_list, search_task, record_file):
     """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
     invars = set()
     outvars = set()
@@ -628,8 +632,9 @@ def generate_sharded_xla_stages(name: str,
             jax_pipeline_stage=stage,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars) for stage, proto, donate_invars
-        in zip(jax_stages, stage_protos, stage_donate_invars)
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables) for stage, proto, donate_invars, donatables
+        in zip(jax_stages, stage_protos, stage_donate_invars, donatables_list)
     ]
     return stages
 

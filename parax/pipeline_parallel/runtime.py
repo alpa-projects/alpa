@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import ray
 import numpy as np
 
-from parax.device_mesh import DistributedArray
+from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.timer import timers
@@ -305,7 +305,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         logger.debug(">>> All pipeline jobs done.")
         timers("overall").stop(sync_func=self.sync)
         # timers("overall").stop()
-        # report_pipeline_runtime_benchmark_timers(reset=True)
 
         # Make sure reference counting is correct
         assert len(self._env) == 0, (self._env, self._env_reference_count)
@@ -403,7 +402,13 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                         self._collective_groups[src_mesh_idx][mesh_idx], val)
                     resharded_val = task.do()
                     inputs_list.append(resharded_val)
+            elif isinstance(val, ReplicatedDistributedArray):
+                mesh_idx = list(self.schedule.stage_placement(stage_idx))[0]
+                # find the local copy of val
+                local_replica = val.get_replica_on_mesh(self.physical_meshes[mesh_idx])
+                inputs_list.append(local_replica)
             else:
+                # it is a DeviceArray
                 inputs_list.append(val)
         return inputs_list
 
@@ -411,7 +416,18 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         stage = self.stages[stage_idx]
         for var, val in zip(stage.outvars, outputs):
             key = (batch_idx, repr(var))
-            self._env[key] = val
+            if key not in self._env:
+                self._env[key] = val
+            else:
+                if isinstance(self._env[key], DistributedArray):
+                    # construct the ReplicatedDA, and put it back to env
+                    rda = ReplicatedDistributedArray([self._env[key].device_mesh], [self._env[key]])
+                    rda.add_replica(val.device_mesh, val)
+                    self._env[key] = rda
+                elif isinstance(self._env[key], ReplicatedDistributedArray):
+                    self._env[key].add_replica(val.device_mesh, val)
+                else:
+                    raise RuntimeError("Unrecognized type.")
 
     def sync(self):
         all_workers = [w for mesh in self.physical_meshes for w in mesh.workers]

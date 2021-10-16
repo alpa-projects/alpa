@@ -144,6 +144,7 @@ def benchmark_transformer_one_case(benchmark_case):
             train_step(state, batch, rngkey)
         else:
             state = train_step(state, batch, rngkey)
+            # train_step(state, batch, rngkey)
 
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")

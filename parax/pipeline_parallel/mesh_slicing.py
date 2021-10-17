@@ -173,16 +173,14 @@ def compile_all(layer_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
             (compile_config, logical_mesh, proto, avals, out_avals,
              donate_invars))
 
-    compiled_protos = []
-    sharding_configs = []
+    compiled_outputs = []
     for layer_info in layer_info_list:
-        proto, config = compile_workers.get_next()
-        compiled_protos.append(proto)
-        sharding_configs.append(config)
+        compiled_output = compile_workers.get_next()
+        compiled_outputs.append(compiled_output)
 
     compile_workers.shutdown()
     global_config.restore(backup_config)
-    return compiled_protos, sharding_configs
+    return compiled_outputs
 
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,

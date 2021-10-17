@@ -379,7 +379,8 @@ class CompileWorker:
             proto: The proto of compiled executable
             strategy_config: The sharding strategy from auto sharding
         """
-        from parax.shard_parallel.auto_sharding import compile_with_search
+        from parax.shard_parallel.auto_sharding import (
+            compile_with_search, compile_with_given_strategy, HloProtoStatus)
         global_config.restore(new_global_config)
         xla_computation = xla_client.XlaComputation(proto)
         self.cnt += 1
@@ -405,7 +406,27 @@ class CompileWorker:
             bypass_device_assignment_check=True)
         assert len(
             protos) == 1, "compile worker compiles multiple stages in a time"
-        return protos[0], strategy_config
+        sharded_proto = protos[0]
+        sharding_annotated_computation = xla_client.XlaComputation(
+            sharded_proto)
+        hlo_module = sharding_annotated_computation.as_hlo_module()
+        hlo_module.infer_spmd_shardings()
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        output_sharding = hlo_module.spmd_output_sharding()
+        input_sharding_protos = [
+            sharding.proto_tuple() for sharding in input_shardings
+        ]
+        output_sharding_proto = output_sharding.proto_tuple()
+        compiled = compile_with_given_strategy(
+            self.backend,
+            sharding_annotated_computation,
+            strategy_config,
+            logical_mesh.total_devices,
+            bypass_device_assignment_check=True,
+            hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED)
+        optimized_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        return (optimized_proto, strategy_config, input_sharding_protos,
+                output_sharding_proto)
 
 
 class CompileWorkerPool:
@@ -415,14 +436,19 @@ class CompileWorkerPool:
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
         self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
-    
+
     def submit(self, fn, value):
         self.pool.submit(fn, value)
 
+    def get_next(self):
+        return self.pool.get_next()
+
     def shutdown(self):
-        self.pool = None
+        while self.pool.has_next():
+            w = self.pool.pop_idle()
+            ray.kill(w)
         gc.collect()
-        
+
 
 class PhysicalDeviceMesh:
     """

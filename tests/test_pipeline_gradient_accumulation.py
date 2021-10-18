@@ -16,7 +16,7 @@ from parax.testing import assert_allclose
 
 
 def create_train_state(rngkey, model, params):
-    params = model.init_dummy(rngkey, *params)
+    params = model.init(rngkey, *params)
     tx = optax.adam(learning_rate=1e-2)
     state = TrainState.create(
         apply_fn=model.apply,
@@ -34,11 +34,11 @@ class MLP_Model(nn.Module):
     def __call__(self, x):
         mark_pipeline(name='1', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        # x = nn.relu(x)
-        # x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         mark_pipeline(name='1', mark_type='end')
         mark_pipeline(name='2', mark_type='start')
-        # x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         x = nn.Dense(features=self.output_dim, use_bias=True)(x)
         return x
 
@@ -102,8 +102,6 @@ class AccumulateGradTest(unittest.TestCase):
         # copy to prevent from donation
         corr = train_step(state, batch)
         parallel_train_step = parallelize(train_step)
-        from jax import tree_flatten
-        print(tree_flatten(state)[1])
         new_optimizer = parallel_train_step(state, batch)
         assert_allclose(new_optimizer.params, corr.params)
         parallel_train_step.get_executable(state, batch).shutdown()
@@ -123,8 +121,8 @@ class AccumulateGradTest(unittest.TestCase):
                                                batch['y'],
                                                batch['attention_mask'])
 
-            new_optimizer = state.apply_gradients(grads=grad_param)
-            return new_optimizer
+            new_state = state.apply_gradients(grads=grad_param)
+            return new_state
 
         batch_size = 16
         seq_len = 8
@@ -150,8 +148,10 @@ class AccumulateGradTest(unittest.TestCase):
 
         corr_tgt = train_step(state, batch, model.apply)
         pipelined_train_step = parallelize(train_step)
-        pipe_tgt = pipelined_train_step(state, batch, model.apply)
-        assert_allclose(corr_tgt.params, pipe_tgt.params)
+
+        for i in range(5):
+            pipe_tgt = pipelined_train_step(state, batch, model.apply)
+            assert_allclose(corr_tgt.params, pipe_tgt.params)
         pipelined_train_step.get_executable(state, batch, model.apply).shutdown()
 
 

@@ -1026,6 +1026,13 @@ class ReplicatedDistributedArray:
     def replica(self):
         return list(self._mesh_array_map.values())[0]
 
+    @property
+    def _value(self):
+        return self.replica._value
+
+    def __array__(self, dtype=None, context=None):
+        return np.asarray(self._value, dtype=dtype)
+
 
 core.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
 xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')

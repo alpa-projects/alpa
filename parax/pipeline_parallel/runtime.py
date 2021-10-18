@@ -111,9 +111,15 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._collective_groups = [
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
+        self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
+                                  for _ in range(self.num_mesh)]
 
+        # Init and warm-up
         self._prepare_runables()
+        # use virtual mesh and VDAs to generate sharding task spec and strategies
         self._prepare_communicator()
+        # create all tasks and put buffers
+        self._initialize_resharding_tasks()
         self._prepare_gradient_accumulation()
         self._prepare_reference_count()
 
@@ -177,6 +183,29 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
+
+    def _initialize_resharding_tasks(self):
+        """
+        Launch all resharding tasks and do all necessary work.
+
+        In this function, we do the following:
+        1. we create a resharding task for each resharding spec
+        2. for each resharding task, we put task-related info (rank, group) in the
+           corresponded remote workers *in advance*.
+        At runtime, we use the source distributed array to index the task and perform
+        cross-mesh communication; in this way, we avoid creating/transferring task
+        info at runtime loop.
+        """
+        # Create resharding tasks for each var
+        for src_mesh_idx, dst_mesh_idx, var_spec_map in self._communicator.task_spec_iter():
+            for key, spec in var_spec_map.items():
+                cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
+                src_mesh = self.physical_meshes[src_mesh_idx]
+                dst_mesh = self.physical_meshes[dst_mesh_idx]
+                t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
+                # TODO(Hao): double check/optimize this function
+                t.prepare_send_recv_tasks()
+                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t
 
     def _prepare_gradient_accumulation(self):
         # Allocate buffers for accumulated gradients
@@ -394,14 +423,15 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 else:
                     # find the corresponded resharding task
                     src_mesh_idx = self.physical_meshes.index(val.device_mesh)
-                    task_spec = self._communicator.resharding_specs[
-                        src_mesh_idx][mesh_idx][key]
-                    assert task_spec
-                    # TODO(yonghao): create the resharding task at prepare function
-                    task = ReshardingTask(
-                        task_spec,
-                        self._collective_groups[src_mesh_idx][mesh_idx], val)
-                    resharded_val = task.do()
+                    # task_spec = self._communicator.resharding_specs[
+                    #     src_mesh_idx][mesh_idx][key]
+                    # assert task_spec
+                    # # TODO(yonghao): create the resharding task at prepare function
+                    # task = ReshardingTask(task_spec, self._collective_groups[src_mesh_idx][mesh_idx],
+                    #                       self.physical_meshes[src_mesh_idx], self.physical_meshes[mesh_idx])
+                    assert key in self._resharding_tasks[src_mesh_idx][mesh_idx]
+                    resharding_task = self._resharding_tasks[src_mesh_idx][mesh_idx][key]
+                    resharded_val = resharding_task.do(val)
                     inputs_list.append(resharded_val)
             else:
                 inputs_list.append(val)

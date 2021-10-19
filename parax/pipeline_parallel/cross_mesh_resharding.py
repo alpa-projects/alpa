@@ -185,9 +185,9 @@ class ReshardingTask:
     Args:
         task_spec (ReshardingTaskSpec): the task spec of this task.
         collective_group (CollectiveGroup): the collective group information.
-        src_mesh ()
+        src_mesh (PhysicalMesh): the source mesh to send.
+        dst_mesh (PhysicalMesh): the destiantion mesh to receive.
     """
-
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         self.task_spec = task_spec
         self.collective_group = collective_group

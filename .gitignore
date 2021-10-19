@@ -24,3 +24,7 @@ tests/*.json
 
 # Dataset
 benchmark/deepspeed/data
+
+# plots
+*.png
+*.pdf

@@ -76,9 +76,14 @@ def get_train_step(grad_func, pipeline_mp_size):
         if pipeline_mp_size > 1:
             loss_func = manual_layer_slicing(loss_func)
         # grad, grad_x = jax.grad(loss_func, argnums=(0, 1))(optimizer.target, batch["hidden_states"])
-        grad = grad_func(loss_func, argnums=(0))(state.params)
-        # new_state = state.apply_gradients(grads=grads)
-        return grad
+
+        params = jax.tree_util.tree_map(lambda x: x, state.params)
+        grads = grad_func(loss_func)(params)
+        if args.skip_apply_grad:
+            return grads
+        else:
+            new_state = state.apply_gradients(grads=grads)
+            return new_state
 
     return train_step
 
@@ -96,10 +101,10 @@ def benchmark_transformer_one_case(benchmark_case):
 
     # Control whether we want to do sync more aggressively
     global_config.pipeline_aggressively_sync = False
-    if num_micro_batches > 1:
-        grad_func = parax.grad
-    else:
+    if args.skip_apply_grad and num_micro_batches == 1:
         grad_func = jax.grad
+    else:
+        grad_func = parax.grad
 
     # Mesh configs
     # 3D parallel always run atop a Ray cluster.
@@ -135,7 +140,11 @@ def benchmark_transformer_one_case(benchmark_case):
     print_used_time("Compile (driver)")
 
     for i in range(args.niter):
-        train_step(state, batch, rngkey)
+        if args.skip_apply_grad:
+            train_step(state, batch, rngkey)
+        else:
+            state = train_step(state, batch, rngkey)
+            # train_step(state, batch, rngkey)
 
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")
@@ -215,6 +224,8 @@ if __name__ == "__main__":
                         help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--niter", type=int, default=10,
                         help="Number of benchmark iteration")
+    parser.add_argument("--skip-apply-grad", type=bool, default=False,
+                        help="Whether we want to skip applying the gradients")
     args = parser.parse_args()
 
     if not args.local:

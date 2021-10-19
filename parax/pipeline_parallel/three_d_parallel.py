@@ -165,6 +165,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               donated_invars, batch_invars, devices,
                               memory_budget_per_device, *avals):
     """End-to-end 3d parallel combining pipelining and sharding."""
+    donated_invars = list(donated_invars)
     if not (isinstance(devices, VirtualMesh) or
             global_config.search_logical_mesh_shape):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
@@ -247,6 +248,16 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         dependency = gen_linear_pipeline_dependency_with_apply(
             n_stages, mesh_num, apply_deps)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad
+
+        used_simultaneously = set()
+        used = set()
+        for stage in sliced_apply_grad:
+            used_simultaneously.update(used.intersection(stage.invars))
+            used.update(stage.invars)
+        for idx, invar in enumerate(global_invars):
+            if invar in used_simultaneously and donated_invars[idx]:
+                logger.warning(f"cannot donate {invar}")
+                donated_invars[idx] = False
     else:
         jax_all_stages = jax_pipeline_stages
         n_stages = len(jax_pipeline_stages)

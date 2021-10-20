@@ -1083,7 +1083,12 @@ def merge_stages(jaxprs: Sequence[ClosedJaxpr],
     new_outvars = list(new_outvars.keys())
     if donation_mapping:
         new_invars_set = set(new_invars)
-        donation_mapping = {k: v for k, v in donation_mapping.items() if k in new_invars_set}
+        new_outvars_set = set(new_outvars)
+        donation_mapping = {
+            k: v
+            for k, v in donation_mapping.items()
+            if k in new_invars_set and v in new_outvars_set
+        }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
     return ClosedJaxpr(

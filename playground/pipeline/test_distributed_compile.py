@@ -1,39 +1,26 @@
 from flax import linen as nn, optim
 import jax
 from jax._src.api import make_jaxpr
-from jax.lib import xla_bridge
+from jax.core import gensym
 import jax.numpy as jnp
-import numpy as np
-from parax.util import jaxpr_to_hlo_computation
+from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
+from parax.pipeline_parallel.stage import compute_to_acc_pipe
 import ray
-import multiprocessing
 
-import parax
-from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, manual_layer_slicing)
+from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
 from parax.model.bert_model import BertConfig, FlaxBertLayer
-from parax.pipeline_parallel.primitive_def import mark_pipeline
+from parax.pipeline_parallel.mesh_slicing import (compile_all,
+                                                  generate_stage_info,
+                                                  split_global_use_and_donate)
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
-from parax.testing import assert_allclose
 
+ray.init(address="auto")
+jax.config.update('jax_platform_name', 'cpu')
+virtual_mesh = DeviceCluster().get_virtual_mesh()
 
-class MLP_Model(nn.Module):
-    hidden_dim: int
-    output_dim: int
-
-    @nn.compact
-    def __call__(self, x):
-        mark_pipeline(name='1', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        x = nn.relu(x)
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        mark_pipeline(name='1', mark_type='end')
-        mark_pipeline(name='2', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        x = nn.Dense(features=self.output_dim, use_bias=True)(x)
-        return x
+N = 10
 
 
 class BertLayer_Model(nn.Module):
@@ -41,91 +28,92 @@ class BertLayer_Model(nn.Module):
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
-        self.layer0 = FlaxBertLayer(config=self.config, dtype=self.dtype)
-        self.layer1 = FlaxBertLayer(config=self.config, dtype=self.dtype)
+        self.layers = [
+            FlaxBertLayer(config=self.config, dtype=self.dtype)
+            for _ in range(N)
+        ]
 
     def __call__(self, x, attention_mask):
-        mark_pipeline(name='1', mark_type='start')
-        layer_outputs = self.layer0(x, attention_mask)
-        x = layer_outputs[0]
-        mark_pipeline(name='1', mark_type='end')
-        mark_pipeline(name='2', mark_type='start')
-        layer_outputs = self.layer1(x, attention_mask)
-        x = layer_outputs[0]
+        for i in range(N):
+            mark_pipeline(name=str(i), mark_type='start')
+            layer_outputs = self.layers[i](x, attention_mask)
+            x = layer_outputs[0]
+            if i != N - 1:
+                mark_pipeline(name=str(i), mark_type='end')
         return x
 
-def setUp():
-    ray.init(address="auto")
-    jax.config.update('jax_platform_name', 'cpu')
-    virtual_mesh = DeviceCluster().get_virtual_mesh()
-    set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
 
-def tearDown():
-    ray.shutdown()
+def train_step(optimizer, batch, apply_fn):
 
-CompileWorkerPool = parax.device_mesh.CompileWorkerPool
-setUp()
+    def loss_func(params, x, y, attention_mask):
+        out = apply_fn(params, x, attention_mask)
+        loss = jnp.mean((out - y)**2)
+        mark_pipeline(name=str(N - 1), mark_type='end')
+        return loss
 
-batch_size = 256
-hidden_dim = 16
-input_dim = output_dim = hidden_dim
-model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim)
-x = jnp.array(np.random.rand(batch_size, input_dim))
-y = jnp.array(np.random.rand(batch_size, output_dim))
+    loss_func = manual_layer_slicing(loss_func)
+    grad_param = jax.grad(loss_func)(optimizer.target, batch['x'], batch['y'],
+                                     batch['attention_mask'])
+
+    # new_optimizer = optimizer.apply_gradient(grad_param)
+    return grad_param
+
+
+batch_size = 4
+seq_len = 64
+hidden_size = 256
+num_heads = 1
+x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
+y = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23
+attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+
+model = BertLayer_Model(config=BertConfig(hidden_size=hidden_size,
+                                          intermediate_size=hidden_size * 4,
+                                          num_attention_heads=num_heads))
 rngkey = jax.random.PRNGKey(0)
-params = model.init(rngkey, x)
+params = model.init(rngkey, x, attention_mask)
 optimizer = optim.GradientDescent(1e-2).create(params)
-batch = {'x': x, 'y': y}
+batch = {"x": x, "y": y, "attention_mask": attention_mask}
 
-@manual_layer_slicing
-def loss_func(params, x, y):
-    out = model.apply(params, x)
-    loss = jnp.mean((out - y)**2)
-    mark_pipeline(name='2', mark_type='end')
-    return loss
-
-def train_step(optimizer, batch):
-    param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
-                                        batch['y'])
-    return param_grad
-
-global_config.num_micro_batches = 1
-
-# copy to prevent from donation
-corr = train_step(optimizer, batch)
-
-origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch)
-
+origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch,
+                                                           model.apply)
 compute_jaxpr, _, _ = split_compute_and_apply(origin_jaxpr)
-stages = slice_closed_jaxpr_by_full_pipeline_marks(compute_jaxpr)
-stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
-                                             compute_jaxpr.jaxpr.outvars)
-fake_donations = [(False,) * len(stage.invars) for stage in stages]
+gensym_fn = gensym([compute_jaxpr.jaxpr])
+acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_to_acc_pipe(
+    compute_jaxpr, gensym_fn)
 
-backend = xla_bridge.get_backend('gpu')
-num_cpus = int(DeviceCluster().num_cpus * 0.5)
-pool = CompileWorkerPool(num_cpus, sum(DeviceCluster().num_devices))
+stages = slice_closed_jaxpr_by_full_pipeline_marks(acc_grad_jaxpr)
+stages = mark_missing_vars_in_pipeline_marks(stages,
+                                             acc_grad_jaxpr.jaxpr.invars,
+                                             acc_grad_jaxpr.jaxpr.outvars)
 
-backup_config = global_config.backup()
+donated_global_invars = compute_jaxpr.jaxpr.invars[:-2]
+global_invars = acc_grad_jaxpr.jaxpr.invars
+global_outvars = acc_grad_jaxpr.jaxpr.outvars
+global_donation_mapping = dict()
 
-virtual_mesh = DeviceCluster().get_virtual_mesh()
-global_config.num_micro_batches = None
-global_config.devices = virtual_mesh
-global_config.strategy = "shard_parallel"
-global_config.use_dummy_value_for_benchmarking = True
-cur_config = global_config.backup()
-w = pool.pop_idle()
+num_layer_per_stage = 2
+stage_infos = []
+for start in range(0, N, int(2 * N / num_layer_per_stage)):
+    stop = start + num_layer_per_stage
+    indices = list(range(start, stop))
+    donation_mapping, global_used, new_layers = split_global_use_and_donate(
+        stages, indices, global_donation_mapping, global_outvars)
+    stage_info = generate_stage_info(stages, indices, donation_mapping,
+                                   global_used, str(start))
+    stage_infos.append(stage_info)
 
-name = 'profile_0_shard_parallel'
-stage = stages[0]
-donate_invars = fake_donations[0]
-logical_mesh = virtual_mesh.get_default_logical_mesh()
-built = jaxpr_to_hlo_computation(name, stage.closed_jaxpr(), donate_invars, backend)
-avals = [var.aval for var in stage.invars]
-out_avals = [var.aval for var in stage.outvars]
-proto = built.as_serialized_hlo_module_proto()
-result = w.compile_single_layer_with_search.remote(cur_config, logical_mesh, proto, avals, out_avals, fake_donations[0])
-proto, strategy = ray.get(result)
-pool.push(w)
-global_config.restore(backup_config)
-tearDown()
+compiled_outputs = compile_all(stage_infos,
+                               virtual_mesh.get_default_logical_mesh(), 16, 4)
+physical_mesh = virtual_mesh.get_physical_mesh()
+for compiled_output, stage_info in zip(compiled_outputs, stage_infos):
+    _, avals, out_avals, tot_donation = stage_info
+    proto, config, in_shardings, out_shardings = compiled_output
+    compiled = ProtoAndSharding(proto=proto,
+                                input_shardings=in_shardings,
+                                output_shardings=out_shardings)
+    donated_invars = (True,) * len(tot_donation) + (False,) * (
+        len(avals) - len(tot_donation))
+    executable = NormalMeshDriverExecutable(physical_mesh, compiled, config,
+                                            avals, out_avals, donated_invars)
+    executable.profile_with_dummy_inputs()

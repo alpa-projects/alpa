@@ -18,10 +18,12 @@ logger.setLevel(logging.INFO)
 
 resharding_task_counter = 0
 
+
 def next_resharding_task_uuid():
     global resharding_task_counter
     resharding_task_counter = (resharding_task_counter + 1) % (1 << 60)
     return resharding_task_counter
+
 
 class VirtualDistributedArray:
     """
@@ -391,11 +393,11 @@ class ReshardingTask:
         if profiling:
             for worker, uuid in self.send_worker_task_ids.items():
                 results.append(
-                    worker.run_resharding_send_task_profiling.remote(
+                    worker.profile_resharding_send_task.remote(
                         uuid, send_buf_uuids[worker]))
             for worker, uuid in self.recv_worker_task_ids.items():
                 results.append(
-                    worker.run_resharding_recv_task_profiling.remote(
+                    worker.profile_resharding_recv_task.remote(
                         uuid, recv_buf_uuids[worker]))
             ray.get(results)
         else:

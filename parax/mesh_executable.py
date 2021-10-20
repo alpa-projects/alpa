@@ -5,6 +5,7 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
+from collections import namedtuple
 import logging
 import os
 from typing import List, Sequence, Tuple, Optional
@@ -30,6 +31,7 @@ logger.setLevel(logging.INFO)
 mesh_executable_counter = 0
 remote_buffer_counter = 0
 
+ProtoAndSharding = namedtuple("HloProtoAndSharding", ["proto", "input_shardings", "output_shardings"])
 
 def next_mesh_executable_uuid():
     """Return the next uuid of a mesh executable."""
@@ -138,7 +140,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  flop_count: Optional[int] = None):
-        from parax.shard_parallel.auto_sharding import get_input_output_sharding_specs
+        from parax.shard_parallel.auto_sharding import (
+            get_input_output_sharding_specs, sharding_proto_to_sharding_spec)
 
         self.physical_mesh = physical_mesh
         self.avals = avals
@@ -147,10 +150,24 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.flop_count = flop_count
 
         # Read sharding specs
-        hlo_module = compiled.hlo_modules()[0]
-        self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
-            hlo_module, physical_mesh.total_devices, avals, out_avals,
-            strategy_config.logical_mesh_shape)
+        if isinstance(compiled, ProtoAndSharding):
+            proto = compiled.proto
+            input_sharding_protos = compiled.input_shardings
+            output_sharding_protos = compiled.output_shardings
+            self.hlo_module = xla_client.XlaComputation(proto).as_hlo_module()
+            logical_mesh_shape = strategy_config.logical_mesh_shape
+            self.input_sharding_specs = [
+            sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
+                for (proto_tuple, aval) in zip(input_sharding_protos, avals)
+            ]
+            self.output_sharding_specs = sharding_proto_to_sharding_spec(
+                output_sharding_protos, out_avals, logical_mesh_shape)
+        else:
+            self.hlo_module = compiled.hlo_modules()[0]
+            self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
+                self.hlo_module, physical_mesh.total_devices, avals, out_avals,
+                strategy_config.logical_mesh_shape)
+            
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -162,7 +179,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
-        self.hlo_text = compiled.hlo_modules()[0].to_string()
+        self.hlo_text = self.hlo_module.to_string()
 
         self.set_executable(physical_mesh, compiled, strategy_config)
 
@@ -171,9 +188,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.sync_func = get_sync_func_driver(physical_mesh)
 
     def set_executable(self, physical_mesh, compiled, strategy_config):
-        hlo_module = compiled.hlo_modules()[0]
         if physical_mesh.is_distributed:
-            hlo_proto = hlo_module.as_serialized_hlo_module_proto()
+            hlo_proto = self.hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         NormalMeshWorkerExecutable, hlo_proto,

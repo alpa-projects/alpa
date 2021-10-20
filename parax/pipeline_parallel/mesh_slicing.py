@@ -1,9 +1,13 @@
+import gc
 import numpy as np
+import ray
+from ray.util import ActorPool
 from typing import Dict, Sequence, Set, Tuple
 
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
+from jax.lib import xla_bridge, xla_client
 
 from parax.api import parallelize
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
@@ -11,13 +15,113 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
-from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages, rearrange_vars
+from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages
 from parax.pipeline_parallel.three_d_parallel import get_donation_mapping_and_modify
+from parax.shard_parallel.auto_sharding import (compile_with_search,
+                                                compile_with_given_strategy,
+                                                HloProtoStatus)
+from parax.util import jaxpr_to_hlo_computation
 
 
 ########################################
 ##### Profile tools
 ########################################
+class CompileWorker:
+    """
+    A ray actor to distributedly compile Jaxpr to HLO Proto.
+    To activaite the worker, a gpu resource is required.
+    """
+
+    def __init__(self):
+        self.cnt = 0
+        self.backend = xla_bridge.get_backend("gpu")
+
+    def compile_stage_with_search(self, new_global_config, logical_mesh,
+                                         proto, avals, out_avals,
+                                         donate_invars):
+        """
+        Compile a single stage with auto sharding.
+        Args:
+            new_global_config: the global config for compilation setting.
+            logical_mesh: the logical mesh for compilation.
+            proto: the proto of XlaComputation to be compiled
+            avals: input avals
+            out_avals: output avals
+            donate_invars: donate invars of the computation to be compiled
+        Returns:
+            proto: The proto of compiled executable
+            strategy_config: The sharding strategy from auto sharding
+        """
+        global_config.restore(new_global_config)
+        xla_computation = xla_client.XlaComputation(proto)
+        self.cnt += 1
+
+        logical_mesh_choices = [logical_mesh]
+        search_task = None
+        record_file = None
+
+        protos, strategy_config = compile_with_search(
+            self.backend,
+            xla_computation,
+            avals,
+            out_avals,
+            donate_invars,
+            None,
+            logical_mesh_choices,
+            global_config.mesh_shape_search_mode,
+            global_config.memory_budget_per_device,
+            search_task,
+            record_file,
+            multiple_stages=True,
+            grad_acc_num_micro_batches=None,
+            bypass_device_assignment_check=True)
+        assert len(
+            protos) == 1, "compile worker compiles multiple stages in a time"
+        sharded_proto = protos[0]
+        sharding_annotated_computation = xla_client.XlaComputation(
+            sharded_proto)
+        hlo_module = sharding_annotated_computation.as_hlo_module()
+        hlo_module.infer_spmd_shardings()
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        output_sharding = hlo_module.spmd_output_sharding()
+        input_sharding_protos = [
+            sharding.proto_tuple() for sharding in input_shardings
+        ]
+        output_sharding_proto = output_sharding.proto_tuple()
+        compiled = compile_with_given_strategy(
+            self.backend,
+            sharding_annotated_computation,
+            strategy_config,
+            logical_mesh.total_devices,
+            bypass_device_assignment_check=True,
+            hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED)
+        optimized_proto = compiled.hlo_modules(
+        )[0].as_serialized_hlo_module_proto()
+        return (optimized_proto, strategy_config, input_sharding_protos,
+                output_sharding_proto)
+
+
+class CompileWorkerPool:
+    """wrapped ray.util.ActorPool"""
+
+    def __init__(self, num_cpus, num_gpus):
+        gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
+        worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
+        self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
+
+    def submit(self, fn, value):
+        self.pool.submit(fn, value)
+
+    def get_next(self):
+        return self.pool.get_next()
+
+    def shutdown(self):
+        while self.pool.has_next():
+            w = self.pool.pop_idle()
+            ray.kill(w)
+        gc.collect()
+
+
 def split_global_use_and_donate(layers, layer_indices, donation_mapping,
                                 global_outvars):
     '''
@@ -83,7 +187,7 @@ def split_sharding_specs(layers: Sequence[JaxPipelineStage],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
+def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
                                      mesh: PhysicalDeviceMesh,
                                      donation_mapping: Dict[Var, Var],
                                      global_used: Set[Var]):
@@ -126,6 +230,60 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     return ret, split_in_specs, split_out_specs
 
 
+def generate_stage_info(stages, selected_indices, donation_mapping,
+                        global_outvars, name):
+    backend = xla_bridge.get_backend('gpu')
+
+    selected_donation_mapping, used_outside, stages = split_global_use_and_donate(
+        stages, selected_indices, donation_mapping, global_outvars)
+
+    jaxprs = [stage.closed_jaxpr() for stage in stages]
+
+    merged = merge_stages(jaxprs, used_outside, '0', selected_donation_mapping)
+    outvars = set(merged.jaxpr.outvars)
+    avals = [var.aval for var in merged.jaxpr.invars]
+    out_avals = [var.aval for var in merged.jaxpr.outvars]
+    tot_donation = [
+        invar in selected_donation_mapping and
+        selected_donation_mapping[invar] in outvars
+        for invar in merged.jaxpr.invars
+    ]
+
+    built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
+    proto = built.as_serialized_hlo_module_proto()
+    return (proto, avals, out_avals, tot_donation)
+
+
+def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
+    """
+    Args:
+        stage_info_list: List of info for compilation. Each info is a tuple with:
+            (proto, in_avals, out_avals, donate_invars)
+    """
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    backup_config = global_config.backup()
+    global_config.num_micro_batches = None
+    global_config.devices = logical_mesh
+    global_config.strategy = "shard_parallel"
+    global_config.use_dummy_value_for_benchmarking = True
+    compile_config = global_config.backup()
+    for stage_info in stage_info_list:
+        proto, avals, out_avals, donate_invars = stage_info
+        compile_workers.submit(
+            lambda w, v: w.compile_stage_with_search.remote(*v),
+            (compile_config, logical_mesh, proto, avals, out_avals,
+             donate_invars))
+
+    compiled_outputs = []
+    for stage_info in stage_info_list:
+        compiled_output = compile_workers.get_next()
+        compiled_outputs.append(compiled_output)
+
+    compile_workers.shutdown()
+    global_config.restore(backup_config)
+    return compiled_outputs
+
+
 def create_collective_group(src_mesh: PhysicalDeviceMesh,
                             dst_mesh: PhysicalDeviceMesh) -> CollectiveGroup:
     cg = CollectiveGroup(set(src_mesh.device_strs + dst_mesh.device_strs),
@@ -157,7 +315,7 @@ def dummy_resharding_strategy(spec: ReshardingTaskSpec):
     return strategy
 
 
-def profile_layer_cost_e(src: JaxPipelineStage, dst: JaxPipelineStage,
+def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStage,
                          src_outvar_sharding_spec, dst_invar_sharding_spec,
                          src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
                          collective_group: CollectiveGroup):

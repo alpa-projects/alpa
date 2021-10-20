@@ -139,9 +139,10 @@ class AccumulateGradTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 512
         num_heads = 8
-        x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
-        y = jnp.ones((batch_size, seq_len, hidden_size),
-                     dtype=jnp.float32) * 23  # * np.arange(hidden_size)[None, None, :]
+        rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                     dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
         # x = jnp.array(np.random.rand(batch_size, seq_len, hidden_size), dtype=jnp.float32)
         # y = jnp.array(np.random.rand(batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23.0
@@ -152,7 +153,6 @@ class AccumulateGradTest(unittest.TestCase):
             config=BertConfig(hidden_size=hidden_size,
                               intermediate_size=hidden_size * 4,
                               num_attention_heads=num_heads))
-        rngkey = jax.random.PRNGKey(0)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
 
@@ -170,7 +170,7 @@ class AccumulateGradTest(unittest.TestCase):
             if i > 0:
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch, model.apply)
-            assert_allclose(expected_new_state.params, actual_new_state.params)
+            assert_allclose(expected_new_state.params, actual_new_state.params, 1e-3, 1e-3)
 
         executable.shutdown()
 
@@ -179,7 +179,7 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))
     # TODO(Hao): disable this test and move it back when the precision issue is fixed.
-    # suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert'))
     return suite
 
 

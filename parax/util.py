@@ -460,6 +460,8 @@ def write_tsv(heads, values, filename, print_line=True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
 
+    values = [str(x) for x in values]
+
     with open(filename, "a") as fout:
         fout.write("\t".join(values) + "\n")
 
@@ -468,6 +470,23 @@ def write_tsv(heads, values, filename, print_line=True):
         for i in range(len(heads)):
             line += heads[i] + ": " + values[i] + "  "
         print(line)
+
+
+def to_str_round(x, decimal=6):
+    """Print a python object but round all floating point numbers."""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, (list, tuple)) or isinstance(x, np.ndarray):
+        return "[" + ", ".join([to_str_round(y, decimal=decimal)
+                                for y in x]) + "]"
+    if isinstance(x, dict):
+        return str({k: eval(to_str_round(v)) for k, v in x.items()})
+    if isinstance(x, int):
+        return str(x)
+    if isinstance(x, float):
+        format_str = "%%.%df" % decimal
+        return format_str % x
+    raise ValueError("Invalid value: " + str(x))
 
 
 _tic = None

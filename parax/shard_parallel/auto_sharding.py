@@ -407,6 +407,22 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
                                                        logical_mesh)
 
 
+def sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape):
+    logical_mesh = LogicalDeviceMesh(
+        None,
+        np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
+    sharding_type, _, _, tuple_shardings, _ = proto_tuple
+    if sharding_type == OpSharding.Type.TUPLE:
+        avals = aval
+        return [
+            _hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
+            for (shard, aval) in zip(tuple_shardings, avals)
+        ]
+    else:
+        return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval,
+                                                       logical_mesh)
+
+
 def make_replicated_spec(aval, logical_mesh_shape):
     """Make a replicated ShardingSpec."""
     sharding = (pxla.NoSharding(),) * len(aval.shape)

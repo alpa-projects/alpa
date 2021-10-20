@@ -8,11 +8,11 @@ from flax import optim
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 
-from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster
+from parax import parallelize, set_parallelize_options, mark_pipeline, DeviceCluster, manual_layer_slicing
 from parax.testing import assert_allclose
 
 MB = 1024 ** 2
-num_gpus = 2
+num_gpus = 4
 # in order for ray to work we have to set this
 # so the driver program and actor program can share GPUs...
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
@@ -39,11 +39,11 @@ class Model(nn.Module):
         # FIXME (zhuohan): if don't require the gradient of x here, the
         #                  backward pass of the pipeline start will not
         #                  be generated.
-        x, = mark_pipeline(x, name='1', mark_type='start')
+        mark_pipeline(name='1', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
         x = nn.relu(x)
-        x, = mark_pipeline(x, name='1', mark_type='end')
-        x, = mark_pipeline(x, name='2', mark_type='start')
+        mark_pipeline(name='1', mark_type='end')
+        mark_pipeline(name='2', mark_type='start')
         x = nn.Dense(features=self.output_dim, use_bias=False)(x)
         return x
 
@@ -51,9 +51,11 @@ def train_step(optimizer, batch, apply_fn):
     def loss_func(params, x, y):
         out = apply_fn(params, x)
         loss = jnp.mean((out - y) ** 2)
-        loss, = mark_pipeline(loss, name='2', mark_type='end')
+        mark_pipeline(loss, name='2', mark_type='end')
         return loss
 
+
+    loss_func = manual_layer_slicing(loss_func)
     grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'])
     # FIXME (zhuohan): make the pipeline work with apply_gradient
     # new_optimizer = optimizer.apply_gradient(grad_param)
@@ -77,9 +79,9 @@ rngkey = jax.random.PRNGKey(0)
 params = model.init(rngkey, x)
 optimizer = optim.GradientDescent(1e-2).create(params)
 
-gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
+# gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
 strategy = "3d_parallel"
-assert_allclose(x, y)
+# assert_allclose(x, y)
 
 
 set_parallelize_options(devices=mesh, strategy=strategy)

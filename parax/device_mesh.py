@@ -1,15 +1,16 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
-from collections.abc import Iterable
-from collections import defaultdict
 import logging
-from operator import attrgetter
 import pickle
 import time
+from collections import defaultdict
+from collections.abc import Iterable
 from typing import List, Union, Sequence, Tuple
+from operator import attrgetter
 
 import numpy as np
 import ray
 import ray.util.collective as col
+from ray.util import ActorPool
 
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
@@ -19,7 +20,7 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
-from jax.lib import xla_client
+from jax.lib import xla_client, xla_bridge
 import jax.numpy as jnp
 
 from parax.global_env import global_config
@@ -27,9 +28,10 @@ from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWor
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
-from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
-                        to_cupy, to_jax_tensor, jax_buffer_set,
-                        xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer)
+from parax.util import (benchmark_func, get_dim_last_value,
+                        list_gpu_info, GB, to_cupy,
+                        to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
+                        jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -75,6 +77,10 @@ class MeshHostWorker:
                          device_id: int,
                          shape: Tuple[int, ...],
                          dtype=np.float32):
+        """Put an all-zero empty buffer on the given device.
+
+        Note: This function is blocking (synchronous).
+        """
         assert uuid not in self.buffers
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(np.empty(shape, dtype),
@@ -903,6 +909,65 @@ class DistributedArray:
 core.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
 xla.pytype_aval_mappings[DistributedArray] = attrgetter('aval')
 xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
+
+
+class ReplicatedDistributedArray:
+    """A distributed array that is replicated on many meshes.
+
+    We use this class as a workaround for symbols that type-change from DeviceArray
+    to DistributedArray in pipeline-parallel training, such as optimizer's step.
+    These variables do not have a resharding spec, and cannot be donated, but have a
+    replica generates on every participant mesh.
+
+    Warning: do not use this class unless you know exactly how.
+    """
+
+    def __init__(self,
+                 device_meshes: List[PhysicalDeviceMesh],
+                 arrays: List[DistributedArray]):
+        self._mesh_array_map = dict()
+        self._array_mesh_map = dict()
+        for mesh, array in zip(device_meshes, arrays):
+            self._mesh_array_map[mesh] = array
+            self._array_mesh_map[array] = mesh
+        self.aval = self.replica.aval
+
+    def is_replicated_on_mesh(self, mesh):
+        """Whether this distributed array is on a given mesh."""
+        if mesh in self._mesh_array_map:
+            return True
+        return False
+
+    def get_replica_on_mesh(self, mesh):
+        if not self.is_replicated_on_mesh(mesh):
+            raise RuntimeError("No replica found on this mesh.")
+        return self._mesh_array_map[mesh]
+
+    def add_replica(self, mesh, array):
+        assert isinstance(array, DistributedArray)
+        assert isinstance(mesh, PhysicalDeviceMesh)
+        if array in self._array_mesh_map:
+            raise RuntimeError("Replica exists.")
+        if mesh in self._mesh_array_map:
+            raise RuntimeError("Mesh exists.")
+        self._mesh_array_map.update({mesh: array})
+        self._array_mesh_map.update({array: mesh})
+
+    @property
+    def replica(self):
+        return list(self._mesh_array_map.values())[0]
+
+    @property
+    def _value(self):
+        return self.replica._value
+
+    def __array__(self, dtype=None, context=None):
+        return np.asarray(self._value, dtype=dtype)
+
+
+core.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
+xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
+xla.canonicalize_dtype_handlers[ReplicatedDistributedArray] = lambda x: x
 
 
 # TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.

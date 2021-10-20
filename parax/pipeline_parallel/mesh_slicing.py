@@ -345,7 +345,8 @@ def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStag
                                                  src_phy_mesh, input_indices)
             val = DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                                    remote_buffers, input_indices)
-            task = ReshardingTask(task_spec, collective_group, val)
+            task = ReshardingTask(task_spec, collective_group,
+                                  collective_group.src_mesh, collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:

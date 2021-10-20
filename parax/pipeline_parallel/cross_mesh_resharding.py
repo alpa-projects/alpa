@@ -407,8 +407,12 @@ class ReshardingTask:
                 results.append(
                     worker.run_resharding_recv_task.remote(
                         uuid, recv_buf_uuids[worker]))
+            logger.debug("Precompiled tasks launched.")
             if global_config.pipeline_aggressively_sync:
                 ray.get(results)
+                logger.debug("Using precompiled tasks in sync mode.")
+            else:
+                logger.debug("Using precomipled tasks in async mode.")
 
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):

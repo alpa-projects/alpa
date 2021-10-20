@@ -120,8 +120,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # use virtual mesh and VDAs to generate sharding task spec and strategies
         self._prepare_communicator()
         # create all tasks and put buffers
-        if global_config.precompile_resharding_tasks:
-            self._initialize_resharding_tasks()
+        self._initialize_resharding_tasks()
         self._prepare_gradient_accumulation()
         self._prepare_reference_count()
 

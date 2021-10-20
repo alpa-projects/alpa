@@ -257,6 +257,13 @@ class MeshHostWorker:
         """Send a slice of a source buffer to a target GPU."""
         src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
         to_send = to_cupy(src_buffer[tuple(offset)])
+
+        # Note: this logger.debug call affects performance
+        # logger.debug(
+        #     ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
+        #     "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
+        #                                to_send.shape, to_send.dtype,
+        #                                to_send[0]))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -271,8 +278,13 @@ class MeshHostWorker:
             self.local_devices[device_id])
         to_recv = to_cupy(tmp_buffer)
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-        recv_tensor = to_jax_tensor(to_recv)
 
+        # Note(Hao): this logger.debug call affects performance
+        # logger.debug(
+        #     ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
+        #         .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
+        #                 to_recv[0]))
+        recv_tensor = to_jax_tensor(to_recv)
         # 0-copy version
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)

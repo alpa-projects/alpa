@@ -5,11 +5,14 @@ import time
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import List, Union, Sequence, Tuple
+from operator import attrgetter
 
-import jax.numpy as jnp
 import numpy as np
 import ray
 import ray.util.collective as col
+from ray.util import ActorPool
+
+import jax.numpy as jnp
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
@@ -19,8 +22,6 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
 from jax.lib import xla_client, xla_bridge
-from operator import attrgetter
-from ray.util import ActorPool
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable

@@ -397,6 +397,7 @@ class ReshardingTask:
                 results.append(
                     worker.run_resharding_recv_task_profiling.remote(
                         uuid, recv_buf_uuids[worker]))
+            ray.get(results)
         else:
             for worker, uuid in self.send_worker_task_ids.items():
                 results.append(
@@ -406,7 +407,8 @@ class ReshardingTask:
                 results.append(
                     worker.run_resharding_recv_task.remote(
                         uuid, recv_buf_uuids[worker]))
-        results = ray.get(results)
+            if global_config.pipeline_aggressively_sync:
+                ray.get(results)
 
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):

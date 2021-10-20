@@ -95,8 +95,8 @@ from parax.pipeline_parallel.three_d_parallel import (
     split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.mesh_slicing import (
-    compile_and_profile_layer_cost_c, create_collective_group,
-    profile_layer_cost_e)
+    compile_and_profile_stage_compute_cost, create_collective_group,
+    profile_layer_communication_cost)
 
 compute_jaxpr, _, _ = split_compute_and_apply(origin_jaxpr)
 stages = slice_closed_jaxpr_by_full_pipeline_marks(compute_jaxpr)
@@ -110,13 +110,13 @@ stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
 # tn = "compute1"
 # timers(tn).start()
 # for t in range(round):
-#     print(compile_and_profile_layer_cost_c((stages[0], stages[3]), physical_mesh)[0])
+#     print(compile_and_profile_stage_compute_cost((stages[0], stages[3]), physical_mesh)[0])
 # timers(tn).stop()
 # print(timers(tn).elapsed())
 # tn = "compute2"
 # timers(tn).start()
 # for t in range(round):
-#     print(compile_and_profile_layer_cost_c((stages[1], stages[2]), physical_mesh)[0])
+#     print(compile_and_profile_stage_compute_cost((stages[1], stages[2]), physical_mesh)[0])
 # timers(tn).stop()
 # print(timers(tn).elapsed())
 '''----------------profile cost e----------------'''
@@ -137,11 +137,11 @@ def all_true_outvar(stages):
 
 
 test_stages = (stages[0], stages[3])
-cost_c1, _, out_spec = compile_and_profile_layer_cost_c(
+cost_c1, _, out_spec = compile_and_profile_stage_compute_cost(
     test_stages, src_phy_mesh, all_false_donation(test_stages),
     all_true_outvar(test_stages))
 test_stages = (stages[1], stages[2])
-cost_c2, in_spec, _ = compile_and_profile_layer_cost_c(
+cost_c2, in_spec, _ = compile_and_profile_stage_compute_cost(
     test_stages, dst_phy_mesh, all_false_donation(test_stages),
     all_true_outvar(test_stages))
 
@@ -150,7 +150,7 @@ src_phy_mesh.sync_workers()
 dst_phy_mesh.sync_workers()
 collective_group = create_collective_group(src_phy_mesh, dst_phy_mesh)
 
-cost_e = profile_layer_cost_e(stages[0], stages[1], out_spec[0], in_spec[0],
+cost_e = profile_layer_communication_cost(stages[0], stages[1], out_spec[0], in_spec[0],
                               src_mesh, dst_mesh, collective_group)
 
 print(cost_e)

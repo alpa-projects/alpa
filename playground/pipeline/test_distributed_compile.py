@@ -3,19 +3,18 @@ import jax
 from jax._src.api import make_jaxpr
 from jax.core import gensym
 import jax.numpy as jnp
-from parax.mesh_executable import NormalMeshDriverExecutable
+from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
 from parax.pipeline_parallel.stage import compute_to_acc_pipe
-from parax.util import benchmark_func
 import ray
 
 from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
 from parax.model.bert_model import BertConfig, FlaxBertLayer
-from parax.pipeline_parallel.mesh_slicing import compile_all, compile_and_profile_layer_cost_c, generate_layer_info
+from parax.pipeline_parallel.mesh_slicing import (compile_all,
+                                                  generate_stage_info,
+                                                  split_global_use_and_donate)
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
-from parax.pipeline_parallel.mesh_slicing import (
-    compile_and_profile_layer_cost_c, split_global_use_and_donate)
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
@@ -45,6 +44,7 @@ class BertLayer_Model(nn.Module):
 
 
 def train_step(optimizer, batch, apply_fn):
+
     def loss_func(params, x, y, attention_mask):
         out = apply_fn(params, x, attention_mask)
         loss = jnp.mean((out - y)**2)
@@ -75,8 +75,8 @@ params = model.init(rngkey, x, attention_mask)
 optimizer = optim.GradientDescent(1e-2).create(params)
 batch = {"x": x, "y": y, "attention_mask": attention_mask}
 
-origin_jaxpr = make_jaxpr(train_step, static_argnums=(2, ))(optimizer, batch,
-                                                            model.apply)
+origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch,
+                                                           model.apply)
 compute_jaxpr, _, _ = split_compute_and_apply(origin_jaxpr)
 gensym_fn = gensym([compute_jaxpr.jaxpr])
 acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_to_acc_pipe(
@@ -99,8 +99,8 @@ for start in range(0, N, int(2 * N / num_layer_per_stage)):
     indices = list(range(start, stop))
     donation_mapping, global_used, new_layers = split_global_use_and_donate(
         stages, indices, global_donation_mapping, global_outvars)
-    stage_info = generate_layer_info(stages, indices, donation_mapping,
-                                     global_used, str(start))
+    stage_info = generate_stage_info(stages, indices, donation_mapping,
+                                   global_used, str(start))
     stage_infos.append(stage_info)
 
 compiled_outputs = compile_all(stage_infos,
@@ -109,15 +109,11 @@ physical_mesh = virtual_mesh.get_physical_mesh()
 for compiled_output, stage_info in zip(compiled_outputs, stage_infos):
     _, avals, out_avals, tot_donation = stage_info
     proto, config, in_shardings, out_shardings = compiled_output
-    proto_and_sharding = (proto, in_shardings, out_shardings)
-    donated_invars = (True, ) * len(tot_donation) + (False, ) * (
+    compiled = ProtoAndSharding(proto=proto,
+                                input_shardings=in_shardings,
+                                output_shardings=out_shardings)
+    donated_invars = (True,) * len(tot_donation) + (False,) * (
         len(avals) - len(tot_donation))
-    executable = NormalMeshDriverExecutable(
-        physical_mesh,
-        None,
-        config,
-        avals,
-        out_avals,
-        donated_invars,
-        proto_and_sharding=proto_and_sharding)
+    executable = NormalMeshDriverExecutable(physical_mesh, compiled, config,
+                                            avals, out_avals, donated_invars)
     executable.profile_with_dummy_inputs()

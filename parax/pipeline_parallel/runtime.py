@@ -14,6 +14,7 @@ import numpy as np
 from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
+from parax.global_env import global_config
 from parax.timer import timers
 
 logger = logging.getLogger(__name__)
@@ -111,9 +112,15 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._collective_groups = [
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
+        self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
+                                  for _ in range(self.num_mesh)]
 
+        # Init and warm-up
         self._prepare_runables()
+        # use virtual mesh and VDAs to generate sharding task spec and strategies
         self._prepare_communicator()
+        # create all tasks and put buffers
+        self._initialize_resharding_tasks()
         self._prepare_gradient_accumulation()
         self._prepare_reference_count()
 
@@ -177,6 +184,30 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
+
+    def _initialize_resharding_tasks(self):
+        """
+        Launch all resharding tasks and do all necessary work.
+
+        In this function, we do the following:
+        1. we create a resharding task for each resharding spec
+        2. for each resharding task, we put task-related info (rank, group) in the
+           corresponded remote workers *in advance*.
+        At runtime, we use the source distributed array to index the task and perform
+        cross-mesh communication; in this way, we avoid creating/transferring task
+        info at runtime loop.
+        """
+        # Create resharding tasks for each var
+        for src_mesh_idx, dst_mesh_idx, var_spec_map \
+                in self._communicator.task_spec_iter():
+            for key, spec in var_spec_map.items():
+                cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
+                src_mesh = self.physical_meshes[src_mesh_idx]
+                dst_mesh = self.physical_meshes[dst_mesh_idx]
+                t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
+                # TODO(Hao): double check/optimize this function
+                t.prepare_send_recv_tasks()
+                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t
 
     def _prepare_gradient_accumulation(self):
         # Allocate buffers for accumulated gradients
@@ -255,7 +286,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._prepare_env(*args)
         timers("initialize_microbatch").stop()
 
-        global_outputs = {}
         for clock, sched in enumerate(self.schedule.schedules):
             # submit work in parallel
             logger.debug(">>> At clock {}, working on tasks {}.".format(
@@ -393,14 +423,21 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 else:
                     # find the corresponded resharding task
                     src_mesh_idx = self.physical_meshes.index(val.device_mesh)
-                    task_spec = self._communicator.resharding_specs[
-                        src_mesh_idx][mesh_idx][key]
-                    assert task_spec
-                    # TODO(yonghao): create the resharding task at prepare function
-                    task = ReshardingTask(
-                        task_spec,
-                        self._collective_groups[src_mesh_idx][mesh_idx], val)
-                    resharded_val = task.do()
+                    if global_config.precompile_resharding_tasks:
+                        # The tasks have been prepared.
+                        if key not in self._resharding_tasks[src_mesh_idx][mesh_idx]:
+                            raise RuntimeError("Cannot find a ready resharding task.")
+                        resharding_task = self._resharding_tasks[src_mesh_idx][mesh_idx][key]
+                        resharded_val = resharding_task.do_prepared(val)
+                    else:
+                        task_spec = self._communicator.resharding_specs[
+                            src_mesh_idx][mesh_idx][key]
+                        assert task_spec
+                        task = ReshardingTask(task_spec,
+                                              self._collective_groups[src_mesh_idx][mesh_idx],
+                                              self.physical_meshes[src_mesh_idx],
+                                              self.physical_meshes[mesh_idx])
+                        resharded_val = task.do(val)
                     inputs_list.append(resharded_val)
             elif isinstance(val, ReplicatedDistributedArray):
                 mesh_idx = list(self.schedule.stage_placement(stage_idx))[0]

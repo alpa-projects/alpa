@@ -185,22 +185,25 @@ class ReshardingTask:
     Args:
         task_spec (ReshardingTaskSpec): the task spec of this task.
         collective_group (CollectiveGroup): the collective group information.
-        src_array (DistributedArray): the source (materialized) distributed array.
+        src_mesh (PhysicalMesh): the source mesh to send.
+        dst_mesh (PhysicalMesh): the destiantion mesh to receive.
     """
-
-    def __init__(self, task_spec, collective_group, src_array):
+    def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         self.task_spec = task_spec
         self.collective_group = collective_group
-        self.src_array = src_array
+        self.src_mesh = src_mesh
+        self.dst_mesh = dst_mesh
 
-        self.src_mesh = self.src_array.device_mesh
-        if self.src_mesh == collective_group.src_mesh:
-            self.dst_mesh = collective_group.dst_mesh
-        else:
-            self.dst_mesh = collective_group.src_mesh
+    def do(self, src_array):
+        """According to the task_spec, launch send/recv operations.
 
-    def do(self):
-        """According to the task_spec, launch send/recv operations."""
+        Args:
+            src_array (DistributedArray): the source array to be resharded.
+        """
+        if src_array.device_mesh != self.src_mesh:
+            raise RuntimeError("The src array locates on a different mesh `{}` "
+                               "than self.src_mesh `{}`.".format(src_array.device_mesh, self.src_mesh))
+
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
@@ -216,7 +219,7 @@ class ReshardingTask:
                     for src_tile_index, src_tile in enumerate(src_tiles)
                 ]
                 device_str_to_buf_map[
-                    receiver] = self.same_destination_group_send_recv(
+                    receiver] = self.same_destination_group_send_recv(src_array,
                         senders, src_tiles, dst_tile, indices_in_dst_tiles,
                         receiver)
         # Assemble the buffer based on the order present in indices
@@ -227,12 +230,12 @@ class ReshardingTask:
                 device_str]] = device_str_to_buf_map[device_str]
 
         # Now construct the distributed array
-        dst_array = DistributedArray(self.dst_mesh, self.src_array.aval,
+        dst_array = DistributedArray(self.dst_mesh, src_array.aval,
                                      self.task_spec.dst_sharding_spec, bufs,
                                      self.task_spec.dst_indices)
         return dst_array
 
-    def same_destination_group_send_recv(self, senders, src_tiles, dst_tile,
+    def same_destination_group_send_recv(self, src_array, senders, src_tiles, dst_tile,
                                          indices_in_dst_tiles, receiver):
         """P2P Communication accounting for multiple senders and one receiver (a destination tile)."""
         # construct a remote buf for this tile
@@ -243,7 +246,7 @@ class ReshardingTask:
         receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
             receiver]
 
-        dtype = self.src_array.remote_buffers[0].dtype
+        dtype = src_array.remote_buffers[0].dtype
         result_buf = RemoteBufferRef(self.dst_mesh,
                                      receiver_host_id,
                                      receiver_device_id,
@@ -268,7 +271,7 @@ class ReshardingTask:
         for i, sender in enumerate(senders):
             # send is a device_str in src_mesh
             # we need to find out its mesh_worker, and the corresponded sender remotebuf (uuid-indexed).
-            sender_buf = self.src_array.remote_buffers[
+            sender_buf = src_array.remote_buffers[
                 self.task_spec.src.device_str_to_flat_index[sender]]
             sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                 sender]
@@ -394,6 +397,7 @@ class ReshardingTask:
                 results.append(
                     worker.run_resharding_recv_task_profiling.remote(
                         uuid, recv_buf_uuids[worker]))
+            ray.get(results)
         else:
             for worker, uuid in self.send_worker_task_ids.items():
                 results.append(
@@ -403,7 +407,12 @@ class ReshardingTask:
                 results.append(
                     worker.run_resharding_recv_task.remote(
                         uuid, recv_buf_uuids[worker]))
-        results = ray.get(results)
+            logger.debug("Precompiled tasks launched.")
+            if global_config.pipeline_aggressively_sync:
+                ray.get(results)
+                logger.debug("Using precompiled tasks in sync mode.")
+            else:
+                logger.debug("Using precomipled tasks in async mode.")
 
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):
@@ -412,7 +421,7 @@ class ReshardingTask:
                 device_str]] = device_str_to_buf_map[device_str]
 
         # Now construct the distributed array
-        dst_array = DistributedArray(self.dst_mesh, self.src_array.aval,
+        dst_array = DistributedArray(self.dst_mesh, src_array.aval,
                                      self.task_spec.dst_sharding_spec, bufs,
                                      self.task_spec.dst_indices)
         if profiling:
@@ -781,6 +790,9 @@ class CrossMeshCommunicator:
     - resharding specs (see docstring of `ReshardingTaskSpec`)
     - resharding strategies (see docstring of `_generate_resharding_strategy_by_loads()`)
 
+    This communicator only takes care of compilation-time work, and does not get involved
+    with physical meshes, buffer creations, or other execution-time work.
+
     Args:
         sharded_stages (List[XlaShardedPipelineStage]): list of stages to form the pipeline.
         schedule (Any): the pipelining schedule for these stages.
@@ -837,7 +849,7 @@ class CrossMeshCommunicator:
         # Note(Hao): resharding_specs is num_mesh x num_mesh matrix
         # Each element is a dict: the name of variables are keys, ReshardingSpec are values.
         self.resharding_specs = [
-            [dict() for i in range(self.num_mesh)] for j in range(self.num_mesh)
+            [dict() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
 
         # find stages that will communicate

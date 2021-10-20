@@ -35,7 +35,8 @@ class GlobalConfig:
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
         ########## Options for pipeline runtime ##########
-        self.pipeline_aggressively_sync = True
+        self.pipeline_aggressively_sync = False
+        self.precompile_resharding_tasks = True
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during

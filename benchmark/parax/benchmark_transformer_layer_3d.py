@@ -101,6 +101,7 @@ def benchmark_transformer_one_case(benchmark_case):
 
     # Control whether we want to do sync more aggressively
     global_config.pipeline_aggressively_sync = False
+    global_config.precompile_resharding_tasks = True
     if args.skip_apply_grad and num_micro_batches == 1:
         grad_func = jax.grad
     else:

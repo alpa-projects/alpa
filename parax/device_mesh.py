@@ -1,18 +1,18 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
-from collections.abc import Iterable
-from collections import defaultdict
 import logging
-from operator import attrgetter
 import pickle
 import time
+from collections import defaultdict
+from collections.abc import Iterable
 from typing import List, Union, Sequence, Tuple
+from operator import attrgetter
 
 import numpy as np
 import ray
-from ray.util import ActorPool
 import ray.util.collective as col
+from ray.util import ActorPool
 
-import jax
+import jax.numpy as jnp
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
@@ -22,7 +22,6 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
 from jax.lib import xla_client, xla_bridge
-import jax.numpy as jnp
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
@@ -30,7 +29,7 @@ from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value,
-                        jaxpr_to_hlo_computation, list_gpu_info, GB, to_cupy,
+                        list_gpu_info, GB, to_cupy,
                         to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
                         jax_buffer_to_xla_buffer)
 
@@ -258,11 +257,13 @@ class MeshHostWorker:
         """Send a slice of a source buffer to a target GPU."""
         src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
         to_send = to_cupy(src_buffer[tuple(offset)])
-        logger.debug(
-            ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
-            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
-                                       to_send.shape, to_send.dtype,
-                                       to_send[0]))
+
+        # Note: this logger.debug call affects performance
+        # logger.debug(
+        #     ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
+        #     "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
+        #                                to_send.shape, to_send.dtype,
+        #                                to_send[0]))
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
@@ -278,13 +279,12 @@ class MeshHostWorker:
         to_recv = to_cupy(tmp_buffer)
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
 
-        # Hao: if the following line cannot print, meaning NCCL hangs...
-        logger.debug(
-            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
-            .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
-                    to_recv[0]))
+        # Note(Hao): this logger.debug call affects performance
+        # logger.debug(
+        #     ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
+        #         .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
+        #                 to_recv[0]))
         recv_tensor = to_jax_tensor(to_recv)
-
         # 0-copy version
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)

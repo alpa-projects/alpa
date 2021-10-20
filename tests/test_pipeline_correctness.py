@@ -127,16 +127,29 @@ class PipelineCorrectnessTest(unittest.TestCase):
 
         executable = pipelined_train_step.get_executable(optimizer, batch, model.apply)
 
-        # Run sync
+        # Run sync + no compile
         global_config.pipeline_aggressively_sync = True
-        gradients_sync = pipelined_train_step(optimizer, batch, model.apply)
+        global_config.precompile_resharding_tasks = False
+        gradients_sync_no_compile = pipelined_train_step(optimizer, batch, model.apply)
 
-        # Run async
+        # Run async + no compile
         global_config.pipeline_aggressively_sync = False
-        gradients_async = pipelined_train_step(optimizer, batch, model.apply)
+        global_config.precompile_resharding_tasks = False
+        gradients_async_no_compile = pipelined_train_step(optimizer, batch, model.apply)
+        assert_allclose(gradients_sync_no_compile, gradients_async_no_compile)
 
-        # test
-        assert_allclose(gradients_sync, gradients_async)
+        # Run sync + compile
+        global_config.pipeline_aggressively_sync = True
+        global_config.precompile_resharding_tasks = True
+        gradients_sync_compile = pipelined_train_step(optimizer, batch, model.apply)
+        assert_allclose(gradients_sync_no_compile, gradients_sync_compile)
+
+        # Run sync + compile
+        global_config.pipeline_aggressively_sync = False
+        global_config.precompile_resharding_tasks = True
+        gradients_async_compile = pipelined_train_step(optimizer, batch, model.apply)
+        assert_allclose(gradients_sync_no_compile, gradients_async_compile)
+
         executable.shutdown()
 
     def train_2_layer_transformer(self, num_microbatches=1):
@@ -176,16 +189,29 @@ class PipelineCorrectnessTest(unittest.TestCase):
         pipelined_train_step = get_train_transformer_step(grad_func, pipeline_mp_size=pipeline_mp_size)
         executable = pipelined_train_step.get_executable(state, batch, rngkey)
 
-        # sync
+        # sync + no compile
         global_config.pipeline_aggressively_sync = True
-        gradients_with_pipeline_sync = pipelined_train_step(state, batch, rngkey)
+        global_config.precompile_resharding_tasks = False
+        gradients_sync_no_compile = pipelined_train_step(state, batch, rngkey)
 
-        # async
+        # async + no compile
         global_config.pipeline_aggressively_sync = False
-        gradients_without_pipeline_sync = pipelined_train_step(state, batch, rngkey)
+        global_config.precompile_resharding_tasks = False
+        gradients_async_no_compile = pipelined_train_step(state, batch, rngkey)
+        assert_allclose(gradients_sync_no_compile, gradients_async_no_compile)
 
-        # compare
-        assert_allclose(gradients_with_pipeline_sync, gradients_without_pipeline_sync)
+        # sync + compile
+        global_config.pipeline_aggressively_sync = True
+        global_config.precompile_resharding_tasks = True
+        gradients_sync_compile = pipelined_train_step(state, batch, rngkey)
+        assert_allclose(gradients_sync_no_compile, gradients_sync_compile)
+
+        # sync + compile
+        global_config.pipeline_aggressively_sync = False
+        global_config.precompile_resharding_tasks = True
+        gradients_async_compile = pipelined_train_step(state, batch, rngkey)
+        assert_allclose(gradients_sync_no_compile, gradients_async_compile)
+
         executable.shutdown()
 
     def test_pipeline_correctness_mlp_nmb_1(self):

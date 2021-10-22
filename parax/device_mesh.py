@@ -47,24 +47,16 @@ def device_str_to_id(device_str):
     return int(device_str.split(":")[-1])
 
 
-class MeshHostWorker:
-    """A ray actor that manages the xla computation on a single host."""
+class AbstractMeshWorker:
 
-    def __init__(self, server_address, num_hosts, host_id):
-        self.num_hosts = num_hosts
-        self.host_id = host_id
-        self.distributed_client = \
-            xla_client._xla.get_distributed_runtime_client(server_address, host_id)
-        self.distributed_client.connect()
-        self.backend = xla_client.make_gpu_client(self.distributed_client,
-                                                  node_id=host_id)
-        # Monkey patch the backend
+    def __init__(self, backend):
+        self.backend = backend
         self.local_devices = self.backend.local_devices()
+
         self.buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
-        set_override_backend(self.backend)
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -128,49 +120,12 @@ class MeshHostWorker:
         return self.executables[uuid].get_total_allocation_size()
 
     ##### Cross Mesh Resharding Related Functions #####
-    # Note: in this device mesh code, we will use 3 types of tensors:
-    # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
-    # (2) XLA low-level PyLocalBuffer, which is not index-able
-    # (3) cupy array, which is an intermediate format for ray collective
     def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
-        """Send a slice of a source buffer to a target GPU."""
-        src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
-        to_send = to_cupy(src_buffer[tuple(offset)])
-        logger.debug(
-            ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
-            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
-                                       to_send.shape, to_send.dtype,
-                                       to_send[0]))
-        col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
-        return True
+        raise NotImplementedError
 
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
                   src_gpu_idx, group_name):
-        """Recv a slice from a source GPU and in-place write it on the target buffer."""
-        if uuid not in self.buffers:
-            raise RuntimeError()
-        tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
-        tmp_buffer = device_put(
-            jnp.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
-            self.local_devices[device_id])
-        to_recv = to_cupy(tmp_buffer)
-        col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-
-        # Hao: if the following line cannot print, meaning NCCL hangs...
-        logger.debug(
-            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
-            .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
-                    to_recv[0]))
-        recv_tensor = to_jax_tensor(to_recv)
-
-        # 0-copy version
-        start_indices = tuple(
-            ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
-        new_buffer = jax_buffer_set(
-            xla_buffer_to_jax_buffer(self.buffers[uuid]), recv_tensor,
-            start_indices)
-        self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
-        return True
+        raise NotImplementedError
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
@@ -196,6 +151,121 @@ class MeshHostWorker:
                                recv_detail[0],
                                *recv_subtask,
                                group_name=task['group_name'])
+        return True
+
+    ##### Profiling Related Functions #####
+    def profile_executable_with_dummy_inputs(self, uuid: int):
+        return self.executables[uuid].profile_with_dummy_inputs(
+            self.backend, self.local_devices)
+
+    # TODO(yonghao): the sync function should be carefully reconsidered
+    def profile_resharding_send_task(self,
+                                     uuid,
+                                     buf_uuids,
+                                     warmup=1,
+                                     repeat=3,
+                                     number=3,
+                                     sync=False):
+        run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
+        sync_fn = self.sync if sync else None
+        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
+        return np.mean(costs)
+
+    def profile_resharding_recv_task(self,
+                                     uuid,
+                                     buf_uuids,
+                                     warmup=1,
+                                     repeat=3,
+                                     number=3,
+                                     sync=False):
+        set_empty_buffer = True
+
+        def run_fn():
+            nonlocal set_empty_buffer
+            self.run_resharding_recv_task(uuid, buf_uuids, set_empty_buffer)
+            set_empty_buffer = False
+
+        sync_fn = self.sync if sync else None
+        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
+        return np.mean(costs)
+
+    def get_timer(self, name: str):
+        return timers(name)
+
+    def sync(self):
+        raise NotImplemented
+
+    def shutdown(self):
+        raise NotImplemented
+
+
+class MeshHostWorker(AbstractMeshWorker):
+    """A ray actor that manages the xla computation on a single host."""
+
+    def __init__(self, server_address, num_hosts, host_id):
+        self.num_hosts = num_hosts
+        self.host_id = host_id
+        self.distributed_client = \
+            xla_client._xla.get_distributed_runtime_client(server_address, host_id)
+        self.distributed_client.connect()
+        backend = xla_client.make_gpu_client(self.distributed_client,
+                                                  node_id=host_id)
+        # Monkey patch the backend
+        super(MeshHostWorker, self).__init__(backend)
+        set_override_backend(self.backend, self.local_devices)
+
+    # Note: in this device mesh code, we will use 3 types of tensors:
+    # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
+    # (2) XLA low-level PyLocalBuffer, which is not index-able
+    # (3) cupy array, which is an intermediate format for ray collective
+    def send_tile_impl(self, src_buffer, offset, dst_rank, dst_gpu_idx,
+                       group_name):
+        to_send = to_cupy(src_buffer[tuple(offset)])
+        logger.debug(">>> Send to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
+                     "Sample value: {}.".format(dst_rank, dst_gpu_idx,
+                                                to_send.shape, to_send.dtype,
+                                                to_send[0]))
+        col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
+
+    def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
+        """Send a slice of a source buffer to a target GPU."""
+        src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
+        self.send_tile_impl(src_buffer, offset, dst_rank, dst_gpu_idx,
+                            group_name)
+        return True
+
+    def recv_tile_impl(self, xla_buffer, device_id, indices_in_dst_tile,
+                       src_rank, src_gpu_idx, group_name):
+
+        tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
+        tmp_buffer = device_put(
+            jnp.zeros(tileslice_shape, dtype=xla_buffer.dtype),
+            self.local_devices[device_id])
+        to_recv = to_cupy(tmp_buffer)
+        col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+
+        # Hao: if the following line cannot print, meaning NCCL hangs...
+        logger.debug(
+            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
+            .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
+                    to_recv[0]))
+        recv_tensor = to_jax_tensor(to_recv)
+
+        # 0-copy version
+        start_indices = tuple(
+            ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
+        new_buffer = jax_buffer_set(xla_buffer_to_jax_buffer(xla_buffer),
+                                    recv_tensor, start_indices)
+        return jax_buffer_to_xla_buffer(new_buffer)
+
+    def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
+                  src_gpu_idx, group_name):
+        """Recv a slice from a source GPU and in-place write it on the target buffer."""
+        if uuid not in self.buffers:
+            raise RuntimeError()
+        self.buffers[uuid] = self.recv_tile_impl(self.buffers[uuid], device_id,
+                                                 indices_in_dst_tile, src_rank,
+                                                 src_gpu_idx, group_name)
         return True
 
     ##### Profiling Related Functions #####
@@ -301,45 +371,6 @@ class MeshHostWorker:
         if self.host_id == 0:
             return prof_result
         return None
-
-    def profile_executable_with_dummy_inputs(self, uuid: int):
-        return self.executables[uuid].profile_with_dummy_inputs(
-            self.backend, self.local_devices)
-
-        # TODO(yonghao): the sync function should be carefully reconsidered
-
-    def profile_resharding_send_task(self,
-                                     uuid,
-                                     buf_uuids,
-                                     warmup=1,
-                                     repeat=3,
-                                     number=3,
-                                     sync=False):
-        run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
-        sync_fn = self.sync if sync else None
-        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
-        return np.mean(costs)
-
-    def profile_resharding_recv_task(self,
-                                     uuid,
-                                     buf_uuids,
-                                     warmup=1,
-                                     repeat=3,
-                                     number=3,
-                                     sync=False):
-        set_empty_buffer = True
-
-        def run_fn():
-            nonlocal set_empty_buffer
-            self.run_resharding_recv_task(uuid, buf_uuids, set_empty_buffer)
-            set_empty_buffer = False
-
-        sync_fn = self.sync if sync else None
-        costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
-        return np.mean(costs)
-
-    def get_timer(self, name: str):
-        return timers(name)
 
     ##### Other Functions #####
     def sync(self):
@@ -922,8 +953,7 @@ class ReplicatedDistributedArray:
     Warning: do not use this class unless you know exactly how.
     """
 
-    def __init__(self,
-                 device_meshes: List[PhysicalDeviceMesh],
+    def __init__(self, device_meshes: List[PhysicalDeviceMesh],
                  arrays: List[DistributedArray]):
         self._mesh_array_map = dict()
         self._array_mesh_map = dict()

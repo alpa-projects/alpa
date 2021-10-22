@@ -6,6 +6,7 @@ import logging
 import numpy as np
 import ray
 import ray.util.collective as col
+import jax.linear_util as lu
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
@@ -297,10 +298,10 @@ class ReshardingTask:
                 logger.debug("We are NOT synchronizing for `send_tile`/`recv_tile`.")
         return result_buf
 
-    def prepare_send_recv_tasks(self):
+    @lu.cache
+    def get_send_recv_tasks(self):
         sender_tasks = {host: list() for host in self.src_mesh.workers}
         receiver_tasks = {host: list() for host in self.dst_mesh.workers}
-        group_name = self.collective_group.group_name
 
         self.sender_uuid_plan = []
         self.receiver_uuid_plan = []
@@ -343,6 +344,12 @@ class ReshardingTask:
                 receiver_task.append(receiver_subtasks)
 
                 receiver_tasks[receiver_worker].append(receiver_task)
+
+        return sender_tasks, receiver_tasks
+
+    def prepare_send_recv_tasks(self):
+        sender_tasks, receiver_tasks = self.get_send_recv_tasks()
+        group_name = self.collective_group.group_name
 
         self.send_worker_task_ids = dict()
         task_dones = []

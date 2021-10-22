@@ -5,12 +5,12 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from parax.parax.device_mesh import AbstractMeshWorker, MeshHostWorker
-from parax.parax.mesh_executable import PartialGradAccMeshWorkerExecutable
-from parax.parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
-from parax.parax.pipeline_parallel.runtime import GpipeSchedule
-from parax.parax.pipeline_parallel.stage import XlaShardedPipelineStage
-from parax.parax.util import xla_buffer_to_jax_buffer
+from parax.device_mesh import AbstractMeshWorker, MeshHostWorker
+from parax.mesh_executable import PartialGradAccMeshWorkerExecutable
+from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
+from parax.pipeline_parallel.runtime import GpipeSchedule
+from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.util import xla_buffer_to_jax_buffer
 
 BufferRefType = namedtuple("", ["is_static", "value"])
 

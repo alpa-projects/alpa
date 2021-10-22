@@ -217,6 +217,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # to get a sketchy donation_mapping: only accumulate grad, no applygrad
     if global_config.pipeline_stage_mode == "auto":
         # TODO(zhuohan): get stage_to_mesh, dependency with the auto pass
+        #                call get_stage_and_mesh_assignments & may merge layers
         pass
     elif global_config.pipeline_stage_mode == "uniform_layer_gpipe":
         num_acc_grad_stages = len(jax_pipeline_stages)

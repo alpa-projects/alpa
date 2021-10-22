@@ -14,7 +14,7 @@ from parax.pipeline_parallel.three_d_parallel import (
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.mesh_slicing import (
     compile_and_profile_layer_cost_c, split_global_use_and_donate)
-from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes, get_compute_cost
+from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes, get_compute_cost, get_stage_and_mesh_assignments
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
@@ -141,5 +141,8 @@ print(solution)
 
 sliced_meshes = get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution)
 print("sliced_meshes", sliced_meshes)
+
+solution, sliced_meshes = get_stage_and_mesh_assignments(virtual_mesh, stages, donation_mapping, global_outvars, batch_size)
+print("solution, sliced_meshes", solution, sliced_meshes)
 
 ray.shutdown()

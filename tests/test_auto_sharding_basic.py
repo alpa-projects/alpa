@@ -123,6 +123,22 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         np.testing.assert_allclose(b, a + 1)
 
+    def test_reshape_uneven_partition(self):
+        # TODO(lmzheng): Support the uneven partition of reshape.
+        # But this seems too complicated.
+
+        set_parallelize_options(devices=jax.devices()[0:4])
+
+        @parallelize
+        def split(a):
+            b = a.reshape((8, 18))
+            #b = a.reshape((9, 16))
+            return b
+
+        split(jnp.ones((144)))
+
+        assert_close(testing.last_compiled_auto_sharding_objective, 0)
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -130,6 +146,7 @@ def suite():
     suite.addTest(AutoShardingBasicTest("test_dot_reshape_transpose"))
     suite.addTest(AutoShardingBasicTest("test_dropout"))
     suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
+    suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
     return suite
 
 

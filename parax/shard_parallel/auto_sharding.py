@@ -677,8 +677,9 @@ def _call_solver_serialized_args(
     # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     prob.solve(solver)
 
-    objective = float(pulp.value(prob.objective))
     status = prob.status
+    objective = pulp.value(prob.objective)
+    objective = float(objective) if objective is not None else -1.0
     if verbose:
         print(f"ILP Status: {LpStatus[status]}\tObjective: {objective}\t"
               f"Time: {time.time() - tic}")

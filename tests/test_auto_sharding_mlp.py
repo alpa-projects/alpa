@@ -17,11 +17,11 @@ from parax.util import map_to_shape, count_communication_primitives
 
 
 def assert_close(x, y, atol=0.01):
-    assert abs(x / y - 1) <= atol, f"{x} vs. {y}"
+    assert abs((x + 1e-9) / (y + 1e-9) - 1) <= atol, f"{x} vs. {y}"
 
 
 def assert_less_equal(x, y):
-    assert abs(x / y) <= 1.01, f"{x} vs. {y}"
+    assert abs((x + 1e-9) / (y + 1e-9)) <= 1.01, f"{x} vs. {y}"
 
 
 def assert_column_partitioned(x, num_chunks, mesh_dim):

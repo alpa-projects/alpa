@@ -2,7 +2,7 @@
 
 ## Requirements
 ```
-torch==1.8.0
+torch==1.8.2
 ```
 
 ```

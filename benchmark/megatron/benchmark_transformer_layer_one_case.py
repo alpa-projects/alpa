@@ -58,6 +58,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     sys.argv += ["--train-iters", "100"]
     sys.argv += ["--lr", "0.00015"]
     sys.argv += ["--DDP-impl", "local" if ddp_impl else "torch"]
+    # sys.argv += ["--no-scatter-gather-tensors-in-pipeline"]
     # sys.argv += ["--fp16"]
     if checkpoint_activations:
         sys.argv += ["--checkpoint-activations"]

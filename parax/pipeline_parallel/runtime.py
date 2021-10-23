@@ -178,6 +178,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                 if i >= j:
                     assert not device_str_groups[i][j]
                     continue
+                if not device_str_groups[i][j]:
+                    continue
                 cg = CollectiveGroup(device_str_groups[i][j],
                                      self.physical_meshes[i],
                                      self.physical_meshes[j])
@@ -475,7 +477,7 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         # Recycle the groups an Ray resources
         for i in range(self.num_mesh):
             for j in range(self.num_mesh):
-                if i < j:
+                if i < j and self._collective_groups[i][j]:
                     self._collective_groups[i][j].destroy()
 
         # Recycle the recompiled runnables

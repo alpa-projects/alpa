@@ -513,7 +513,6 @@ class CollectiveGroup:
         self.group_name = ",".join(self.device_strs)
 
         self._destroyed = False
-        self._debug_check()
 
         # construct a device str -> rank: (process_rank, gpu_index) map
         self.device_str_to_rank_map = dict()
@@ -579,11 +578,6 @@ class CollectiveGroup:
             self.destroy()
             self._destroyed = True
         return
-
-    def _debug_check(self):
-        all_device_strs = self.src_mesh.device_strs + self.dst_mesh.device_strs
-        # TODO(Hao): incorrect assertion
-        assert set(self.device_strs) == set(all_device_strs)
 
 
 class ReshardingTaskSpec:

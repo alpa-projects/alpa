@@ -920,6 +920,7 @@ class CrossMeshCommunicator:
                     continue
                 yield i, j, self.resharding_specs[i][j]
 
+    # TODO(Hao): implement another send/recv strategy similar to the scatter-gather optimization in megatron.
     def _generate_resharding_strategy_by_loads(self, spec):
         """
         Generate the resharding strategy for a resharding task spec.

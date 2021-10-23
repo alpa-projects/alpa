@@ -231,21 +231,60 @@ def create_instructions_from_pipeline_schedule(
                     PipelineInstruction.RUN(exec_uuid, input_uuids,
                                             output_uuids, kwargs))
 
+    # TODO(Yonghao):
+    #  map uuid to global invars, outvars, and return them for run() to use.
+
     return instruction_lists, executable_config_lists, resharding_config_lists
 
 
-# TODO: merge this into Jax3DPipeline
+# TODO(Hao):
+#  1. implement a base class, let two runtimes inherit this baseclass
+#  2. make some abstraction, put sharing-related functionality in baseclass, such as:
+#  creating collective_group, resharding-related logic.
+#  3. complete PipelineMeshDriverExecutable main logic.
 class PipelineMeshDriverExecutable:
 
     def __init__(self, physical_meshes):
         self.physical_meshes = physical_meshes
         num_meshes = len(self.physical_meshes)
-        # TODO
+
+
+        # TODO(Hao): only compile, not actually getting runnables, for the sake
+        #  of invoking `create_instructions_from_pipeline_schedule`.
+        self._compile_xla_stages()
+
+        # TODO(Hao): spawn cgs and communicators, find device-device group relations/dependencies, etc.
+        #  Note: do some abstraction and put the functions in baseclass.
+        self._create_collective_group()
+        # TODO(Hao): for each tensor (that needs to be resharded), create its resharding task_spec/task
+        resharding_tasks, communicator, _ = self._prepare_communicator()
+
+        # call the main compile function to get instructions.
+        instruction_lists, executable_config_lists, resharding_config_lists = \
+            create_instructions_from_pipeline_schedule(
+            schedule, # generated in three_d_parallel.py
+            stages, # generated in three_d_parallel, but we have compiled it for communicator construciton,
+            resharding_tasks, # generated above
+            meshes, # physical, generated outside
+        )
+
+        # TODO(Hao): for each worker,
+        #  spawn many PipelineMeshWorkerExecutable remotely
+        #  Then, send the compiled instructons + configs etc. using the class `PipelineMeshWorkerExecutable`
+
+        # TODO (Yonghao): compiled output, set here.
+        #  do it together with global input/output uuid-buffer mapping.
         self.mesh_arg_indices = [None for _ in range(num_meshes)]
         self.donate_invars = [None for _ in range(num_meshes)]
         self.input_indices = [None for _ in range(num_meshes)]
 
-    def launch_on_driver(self, *args):
+        # TODO (Hao): where to put RDA?
+
+
+    def run(self, *args):
+        """1. shard inputs (send input to each remote worker)
+            2. launch each worker to start instructions,
+            sync after each iter"""
         num_meshes = len(self.physical_meshes)
         input_bufs = [None for _ in range(num_meshes)]
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):

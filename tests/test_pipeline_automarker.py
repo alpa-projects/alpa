@@ -4,7 +4,6 @@ import unittest
 
 from flax import linen as nn, optim
 import jax
-from jax._src.tree_util import tree_map
 import jax.numpy as jnp
 import numpy as np
 import ray

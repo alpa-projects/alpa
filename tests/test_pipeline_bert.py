@@ -5,7 +5,6 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
-from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
@@ -67,7 +66,6 @@ class PipelineBERTTest(unittest.TestCase):
                                              batch['y'],
                                              batch['attention_mask'])
 
-            # FIXME (zhuohan): make the pipeline work with apply_gradient
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
 

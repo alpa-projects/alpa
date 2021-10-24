@@ -8,6 +8,7 @@ import ray
 
 from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import AllocZeroBufferDriverExecutable
+from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.global_env import global_config
 from parax.timer import timers
@@ -29,12 +30,9 @@ def reset_pipeline_runtime_benchmark_timers():
         timers(t).reset()
 
 
-# TODO (abstract out some methods to base_runtime.py)
-class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
+class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=too-many-instance-attributes
     """
-    A class to coordinate 3D parallelism.
-
-    This class implements pipeline parallelism and sharding.
+    A pipeline-parallel runtime that uses a central driver process to coordinate training schedules.
 
     Args:
         pipeline_stages (List[PipelineStage]): list of pipeline stage programs.
@@ -47,7 +45,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         num_batch (int): number of microbatches.
         schedule (): schedule to follow to execute the pipeline.
     """
-
     def __init__(self,
                  *,
                  pipeline_stages,
@@ -59,47 +56,31 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                  schedule,
                  is_batch,
                  num_batch=1):
-        self.stages = pipeline_stages
-        self.global_invars = global_invars
-        self.grad_dummy_invars = grad_dummy_invars
-        self.global_outvars = global_outvars
-        self.global_outvars_repr_set = set()
-        for var in self.global_outvars:
-            if not isinstance(var, Literal):
-                self.global_outvars_repr_set.add(repr(var))
-        self.num_stage = len(self.stages)
-        self.is_batch = is_batch
-        self.num_batch = num_batch
-        self.dependency = dependency
-        self.schedule = schedule
-        self.physical_meshes = physical_meshes
+        super(CentralizedDistributedRuntime, self).__init__(
+            pipeline_stages=pipeline_stages,
+            global_invars=global_invars,
+            grad_dummy_invars=grad_dummy_invars,
+            global_outvars=global_outvars,
+            physical_meshes=physical_meshes,
+            dependency=dependency,
+            schedule=schedule,
+            is_batch=is_batch,
+            num_batch=num_batch)
 
         # private attributes
         self._runnables = None
         self._env = None
         self._initial_var_reference_count = None
 
-        # for resharding
-        self._communicator = None
-        self._collective_groups = [
-            [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
-        ]
         self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
                                   for _ in range(self.num_mesh)]
 
         # Init and warm-up
         self._prepare_runables()
-        # use virtual mesh and VDAs to generate sharding task spec and strategies
-        self._prepare_communicator()
         # create all tasks and put buffers
         self._initialize_resharding_tasks()
         self._prepare_gradient_accumulation()
         self._prepare_reference_count()
-
-    @property
-    def num_mesh(self):
-        """Return the number of meshes in the pipeline job."""
-        return len(self.physical_meshes)
 
     def _prepare_runables(self):
         # Let each physical mesh to re-compile the sharded stage
@@ -110,52 +91,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             mesh_idx = mesh_indices[0]
             self._runnables.append(
                 stage.get_runnable(self.physical_meshes[mesh_idx]))
-
-    def _prepare_communicator(self):
-        # Based on dependency and sharding specs, infer communication spec (cross-mesh).
-        self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
-
-        # Now we establish NCCL collective groups and communicators
-        # because we need physical meshes we have to do this out of the CrossMeshCommunicator class.
-        self._establish_nccl_groups()
-
-    def _establish_nccl_groups(self):
-        """
-        Identify and create NCCL groups based on specs.
-
-        We establish one collective group between two physical meshes, covering all the devices in
-        these two meshes that require NCCL communication.
-
-        Returns:
-            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
-                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
-                (spec[i][j], spec[j][i]) will share collective groups.
-        """
-        device_str_groups = [
-            [set() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
-        ]
-        # Merge (i, j) and (j, i)
-        for i, j, var_spec_map in self._communicator.task_spec_iter():
-            participants = set()
-            for _, spec in var_spec_map.items():  # for each var
-                participants = participants | spec.get_participant_device_strs()
-            if i <= j:
-                device_str_groups[i][j] = device_str_groups[i][j] | participants
-            else:
-                device_str_groups[j][i] = device_str_groups[j][i] | participants
-
-        # construct groups
-        for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                if i >= j:
-                    assert not device_str_groups[i][j]
-                    continue
-                cg = CollectiveGroup(device_str_groups[i][j],
-                                     self.physical_meshes[i],
-                                     self.physical_meshes[j])
-                cg.instantiate()
-                self._collective_groups[i][j] = cg
-                self._collective_groups[j][i] = cg
 
     def _initialize_resharding_tasks(self):
         """
@@ -313,7 +248,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
 
         return global_outvals_list
 
-    def get_execution_time_costs(self, warmup=2, timer_name="overall"):
+    @staticmethod
+    def get_execution_time_costs(warmup=2, timer_name="overall"):
         if timer_name not in timer_names:
             raise RuntimeError(
                 "Unrecognized timer name for pipeline parallel runtime. "
@@ -437,10 +373,6 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     self._env[key].add_replica(val.device_mesh, val)
                 else:
                     raise RuntimeError("Unrecognized type.")
-
-    def sync(self):
-        all_workers = [w for mesh in self.physical_meshes for w in mesh.workers]
-        ray.get([w.sync.remote() for w in all_workers])
 
     def shutdown(self):
         """Shutdown the pipeline runtime."""

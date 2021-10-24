@@ -298,7 +298,7 @@ class ReshardingTask:
                 logger.debug("We are NOT synchronizing for `send_tile`/`recv_tile`.")
         return result_buf
 
-    @lu.cache
+    # @lu.cache
     def get_send_recv_tasks(self):
         sender_tasks = {host: list() for host in self.src_mesh.workers}
         receiver_tasks = {host: list() for host in self.dst_mesh.workers}
@@ -512,7 +512,7 @@ class CollectiveGroup:
     """
 
     def __init__(self, device_strs, src_mesh, dst_mesh):
-        self.device_strs = list(device_strs)
+        self.device_strs = device_strs
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
 

@@ -199,7 +199,7 @@ class XlaShardedPipelineStage(PipelineStage):
                    outvars=jax_pipeline_stage.outvars,
                    output_acc_grad_indices=acc_grad_indices)
 
-    @lu.cache
+    # @lu.cache
     def get_compiled(self, mesh=None):
 
         if not isinstance(mesh, PhysicalDeviceMesh):
@@ -228,7 +228,7 @@ class XlaShardedPipelineStage(PipelineStage):
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-            compiled.hlo_modules()[0], num_devices, avals, out_avals)
+            compiled.hlo_modules()[0], num_devices, avals, out_avals, strategy_config.logical_mesh_shape)
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
         return compiled

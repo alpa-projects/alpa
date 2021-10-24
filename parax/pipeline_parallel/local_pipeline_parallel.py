@@ -1,16 +1,18 @@
-"""pipeline parallel on a single device."""
-from typing import Sequence, Set, Mapping, Any, Dict
+"""Pipeline parallel on a single device."""
+from parax.device_mesh import PhysicalDeviceMesh
+from typing import Sequence, Mapping, Any, Dict
 
 import jax
 from jax import linear_util as lu
 from jax._src.util import safe_map
-from jax.core import Var, DropVar, ClosedJaxpr, Literal, gensym
+from jax.core import Var, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
 
-from parax.pipeline_parallel.primitive_def import pipeline_p
 from parax.pipeline_parallel.stage import (
     PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
+from parax.pipeline_parallel.base_runtime import BaseRuntime
+
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -59,32 +61,38 @@ class LocalPipelineRunner:
         del self.env[var]
 
 
-def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
-                           global_invars: Sequence[Var],
-                           global_outvars: Sequence[Var]):
-    """
-    Return a callable that runs all pipeline stages on a single local device.
+class LocalRuntime(BaseRuntime):
+    def __init__(self,
+                 *,
+                 pipeline_stages: Sequence[PipelineStage],
+                 global_invars: Sequence[Var],
+                 global_outvars: Sequence[Var],
+                 physical_meshes: Sequence[PhysicalDeviceMesh] = None):
+        """
+        Return a runtime that runs all pipeline stages on a single local device.
 
-    Args:
-        pipeline_stages (Sequence[PipelineStage]): the pipeline stages to be
-            executed.
-        global_invars (Sequence[Var]): Global input variables.
-        global_outvars (Sequence[Var]): Global output variables.
+        Args:
+            pipeline_stages (Sequence[PipelineStage]): the pipeline stages to be
+                executed.
+            global_invars (Sequence[Var]): Global input variables.
+            global_outvars (Sequence[Var]): Global output variables.
+        """
+        super(LocalRuntime, self).__init__(pipeline_stages=pipeline_stages,
+                                           global_invars=global_invars,
+                                           global_outvars=global_outvars,
+                                           physical_meshes=physical_meshes)
 
-    Returns:
-        ret_func (function): the returned function.
-    """
-
-    def ret_func(*args, **kwargs):
+    def run(self, *args, **kwargs):
+        """Run function."""
         assert not kwargs, "kwargs not supported"
-        global_invals = dict(zip(global_invars, args))
+        global_invals = dict(zip(self.global_invars, args))
         runners = {}
 
         var_stage_mapping = {}
         var_reference_count = {}
 
         # Create variable dependency mapping.
-        for stage in pipeline_stages:
+        for stage in self.stages:
             for var in stage.invars:
                 if var not in global_invals:
                     assert var in var_stage_mapping, f"referred to an unknown var {var}"
@@ -93,12 +101,12 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
             for var in stage.outvars:
                 var_stage_mapping[var] = stage.name
 
-        for var in global_outvars:
+        for var in self.global_outvars:
             if not isinstance(var, Literal):
                 assert var in var_stage_mapping, f"referred to an unknown var {var}"
                 var_reference_count[var] = var_reference_count.get(var, 0) + 1
 
-        for stage in pipeline_stages:
+        for stage in self.stages:
             stage_invals = {}
             for var in stage.invars:
                 if var in global_invals:
@@ -117,7 +125,7 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
             runners[stage.name].run_stage(stage, stage_invals)
 
         global_outvals_list = []
-        for var in global_outvars:
+        for var in self.global_outvars:
             if isinstance(var, Literal):
                 global_outvals_list.append(var.val)
             else:
@@ -129,11 +137,9 @@ def local_pipeline_runtime(pipeline_stages: Sequence[PipelineStage],
                     sender_runner.del_var(var)
         return global_outvals_list
 
-    ret_func.shutdown = lambda: None
-    ret_func.get_executable = lambda: ret_func
-    ret_func.run = ret_func
-
-    return ret_func
+    def shutdown(self):
+        """Shutdown the pipeline runtime."""
+        pass
 
 
 @lu.cache
@@ -153,5 +159,14 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
         XlaPipelineStage.from_jax_pipeline_stage(stage)
         for stage in jax_pipeline_stages
     ]
-    return local_pipeline_runtime(xla_pipeline_stages, global_invars,
-                                  global_outvars)
+
+    local_runtime = LocalRuntime(pipeline_stages=xla_pipeline_stages,
+                                 global_invars=global_invars,
+                                 global_outvars=global_outvars)
+
+    def ret_func(*args, **kwargs):
+        return local_runtime.run(*args, **kwargs)
+
+    ret_func.get_executable = lambda: local_runtime
+
+    return ret_func

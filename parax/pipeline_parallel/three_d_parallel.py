@@ -10,8 +10,8 @@ from jax.interpreters import partial_eval as pe
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
-from parax.pipeline_parallel.centralized_runtime import (
-    Jax3DPipeline)
+from parax.pipeline_parallel.centralized_distributerd_runtime import (
+    CentralizedDistributedRuntime)
 from parax.pipeline_parallel.schedules import GpipeSchedule, gen_linear_pipeline_dependency, \
     gen_linear_pipeline_dependency_with_apply
 from parax.pipeline_parallel.stage import (
@@ -315,15 +315,15 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             xla_stages[i] = xla_stage
 
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = Jax3DPipeline(pipeline_stages=xla_stages,
-                       global_invars=global_invars,
-                       grad_dummy_invars=grad_in_to_out,
-                       global_outvars=global_outvars,
-                       physical_meshes=physical_meshes,
-                       dependency=dependency,
-                       schedule=schedule,
-                       is_batch=batch_invars,
-                       num_batch=num_batch)
+    jp = CentralizedDistributedRuntime(pipeline_stages=xla_stages,
+                                       global_invars=global_invars,
+                                       grad_dummy_invars=grad_in_to_out,
+                                       global_outvars=global_outvars,
+                                       physical_meshes=physical_meshes,
+                                       dependency=dependency,
+                                       schedule=schedule,
+                                       is_batch=batch_invars,
+                                       num_batch=num_batch)
 
     def ret_func(*args, **kwargs):
         return jp.run(*args, **kwargs)

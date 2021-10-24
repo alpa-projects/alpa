@@ -8,7 +8,7 @@ import numpy as np
 from parax.device_mesh import AbstractMeshWorker, MeshHostWorker, PhysicalDeviceMesh
 from parax.mesh_executable import PartialGradAccMeshWorkerExecutable, next_mesh_executable_uuid
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask, next_resharding_task_uuid
-from parax.pipeline_parallel.runtime import GpipeSchedule
+from parax.pipeline_parallel.schedules import GpipeSchedule
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 
 

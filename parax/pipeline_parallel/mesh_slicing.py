@@ -5,7 +5,6 @@ import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
 
-from parax.api import parallelize
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
@@ -115,6 +114,8 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
+    # Do not import in a function
+    from parax.api import parallelize
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)
     ret = executable.profile_with_dummy_inputs()

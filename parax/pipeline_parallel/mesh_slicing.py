@@ -11,7 +11,6 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
 from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages, rearrange_vars
-from parax.pipeline_parallel.three_d_parallel import get_donation_mapping_and_modify
 
 
 ########################################
@@ -42,6 +41,9 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
     used = set(global_outvars)
     local_used = set()  # limit donation
     new_layers = []
+    # FIXME(zhuohan): Do not import in a function
+    from parax.pipeline_parallel.three_d_parallel import (
+        get_donation_mapping_and_modify)
     for idx in reversed(range(num_layers)):
         layer = layers[idx]
         if idx in layer_indices:
@@ -114,7 +116,7 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
-    # Do not import in a function
+    # FIXME(zhuohan): Do not import in a function
     from parax.api import parallelize
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)

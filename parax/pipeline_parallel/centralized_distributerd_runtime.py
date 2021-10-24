@@ -379,7 +379,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
         # Recycle the groups an Ray resources
         for i in range(self.num_mesh):
             for j in range(self.num_mesh):
-                if i < j:
+                if i < j and self._collective_groups[i][j]:
                     self._collective_groups[i][j].destroy()
 
         # Recycle the recompiled runnables

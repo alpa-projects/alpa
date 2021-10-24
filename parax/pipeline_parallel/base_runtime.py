@@ -160,6 +160,8 @@ class BaseDistributedRuntime(BaseRuntime):
                 if i >= j:
                     assert not device_str_groups[i][j]
                     continue
+                if not device_str_groups[i][j]:
+                    continue
                 cg = CollectiveGroup(list(device_str_groups[i][j]),
                                      self.physical_meshes[i],
                                      self.physical_meshes[j])

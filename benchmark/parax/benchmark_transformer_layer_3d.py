@@ -115,11 +115,13 @@ def benchmark_transformer_one_case(benchmark_case):
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches)
 
+
+    rngkey = jax.random.PRNGKey(0)
     # Prepare input batch
     batch = {
-        "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=np.int32),
-        "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
+        "hidden_states": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=jnp.float32),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.float32),
+        "label": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=jnp.float32)
     }
     print_used_time("Prepare input")
 
@@ -131,7 +133,6 @@ def benchmark_transformer_one_case(benchmark_case):
         num_attention_heads=num_heads,
         pipeline_mp_size=pipeline_mp_size))
 
-    rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch)
     print_used_time("Create train state")
 
@@ -166,26 +167,55 @@ def benchmark_transformer_one_case(benchmark_case):
 benchmark_suite_2_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
     # sanity check case
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
+    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
+    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
+    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
+    # (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  1, 2, 1, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  1, 2, 2, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  1, 2, 4, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  1, 2, 8, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  1, 2, 16, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  1, 2, 32, False, False),
 ]
 
 
 benchmark_suite_4_gpu = [
     # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (4,  512, 1536, 2,  1536//96,  4,  1, 1, 1, False, False),
-    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 4, True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 8, True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 16, True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 32, True, False), # wrong case
+
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
-    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
-    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 4, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 8, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 16, False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 32, False, False),
+
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 1, True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 2, True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 4, True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 8, True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 16, True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 32, True, False),  # wrong case
+
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 1, False, False), # OOM
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 2, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 4, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 8, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 16, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 32, False, False), # OOM
+
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 1, False, False), # OOM
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 2, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 4, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 8, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 16, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 32, False, False),
 ]
 
 benchmark_suite_8_gpu = [

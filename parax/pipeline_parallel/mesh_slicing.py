@@ -264,12 +264,12 @@ def config_to_logical_meshes(raw_mesh: VirtualMesh, config: np.ndarray):
     return meshes
 
 
-def slice_mesh(layers, **kwargs):
+def slice_mesh(layers: Sequence[JaxPipelineStage]):
     '''
     Args:
         layers (Sequence[JaxPipelineStage]): clustered layers
     Returns:
-        layer_assignment: the assignment of layers
+        layer_assignment: the assignment of layers to stages
         sliced_meshes (Sequence[PhysicalDeviceMesh]): sliced physical meshes
     '''
     raw_mesh = global_config.devices

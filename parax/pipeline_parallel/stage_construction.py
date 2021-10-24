@@ -170,8 +170,33 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh, layers: Sequence[JaxPipeli
         compute_cost = get_compute_cost(mesh, submesh_choices, layers, donation_mapping, global_outvars)
     cost, solution = dp(num_layers, mesh.total_devices, num_microbatches,
                         submesh_choices, compute_cost)
+    stage_layer_ids = [list(range(start_id, end_id)) for (start_id, end_id), _ in solution]
     sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_choices, solution)
-    return solution, sliced_meshes
+    return stage_layer_ids, sliced_meshes
 
+
+def get_stage_outvars(layers: Sequence[JaxPipelineStage], layer_assignment, global_outvars):
+    """
+    Perform liveness analysis to get the outvars of a stage that is used by
+    another stage.
+    Args:
+        layers: clustered layers
+        layer_assignment: the assignment of layers to stages
+        global_outvars: global outvars
+
+    Returns:
+        A list of outvars for each stage
+    """
+    n_stages = len(layer_assignment)
+    used = set(global_outvars)
+    stage_outvars = [set() for _ in range(n_stages)]
+    for stage_id, layer_ids in reversed(list(enumerate(layer_assignment))):
+        for layer_id in layer_ids:
+            for var in layers[layer_id].outvars:
+                if var in used:
+                    stage_outvars[stage_id].add(var)
+            for var in layers[layer_id].invars:
+                used.add(var)
+    return stage_outvars
 
 

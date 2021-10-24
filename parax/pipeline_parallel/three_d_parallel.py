@@ -215,7 +215,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # For mesh-slicing's profiling, we can use the create_donation_mapping
     # to get a sketchy donation_mapping: only accumulate grad, no applygrad
-    if global_config.pipeline_stage_mode == "auto":
+    if global_config.pipeline_stage_mode == "auto_gpipe":
         # Assume each forward layer corresponds to a backward layer
         assert len(jax_pipeline_layers) % 2 == 0
         num_layers = len(jax_pipeline_layers) / 2

@@ -12,7 +12,7 @@ from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    PartialGradAccMeshWorkerExecutable,
                                    get_grad_sync_channel_ids_with_hint,
                                    next_mesh_executable_uuid)
-from parax.pipeline_parallel.cross_mesh_resharding import next_resharding_task_uuid
+from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.pipeline_parallel.schedules import GpipeSchedule
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 from util import OrderedSet, get_shard_shape
@@ -72,14 +72,12 @@ AllocateZeroWorkerExecutableConfig = namedtuple(
 PartialGradWorkerExecutableConfig = namedtuple(
     "GradAccWorkerExecutableConfig",
     ["exec_uuid", "hlo_proto", "strategy_config", "grad_sync_channel_ids"])
-ReshardingTaskConfig = namedtuple("ReshardingTaskConfig",
-                                  ["task_type", "uuid", "tasks", "group_name"])
 
 
 def create_task_configs(schedule: GpipeSchedule,
                         stages: Sequence[XlaShardedPipelineStage],
-                        resharding_tasks, meshes: Sequence[PhysicalDeviceMesh],
-                        grad_dummy_invars: Set[Var], get_next_uuids,
+                        meshes: Sequence[PhysicalDeviceMesh],
+                        grad_dummy_invars: Set[Var], num_batch, get_next_uuids,
                         instruction_lists, var_at):
     """
     Assign uuids for each task and prepare configs,
@@ -89,7 +87,6 @@ def create_task_configs(schedule: GpipeSchedule,
     executable_config_lists = dict()
     resharding_config_lists = dict()
 
-    resharding_task_uuids = dict()
     executable_uuids = []
 
     # Each worker has its own instruction list because Resharding is not SPMD
@@ -143,7 +140,8 @@ def create_task_configs(schedule: GpipeSchedule,
             # (args, workers, devices)
             output_uuids = output_uuids.transpose([1, 0, 2])
             for var_idx, var in enumerate(grad_vars):
-                key = (repr(var), 0)
+                # TODO(yonghao): only works for GPipeSchedule
+                key = (repr(var), num_batch - 1)
                 var_at.setdefault(key, dict())[mesh_idx] = output_uuids[var_idx]
     # 2. PartialGradAccMeshExecutable
     for stage_idx, stage in enumerate(stages):
@@ -162,40 +160,15 @@ def create_task_configs(schedule: GpipeSchedule,
                 PartialGradWorkerExecutableConfig(exec_uuid, hlo_proto,
                                                   strategy_config,
                                                   grad_sync_channel_ids))
-    # 3. Resharding tasks
-    for src_idx in range(num_mesh):
-        for dst_idx in range(num_mesh):
-            for resharding_task in resharding_tasks[src_idx][dst_idx].values():
-                send_tasks, recv_tasks = resharding_task.get_send_recv_tasks()
-                group_name = resharding_task.collective_group.group_name
-                send_uuids = []
-                recv_uuids = []
-                for worker, send_task in send_tasks.items():
-                    task_uuid = next_resharding_task_uuid()
-                    resharding_config_lists[worker].append(
-                        ReshardingTaskConfig(task_type="send",
-                                             uuid=task_uuid,
-                                             tasks=send_task,
-                                             group_name=group_name))
-                    send_uuids.append(task_uuid)
-                for worker, recv_task in recv_tasks.items():
-                    task_uuid = next_resharding_task_uuid()
-                    resharding_config_lists[worker].append(
-                        ReshardingTaskConfig(task_type="recv",
-                                             uuid=task_uuid,
-                                             task=recv_task,
-                                             group_name=group_name))
-                    recv_uuids.append(task_uuid)
-                resharding_task_uuids[resharding_task] = (send_uuids,
-                                                          recv_uuids)
-    return executable_config_lists, resharding_config_lists, resharding_task_uuids, executable_uuids
+    return executable_config_lists, executable_uuids
 
 
-def split_input_to_microbatches(global_invars, not_batch_invars, donated_invars,
-                                var_at, num_batch,
+def split_input_to_microbatches(global_invars, not_batch_invars,
+                                donated_invar_set, var_at, num_batch,
                                 meshes: Sequence[PhysicalDeviceMesh], stages,
                                 schedule, get_next_uuids):
     """
+    Returns:
     mesh_arg_indices (Sequence[Sequence[int]]):
         indices[mesh_idx][i] indicates the index of global_invars(expanded) of the i-th input for PipelineWorkerExecutable
         in mesh_idx-th mesh
@@ -255,9 +228,9 @@ def split_input_to_microbatches(global_invars, not_batch_invars, donated_invars,
                 input_local_uuid_list[worker].append(arg_uuids[arg_idx,
                                                                worker_idx])
     # get returned value
-    donated_invar_list = [[key[0] in donated_invars
-                           for key in mesh_arg_list]
-                          for mesh_arg_list in mesh_arg_lists]
+    donated_invar_list = [[
+        key[0] in donated_invar_set for key in mesh_arg_list
+    ] for mesh_arg_list in mesh_arg_lists]
     mesh_arg_indices = [[global_invar_indices[key]
                          for key in mesh_arg_list]
                         for mesh_arg_list in mesh_arg_lists]
@@ -297,6 +270,18 @@ def collect_output_from_meshes(global_outvars, var_at, meshes):
     return mesh_output_indices_list, output_local_uuid_list
 
 
+def flatten_uuid_set(container):
+    # From Sequence[np.ndarray] to set of elements in the array
+    container = list(container)
+    output = set()
+    for e in container:
+        if isinstance(e, int):
+            output.add(e)
+            continue
+        output.union(list(e))
+    return output
+
+
 # TODO: This function requires prepared resharding tasks as inputs, which relies on sharding specs of each stage.
 # However, the function is called before we set runnables, so the order new should be modified: call get_compiled first for sharding specs, then create communicator.
 # After that, run this function and finally launch instructions.
@@ -315,7 +300,7 @@ def create_instructions_from_pipeline_schedule(
         schedule: GpipeSchedule, stages: Sequence[XlaShardedPipelineStage],
         resharding_tasks, meshes: Sequence[PhysicalDeviceMesh],
         grad_dummy_invars: Set[Var], global_invars, global_outvars, is_batch,
-        num_batch, donated_invars):
+        num_batch, donated_invar_set):
     """
     This function allocates uuids of intermediates, as well as creating instruction lists for all intermediates
     """
@@ -346,30 +331,20 @@ def create_instructions_from_pipeline_schedule(
     instruction_lists = dict()
     var_at = dict()  # var->(mesh_idx->uuids in shape of (worker, deice))
 
-    input_local_uuid_lists = dict()
-    output_local_uuid_lists = dict()
-    for physical_mesh in meshes:
-        for worker in physical_mesh.workers:
-            input_local_uuid_lists[worker] = list()
-            output_local_uuid_lists[worker] = list()
-
     # Microbatch-unrelated work
     # compile args for tasks
-    (executable_config_lists, resharding_config_lists, resharding_task_uuids,
-     executable_uuids) = create_task_configs(schedule, stages, resharding_tasks,
-                                             meshes, grad_dummy_invars,
-                                             get_next_uuids, instruction_lists,
-                                             var_at)
+    (executable_config_lists, executable_uuids) = create_task_configs(
+        schedule, stages, meshes, grad_dummy_invars, num_batch, get_next_uuids,
+        instruction_lists, var_at)
     # mesh_arg_indices
     not_batch_invars = set(
         [var for var, batch in zip(global_invars, is_batch) if not batch])
     (mesh_arg_indices, donated_invar_list, input_indices_list,
      input_local_uuid_list) = split_input_to_microbatches(
-         global_invars, not_batch_invars, donated_invars, var_at, num_batch,
+         global_invars, not_batch_invars, donated_invar_set, var_at, num_batch,
          meshes, stages, schedule, get_next_uuids)
 
     # Microbatch-related work
-    # TODO(yonghao): construct all microbatch of a stage together, instead of a simulation like this
     for _, sched in enumerate(schedule.schedules):
         for mesh_idx, task in enumerate(sched):
             if not task:
@@ -378,6 +353,7 @@ def create_instructions_from_pipeline_schedule(
             num_devices_per_host = physical_mesh.num_devices_per_host
             batch_idx, stage_idx = task
             stage = stages[stage_idx]
+            received_keys = OrderedSet()
             # shard_args for intermediates
             for invar in stage.invars:
                 var_key, key = get_invar_key(invar, batch_idx)
@@ -398,30 +374,30 @@ def create_instructions_from_pipeline_schedule(
                 num_receiver_host = len(recv_buf_uuids)
 
                 resharding_task = resharding_tasks[src_idx][mesh_idx][var_key]
-                send_tasks, recv_tasks = resharding_task.get_send_recv_tasks()
-                # get or create task uuids
-                send_uuids, recv_uuids = resharding_task_uuids[resharding_task]
+                resharding_task: ReshardingTask
 
                 # collect uuids of each send_tile in each worker according to resharding_task's plan
                 for sender_str in resharding_task.sender_uuid_plan:
-                    sender_worker = resharding_task.collective_group.device_str_to_mesh_worker_map[
+                    send_worker = resharding_task.collective_group.device_str_to_mesh_worker_map[
                         sender_str]
                     send_buf_flat_idx = resharding_task.task_spec.src.device_str_to_flat_index[
                         sender_str]
                     send_buf_host = send_buf_flat_idx // num_sender_host
                     send_buf_device = send_buf_flat_idx % num_sender_host
-                    send_buf_uuids[sender_worker].append(
+                    send_buf_uuids[send_worker].append(
                         src_uuids[send_buf_host, send_buf_device])
 
                 # add send tasks for each worker
-                for task_uuid, worker in zip(send_uuids, send_tasks.keys()):
-                    input_uuids = send_buf_uuids[worker]
-                    instruction_lists[worker].append(
+                for w, task_uuid in resharding_task.send_worker_task_ids.items(
+                ):
+                    input_uuids = send_buf_uuids[w]
+                    instruction_lists[w].append(
                         PipelineInstruction.SEND(task_uuid, input_uuids))
 
                 recv_uuids = get_next_uuids(
                     physical_mesh.total_devices).reshape(
                         num_receiver_host, num_devices_per_host)
+                received_keys.add(key)
                 # collect uuids of each recv_tile in each worker according to resharding_task's plan
                 for receiver_str in resharding_task.receiver_uuid_plan:
                     receiver_worker = resharding_task.collective_group.device_str_to_host_id_map[
@@ -434,9 +410,10 @@ def create_instructions_from_pipeline_schedule(
                         recv_uuids[recv_buf_host, recv_buf_device])
 
                 # add recv task for each worker
-                for task_uuid, worker in zip(recv_uuids, recv_tasks.keys()):
-                    output_uuids = recv_buf_uuids[worker]
-                    instruction_lists[worker].append(
+                for w, task_uuid in resharding_task.recv_worker_task_ids.items(
+                ):
+                    output_uuids = recv_buf_uuids[w]
+                    instruction_lists[w].append(
                         PipelineInstruction.RECV(task_uuid, output_uuids, True))
                 # no need to set default because of sent mesh
                 var_at[key][mesh_idx] = recv_uuids
@@ -475,13 +452,35 @@ def create_instructions_from_pipeline_schedule(
                 instruction_lists[worker].append(
                     PipelineInstruction.RUN(exec_uuid, input_uuids,
                                             output_uuids, kwargs))
-            # TODO: free all received buffers
+            # free all received buffers
+            received_uuids = [
+                var_at[key].pop(mesh_idx) for key in received_keys
+            ]
+            for worker_idx, worker in enumerate(physical_mesh.workers):
+                instructions = instruction_lists[worker]
+                for uuids in received_uuids:
+                    instructions.append(
+                        PipelineInstruction.FREE(uuids[worker_idx]))
+    # output info
     mesh_output_indices_list, output_local_uuid_list = collect_output_from_meshes(
         global_outvars, var_at, meshes)
-    # TODO(yonghao): add FREE
+    # add FREE insts
+    for worker in instruction_lists:
+        instruction_list: Sequence[PipelineInstruction] = instruction_lists[
+            worker]
+        new_list = []
+        used_later_uuids = flatten_uuid_set(output_local_uuid_list[worker])
+        for instruction in reversed(instruction_list):
+            input_uuids = flatten_uuid_set(list(instruction.input_uuids))
+            # for free instruction, do not free again
+            if instruction.opcode != PipelineInstType.FREE:
+                unused_uuids = list(input_uuids.difference(used_later_uuids))
+                new_list.append(PipelineInstruction.FREE(
+                    np.array(unused_uuids)))
+            new_list.append(instruction)
+            used_later_uuids.update(input_uuids)
 
-    return (instruction_lists, executable_config_lists, resharding_config_lists,
-            input_local_uuid_lists, output_local_uuid_lists, mesh_arg_indices,
+    return (instruction_lists, executable_config_lists, mesh_arg_indices,
             donated_invar_list, input_indices_list, input_local_uuid_list,
             mesh_output_indices_list, output_local_uuid_list)
 
@@ -546,13 +545,12 @@ class PipelineMeshWorkerExecutable:
     def __init__(self, instructions: Sequence[PipelineInstruction],
                  input_local_uuids: Sequence[int],
                  output_local_uuids: Sequence[int], executable_configs,
-                 resharding_configs: Sequence[ReshardingTaskConfig],
-                 worker: MeshHostWorker):
-        super(PipelineMeshWorkerExecutable, self).__init__(worker.backend)
+                 donate_invars, worker: MeshHostWorker):
         # Instruction Lists
         self.instructions = instructions
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids
+        self.donate_invars = donate_invars
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
@@ -564,7 +562,6 @@ class PipelineMeshWorkerExecutable:
         self.global_send_tasks = worker.send_tasks
         self.global_recv_tasks = worker.recv_tasks
         # Create tasks
-        self.push_tasks()
         for task_config in executable_configs:
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
@@ -579,26 +576,18 @@ class PipelineMeshWorkerExecutable:
                                        task_config.grad_shard_shapes,
                                        task_config.grad_shard_dtypes)
 
-        for task_config in resharding_configs:
-            if task_config.task_type == "send":
-                self.worker.put_resharding_send_task(task_config.uuid,
-                                                     task_config.tasks,
-                                                     task_config.group_name)
-                continue
-            self.worker.put_resharding_recv_task(task_config.uuid,
-                                                 task_config.tasks,
-                                                 task_config.group_name)
-        self.pop_tasks()
-
     def execute_on_worker(self, input_global_uuids, output_global_uuids):
-        # TODO(yonghao): donate invars
+        # copy to local env
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = dict()
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
-
-        self.push_tasks()
+        # donate invars
+        for global_id, donate in zip(input_global_uuids, self.donate_invars):
+            if donate:
+                self.global_buffers.pop(global_id)
+        # monkey patch
         self.worker.buffers = buffers
 
         # Execute
@@ -618,21 +607,14 @@ class PipelineMeshWorkerExecutable:
             elif instruction.opcode == PipelineInstType.FREE:
                 self.worker.delete_buffers(instruction.input_uuids)
 
+        # copy to global env
+        assert len(self.output_local_uuids) == len(output_global_uuids)
         for local_id, global_id in zip(self.output_local_uuids,
                                        output_global_uuids):
             self.global_buffers[global_id] = buffers[local_id]
 
+        # monkey patch
         self.worker.buffers = self.global_buffers
-        self.pop_tasks()
-        # TODO: Clean the dict
+        # Clean the dict
+        buffers.clear()
         return True
-
-    def push_tasks(self):
-        self.worker.executables = self.executables
-        self.worker.send_tasks = self.send_tasks
-        self.worker.recv_tasks = self.recv_tasks
-
-    def pop_tasks(self):
-        self.worker.executables = self.global_executables
-        self.worker.send_tasks = self.global_send_tasks
-        self.worker.recv_tasks = self.global_recv_tasks

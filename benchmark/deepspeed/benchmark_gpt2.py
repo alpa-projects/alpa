@@ -1,34 +1,47 @@
 import argparse
 import os
+import random
 
 from util import run_cmd
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size,
-# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, DPI = ddp_implementation,
+# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, NB = num_micro_batches,
 # CK = checkpoint_activations, DS = use_deepspeed
 
 benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK, DS
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,   1,   0,  1),
-    (8,   1024, 1536, 10, 1536//96,  25600, 1,  1,   1,   0,  1),
-]
-
-benchmark_suite_4_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK
+    #B,    S,    H,    L,  #head,     V,     DP, TMP, NB, CK, DS
+    (16,   512,  1024, 10, 1024//64,  25600, 1,  1,   1,  0,  1),
+    (8,    1024, 1536, 10, 1536//96,  25600, 1,  1,   1,  0,  1),
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK, DS
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,   1,   0,  1),
-    #(8,   1024, 4096, 10, 4096//128, 25600, 1,  8,   1,   0,  0),
-    #(8,   1024, 4096, 10, 4096//128, 25600, 8,  1,   1,   0,  1),
+    #B,    S,    H,    L,  #head,     V,     DP, TMP, NB, CK, DS
+    (256,  512,  1024, 10, 1024//64,  25600, 8,  1,   1,  0,  1),
+    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,   1,  0,  1),
+    (8,    1024, 4096, 10, 4096//128, 25600, 8,  1,   1,  0,  1),
 ]
 
 benchmark_suite_16_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TMP, DPI, CK, DS
-    (512, 512,  1024, 10, 1024//64,  25600, 16, 1,   1,   0,  1),
-    (16,  1024, 4096, 10, 4096//128, 25600, 2,  8,   1,   0,  1),
+    #B,    S,    H,    L,  #head,     V,     DP, TMP, NB, CK, DS
+    (512,  512,  1024, 10, 1024//64,  25600, 16, 1,   1,  0,  1),
+    (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,   4,  0,  1),
+    (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,   1,  0,  1),
+    (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,   4,  0,  1),
+    (16,   1024, 4096, 10, 4096//128, 25600, 16, 1,   1,  0,  1),
+    (64,   1024, 4096, 10, 4096//128, 25600, 16, 1,   4,  0,  1),
 ]
+
+
+def update_ds_config(filename, gradient_accumulation_steps):
+    lines = list(open(filename))
+
+    for i in range(len(lines)):
+        if "gradient_accumulation_steps" in lines[i]:
+            idx = lines[i].index(":")
+            lines[i] = lines[i][:idx] + f": {gradient_accumulation_steps},\n"
+
+    with open(filename, "w") as fout:
+        fout.writelines(lines)
 
 
 def benchmark_all(args):
@@ -36,17 +49,22 @@ def benchmark_all(args):
 
     benchmark_suites = {
         1 : benchmark_suite_1_gpu,
-        4 : benchmark_suite_4_gpu,
         8 : benchmark_suite_8_gpu,
         16 : benchmark_suite_16_gpu,
     }
 
+    warmup_iter = 2
+    bench_iter = 3
+    config_file = "ds_zero_stage_2_config.json"
+
     for case in benchmark_suites[num_gpus]:
         batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        dp_size, tensor_mp_size, dp_imp, checkpoint_activations, use_deepspeed = case
+        dp_size, tensor_mp_size, num_micro_batches, checkpoint_activations, use_deepspeed\
+            = case
 
         assert dp_size * tensor_mp_size == num_gpus
         assert batch_size % dp_size == 0
+        assert batch_size & num_micro_batches == 0
 
         gpt_options = (
             f"--model-parallel-size {tensor_mp_size} "
@@ -55,8 +73,8 @@ def benchmark_all(args):
             f"--num-attention-heads {num_heads} "
             f"--seq-length {seq_len} "
             f"--max-position-embeddings {seq_len} "
-            f"--batch-size {batch_size // dp_size} "
-            f"--train-iters 3 "
+            f"--batch-size {batch_size // dp_size // num_micro_batches} "
+            f"--train-iters {(warmup_iter + bench_iter) * num_micro_batches} "
             f"--lr-decay-iters 320000 "
             #f"--save $CHECKPOINT_PATH "
             #f"--load $CHECKPOINT_PATH "
@@ -77,20 +95,24 @@ def benchmark_all(args):
             f"--eval-interval 2000 "
             f"--eval-iters 0 "
             f"--fp16 "
+            f"--loss-scale 1.0 "
             f"--scattered-embeddings "
             f"--split-transformers "
+
+            # Disable fusion optimizations because this makes
+            # loading too slow.
+            #f"--scaled-upper-triang-masked-softmax-fusion "
+            #f"--scaled-masked-softmax-fusion "
+            #f"--bias-gelu-fusion "
+            #f"--bias-dropout-fusion "
         )
 
         if use_deepspeed:
             gpt_options += (
                 "--deepspeed "
-                "--deepspeed_config ds_zero_stage_2_config.json "
-                "--zero-stage 2 "
-                "--zero-reduce-bucket-size 50000000 "
-                "--zero-allgather-bucket-size 5000000000 "
-                "--zero-contigious-gradients "
-                "--zero-reduce-scatter "
+                f"--deepspeed_config {config_file} "
             )
+            update_ds_config(config_file, num_micro_batches)
 
         if checkpoint_activations:
             gpt_options += "--checkpoint-activations "
@@ -103,16 +125,18 @@ def benchmark_all(args):
             # gpt_options += "--synchronize-each-layer "
             # gpt_options += "--ontigious-checkpointing "
 
-        if args.nnodes == 1:
-            # Single node
-            work_dir= os.environ["DEEPSPEED_PATH"] + "/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/"
-            ret = run_cmd(f"PYTHONPATH={work_dir} VOCAB_SIZE={vocab_size} deepspeed "
-                          f"--num_nodes {args.nnodes} "
-                          f"--num_gpus {args.nproc_per_node} "
-                          f"pretrain_gpt2.py {gpt_options}")
+        if args.nnodes > 1:
+            host_options = "--hostfile hostfile "
         else:
-            # Multiple nodes
-            raise NotImplementedError
+            host_options = ""
+
+        work_dir= os.environ["DEEPSPEED_PATH"] + "/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/"
+        ret = run_cmd(f"PYTHONPATH={work_dir} PYTHON_VOCAB_SIZE={vocab_size} deepspeed "
+                      f"{host_options}"
+                      f"--num_nodes {args.nnodes} "
+                      f"--master_port {random.randint(10000, 20000)} "
+                      f"--num_gpus {args.nproc_per_node} "
+                      f"pretrain_gpt2.py {gpt_options}")
 
 
 if __name__ == "__main__":

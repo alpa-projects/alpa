@@ -16,8 +16,10 @@
 """Pretrain GPT2"""
 
 import os
+import json
 
 import torch
+import numpy as np
 
 from megatron import get_args
 from megatron import print_rank_0
@@ -41,7 +43,7 @@ def model_provider():
     see_memory_usage(f"Before Building Model", force=True)
     args = get_args()
 
-    args.padded_vocab_size = int(os.environ["VOCAB_SIZE"])
+    args.padded_vocab_size = int(os.environ.get("PYTHON_VOCAB_SIZE", 25600))
 
     with deepspeed.zero.Init(data_parallel_group=mpu.get_data_parallel_group(),
                              remote_device=None if args.remote_device=='none' else args.remote_device,
@@ -148,17 +150,25 @@ if __name__ == "__main__":
         from megatron.training import step_latencies
         GB = 1 << 30
 
-        latencies = step_latencies[2:]
+
 
         args = get_args()
-        batch_size = args.batch_size * mpu.get_data_parallel_world_size()
         seq_len = args.seq_length
         num_layers = args.num_layers
         hidden_size = args.hidden_size
         num_heads = args.num_attention_heads
         vocab_size = args.padded_vocab_size
+        if args.deepspeed:
+            num_micro_batches = json.load(open(
+                args.deepspeed_config))["gradient_accumulation_steps"]
+        else:
+            num_micro_batches = 1
+        batch_size = args.batch_size * mpu.get_data_parallel_world_size() * num_micro_batches
+        warmup_iter = 2
 
         alloc_mem = torch.cuda.max_memory_allocated(0)
+        latencies = np.array(step_latencies[warmup_iter * num_micro_batches:])\
+                    .reshape((-1, num_micro_batches)).sum(axis=-1)
         param_count = compute_gpt_parameter_count(
             num_layers, hidden_size, vocab_size)
         tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
@@ -168,7 +178,9 @@ if __name__ == "__main__":
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size)
         parallel_config = (mpu.get_data_parallel_world_size(),
                            mpu.get_model_parallel_world_size(),
-                           args.checkpoint_activations)
+                           args.checkpoint_activations,
+                           num_micro_batches,
+                           args.deepspeed)
 
         # Log results
         heads = ["Model", "Model Config", "Parallel Config", "Param Count",

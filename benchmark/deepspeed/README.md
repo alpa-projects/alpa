@@ -5,6 +5,8 @@
 ```
 pip3 install torch==1.8.2+cu111 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
 pip3 install nltk pandas sentencepiece boto3
+sudo apt-get update
+sudo apt-get install pdsh
 ```
 
 ```
@@ -34,7 +36,13 @@ ln -s $(pwd) ~/efs/parax/benchmark/deepspeed/data   # use your own path
 ```
 
 ## Run
+### Single Node
 ```
-# Single Node
 python3 benchmark_gpt2.py --nproc_per_node 8
+```
+
+### Multiple Node
+- Modify the [hostfile](https://www.deepspeed.ai/getting-started/#resource-configuration-multi-node) and setup the ssh connections.
+```
+python3 benchmark_gpt2.py --nnodes 2 --nproc_per_node 8
 ```

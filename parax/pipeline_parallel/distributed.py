@@ -262,10 +262,10 @@ def collect_output_from_meshes(global_outvars, var_at, meshes):
         mesh_out_indices = dict()
         for mesh_idx in var_meshes:
             mesh = meshes[mesh_idx]
-            uuids = var_meshes[mesh]
+            uuids = var_meshes[mesh_idx]
             for worker_idx, worker in enumerate(mesh.workers):
                 output_local_uuid_list[worker].append(uuids[worker_idx])
-            mesh_out_indices[mesh_idx] = len(output_local_uuid_list[worker])
+            mesh_out_indices[mesh_idx] = len(output_local_uuid_list[worker]) - 1
         mesh_output_indices_list.append(mesh_out_indices)
     return mesh_output_indices_list, output_local_uuid_list
 
@@ -580,13 +580,16 @@ class PipelineMeshWorkerExecutable:
         # copy to local env
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = dict()
-        for local_id, global_id in zip(self.input_local_uuids,
-                                       input_global_uuids):
-            buffers[local_id] = self.global_buffers[global_id]
+        for local_ids, global_ids in zip(self.input_local_uuids,
+                                         input_global_uuids):
+            local_ids = list(local_ids)
+            global_ids = list(global_ids)
+            for local_id, global_id in zip(local_ids, global_ids):
+                buffers[local_id] = self.global_buffers[global_id]
         # donate invars
-        for global_id, donate in zip(input_global_uuids, self.donate_invars):
+        for global_ids, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
-                self.global_buffers.pop(global_id)
+                self.worker.delete_buffers(list(global_ids))
         # monkey patch
         self.worker.buffers = buffers
 
@@ -609,9 +612,12 @@ class PipelineMeshWorkerExecutable:
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)
-        for local_id, global_id in zip(self.output_local_uuids,
-                                       output_global_uuids):
-            self.global_buffers[global_id] = buffers[local_id]
+        for local_ids, global_ids in zip(self.output_local_uuids,
+                                         output_global_uuids):
+            local_ids = list(local_ids)
+            global_ids = list(global_ids)
+            for local_id, global_id in zip(local_ids, global_ids):
+                self.global_buffers[global_id] = buffers[local_id]
 
         # monkey patch
         self.worker.buffers = self.global_buffers

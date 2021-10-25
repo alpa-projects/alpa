@@ -218,7 +218,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if global_config.pipeline_stage_mode == "auto_gpipe":
         # Assume each forward layer corresponds to a backward layer
         assert len(jax_pipeline_layers) % 2 == 0
-        num_layers = len(jax_pipeline_layers) / 2
+        num_layers = len(jax_pipeline_layers) // 2
         forward_stage_layer_ids, sliced_meshes = get_stage_and_mesh_assignments(
             virtual_mesh, jax_pipeline_layers, donation_mapping, acc_grad_outvars, num_micro_batches)
         num_forward_stages = len(forward_stage_layer_ids)
@@ -228,8 +228,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         stage_outvars = get_stage_outvars(jax_pipeline_layers, stage_layer_ids, acc_grad_outvars)
         merged_stages = []
         for stage_id, layer_ids in enumerate(stage_layer_ids):
-            stage_layers = [jax_pipeline_layers[i] for i in layer_ids]
-            merged_stage = merge_stages(stage_layers, stage_outvars[stage_id], str(stage_id), donation_mapping)
+            stage_layer_closed_jaxprs = [jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids]
+            merged_stage = merge_stages(stage_layer_closed_jaxprs, stage_outvars[stage_id], str(stage_id), donation_mapping)
             merged_stages.append(merged_stage)
         num_meshes = num_forward_stages
         jax_pipeline_stages = merged_stages

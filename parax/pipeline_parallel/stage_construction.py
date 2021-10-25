@@ -55,6 +55,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost)
     best_cost = np.inf
     best_solution = None
     last_max_stage_cost = 0.0
+    # FIXME(zhuohan): Set this gap as a tunable parameter in global config
     gap = 1e-6
     for max_stage_cost in all_possible_stage_costs:
         if max_stage_cost * num_microbatches >= best_cost:

@@ -284,8 +284,6 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,   True,  False),
     (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False,  True,  False),
     (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False,  True,  False),
-    #(8,   1024, 5760, 10, 5760//128, 25600, 1,  8,  1,  False,  True,  False),
-    #(8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  False,  True,  False),
 ],
 
 16: [
@@ -294,6 +292,8 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
     (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
     (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
+    (16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  False, True,  False),
+    #(64,   1024, 4096, 10, 4096//128, 25600, 16, 1,  4,  False, True,  False),
 ]
 }
 

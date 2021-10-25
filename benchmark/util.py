@@ -7,6 +7,8 @@ def write_tsv(heads, values, filename, print_line=True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
 
+    values = [str(x) for x in values]
+
     with open(filename, "a") as fout:
         fout.write("\t".join(values) + "\n")
 

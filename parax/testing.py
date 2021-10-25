@@ -25,7 +25,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         assert hasattr(y, '__array__') or np.isscalar(y)
         x = np.asarray(x)
         y = np.asarray(y)
-        assert np.allclose(x, y, rtol, atol)
+        np.testing.assert_allclose(x, y, rtol, atol)
     elif x == y:
         return
     else:

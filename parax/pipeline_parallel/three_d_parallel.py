@@ -245,6 +245,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         assert num_acc_grad_stages % 2 == 0
         num_meshes = num_acc_grad_stages // 2
         jax_pipeline_stages = jax_pipeline_layers
+        sliced_meshes = None
     else:
         raise ValueError("Unknown pipeline_stage_mode", global_config.pipeline_stage_mode)
 
@@ -287,7 +288,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                              mesh=virtual_mesh,
                              num_pipeline_worker=num_meshes,
                              apply_grad_schedule=apply_grad_schedule,
-                             num_batch=num_micro_batches)
+                             num_batch=num_micro_batches,
+                             sliced_meshes=sliced_meshes)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
     # TODO(Hao): delay the creation of physical mesh here

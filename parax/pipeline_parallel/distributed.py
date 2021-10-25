@@ -239,22 +239,42 @@ def split_input_to_microbatches(global_invars, not_batch_invars,
         for key in mesh_arg_list
     ]
                           for mesh_arg_list in mesh_arg_lists]
-    return mesh_arg_indices, donated_invar_list, input_indices_list, input_local_uuid_list
+    return (mesh_arg_indices, donated_invar_list, input_indices_list,
+            input_local_uuid_list)
 
 
-def collect_output_from_meshes(global_outvars, var_at, meshes):
+def collect_output_from_meshes(global_outvars, var_at, meshes, schedule,
+                               stages):
     """
     output_local_uuid_list (Dict[MeshHostWorker, Sequence[np.ndarray]]):
         output local uuid of each MeshHostWorker
     mesh_output_indices_list (Sequence[Dict[int, int]]):
         list[outvar_idx][mesh_idx] indicates the index of the output in
         that mesh corresponding to outvar_idx-th global outputs
+    output_spec_list (Sequence[Sequence[ShardingSpec]]):
+        list[mesh_idx] is the ShardingSpec of all outputs from 
+        PipelineWorkerExecutable in mesh_idx-th mesh.
     """
     output_local_uuid_list = dict()
+    num_mesh = len(meshes)
+
     for mesh in meshes:
         for worker in mesh.workers:
             output_local_uuid_list[worker] = []
     mesh_output_indices_list = []
+    output_spec_list = [[] for _ in range(num_mesh)]
+    # collect outvar specs
+    var_to_spec_all_meshes = []
+    global_outvar_set = set(global_outvars)
+    for mesh_idx in range(num_mesh):
+        var_to_spec = dict()
+        for stage_idx in schedule.worker_stage_mapping[mesh_idx]:
+            stage = stages[stage_idx]
+            for spec, outvar in zip(stage.output_sharding_spec, stage.outvars):
+                if outvar in global_outvar_set:
+                    var_to_spec[outvar] = spec
+        var_to_spec_all_meshes.append(var_to_spec)
+    # assign indices and get specs
     for outvar in global_outvars:
         # the apply gradient only writes to microbatch 0
         key = (repr(outvar), 0)
@@ -265,9 +285,12 @@ def collect_output_from_meshes(global_outvars, var_at, meshes):
             uuids = var_meshes[mesh_idx]
             for worker_idx, worker in enumerate(mesh.workers):
                 output_local_uuid_list[worker].append(uuids[worker_idx])
-            mesh_out_indices[mesh_idx] = len(output_local_uuid_list[worker]) - 1
+            mesh_out_indices[mesh_idx] = (len(output_local_uuid_list[worker]) -
+                                          1)
+            output_spec_list[mesh_idx].append(
+                var_to_spec_all_meshes[mesh_idx][outvar])
         mesh_output_indices_list.append(mesh_out_indices)
-    return mesh_output_indices_list, output_local_uuid_list
+    return mesh_output_indices_list, output_local_uuid_list, output_spec_list
 
 
 def flatten_uuid_set(container):
@@ -302,7 +325,8 @@ def create_instructions_from_pipeline_schedule(
         grad_dummy_invars: Set[Var], global_invars, global_outvars, is_batch,
         num_batch, donated_invar_set):
     """
-    This function allocates uuids of intermediates, as well as creating instruction lists for all intermediates
+    This function allocates uuids of intermediates,
+    as well as creating instruction lists for all intermediates
     """
     uuid_counter = 0
 
@@ -462,8 +486,9 @@ def create_instructions_from_pipeline_schedule(
                     instructions.append(
                         PipelineInstruction.FREE(uuids[worker_idx]))
     # output info
-    mesh_output_indices_list, output_local_uuid_list = collect_output_from_meshes(
-        global_outvars, var_at, meshes)
+    (mesh_output_indices_list, output_local_uuid_list,
+     output_spec_list) = collect_output_from_meshes(global_outvars, var_at,
+                                                    meshes)
     # add FREE insts
     for worker in instruction_lists:
         instruction_list: Sequence[PipelineInstruction] = instruction_lists[
@@ -482,7 +507,7 @@ def create_instructions_from_pipeline_schedule(
 
     return (instruction_lists, executable_config_lists, mesh_arg_indices,
             donated_invar_list, input_indices_list, input_local_uuid_list,
-            mesh_output_indices_list, output_local_uuid_list)
+            mesh_output_indices_list, output_local_uuid_list, output_spec_list)
 
 
 # TODO(Hao):

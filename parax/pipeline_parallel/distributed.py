@@ -1,21 +1,25 @@
 from collections import namedtuple
 from dataclasses import dataclass
 import enum
-from typing import Any, Dict, Sequence, Set
+from typing import Any, Dict, Sequence, Set, List, Callable
 
 import numpy as np
 from jax.core import Var
 from jax.interpreters import pxla
 
-from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh
+from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    PartialGradAccMeshWorkerExecutable,
                                    get_grad_sync_channel_ids_with_hint,
-                                   next_mesh_executable_uuid)
+                                   next_mesh_executable_uuid,
+                                   get_uuid_np_array,
+                                   next_remote_buffer_uuid,
+                                   RemoteBufferRef)
+from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
-from parax.pipeline_parallel.schedules import GpipeSchedule
+from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
-from util import OrderedSet, get_shard_shape
+from parax.util import OrderedSet, get_shard_shape
 
 
 class PipelineInstType(enum.IntEnum):
@@ -143,6 +147,7 @@ def create_task_configs(schedule: GpipeSchedule,
                 # TODO(yonghao): only works for GPipeSchedule
                 key = (repr(var), num_batch - 1)
                 var_at.setdefault(key, dict())[mesh_idx] = output_uuids[var_idx]
+
     # 2. PartialGradAccMeshExecutable
     for stage_idx, stage in enumerate(stages):
         exec_uuid = next_mesh_executable_uuid()
@@ -168,18 +173,20 @@ def split_input_to_microbatches(global_invars, not_batch_invars,
                                 meshes: Sequence[PhysicalDeviceMesh], stages,
                                 schedule, get_next_uuids):
     """
+    Args:
+        mesh_arg_indices (Sequence[Sequence[int]]):
+            indices[mesh_idx][i] indicates the index of global_invars(expanded) of the i-th input for PipelineWorkerExecutable
+            in mesh_idx-th mesh
+        donated_invar_list (Sequence[Sequence[bool]]):
+            list[mesh_idx] is the donate_invars of PipelineWorkerExecutable
+            in mesh_idx-th mesh
+        input_indices_list (Sequence[Sequence[Tuple[Index, ...]]]):
+            list[mesh_idx] is the input_indices of PipelineWorkerExecutable
+            in mesh_idx-th mesh. Here the input_indices are for XLA
+            to shard_args instead of indices in input list
+        input_local_uuid_list (Dict[MeshHostWorker, np.ndarray]):
+
     Returns:
-    mesh_arg_indices (Sequence[Sequence[int]]):
-        indices[mesh_idx][i] indicates the index of global_invars(expanded) of the i-th input for PipelineWorkerExecutable
-        in mesh_idx-th mesh
-    donated_invar_list (Sequence[Sequence[bool]]):
-        list[mesh_idx] is the donate_invars of PipelineWorkerExecutable
-        in mesh_idx-th mesh
-    input_indices_list (Sequence[Sequence[Tuple[Index, ...]]]):
-        list[mesh_idx] is the input_indices of PipelineWorkerExecutable
-        in mesh_idx-th mesh. Here the input_indices are for XLA
-        to shard_args instead of indices in input list
-    input_local_uuid_list (Dict[MeshHostWorker, np.ndarray]):
 
     """
     num_mesh = len(meshes)
@@ -252,7 +259,7 @@ def collect_output_from_meshes(global_outvars, var_at, meshes, schedule,
         list[outvar_idx][mesh_idx] indicates the index of the output in
         that mesh corresponding to outvar_idx-th global outputs
     output_spec_list (Sequence[Sequence[ShardingSpec]]):
-        list[mesh_idx] is the ShardingSpec of all outputs from 
+        list[mesh_idx] is the ShardingSpec of all outputs from
         PipelineWorkerExecutable in mesh_idx-th mesh.
     """
     output_local_uuid_list = dict()
@@ -510,11 +517,6 @@ def create_instructions_from_pipeline_schedule(
             mesh_output_indices_list, output_local_uuid_list, output_spec_list)
 
 
-# TODO(Hao):
-#  1. implement a base class, let two runtimes inherit this baseclass
-#  2. make some abstraction, put sharing-related functionality in baseclass, such as:
-#  creating collective_group, resharding-related logic.
-#  3. complete DecentralizedDistributedRuntime main logic.
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def __init__(self,
@@ -528,63 +530,227 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  schedule,
                  is_batch,
                  num_batch=1):
+        """TODO(Hao): add a docstring."""
+        super(DecentralizedDistributedRuntime, self).__init__(
+            pipeline_stages=pipeline_stages,
+            global_invars=global_invars,
+            grad_dummy_invars=grad_dummy_invars,
+            global_outvars=global_outvars,
+            physical_meshes=physical_meshes,
+            dependency=dependency,
+            schedule=schedule,
+            is_batch=is_batch,
+            num_batch=num_batch)
+
+        # make this the states of this class
+        instruction_lists, executable_config_lists, mesh_arg_indices, \
+        donated_invar_list, input_indices_list, input_local_uuid_list, \
+        mesh_output_indices_list, output_local_uuid_list, output_spec_list \
+            = self._compile()
+
+        self.output_local_uuid_list = output_local_uuid_list
 
 
-    def __init__(self, physical_meshes):
-        self.physical_meshes = physical_meshes
-        num_meshes = len(self.physical_meshes)
+        self._worker_executable_uuid_mapping = dict()
+        self._executable_uuid_worker_mapping = dict()
+        # we create a PipelineMeshWorkerExecutable for each MeshHostWorker
+        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            for worker in physical_mesh.workers:
+                args = (instruction_lists[worker],
+                        input_local_uuid_list[worker],
+                        output_local_uuid_list[worker],
+                        executable_config_lists[worker],
+                        donated_invar_list[mesh_idx])
+                uuid = next_mesh_executable_uuid()
+                worker.put_executable.remote(next_mesh_executable_uuid(),
+                                             PipelineMeshWorkerExecutable,
+                                             *args)
+                self._worker_executable_uuid_mapping[worker] = uuid
+                self._executable_uuid_worker_mapping[uuid] = worker
 
-        # TODO(Hao): only compile, not actually getting runnables, for the sake
-        #  of invoking `create_instructions_from_pipeline_schedule`.
-        self._compile_xla_stages()
+        # for handling input/outputs
+        self.mesh_arg_indices = mesh_arg_indices
+        self.donate_invars = donated_invar_list
+        self.input_indices = input_indices_list
+        self.mesh_output_indices = mesh_output_indices_list
+        self.output_spec_list = output_spec_list
 
-        # TODO(Hao): spawn cgs and communicators, find device-device group relations/dependencies, etc.
-        #  Note: do some abstraction and put the functions in baseclass.
-        self._create_collective_group()
-        # TODO(Hao): for each tensor (that needs to be resharded), create its resharding task_spec/task
-        resharding_tasks, communicator, _ = self._prepare_communicator()
+        self.outs_handler: Callable = None
+        self._setup_outs_handler()
 
-        # call the main compile function to get instructions.
-        instruction_lists, executable_config_lists, resharding_config_lists = \
-            create_instructions_from_pipeline_schedule(
-            schedule, # generated in three_d_parallel.py
-            stages, # generated in three_d_parallel, but we have compiled it for communicator construciton,
-            resharding_tasks, # generated above
-            meshes, # physical, generated outside
+    def _compile(self):
+        """Precompile the stages and generate static instructions for pipelined execution."""
+        # TODO(Hao): move the long function create_instructions_from_pipeline_schedule here.
+        return create_instructions_from_pipeline_schedule(
+            self.schedule,
+            self.stages,
+            self._resharding_tasks,
+            self.physical_meshes,
+            self.grad_dummy_invars,
+            self.global_invars,
+            self.global_outvars,
+            self.is_batch,
+            self.num_batch,
+            self.donate_invars
         )
 
-        # TODO(Hao): for each worker,
-        #  spawn many PipelineMeshWorkerExecutable remotely
-        #  Then, send the compiled instructons + configs etc. using the class `PipelineMeshWorkerExecutable`
+    def run(self, *args, **kwargs):
+        """The run function that maps to train_step()."""
+        """ Done 1. shard inputs (send input to each remote worker)
+            Done: 2. launch each worker to start instructions,
+            Done: 3. prepare outputs  
+            Done: 4. handle RDA
+            5. sync after each iter
+        """
 
-        # Done (Yonghao): compiled output, set here.
-        #  do it together with global input/output uuid-buffer mapping.
-        self.mesh_arg_indices = [None for _ in range(num_meshes)]
-        self.donate_invars = [None for _ in range(num_meshes)]
-        self.input_indices = [None for _ in range(num_meshes)]
+        input_bufs: List[Any] = [None for _ in range(self.num_mesh)]
+        input_uuids: List[Any] = [None for _ in range(self.num_mesh)]
+        output_bufs: List[Any] = [None for _ in range(self.num_mesh)]
+        output_uuids: List[Any] = [None for _ in range(self.num_mesh)]
 
-        # TODO (Hao): where to put RDA?
+        num_outs = [len(self.output_local_uuid_list[mesh.workers[0]])
+                    for mesh in range(self.physical_meshes)]
+        self._debug_check()
 
-    def run(self, *args):
-        """1. shard inputs (send input to each remote worker)
-            2. launch each worker to start instructions,
-            sync after each iter"""
-        num_meshes = len(self.physical_meshes)
-        input_bufs = [None for _ in range(num_meshes)]
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_args = [args[idx] for idx in self.mesh_arg_indices[mesh_idx]]
             input_bufs[mesh_idx] = physical_mesh.shard_args(
                 self.input_indices[mesh_idx], self.donate_invars[mesh_idx],
                 mesh_args)
+            num_hosts = physical_mesh.num_hosts
+            num_devices_per_host = physical_mesh.num_devices_per_host
+            input_uuids[mesh_idx] = get_uuid_np_array(input_bufs[mesh_idx])\
+                .reshape(len(mesh_args), num_hosts, num_devices_per_host) \
+                .transpose([1, 0, 2])
+            output_uuids[mesh_idx] = next_remote_buffer_uuid(num_hosts * num_outs[mesh_idx] * num_devices_per_host) \
+                .reshape(num_hosts, num_outs, num_devices_per_host)
+
+        # Execute
+        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            for i, worker in enumerate(physical_mesh.workers):
+                worker.run_executable.remote(self._worker_executable_uuid_mapping[worker],
+                                             input_uuids[mesh_idx][i],
+                                             output_uuids[mesh_idx][i],
+                                             **kwargs)
+
+        # TODO(Hao): how to sync and check results?
+        # construct output_bufs first.
+        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            num_devices_per_host = physical_mesh.num_devices_per_host
+            output_uuid_transposed = output_uuids[mesh_idx].transpose([1, 0, 2])
+            output_bufs[mesh_idx] = np.empty((num_outs, physical_mesh.total_devices), dtype=object)
+            for i in range(num_outs[mesh_idx]):
+                for j in range(physical_mesh.total_devices):
+                    host_id = j // num_devices_per_host
+                    device_id = j % num_devices_per_host
+                    # TODO(Hao): check this
+                    dtype = self.global_outvars[self.mesh_index_to_outvar_indices_mapping[mesh_idx][i]].aval.dtype
+                    output_bufs[mesh_idx][i][j] = RemoteBufferRef(
+                        physical_mesh,
+                        host_id,
+                        device_id,
+                        output_uuid_transposed[i][host_id][device_id],
+                        dtype=dtype)
+
+        # TODO: do we need to handle donation here?
+        return self.outs_handler(output_bufs)
+
+    def _setup_outs_handler(self):
+        """Setup outs handlers that assemble RemoteBufs into DistributedArrays."""
+        avals = [outvar.aval for outvar in self.global_outvars]
+        is_replicated = [True if len(self.outvar_index_to_mesh_index_mapping[i]) > 1 else False
+                         for i, _ in enumerate(self.global_outvars)]
+
+        def outs_handler(bufs):
+            ret = []
+            for i, _ in enumerate(avals):
+                aval = avals[i]
+                if not is_replicated[i]:
+                    # construct DA
+                    mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
+                    device_mesh = self.physical_meshes[mesh_idx]
+                    outvar_index_on_mesh = self.mesh_output_indices[i][0]
+                    spec = self.output_spec_list[mesh_idx][outvar_index_on_mesh]
+                    arr = DistributedArray(
+                        device_mesh=device_mesh,
+                        aval=aval,
+                        sharding_spec=spec,
+                        remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
+                        indices=pxla.spec_to_indices(aval, spec))
+                else:
+                    # otherwise, construct RDA
+                    meshes = []
+                    distributed_arrays = []
+                    for j, mesh_idx in enumerate(self.outvar_index_to_mesh_index_mapping[i]):
+                        meshes.append(self.physical_meshes[mesh_idx])
+                        outvar_index_on_mesh = self.mesh_output_indices[i][j]
+                        spec = self.output_spec_list[mesh_idx][outvar_index_on_mesh]
+                        distributed_arrays[j] = DistributedArray(
+                            device_mesh=self.physical_meshes[mesh_idx],
+                            aval=aval,
+                            sharding_spec=spec,
+                            remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
+                            indices=pxla.spec_to_indices(aval, spec))
+                    arr = ReplicatedDistributedArray(meshes, distributed_arrays)
+                ret.append(arr)
+            return ret
+
+        self.outs_handler = outs_handler
+
+    @cached_property
+    def mesh_index_to_outvar_indices_mapping(self):
+        # TODO(Hao): check the order here...
+        if self.mesh_output_indices is None:
+            raise RuntimeError()
+        mapping = dict()
+        for i, outvar in enumerate(self.global_outvars):
+            mesh_out_indices = self.mesh_output_indices[i]
+            for mesh_idx in mesh_out_indices:
+                if mesh_idx not in mapping:
+                    mapping[mesh_idx] = []
+                mapping[mesh_idx].append(i)
+        return mapping
+
+    @cached_property
+    def outvar_index_to_mesh_index_mapping(self):
+        if self.mesh_output_indices is None:
+            raise RuntimeError()
+        mapping = dict()
+        for i, _ in enumerate(self.global_outvars):
+            mapping[i] = list(self.mesh_output_indices[i].keys())
+        return mapping
+
+    def _debug_check(self):
+        for mesh in self.physical_meshes:
+            num_outs = -1
+            for worker in mesh.workers:
+                if num_outs == -1:
+                    num_outs = len(self.output_local_uuid_list[worker])
+                else:
+                    assert len(self.output_local_uuid_list[worker]) == num_outs
+
+
+    def shutdown(self):
+        """"""
+        # TODO(Hao):
+        #  1. delete all PipelineMeshWorkerExecutable
+        #  2. delete all PartialGradAccMeshWorkerExecutable and AllocZeroBufferWorkerExecutable put
+        #  by PipelineMeshWorkerExecutable
+        pass
 
 
 class PipelineMeshWorkerExecutable:
 
-    def __init__(self, instructions: Sequence[PipelineInstruction],
+    def __init__(self,
+                 worker: MeshHostWorker,
+                 uuid: int,
+                 instructions: Sequence[PipelineInstruction],
                  input_local_uuids: Sequence[int],
-                 output_local_uuids: Sequence[int], executable_configs,
-                 donate_invars, worker: MeshHostWorker):
+                 output_local_uuids: Sequence[int],
+                 executable_configs,
+                 donate_invars):
         # Instruction Lists
+        self.my_uuid = uuid
         self.instructions = instructions
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids
@@ -618,8 +784,7 @@ class PipelineMeshWorkerExecutable:
         # copy to local env
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = dict()
-        for local_ids, global_ids in zip(self.input_local_uuids,
-                                         input_global_uuids):
+        for local_ids, global_ids in zip(self.input_local_uuids, input_global_uuids):
             local_ids = list(local_ids)
             global_ids = list(global_ids)
             for local_id, global_id in zip(local_ids, global_ids):

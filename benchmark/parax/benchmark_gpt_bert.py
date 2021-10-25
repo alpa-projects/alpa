@@ -76,9 +76,10 @@ def load_profiling_result(physical_mesh):
         physical_mesh.save_profiling_result(filename)
 
 
-def create_train_state(rngkey, model, batch, dtype):
+def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
+
     def weight_decay_mask(pytree):
         # do not use weight decay on layer norm and bias.
         return jax.tree_map(lambda x: x.ndim > 1, pytree)
@@ -192,7 +193,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    state = create_train_state(rngkey, model, batch, dtype)
+    state = create_train_state(rngkey, model, dtype, batch)
     print_used_time("Create train state")
 
     # Compile executable

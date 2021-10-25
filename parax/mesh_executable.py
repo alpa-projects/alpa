@@ -31,7 +31,9 @@ logger.setLevel(logging.INFO)
 mesh_executable_counter = 0
 remote_buffer_counter = 0
 
-ProtoAndSharding = namedtuple("HloProtoAndSharding", ["proto", "input_shardings", "output_shardings"])
+ProtoAndSharding = namedtuple("HloProtoAndSharding",
+                              ["proto", "input_shardings", "output_shardings"])
+
 
 def next_mesh_executable_uuid():
     """Return the next uuid of a mesh executable."""
@@ -157,7 +159,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.hlo_module = xla_client.XlaComputation(proto).as_hlo_module()
             logical_mesh_shape = strategy_config.logical_mesh_shape
             self.input_sharding_specs = [
-            sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
+                sharding_proto_to_sharding_spec(proto_tuple, aval,
+                                                logical_mesh_shape)
                 for (proto_tuple, aval) in zip(input_sharding_protos, avals)
             ]
             self.output_sharding_specs = sharding_proto_to_sharding_spec(
@@ -167,7 +170,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
                 self.hlo_module, physical_mesh.total_devices, avals, out_avals,
                 strategy_config.logical_mesh_shape)
-            
 
         # Cache results for input and output sharding
         self.input_indices = [

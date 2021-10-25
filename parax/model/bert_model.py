@@ -16,8 +16,7 @@ import jax.numpy as jnp
 from parax.model.model_util import (FlaxBaseModelOutput,
                                     FlaxBaseModelOutputWithPooling,
                                     FlaxBertForPreTrainingOutput,
-                                    FlaxMaskedLMOutput,
-                                    TrainState)
+                                    FlaxMaskedLMOutput, TrainState)
 from parax import mark_pipeline
 
 

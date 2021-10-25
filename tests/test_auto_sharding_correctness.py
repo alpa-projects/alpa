@@ -15,11 +15,10 @@ from parax.testing import assert_allclose
 def create_train_state(rngkey, model, batch_args):
     params = model.init(rngkey, *batch_args)
     tx = optax.adam(learning_rate=1e-2)
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              dynamic_scale=None)
     return state
 
 
@@ -48,7 +47,8 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
         def train_step(state, batch):
 
             def loss_func(params):
-                out = state.apply_fn(params, batch["x"], batch["attention_mask"])
+                out = state.apply_fn(params, batch["x"],
+                                     batch["attention_mask"])
                 loss = jnp.mean((out - batch["y"])**2)
                 return loss
 
@@ -63,16 +63,18 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
         dtype = jnp.float32
 
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=dtype)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=dtype)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=dtype)
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=dtype)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=dtype)
 
         # Init model and optimizer
-        model = BertLayerModel(
-            config=BertConfig(hidden_size=hidden_size,
-                              intermediate_size=hidden_size * 4,
-                              num_attention_heads=num_heads),
-            dtype=dtype)
+        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
+                                                 intermediate_size=hidden_size *
+                                                 4,
+                                                 num_attention_heads=num_heads),
+                               dtype=dtype)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
 
@@ -93,13 +95,17 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
         # print("expected grad example: ", jax.tree_util.tree_flatten(expected_grads)[0][-1][0:100])
         # print("actual grad example: ", jax.tree_util.tree_flatten(actual_grads)[0][-1]._value[0:100])
 
-        assert_allclose(expected_params.params, actual_params.params, rtol=5e-4, atol=5e-4)
+        assert_allclose(expected_params.params,
+                        actual_params.params,
+                        rtol=5e-4,
+                        atol=5e-4)
         physical_mesh.shutdown()
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingCorrectnessTest("test_2_layer_bert_shard_parallel"))
+    suite.addTest(
+        AutoShardingCorrectnessTest("test_2_layer_bert_shard_parallel"))
     return suite
 
 

@@ -22,7 +22,7 @@ from benchmark_gpt_bert import load_profiling_result, get_train_step
 GB = 1024 ** 3
 
 
-def create_train_state(rngkey, model, batch):
+def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
 
@@ -34,10 +34,13 @@ def create_train_state(rngkey, model, batch):
         learning_rate=1e-2, weight_decay_mask=weight_decay_mask
     )
 
+    mixed_precision = (dtype == jnp.float16)
+
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
         tx=tx,
+        mixed_precision = (dtype == jnp.float16),
         dynamic_scale=None)
     return state
 
@@ -94,7 +97,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     ), dtype=dtype)
 
     rngkey = jax.random.PRNGKey(0)
-    state = create_train_state(rngkey, model, batch)
+    state = create_train_state(rngkey, model, dtype, batch)
     param_count = compute_param_number(state.params)
     print_used_time("Create train state")
 
@@ -177,15 +180,15 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (8,   1024, 1024, 12, 1024//64,  25600, 1024, 4,  1,  1,  1,  False, True,  False),
 ],
 
-4: [
+2: [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 1792, 10, 1792//128, 25600, 1024, 8,  1,  4,  1,  True,  False, False),
+    (16,  1024, 1280, 12, 1280//128, 25600, 1024, 16, 1,  2,  1,  True,  True,  False),
 ],
 
 8: [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  False, True, False),
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  True, False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  False, False, False),
+    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  True,  False),
 ],
 
 16: [

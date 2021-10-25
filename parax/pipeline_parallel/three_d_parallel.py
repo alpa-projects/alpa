@@ -229,8 +229,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         merged_stages = []
         for stage_id, layer_ids in enumerate(stage_layer_ids):
             stage_layer_jaxprs = [jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids]
-            merged_stage_jaxpr = merge_stage_jaxprs(stage_layer_jaxprs, stage_outvars[stage_id], str(stage_id), donation_mapping)
-            print("merged_stage_jaxpr", merged_stage_jaxpr)
+            stage_name = str(stage_id)
+            merged_stage_jaxpr = merge_stage_jaxprs(stage_layer_jaxprs, stage_outvars[stage_id], stage_name, donation_mapping)
+            merged_stage = JaxPipelineStage.from_closed_jaxpr(stage_name, merged_stage_jaxpr)
             merged_stages.append(merged_stage)
         num_meshes = num_forward_stages
         jax_pipeline_stages = merged_stages

@@ -108,6 +108,17 @@ class JaxPipelineStage(PipelineStage):
         closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
 
+    @classmethod
+    def from_closed_jaxpr(cls, name, closed_jaxpr: ClosedJaxpr):
+        """Construct a JaxPipelineStage from a Jaxpr."""
+        return cls(
+            name=name,
+            invars=closed_jaxpr.jaxpr.invars,
+            outvars=closed_jaxpr.jaxpr.outvars,
+            eqns=closed_jaxpr.eqns,
+            consts_dir={k: v for k, v in zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)}
+        )
+
 
 @dataclass
 class XlaPipelineStage(PipelineStage):

@@ -10,7 +10,7 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
-from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages, rearrange_vars
+from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stage_jaxprs, rearrange_vars
 
 
 ########################################
@@ -105,8 +105,8 @@ def compile_and_profile_layer_cost_c(layers: Sequence[JaxPipelineStage],
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    mixed_jaxpr = merge_stages(jaxprs, global_used, 'profile_tmp',
-                               donation_mapping)
+    mixed_jaxpr = merge_stage_jaxprs(jaxprs, global_used, 'profile_tmp',
+                                     donation_mapping)
     donate_argnums = [
         idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
         if var in donation_mapping

@@ -1020,10 +1020,10 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
     return results, outvar_map
 
 
-def merge_stages(jaxprs: Sequence[ClosedJaxpr],
-                 used: Set[Var],
-                 new_marker_name,
-                 donation_mapping=None) -> ClosedJaxpr:
+def merge_stage_jaxprs(jaxprs: Sequence[ClosedJaxpr],
+                       used: Set[Var],
+                       new_marker_name,
+                       donation_mapping=None) -> ClosedJaxpr:
     """
     Merge continuous jaxprs and remove pipe markers
     Args:

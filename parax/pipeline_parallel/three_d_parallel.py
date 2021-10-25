@@ -17,7 +17,7 @@ from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
     compute_grad_to_accumulate_grad, generate_sharded_xla_stages, get_var_mapping,
     mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
-    rearrange_vars, slice_apply_gradient, merge_stages,
+    rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
     slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars
@@ -228,8 +228,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         stage_outvars = get_stage_outvars(jax_pipeline_layers, stage_layer_ids, acc_grad_outvars)
         merged_stages = []
         for stage_id, layer_ids in enumerate(stage_layer_ids):
-            stage_layer_closed_jaxprs = [jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids]
-            merged_stage = merge_stages(stage_layer_closed_jaxprs, stage_outvars[stage_id], str(stage_id), donation_mapping)
+            stage_layer_jaxprs = [jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids]
+            merged_stage_jaxpr = merge_stage_jaxprs(stage_layer_jaxprs, stage_outvars[stage_id], str(stage_id), donation_mapping)
+            print("merged_stage_jaxpr", merged_stage_jaxpr)
             merged_stages.append(merged_stage)
         num_meshes = num_forward_stages
         jax_pipeline_stages = merged_stages

@@ -6,7 +6,7 @@ from typing import Sequence, List, Any
 
 from jax.core import Var
 
-from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup
+from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import PipelineStage
 
 
@@ -101,13 +101,14 @@ class BaseDistributedRuntime(BaseRuntime):
         # Communication-related setup
         # Based on dependency and sharding specs, infer communication spec (cross-mesh)。
         self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
-
-        # Establish NCCL collective groups and communicators
-        # because we need physical meshes we have to do this out of the CrossMeshCommunicator class.
         self._collective_groups: List[List[Any]] = [
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
+        self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
+                                  for _ in range(self.num_mesh)]
+        # pre-setup
         self._establish_nccl_groups()
+        self._create_resharding_and_get_send_recv_tasks()
 
     def run(self, *args, **kwargs):
         raise NotImplementedError()
@@ -168,3 +169,23 @@ class BaseDistributedRuntime(BaseRuntime):
                 cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
+
+    def _create_resharding_and_get_send_recv_tasks(self):
+        """
+        Initialize all resharding (send/recv) tasks.
+
+        In this function, we do the following:
+        1. we create a resharding task for each resharding spec
+        2. for each resharding task, we generate all related send/recv tasks.
+        """
+
+        # Create resharding tasks for each var
+        for src_mesh_idx, dst_mesh_idx, var_spec_map \
+                in self._communicator.task_spec_iter():
+            for key, spec in var_spec_map.items():
+                cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
+                src_mesh = self.physical_meshes[src_mesh_idx]
+                dst_mesh = self.physical_meshes[dst_mesh_idx]
+                t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
+                t.get_send_recv_tasks()
+                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t

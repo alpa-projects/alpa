@@ -75,8 +75,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
         # Init and warm-up
         self._prepare_runables()
 
-        # create all tasks and put buffers
-        self._put_resharding_tasks()
+        # eager grad_accum and reference counting.
         self._prepare_gradient_accumulation()
         self._prepare_reference_count()
 
@@ -89,21 +88,6 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
             mesh_idx = mesh_indices[0]
             self._runnables.append(
                 stage.get_runnable(self.physical_meshes[mesh_idx]))
-
-    def _put_resharding_tasks(self):
-        """
-        Setup all send/recv tasks on the remote workers.
-
-        for each resharding task, we put task-related info (rank, group) in
-        the corresponded remote workers *in advance*. At runtime, we use the
-        source distributed array to index the task and perform cross-mesh
-        communication; in this way, we avoid creating/transferring task info
-        at runtime loop.
-        """
-        for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                for _, task in self._resharding_tasks[i][j].items():
-                    task.put_send_recv_tasks()
 
     def _prepare_gradient_accumulation(self):
         # Allocate buffers for accumulated gradients

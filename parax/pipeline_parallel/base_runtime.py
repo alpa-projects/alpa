@@ -109,6 +109,7 @@ class BaseDistributedRuntime(BaseRuntime):
         # pre-setup
         self._establish_nccl_groups()
         self._create_resharding_and_get_send_recv_tasks()
+        self._put_resharding_tasks()
 
     def run(self, *args, **kwargs):
         raise NotImplementedError()
@@ -189,3 +190,18 @@ class BaseDistributedRuntime(BaseRuntime):
                 t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
                 t.get_send_recv_tasks()
                 self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t
+
+    def _put_resharding_tasks(self):
+        """
+        Setup all send/recv tasks on the remote workers.
+
+        for each resharding task, we put task-related info (rank, group) in
+        the corresponded remote workers *in advance*. At runtime, we use the
+        source distributed array to index the task and perform cross-mesh
+        communication; in this way, we avoid creating/transferring task info
+        at runtime loop.
+        """
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                for _, task in self._resharding_tasks[i][j].items():
+                    task.put_send_recv_tasks()

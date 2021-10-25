@@ -383,6 +383,8 @@ class ReshardingTask:
 
     def put_send_recv_tasks(self):
         """Put send recv tasks to remote worker."""
+        if self.has_put_send_recv_tasks:
+            return
         sender_tasks, receiver_tasks = self.get_send_recv_tasks()
         group_name = self.collective_group.group_name
         self.send_worker_task_ids = dict()

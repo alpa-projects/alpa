@@ -72,13 +72,11 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
         self._env = None
         self._initial_var_reference_count = None
 
-        self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
-                                  for _ in range(self.num_mesh)]
-
         # Init and warm-up
         self._prepare_runables()
+
         # create all tasks and put buffers
-        self._initialize_resharding_tasks()
+        self._put_resharding_tasks()
         self._prepare_gradient_accumulation()
         self._prepare_reference_count()
 
@@ -92,29 +90,20 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
             self._runnables.append(
                 stage.get_runnable(self.physical_meshes[mesh_idx]))
 
-    def _initialize_resharding_tasks(self):
+    def _put_resharding_tasks(self):
         """
-        Launch all resharding tasks and do all necessary work.
+        Setup all send/recv tasks on the remote workers.
 
-        In this function, we do the following:
-        1. we create a resharding task for each resharding spec
-        2. for each resharding task, we put task-related info (rank, group) in the
-           corresponded remote workers *in advance*.
-        At runtime, we use the source distributed array to index the task and perform
-        cross-mesh communication; in this way, we avoid creating/transferring task
-        info at runtime loop.
+        for each resharding task, we put task-related info (rank, group) in
+        the corresponded remote workers *in advance*. At runtime, we use the
+        source distributed array to index the task and perform cross-mesh
+        communication; in this way, we avoid creating/transferring task info
+        at runtime loop.
         """
-        # Create resharding tasks for each var
-        for src_mesh_idx, dst_mesh_idx, var_spec_map \
-                in self._communicator.task_spec_iter():
-            for key, spec in var_spec_map.items():
-                cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
-                src_mesh = self.physical_meshes[src_mesh_idx]
-                dst_mesh = self.physical_meshes[dst_mesh_idx]
-                t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
-                # TODO(Hao): double check/optimize this function
-                t.prepare_send_recv_tasks()
-                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                for _, task in self._resharding_tasks[i][j].items():
+                    task.put_send_recv_tasks()
 
     def _prepare_gradient_accumulation(self):
         # Allocate buffers for accumulated gradients

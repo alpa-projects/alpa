@@ -350,7 +350,7 @@ def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStag
             tasks.append(task)
 
     for task in tasks:
-        task.prepare_send_recv_tasks()
+        task.put_send_recv_tasks()
     src_phy_mesh.sync_workers()
     collective_group.dst_mesh.sync_workers()
     results = []

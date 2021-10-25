@@ -514,8 +514,21 @@ def create_instructions_from_pipeline_schedule(
 #  1. implement a base class, let two runtimes inherit this baseclass
 #  2. make some abstraction, put sharing-related functionality in baseclass, such as:
 #  creating collective_group, resharding-related logic.
-#  3. complete PipelineMeshDriverExecutable main logic.
-class PipelineMeshDriverExecutable:
+#  3. complete DecentralizedDistributedRuntime main logic.
+class DecentralizedDistributedRuntime(BaseDistributedRuntime):
+
+    def __init__(self,
+                 *,
+                 pipeline_stages,
+                 global_invars,
+                 grad_dummy_invars,
+                 global_outvars,
+                 physical_meshes,
+                 dependency,
+                 schedule,
+                 is_batch,
+                 num_batch=1):
+
 
     def __init__(self, physical_meshes):
         self.physical_meshes = physical_meshes

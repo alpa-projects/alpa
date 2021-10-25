@@ -617,10 +617,10 @@ class CollectiveGroup:
         self._destroyed = True
 
     def __del__(self):
-        if not self._destroyed:
-            self.destroy()
-            self._destroyed = True
-        return
+        if hasattr(ray.worker.global_worker, "core_worker"):
+            if not self._destroyed:
+                self.destroy()
+                self._destroyed = True
 
 
 class ReshardingTaskSpec:

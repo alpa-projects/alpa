@@ -9,7 +9,7 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
-from parax.pipeline_parallel.distributed import DecentralizedDistributedRuntime
+from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.pipeline_parallel.centralized_distributerd_runtime import (
     CentralizedDistributedRuntime)

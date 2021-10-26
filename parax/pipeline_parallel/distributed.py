@@ -1,6 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
 import enum
+import logging
 from typing import Any, Dict, Sequence, Set, List, Callable
 
 import numpy as np
@@ -20,7 +21,8 @@ from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
 from parax.util import OrderedSet, get_shard_shape
 
-
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 class PipelineInstType(enum.IntEnum):
     RUN = 0
     SEND = 1
@@ -651,6 +653,13 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     self._worker_executable_uuid_mapping[worker],
                     input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
                     **kwargs)
+
+        for mesh_idx in range(len(self.physical_meshes)):
+            inputs = input_bufs[mesh_idx]
+            for bufs, donate in zip(inputs, self.donate_invars[mesh_idx]):
+                if donate:
+                    for buf in bufs:
+                        buf.set_deleted_on_workers()
 
         # TODO(Hao): how to sync and check results?
         # construct output_bufs first.

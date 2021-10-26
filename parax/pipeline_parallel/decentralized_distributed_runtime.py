@@ -19,12 +19,18 @@ from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
-from parax.pipeline_parallel.centralized_distributerd_runtime import timer_names
-from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
+
+
+timer_names = {
+    "overall": "average",
+    "compute": "sum",
+    "resharding_send": "sum",
+    "resharding_recv": "sum"
+}
 
 
 class PipelineInstType(enum.IntEnum):
@@ -95,6 +101,12 @@ def flatten_uuid_set(container):
     return output
 
 
+def logging_instructions(instructions):
+    for ins_idx, instruction in enumerate(instructions):
+        logger.debug(">>> ins_idx {}: op code {}..."
+                     .format(ins_idx, instruction.opcode))
+
+
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
     """
     A decentralized pipeline_parallel runtime.
@@ -136,7 +148,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self._executable_uuid_worker_mapping = dict()
         # we create a PipelineMeshWorkerExecutable for each MeshHostWorker
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            for worker in physical_mesh.workers:
+            for worker_idx, worker in enumerate(physical_mesh.workers):
+                if mesh_idx == 1 and worker_idx == 0:
+                    logging_instructions(self.instruction_lists[worker])
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],
@@ -867,20 +881,20 @@ class PipelineMeshWorkerExecutable:
                                            **instruction.opaques["kwargs"])
                 timers("compute").suspend()
             elif instruction.opcode == PipelineInstType.SEND:
-                timers("resharding").start()
+                timers("resharding_send").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids)
-                timers("resharding").suspend()
+                timers("resharding_send").suspend()
             elif instruction.opcode == PipelineInstType.RECV:
-                timers("resharding").start()
+                timers("resharding_recv").start()
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques['set_empty_buffer'])
-                timers("resharding").suspend()
+                timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 self.worker.delete_buffers(instruction.input_uuids)
 
-        for timer_name in ["compute", "resharding"]:
+        for timer_name in ["compute", "resharding_send", "resharding_recv"]:
             timers(timer_name).stop()
         timers("overall").stop(sync_func=self.worker.sync)
 

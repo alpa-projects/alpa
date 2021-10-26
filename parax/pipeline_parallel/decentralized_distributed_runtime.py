@@ -197,7 +197,13 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             not_batch_invars, var_at)
 
         # Microbatch-related work
+        worker_tmp_instructions = dict()
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                worker_tmp_instructions[worker] = []
         for _, sched in enumerate(self.schedule.schedules):
+            for worker in worker_tmp_instructions:
+                worker_tmp_instructions[worker] = []
             for mesh_idx, task in enumerate(sched):
                 if not task:
                     continue
@@ -254,7 +260,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                                batch_idx == 0)
                     }
 
-                    self.instruction_lists[worker].append(
+                    worker_tmp_instructions[worker].append(
                         PipelineInstruction.RUN(exec_uuid, input_uuids,
                                                 output_uuids, kwargs))
                 # free all received buffers
@@ -262,10 +268,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     var_at[key].pop(mesh_idx) for key in received_keys
                 ]
                 for worker_idx, worker in enumerate(physical_mesh.workers):
-                    instructions = self.instruction_lists[worker]
+                    instructions = worker_tmp_instructions[worker]
                     for uuids in received_uuids:
                         instructions.append(
                             PipelineInstruction.FREE(uuids[worker_idx]))
+            for worker in worker_tmp_instructions:
+                self.instruction_lists[worker].extend(worker_tmp_instructions[worker])
         # output info
         self._compile_collect_outputs(var_at)
         # add FREE insts

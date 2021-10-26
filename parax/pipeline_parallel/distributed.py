@@ -6,6 +6,7 @@ from typing import Any, Dict, Sequence, Set, List, Callable
 import numpy as np
 from jax.core import Var
 from jax.interpreters import pxla
+import jax.numpy as jnp
 
 from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -577,6 +578,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.outs_handler: Callable = None
         self._setup_outs_handler()
 
+        # # Some private attributes.
+        # self._batchable_invar_indices: List = set([var for var, batch in zip(self.global_invars, is_batch)
+        #                                    if batch])
+        # self._unbatchable_invar_indices: List = set(self.global_invars).difference(self._batchable_invars)
+
+
     def _compile(self):
         """Precompile the stages and generate static instructions for pipelined execution."""
         # TODO(Hao): move the long function create_instructions_from_pipeline_schedule here.
@@ -591,6 +598,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.physical_meshes, self.grad_dummy_invars, self.global_invars,
             self.global_outvars, self.is_batch, self.num_batch,
             donated_invar_set)
+
+    def _split_args(self, args, batch_dim=0):
+        split_args = []
+        for arg_idx, arg in enumerate(args):
+            if self.is_batch[arg_idx]:
+                split_args.append(jnp.split(arg, self.num_batch, axis=batch_dim))
+            else:
+                split_args.append(arg)
+        return split_args
 
     def run(self, *args, **kwargs):
         """The run function that maps to train_step()."""
@@ -612,8 +628,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         ]
         self._debug_check()
 
+        split_args = self._split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            mesh_args = [args[idx] for idx in self.mesh_arg_indices[mesh_idx]]
+            mesh_args = [split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]]
             input_bufs[mesh_idx] = physical_mesh.shard_args(
                 self.input_indices[mesh_idx], self.donate_invars[mesh_idx],
                 mesh_args)

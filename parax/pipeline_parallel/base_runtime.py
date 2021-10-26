@@ -6,8 +6,9 @@ from typing import Sequence, List, Any
 
 from jax.core import Var
 
-from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
-from parax.pipeline_parallel.stage import PipelineStage
+from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, \
+    CollectiveGroup, ReshardingTask
+from parax.pipeline_parallel.stage import PipelineStage, XlaShardedPipelineStage
 
 
 class BaseRuntime(metaclass=ABCMeta):
@@ -22,7 +23,7 @@ class BaseRuntime(metaclass=ABCMeta):
         An abstract class for pipeline-parallel runtime.
 
         Args:
-            pipeline_stages (Sequence[PipelineStage]):  pipeline stages.
+            pipeline_stages (Sequence[PipelineStage, XlaShardedPipelineStage]):  pipeline stages.
             global_invars (Sequence[Var]): input variables.
             global_outvars (input variables.): output varialbes.
         """

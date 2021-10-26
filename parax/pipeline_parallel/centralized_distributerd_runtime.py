@@ -32,18 +32,10 @@ def reset_pipeline_runtime_benchmark_timers():
 
 class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=too-many-instance-attributes
     """
-    A pipeline-parallel runtime that uses a central driver process to coordinate training schedules.
+    A centralized pipeline-parallel runtime.
 
-    Args:
-        pipeline_stages (List[PipelineStage]): list of pipeline stage programs.
-        global_invars (List[Var]): input variables.
-        global_outvars (List[Var]): output variables.
-        mesh (VirtualMesh): the cluster mesh to pipeline on.
-        sharding_compilation_kwargs (dict): a dict of keyword arguments as the sharding
-            compilation parameters.
-        dependency (np.array): dependency between stages as an adjacency matrix.
-        num_batch (int): number of microbatches.
-        schedule (): schedule to follow to execute the pipeline.
+    This runtime uses a central driver process to dynamically coordinate among distributed workers and
+    schedule their pipelined training.
     """
     def __init__(self,
                  *,

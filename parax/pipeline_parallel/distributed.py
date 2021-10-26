@@ -2,6 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 import enum
 import logging
+import numpy
 from typing import Any, Dict, Sequence, Set, List, Callable
 
 import numpy as np
@@ -23,6 +24,7 @@ from parax.util import OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
+
 class PipelineInstType(enum.IntEnum):
     RUN = 0
     SEND = 1
@@ -522,19 +524,24 @@ def create_instructions_from_pipeline_schedule(
 
 
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
+    """
+    A decentralized pipeline_parallel runtime.
 
+    This runtime uses the driver to compile and generate static instructions for each
+    worker. It sends the instructions to distributed workers and launches the training.
+    See the docstring of `BaseDistributedRuntime`.
+    """
     def __init__(self,
                  *,
-                 pipeline_stages,
-                 global_invars,
+                 pipeline_stages: List[XlaShardedPipelineStage],
+                 global_invars: List[Var],
                  grad_dummy_invars,
-                 global_outvars,
-                 physical_meshes,
-                 dependency,
-                 schedule,
-                 is_batch,
+                 global_outvars: List[Var],
+                 physical_meshes: List[PhysicalDeviceMesh],
+                 dependency: np.ndarray,
+                 schedule: GpipeSchedule,
+                 is_batch: List[bool],
                  num_batch=1):
-        """TODO(Hao): add a docstring."""
         super(DecentralizedDistributedRuntime,
               self).__init__(pipeline_stages=pipeline_stages,
                              global_invars=global_invars,
@@ -586,23 +593,52 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         #                                    if batch])
         # self._unbatchable_invar_indices: List = set(self.global_invars).difference(self._batchable_invars)
 
-
     def _compile(self):
-        """Precompile the stages and generate static instructions for pipelined execution."""
-        # TODO(Hao): move the long function create_instructions_from_pipeline_schedule here.
+        """Precompile the stages and generate static instructions for each worker.
+
+        This function takes symbolic passes, allocates uuids of intermediates, and
+        creates instruction lists for all intermediates.
+        """
+        uuid_counter = 0
+
+        def get_next_uuids(num) -> np.ndarray:
+            nonlocal uuid_counter
+            ret = np.arange(start=uuid_counter,
+                            stop=uuid_counter + num,
+                            dtype=np.int64)
+            uuid_counter += num
+            return ret
+
         donated_invar_set = set()
         global_invar_set = set(self.global_invars)
         for stage in self.stages:
             for invar, donate in zip(stage.invars, stage.donated_invars):
                 if donate and invar in global_invar_set:
                     donated_invar_set.add(invar)
+
         return create_instructions_from_pipeline_schedule(
             self.schedule, self.stages, self._resharding_tasks,
             self.physical_meshes, self.grad_dummy_invars, self.global_invars,
             self.global_outvars, self.is_batch, self.num_batch,
             donated_invar_set)
 
-    def _split_args(self, args, batch_dim=0):
+    def _compile_task_configs(self):
+        """"""
+        pass
+
+    def _compile_split_input_to_microbatches(self):
+        """"""
+        pass
+
+    def _compile_collect_outputs(self):
+        """"""
+        pass
+
+    def _compile_symbolic_pass(self):
+        """"""
+        pass
+
+    def _exec_split_args(self, args, batch_dim=0):
         split_args = []
         for arg_idx, arg in enumerate(args):
             if self.is_batch[arg_idx]:
@@ -632,7 +668,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         ]
         self._debug_check()
 
-        split_args = self._split_args(args)
+        split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_args = [split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]]
             input_bufs[mesh_idx] = physical_mesh.shard_args(

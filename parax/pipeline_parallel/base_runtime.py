@@ -6,6 +6,7 @@ from typing import Sequence, List, Any
 
 from jax.core import Var
 
+from parax import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, \
     CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import PipelineStage, XlaShardedPipelineStage
@@ -58,11 +59,11 @@ class BaseRuntime(metaclass=ABCMeta):
 class BaseDistributedRuntime(BaseRuntime):
     def __init__(self,
                  *,
-                 pipeline_stages,
-                 global_invars,
+                 pipeline_stages: List[XlaShardedPipelineStage],
+                 global_invars: List[Var],
                  grad_dummy_invars,
-                 global_outvars,
-                 physical_meshes,
+                 global_outvars: List[Var],
+                 physical_meshes: List[PhysicalDeviceMesh],
                  dependency,
                  schedule,
                  is_batch,
@@ -75,15 +76,15 @@ class BaseDistributedRuntime(BaseRuntime):
         across different distributed runtime implementations.
 
         Args:
-            pipeline_stages (List[PipelineStage]): list of pipeline stage programs.
+            pipeline_stages (List[XlaShardedPipelineStage]): list of pipeline stage programs.
             global_invars (List[Var]): input variables.
             global_outvars (List[Var]): output variables.
-            mesh (VirtualMesh): the cluster mesh to pipeline on.
+            physical_meshes (List[PhysicalDeviceMesh]): the cluster meshes to pipeline over.
             sharding_compilation_kwargs (dict): a dict of keyword arguments as the sharding
                 compilation parameters.
             dependency (np.array): dependency between stages as an adjacency matrix.
             num_batch (int): number of microbatches.
-            schedule (): schedule to follow to execute the pipeline.
+            schedule (GpipeSchedule): schedule to follow to execute the pipeline.
         """
         super(BaseDistributedRuntime, self).__init__(
             pipeline_stages=pipeline_stages,

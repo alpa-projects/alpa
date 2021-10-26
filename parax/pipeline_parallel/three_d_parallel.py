@@ -1,6 +1,6 @@
 """3D parallel on a Ray cluster."""
 import logging
-from typing import Sequence
+from typing import Sequence, List
 
 import jax
 from jax import linear_util as lu
@@ -20,7 +20,7 @@ from parax.pipeline_parallel.stage import (
     compute_to_acc_pipe, generate_sharded_xla_stages, get_var_mapping,
     mark_grad_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
     rearrange_vars, slice_apply_gradient,
-    slice_closed_jaxpr_by_full_pipeline_marks)
+    slice_closed_jaxpr_by_full_pipeline_marks, XlaShardedPipelineStage)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)

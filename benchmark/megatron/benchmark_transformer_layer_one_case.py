@@ -8,6 +8,7 @@ import numpy as np
 from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
 from megatron.model import DistributedDataParallel as LocalDDP
+from megatron.model import ModelType
 from megatron import mpu, initialize_megatron, get_args, get_timers
 from megatron.training import train_step, setup_model_and_optimizer
 
@@ -57,6 +58,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     sys.argv += ["--train-iters", "100"]
     sys.argv += ["--lr", "0.00015"]
     sys.argv += ["--DDP-impl", "local" if ddp_impl else "torch"]
+    # sys.argv += ["--no-scatter-gather-tensors-in-pipeline"]
     # sys.argv += ["--fp16"]
     if checkpoint_activations:
         sys.argv += ["--checkpoint-activations"]
@@ -101,8 +103,11 @@ def benchmark_transformer_layer_one_case(benchmark_case):
         def forward_step(data_iterator, model):
             # Note(Hao): Megatron PP uses model.module.input_tensor to overwrite
             # the input tensor to `model()`.
-            if model.module.input_tensor is None:
+            if model.module.input_tensor == [None]:
                 model.module.set_input_tensor(x)
+            else:
+                input_tensor = model.module.input_tensor
+                model.module.set_input_tensor(input_tensor[0])
             output_tensor = model(x, attention_mask)
             return output_tensor, loss_func
 
@@ -110,7 +115,8 @@ def benchmark_transformer_layer_one_case(benchmark_case):
 
     # Build model
     model_provider, loss_func, forward_step = get_transformer_functions()
-    model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider)
+    model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider,
+                                                               model_type=ModelType.encoder_or_decoder)
     if rank == 0:
         print(model)
 
@@ -127,20 +133,20 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     def sync_func():
         torch.cuda.synchronize()
 
-    repeat = 2
-    number = 5
+    repeat = 10
+    number = 1
     costs = benchmark_func(run_func, sync_func=sync_func,
-                           warmup=1, repeat=repeat, number=number)
+                           warmup=0, repeat=repeat, number=number)
+    # timers.log(names, normalizer=repeat * number)
 
     # Print results
     if rank == 0:
         peak_mem = torch.cuda.max_memory_allocated(0)
-        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Weight Mem",
+        heads = ["Type", "Case", "Mesh Shape", "#MB", "DDP Impl",
                  "Peak Mem", "Mean Time", "Std Time"]
         values = ["transformer-layer", str(benchmark_case[:-3]),
-                  str(benchmark_case[-6:-3]), str(benchmark_case[-2]),
-                  f"{0/GB:5.3f}", f"{peak_mem/GB:5.3f}",
-                  f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+                  str(benchmark_case[-6:-3]), str(benchmark_case[-3]), str(benchmark_case[-2]),
+                  f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
         write_tsv(heads, values, "result_trans.tsv")
 
 

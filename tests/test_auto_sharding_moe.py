@@ -8,11 +8,13 @@ import numpy as np
 from flax import linen as nn
 from flax import optim
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
+import optax
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
-from parax.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig
+from parax.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
+from parax.model.model_util import optax_adafactor
 
 from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
                                     assert_expert_partitioned)
@@ -93,26 +95,25 @@ class AutoShardingMoETest(unittest.TestCase):
         set_parallelize_options(devices=device_mesh)
 
         @parallelize
-        def train_step(optimizer, batch):
-
+        def train_step(state, batch, deterministic, rng_key):
             def loss_func(params):
-                rngs = {"dropout": batch["rng"]}
-                logits = model.apply(params,
-                                     batch["input_ids"],
-                                     batch["attention_mask"],
-                                     batch["token_type_ids"],
-                                     batch["position_ids"],
-                                     deterministic=deterministic,
-                                     rngs=rngs)[0]
+                rngs = {"dropout": rng_key}
+                logits = state.apply_fn(params,
+                                        batch["input_ids"],
+                                        batch["attention_mask"],
+                                        batch["token_type_ids"],
+                                        batch["position_ids"],
+                                        deterministic=deterministic,
+                                        rngs=rngs)[0]
                 label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
                 labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
-                loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1),
-                                axis=-1)
-                return (label_mask * loss).sum() / label_mask.sum() * 0.1234
+                loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+                loss = (label_mask * loss).sum() / label_mask.sum()
+                return loss
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grads = jax.grad(loss_func)(state.params)
+            new_state = state.apply_gradients(grads=grads)
+            return new_state
 
         # Init model and optimizer
         input_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
@@ -135,23 +136,36 @@ class AutoShardingMoETest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, input_ids, attention_mask, token_type_ids,
                             position_ids)
-        optimizer = optim.Adam(1e-2).create(params)
+
+        def weight_decay_mask(pytree):
+            # do not use weight decay on layer norm and bias.
+            return jax.tree_map(lambda x: x.ndim > 1, pytree)
+
+        tx = optax_adafactor(
+            learning_rate=1e-2, weight_decay_mask=weight_decay_mask,
+            min_dim_size_to_factor=4,
+        )
+
+        state = TrainState.create(
+            apply_fn=model.apply,
+            params=params,
+            tx=tx,
+            dynamic_scale=None)
 
         # JIT compile
-        optimizer = train_step(
-            optimizer, {
+        state = train_step(
+            state, {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
                 "token_type_ids": token_type_ids,
                 "position_ids": position_ids,
                 "labels": labels,
-                "rng": rngkey
-            })
+            }, deterministic, rngkey)
 
         # Get optimized HLO IR
         hlo_module = testing.last_compiled_executable.hlo_modules()[0]
         hlo_ir = hlo_module.to_string()
-        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
+        return state, hlo_ir, testing.last_compiled_auto_sharding_objective
 
     def test_moe_layer(self):
         batch_size = 64
@@ -213,7 +227,7 @@ class AutoShardingMoETest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_moe_lm(
+            state, hlo_ir, objective = self.run_moe_lm(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, S, E, deterministic, device_mesh)
 
@@ -221,15 +235,38 @@ class AutoShardingMoETest(unittest.TestCase):
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
                 count_communication_primitives(hlo_ir)
-            assert n_all_reduce <= 2
-            assert n_all_to_all == 4
-            assert n_total == n_all_reduce + n_all_to_all
+
+            if global_config.prefer_reduce_scatter:
+                if global_config.force_data_parallel:
+                    assert n_all_gather <= 2
+                    assert n_reduce_scatter <= 2
+                    assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
+                else:
+                    assert n_all_gather <= 2
+                    assert n_reduce_scatter == 1
+                    assert n_all_to_all == 4
+                    assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
+            else:
+                assert n_all_reduce <= 3
+                assert n_all_to_all == 4
+                assert n_total == n_all_reduce + n_all_to_all
+
+    def test_moe_lm_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_moe_lm()
+
+    def test_moe_lm_data_parallel_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        global_config.force_data_parallel = True
+        self.test_moe_lm()
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMoETest("test_moe_layer"))
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
 
     return suite
 

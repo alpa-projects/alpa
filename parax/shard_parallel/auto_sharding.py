@@ -407,6 +407,22 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
                                                        logical_mesh)
 
 
+def sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape):
+    logical_mesh = LogicalDeviceMesh(
+        None,
+        np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
+    sharding_type, _, _, tuple_shardings, _ = proto_tuple
+    if sharding_type == OpSharding.Type.TUPLE:
+        avals = aval
+        return [
+            _hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
+            for (shard, aval) in zip(tuple_shardings, avals)
+        ]
+    else:
+        return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval,
+                                                       logical_mesh)
+
+
 def make_replicated_spec(aval, logical_mesh_shape):
     """Make a replicated ShardingSpec."""
     sharding = (pxla.NoSharding(),) * len(aval.shape)
@@ -661,8 +677,9 @@ def _call_solver_serialized_args(
     # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
     prob.solve(solver)
 
-    objective = float(pulp.value(prob.objective))
     status = prob.status
+    objective = pulp.value(prob.objective)
+    objective = float(objective) if objective is not None else -1.0
     if verbose:
         print(f"ILP Status: {LpStatus[status]}\tObjective: {objective}\t"
               f"Time: {time.time() - tic}")

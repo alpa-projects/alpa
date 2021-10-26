@@ -1,0 +1,41 @@
+# GPT
+weak_scaling_model	p3.24xlarge	1	1	GPT	parax.auto_sharding	{'latencies': [0.442558, 0.442168, 0.442196], 'tflops': 66.418925, 'alloc_mem': 19.187883, 'param_count': 0.555996}	1634066610
+weak_scaling_model	p3.24xlarge	1	2	GPT	parax.auto_sharding	{'latencies': [0.543848, 0.543993, 0.543986], 'tflops': 57.561843, 'alloc_mem': 18.068023, 'param_count': 1.211469}	1634066656
+weak_scaling_model	p3.24xlarge	1	4	GPT	parax.auto_sharding	{'latencies': [0.4347, 0.434863, 0.434875], 'tflops': 62.22978, 'alloc_mem': 15.610371, 'param_count': 2.1186}	1634066706
+weak_scaling_model	p3.24xlarge	1	8	GPT	parax.auto_sharding	{'latencies': [0.48021, 0.480223, 0.480577], 'tflops': 61.562758, 'alloc_mem': 17.059918, 'param_count': 4.687836}	1634066770
+weak_scaling_model	p3.24xlarge	1	1	GPT	parax.data_parallel	{'latencies': [0.442346, 0.44207, 0.441983], 'tflops': 66.445083, 'alloc_mem': 19.187883, 'param_count': 0.555996}	1634066791
+weak_scaling_model	p3.24xlarge	1	2	GPT	parax.data_parallel	{'latencies': [0.585993, 0.585449, 0.5875], 'tflops': 53.40194, 'alloc_mem': 24.446645, 'param_count': 1.211469}	1634066833
+weak_scaling_model	p3.24xlarge	1	4	GPT	parax.data_parallel	{'latencies': [-1], 'tflops': -27.058294, 'alloc_mem': 33.441919, 'param_count': 2.1186}	1634066868
+weak_scaling_model	p3.24xlarge	1	8	GPT	parax.data_parallel	{'latencies': [-1], 'tflops': -29.57085, 'alloc_mem': 70.009791, 'param_count': 4.687836}	1634066905
+weak_scaling_model	p3.24xlarge	1	1	GPT	parax.zero_2	{'latencies': [0.442471, 0.443338, 0.442281], 'tflops': 66.360524, 'alloc_mem': 19.187883, 'param_count': 0.555996}	1634066926
+weak_scaling_model	p3.24xlarge	1	2	GPT	parax.zero_2	{'latencies': [0.558792, 0.559358, 0.560065], 'tflops': 55.970755, 'alloc_mem': 17.659448, 'param_count': 1.211469}	1634066980
+weak_scaling_model	p3.24xlarge	1	4	GPT	parax.zero_2	{'latencies': [0.449558, 0.449223, 0.449699], 'tflops': 60.19732, 'alloc_mem': 15.521778, 'param_count': 2.1186}	1634067027
+weak_scaling_model	p3.24xlarge	1	8	GPT	parax.zero_2	{'latencies': [0.506225, 0.50663, 0.506975], 'tflops': 58.370021, 'alloc_mem': 19.448246, 'param_count': 4.687836}	1634067084
+
+# W-ResNet
+weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax.auto_sharding	{'latencies': [3.109376, 3.1129, 3.111272], 'tflops': 8.656475, 'alloc_mem': 21.854661, 'param_count': 0.895432}	1634075305
+weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax.auto_sharding	{'latencies': [3.340949, 3.344781, 3.340027], 'tflops': 8.218375, 'alloc_mem': 19.915908, 'param_count': 1.82284}	1634075372
+weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax.auto_sharding	{'latencies': [3.329919, 3.325844, 3.327158], 'tflops': 8.085355, 'alloc_mem': 18.718459, 'param_count': 3.566792}	1634075449
+weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax.auto_sharding	{'latencies': [3.37416, 3.367409, 3.379114], 'tflops': 8.135634, 'alloc_mem': 18.848623, 'param_count': 7.270024}	1634075544
+weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax.data_parallel	{'latencies': [3.115344, 3.117079, 3.114016], 'tflops': 8.644536, 'alloc_mem': 21.854661, 'param_count': 0.895432}	1634075977
+weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax.data_parallel	{'latencies': [-1], 'tflops': -27.465145, 'alloc_mem': 28.020801, 'param_count': 1.82284}	1634076014
+weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax.data_parallel	{'latencies': [-1], 'tflops': -26.905154, 'alloc_mem': 53.497594, 'param_count': 3.566792}	1634076054
+weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax.data_parallel	{'latencies': [-1], 'tflops': -27.446059, 'alloc_mem': 108.579558, 'param_count': 7.270024}	1634076099
+weak_scaling_model	p3.24xlarge	1	1	W-ResNet	parax.zero_2	{'latencies': [3.113702, 3.116365, 3.114926], 'tflops': 8.645873, 'alloc_mem': 21.854661, 'param_count': 0.895432}	1634075760
+weak_scaling_model	p3.24xlarge	1	2	W-ResNet	parax.zero_2	{'latencies': [3.451629, 3.454241, 3.452497], 'tflops': 7.954481, 'alloc_mem': 22.960499, 'param_count': 1.82284}	1634075823
+weak_scaling_model	p3.24xlarge	1	4	W-ResNet	parax.zero_2	{'latencies': [-1], 'tflops': -26.905154, 'alloc_mem': 33.781905, 'param_count': 3.566792}	1634075864
+weak_scaling_model	p3.24xlarge	1	8	W-ResNet	parax.zero_2	{'latencies': [-1], 'tflops': -27.446059, 'alloc_mem': 61.647597, 'param_count': 7.270024}	1634075908
+
+# MoE
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax.auto_sharding	{'latencies': [0.567483, 0.566811, 0.566846], 'tflops': 46.142997, 'alloc_mem': 21.153457, 'param_count': 1.011568}	1634278989
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax.auto_sharding	{'latencies': [0.717764, 0.716552, 0.715691], 'tflops': 45.526071, 'alloc_mem': 20.009902, 'param_count': 2.786934}	1634279157
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax.auto_sharding	{'latencies': [0.713488, 0.712956, 0.713352], 'tflops': 48.533148, 'alloc_mem': 18.089644, 'param_count': 6.244772}	1634279339
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax.auto_sharding	{'latencies': [0.634051, 0.633562, 0.634509], 'tflops': 47.06719, 'alloc_mem': 15.023369, 'param_count': 11.078866}	1634279499
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax.data_parallel	{'latencies': [0.567114, 0.566636, 0.566439], 'tflops': 46.168802, 'alloc_mem': 21.153457, 'param_count': 1.011568}	1634279555
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -32.627131, 'alloc_mem': 27.37597, 'param_count': 2.786934}	1634279744
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -34.617005, 'alloc_mem': 47.721193, 'param_count': 6.244772}	1634280001
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax.data_parallel	{'latencies': [-1], 'tflops': -29.842509, 'alloc_mem': 83.478871, 'param_count': 11.078866}	1634280194
+weak_scaling_model	p3.24xlarge	1	1	MoE	parax.zero_2	{'latencies': [0.566494, 0.567149, 0.566911], 'tflops': 46.158886, 'alloc_mem': 21.153457, 'param_count': 1.011568}	1634280250
+weak_scaling_model	p3.24xlarge	1	2	MoE	parax.zero_2	{'latencies': [0.987931, 1.017984, 1.014392], 'tflops': 32.407757, 'alloc_mem': 22.255184, 'param_count': 2.786934}	1634280415
+weak_scaling_model	p3.24xlarge	1	4	MoE	parax.zero_2	{'latencies': [-1], 'tflops': -34.617005, 'alloc_mem': 26.111277, 'param_count': 6.244772}	1634280582
+weak_scaling_model	p3.24xlarge	1	8	MoE	parax.zero_2	{'latencies': [-1], 'tflops': -29.842509, 'alloc_mem': 32.444765, 'param_count': 11.078866}	1634280718

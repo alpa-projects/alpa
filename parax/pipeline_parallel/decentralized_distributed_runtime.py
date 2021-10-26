@@ -765,11 +765,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         if return_all_costs:
             return mesh_costs
 
+        min_costs = [1.0e9] * len(mesh_costs[0])
         max_costs = [0] * len(mesh_costs[0])
         for mesh_cost in mesh_costs:
             for i, cost in enumerate(mesh_cost):
                 if cost > max_costs[i]:
                     max_costs[i] = cost
+                if cost < min_costs[i]:
+                    min_costs[i] = cost
         return max_costs
 
     def reset_benchmark_timers(self):
@@ -871,6 +874,7 @@ class PipelineMeshWorkerExecutable:
 
         for timer_name in ["compute", "resharding"]:
             timers(timer_name).stop()
+        timers("overall").stop(sync_func=self.worker.sync)
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)
@@ -880,7 +884,6 @@ class PipelineMeshWorkerExecutable:
             global_ids = list(global_ids)
             for local_id, global_id in zip(local_ids, global_ids):
                 self.global_buffers[global_id] = buffers[local_id]
-        timers("overall").stop(sync_func=self.worker.sync)
 
         # monkey patch
         self.worker.buffers = self.global_buffers

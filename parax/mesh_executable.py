@@ -356,9 +356,10 @@ class NormalMeshWorkerExecutable:
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
 
         # Execute the executable
-        timers(self.timer_name).start(self.sync_func)
+        # TODO(Hao): I made it async.
+        timers(self.timer_name).start()
         output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop()
 
         # Store output buffers
         for i in range(len(output_uuids)):

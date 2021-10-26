@@ -555,8 +555,6 @@ class CollectiveGroup:
         # generate a group name
         self.group_name = ",".join(self.device_strs)
 
-        self._destroyed = False
-
         # construct a device str -> rank: (process_rank, gpu_index) map
         self.device_str_to_rank_map = dict()
         self.device_str_to_mesh_worker_map = dict()
@@ -614,13 +612,6 @@ class CollectiveGroup:
             ray.kill(store)
         except ValueError:
             pass
-        self._destroyed = True
-
-    def __del__(self):
-        if hasattr(ray.worker.global_worker, "core_worker"):
-            if not self._destroyed:
-                self.destroy()
-                self._destroyed = True
 
 
 class ReshardingTaskSpec:

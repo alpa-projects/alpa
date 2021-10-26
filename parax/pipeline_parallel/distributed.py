@@ -2,8 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 import enum
 import logging
-import numpy
-from typing import Any, Dict, Sequence, Set, List, Callable
+from typing import Any, Dict, Sequence, List, Callable
 
 import numpy as np
 from jax.core import Var
@@ -94,8 +93,6 @@ def flatten_uuid_set(container):
     return output
 
 
-# There are too many inputs and outputs, why not merge this function into
-# the new runtime and set its member directly.
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
     """
     A decentralized pipeline_parallel runtime.
@@ -128,6 +125,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                              num_batch=num_batch)
 
         self.uuid_counter = 0
+        self.instruction_lists = dict()
+
         # make this the states of this class
         executable_config_lists, input_local_uuid_list = self._compile()
 
@@ -151,11 +150,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.outs_handler: Callable = None
         self._setup_outs_handler()
 
-        # # Some private attributes.
-        # self._batchable_invar_indices: List = set([var for var, batch in zip(self.global_invars, is_batch)
-        #                                    if batch])
-        # self._unbatchable_invar_indices: List = set(self.global_invars).difference(self._batchable_invars)
-
     def get_next_uuids(self, num) -> np.ndarray:
         ret = np.arange(start=self.uuid_counter,
                         stop=self.uuid_counter + num,
@@ -169,7 +163,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         This function takes symbolic passes, allocates uuids of intermediates, and
         creates instruction lists for all intermediates.
         """
-        num_mesh = len(self.physical_meshes)
+        num_mesh = self.num_mesh
         not_batch_invars = set([
             var for var, batch in zip(self.global_invars, self.is_batch)
             if not batch
@@ -189,7 +183,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 key = (repr(invar), batch_idx)
             return var_key, key
 
-        self.instruction_lists = dict()
+        # TODO: make the var_at an attribute instead of a ref.
         var_at = dict()
         # Microbatch-unrelated work
         # compile args for tasks
@@ -297,8 +291,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _compile_task_configs(self, var_at):
         """
-        Assign uuids for each task and prepare configs,
-        as a replacement of MeshWorkerExecutable.__init__
+        Assign uuids for each task and prepare configs, as a replacement of MeshWorkerExecutable.__init__
+
         Returns:
             executable_config_lists (Dict[MeshHostWorker, Sequence[ExecutableConfig]]):
                 configs of executables put on each mesh
@@ -595,13 +589,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def run(self, *args, **kwargs):
         """The run function that maps to train_step()."""
-        """ Done 1. shard inputs (send input to each remote worker)
-            Done: 2. launch each worker to start instructions,
-            Done: 3. prepare outputs  
-            Done: 4. handle RDA
-            5. sync after each iter
-        """
-
         input_bufs: List[Any] = [None for _ in range(self.num_mesh)]
         input_uuids: List[Any] = [None for _ in range(self.num_mesh)]
         output_bufs: List[Any] = [None for _ in range(self.num_mesh)]
@@ -637,6 +624,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
                     **kwargs)
 
+        # Handle donation
         for mesh_idx in range(len(self.physical_meshes)):
             inputs = input_bufs[mesh_idx]
             for bufs, donate in zip(inputs, self.donate_invars[mesh_idx]):
@@ -666,7 +654,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         output_uuid_transposed[i][host_id][device_id],
                         dtype=dtype)
 
-        # TODO: do we need to handle donation here?
         return self.outs_handler(output_bufs)
 
     def _setup_outs_handler(self):
@@ -720,8 +707,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.outs_handler = outs_handler
 
     @cached_property
-    def mesh_index_to_outvar_indices_mapping(self):
-        # TODO(Hao): check the order here...
+    def mesh_index_to_outvar_indices_mapping(self) -> Dict[int, List[int]]:
+        """
+        A mapping from mesh index to its related global invar index.
+
+        Returns:
+            mapping (Dict[int, List[int]]): mapping[mesh_idx] is a list containing
+                the indices of global outvars of this mesh.
+        """
         if self.mesh_output_indices is None:
             raise RuntimeError()
         mapping = dict()
@@ -734,7 +727,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         return mapping
 
     @cached_property
-    def outvar_index_to_mesh_index_mapping(self):
+    def outvar_index_to_mesh_index_mapping(self) -> Dict[int, List[int]]:
+        """
+        A mapping from an outvar to the indices of meshes it locates on.
+
+        Returns:
+            mapping (Dict[int, List[int]]): mapping[outvar_idx] is a list
+                containing the indices of meshes it locates on.
+        """
         if self.mesh_output_indices is None:
             raise RuntimeError()
         mapping = dict()
@@ -752,12 +752,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     assert len(self.output_local_uuid_list[worker]) == num_outs
 
     def shutdown(self):
-        """"""
-        # TODO(Hao):
-        #  1. delete all PipelineMeshWorkerExecutable
-        #  2. delete all PartialGradAccMeshWorkerExecutable and AllocZeroBufferWorkerExecutable put
-        #  by PipelineMeshWorkerExecutable
-        pass
+        self._destroy_collective_groups()
+        if not self.physical_meshes:
+            raise RuntimeError("No physical meshes spawned yet in "
+                               "the runtime before shutting down.")
+        for mesh in self.physical_meshes:
+            mesh.shutdown()
 
 
 class PipelineMeshWorkerExecutable:
@@ -773,18 +773,21 @@ class PipelineMeshWorkerExecutable:
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids
         self.donate_invars = donate_invars
+
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
-        # Local executables and tasks
-        self.executables = dict()
-        self.send_tasks = dict()
-        self.recv_tasks = dict()
+
         self.global_executables = worker.executables
         self.global_send_tasks = worker.send_tasks
         self.global_recv_tasks = worker.recv_tasks
+
+        # my related executables
+        self._related_exec_uuids = []
+
         # Create tasks
         for task_config in executable_configs:
+            self._related_exec_uuids.append(task_config.exec_uuid)
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
@@ -846,3 +849,8 @@ class PipelineMeshWorkerExecutable:
         # Clean the dict
         buffers.clear()
         return True
+
+    def __del__(self):
+        self.worker.delete_executable(self.my_uuid)
+        for exec_id in self._related_exec_uuids:
+            self.worker.delete_executable(exec_id)

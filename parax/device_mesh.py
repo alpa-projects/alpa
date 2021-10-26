@@ -61,7 +61,7 @@ class MeshHostWorker:
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
         self.buffers = {}  # Dict[uuid -> DeviceArray]
-        self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
+        self.executables = {}
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         set_override_backend(self.backend)

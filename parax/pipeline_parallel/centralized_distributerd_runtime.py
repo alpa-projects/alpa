@@ -342,11 +342,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
     def shutdown(self):
         """Shutdown the pipeline runtime."""
         # Recycle the groups an Ray resources
-        for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                if i < j and self._collective_groups[i][j]:
-                    self._collective_groups[i][j].destroy()
-
+        self._destroy_collective_groups()
         # Recycle the recompiled runnables
         del self._runnables
 
@@ -356,6 +352,5 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                                "the runtime before shutting down.")
         for mesh in self.physical_meshes:
             mesh.shutdown()
-
         # reset all timers
         reset_pipeline_runtime_benchmark_timers()

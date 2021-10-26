@@ -6,7 +6,7 @@ from typing import Sequence, List, Any
 
 from jax.core import Var
 
-from parax import PhysicalDeviceMesh
+from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, \
     CollectiveGroup, ReshardingTask
 from parax.pipeline_parallel.stage import PipelineStage, XlaShardedPipelineStage
@@ -207,3 +207,9 @@ class BaseDistributedRuntime(BaseRuntime):
             for j in range(self.num_mesh):
                 for _, task in self._resharding_tasks[i][j].items():
                     task.put_send_recv_tasks()
+
+    def _destroy_collective_groups(self):
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i < j and self._collective_groups[i][j]:
+                    self._collective_groups[i][j].destroy()

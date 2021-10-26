@@ -19,6 +19,7 @@ from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)

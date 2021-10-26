@@ -70,10 +70,10 @@ class PipelineInstruction:
 
 
 AllocateZeroWorkerExecutableConfig = namedtuple(
-    "AllocZeroWorkerExecutableConfig",
+    "AllocateZeroWorkerExecutableConfig",
     ["exec_uuid", "grad_shard_shapes", "grad_shard_dtypes"])
 PartialGradWorkerExecutableConfig = namedtuple(
-    "GradAccWorkerExecutableConfig",
+    "PartialGradWorkerExecutableConfig",
     ["exec_uuid", "hlo_proto", "strategy_config", "grad_sync_channel_ids"])
 
 
@@ -512,6 +512,7 @@ def create_instructions_from_pipeline_schedule(
                     np.array(unused_uuids)))
                 used_later_uuids.update(input_uuids)
             new_list.append(instruction)
+        instruction_lists[worker] = list(reversed(new_list))
 
     return (instruction_lists, executable_config_lists, mesh_arg_indices,
             donated_invar_list, input_indices_list, input_local_uuid_list,
@@ -562,7 +563,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         executable_config_lists[worker],
                         donated_invar_list[mesh_idx])
                 uuid = next_mesh_executable_uuid()
-                worker.put_executable.remote(next_mesh_executable_uuid(),
+                worker.put_executable.remote(uuid,
                                              PipelineMeshWorkerExecutable,
                                              *args)
                 self._worker_executable_uuid_mapping[worker] = uuid
@@ -603,7 +604,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         split_args = []
         for arg_idx, arg in enumerate(args):
             if self.is_batch[arg_idx]:
-                split_args.append(jnp.split(arg, self.num_batch, axis=batch_dim))
+                for split in jnp.split(arg, self.num_batch, axis=batch_dim):
+                    split_args.append(split)
             else:
                 split_args.append(arg)
         return split_args
@@ -640,7 +642,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 .reshape(len(mesh_args), num_hosts, num_devices_per_host) \
                 .transpose([1, 0, 2])
             output_uuids[mesh_idx] = next_remote_buffer_uuid(num_hosts * num_outs[mesh_idx] * num_devices_per_host) \
-                .reshape(num_hosts, num_outs, num_devices_per_host)
+                .reshape(num_hosts, num_outs[mesh_idx], num_devices_per_host)
 
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -656,7 +658,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             num_devices_per_host = physical_mesh.num_devices_per_host
             output_uuid_transposed = output_uuids[mesh_idx].transpose([1, 0, 2])
             output_bufs[mesh_idx] = np.empty(
-                (num_outs, physical_mesh.total_devices), dtype=object)
+                (num_outs[mesh_idx], physical_mesh.total_devices), dtype=object)
             for i in range(num_outs[mesh_idx]):
                 for j in range(physical_mesh.total_devices):
                     host_id = j // num_devices_per_host
@@ -692,7 +694,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     # construct DA
                     mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
                     device_mesh = self.physical_meshes[mesh_idx]
-                    outvar_index_on_mesh = self.mesh_output_indices[i][0]
+                    outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
                     spec = self.output_spec_list[mesh_idx][outvar_index_on_mesh]
                     arr = DistributedArray(
                         device_mesh=device_mesh,
@@ -707,15 +709,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     for j, mesh_idx in enumerate(
                             self.outvar_index_to_mesh_index_mapping[i]):
                         meshes.append(self.physical_meshes[mesh_idx])
-                        outvar_index_on_mesh = self.mesh_output_indices[i][j]
+                        outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
                         spec = self.output_spec_list[mesh_idx][
                             outvar_index_on_mesh]
-                        distributed_arrays[j] = DistributedArray(
+                        distributed_arrays.append(DistributedArray(
                             device_mesh=self.physical_meshes[mesh_idx],
                             aval=aval,
                             sharding_spec=spec,
                             remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
-                            indices=pxla.spec_to_indices(aval.shape, spec))
+                            indices=pxla.spec_to_indices(aval.shape, spec)))
                     arr = ReplicatedDistributedArray(meshes, distributed_arrays)
                 ret.append(arr)
             return ret

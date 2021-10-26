@@ -630,10 +630,10 @@ class PhysicalDeviceMesh:
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     input_bufs.append(arg.remote_buffers)
-                # elif isinstance(arg, ReplicatedDistributedArray):
-                #     replica = arg.get_replica_on_mesh(self)
-                #     assert replica.indices == indices
-                #     input_bufs.append(replica.remote_buffers)
+                elif isinstance(arg, ReplicatedDistributedArray):
+                    replica = arg.get_replica_on_mesh(self)
+                    assert replica.indices == indices
+                    input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)

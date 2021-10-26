@@ -49,7 +49,7 @@ class GlobalConfig:
 
     def backup(self):
         """Backup the configs."""
-        return copy.deepcopy(self.__dict__)
+        return copy.copy(self.__dict__)
 
     def restore(self, saved_dict):
         """Restore the configs from a backup."""

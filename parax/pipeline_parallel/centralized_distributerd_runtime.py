@@ -9,7 +9,7 @@ import ray
 from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, CollectiveGroup, ReshardingTask
+from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.global_env import global_config
 from parax.timer import timers
 
@@ -169,10 +169,8 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                     continue
                 batch_idx, stage_idx = task
 
-                timers("identify_input").start()
                 inputs = self._identify_stage_inputs(clock, stage_idx,
                                                      batch_idx)
-                timers("identify_input").suspend()
 
                 timers("resharding").start()
                 # check DistributedArray colocation and do resharding if necessary
@@ -193,7 +191,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                 ">>> At clock {}, pipelining jobs finished!".format(clock))
 
         # stop loop timers
-        for timer_name in ["compute", "resharding", "identify_input"]:
+        for timer_name in ["compute", "resharding"]:
             timers(timer_name).stop()
 
         global_outvals_list = []

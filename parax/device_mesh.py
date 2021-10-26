@@ -339,6 +339,10 @@ class MeshHostWorker:
     def get_timer(self, name: str):
         return timers(name)
 
+    def reset_timer(self, name : str):
+        timers(name).reset()
+        return True
+
     ##### Other Functions #####
     def sync(self):
         for device in self.local_devices:
@@ -718,6 +722,13 @@ class PhysicalDeviceMesh:
             return ray.get(self.workers[0].get_timer.remote(timer_name))
         else:
             return timers(timer_name)
+
+    def reset_remote_timer(self, timer_name: str):
+        if self.is_distributed:
+            for worker in self.workers:
+                ray.get(worker.reset_timer.remote(timer_name))
+        else:
+            timers(timer_name).reset()
 
     ##### Other Functions #####
     def sync_workers(self):

@@ -19,6 +19,8 @@ from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
 from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.pipeline_parallel.centralized_distributerd_runtime import timer_names
+from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)
@@ -183,7 +185,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 key = (repr(invar), batch_idx)
             return var_key, key
 
-        # TODO: make the var_at an attribute instead of a ref.
+        # TODO(Hao): make the var_at an attribute instead of a ref.
         var_at = dict()
         # Microbatch-unrelated work
         # compile args for tasks
@@ -643,7 +645,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for j in range(physical_mesh.total_devices):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
-                    # TODO(Hao): check this
                     dtype = self.global_outvars[
                         self.mesh_index_to_outvar_indices_mapping[mesh_idx]
                         [i]].aval.dtype
@@ -751,11 +752,37 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 else:
                     assert len(self.output_local_uuid_list[worker]) == num_outs
 
+    def get_execution_time_costs(self, warmup=2, timer_name="overall",
+                                 return_all_costs=False):
+        if timer_name not in timer_names:
+            raise RuntimeError(
+                "Unrecognized timer name for pipeline parallel runtime. "
+                "Query timer name from the following: {}.".format(
+                    timer_names.keys()))
+        mesh_costs = []
+        for mesh in self.physical_meshes:
+            mesh_costs.append(mesh.get_remote_timer(timer_name).costs[warmup:])
+        if return_all_costs:
+            return mesh_costs
+
+        max_costs = [0] * len(mesh_costs[0])
+        for mesh_cost in mesh_costs:
+            for i, cost in enumerate(mesh_cost):
+                if cost > max_costs[i]:
+                    max_costs[i] = cost
+        return max_costs
+
+    def reset_benchmark_timers(self):
+        for name in timer_names:
+            for mesh in self.physical_meshes:
+                mesh.reset_remote_timer(name)
+
     def shutdown(self):
         self._destroy_collective_groups()
         if not self.physical_meshes:
             raise RuntimeError("No physical meshes spawned yet in "
                                "the runtime before shutting down.")
+        self.reset_benchmark_timers()
         for mesh in self.physical_meshes:
             mesh.shutdown()
 
@@ -819,21 +846,31 @@ class PipelineMeshWorkerExecutable:
         self.worker.buffers = buffers
 
         # Execute
+        timers("overall").start(sync_func=self.worker.sync)
         for instruction in self.instructions:
             if instruction.opcode == PipelineInstType.RUN:
+                timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
+                timers("compute").suspend()
             elif instruction.opcode == PipelineInstType.SEND:
+                timers("resharding").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids)
+                timers("resharding").suspend()
             elif instruction.opcode == PipelineInstType.RECV:
+                timers("resharding").start()
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques['set_empty_buffer'])
+                timers("resharding").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 self.worker.delete_buffers(instruction.input_uuids)
+
+        for timer_name in ["compute", "resharding"]:
+            timers(timer_name).stop()
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)
@@ -843,6 +880,7 @@ class PipelineMeshWorkerExecutable:
             global_ids = list(global_ids)
             for local_id, global_id in zip(local_ids, global_ids):
                 self.global_buffers[global_id] = buffers[local_id]
+        timers("overall").stop(sync_func=self.worker.sync)
 
         # monkey patch
         self.worker.buffers = self.global_buffers

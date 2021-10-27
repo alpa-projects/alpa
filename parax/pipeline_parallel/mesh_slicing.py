@@ -15,7 +15,6 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
 from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stage_jaxprs
-from parax.pipeline_parallel.three_d_parallel import get_donation_mapping_and_modify
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)

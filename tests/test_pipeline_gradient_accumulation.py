@@ -10,7 +10,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, manual_layer_slicing)
+                   DeviceCluster, manual_layer_slicing, automatic_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayer, TrainState
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 from parax.testing import assert_allclose
@@ -29,15 +29,18 @@ def create_train_state(rngkey, model, params):
 class MLP_Model(nn.Module):
     hidden_dim: int
     output_dim: int
+    manual_pipeline_layer: bool = True
 
     @nn.compact
     def __call__(self, x):
-        mark_pipeline(name='1', mark_type='start')
+        if self.manual_pipeline_layer:
+            mark_pipeline(name='1', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        mark_pipeline(name='1', mark_type='end')
-        mark_pipeline(name='2', mark_type='start')
+        if self.manual_pipeline_layer:
+            mark_pipeline(name='1', mark_type='end')
+            mark_pipeline(name='2', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
         x = nn.Dense(features=self.output_dim, use_bias=True)(x)
         return x
@@ -46,17 +49,20 @@ class MLP_Model(nn.Module):
 class BertLayer_Model(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
+    manual_pipeline_layer: bool = True
 
     def setup(self):
         self.layer0 = FlaxBertLayer(config=self.config, dtype=self.dtype)
         self.layer1 = FlaxBertLayer(config=self.config, dtype=self.dtype)
 
     def __call__(self, x, attention_mask):
-        mark_pipeline(name='1', mark_type='start')
+        if self.manual_pipeline_layer:
+            mark_pipeline(name='1', mark_type='start')
         layer_outputs = self.layer0(x, attention_mask)
         x = layer_outputs[0]
-        mark_pipeline(name='1', mark_type='end')
-        mark_pipeline(name='2', mark_type='start')
+        if self.manual_pipeline_layer:
+            mark_pipeline(name='1', mark_type='end')
+            mark_pipeline(name='2', mark_type='start')
         layer_outputs = self.layer1(x, attention_mask)
         x = layer_outputs[0]
         return x
@@ -67,29 +73,38 @@ class AccumulateGradTest(unittest.TestCase):
     def setUp(self):
         ray.init(address="auto")
         jax.config.update('jax_platform_name', 'cpu')
-        virtual_mesh = DeviceCluster().get_virtual_mesh()
-        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
 
     def tearDown(self):
         ray.shutdown()
 
-    def test_mlp(self):
+    def run_mlp(self, manual_pipeline_layer=True,
+                pipeline_stage_mode="uniform_layer_gpipe"):
+        virtual_mesh = DeviceCluster().get_virtual_mesh()
+        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
+                                pipeline_stage_mode=pipeline_stage_mode)
         batch_size = 256
         hidden_dim = 16
         input_dim = output_dim = hidden_dim
-        model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim)
+        model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim,
+                          manual_pipeline_layer=manual_pipeline_layer)
         x = jnp.array(np.random.rand(batch_size, input_dim))
         y = jnp.array(np.random.rand(batch_size, output_dim))
         rngkey = jax.random.PRNGKey(0)
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
-        @manual_layer_slicing
         def loss_func(params, x, y):
             out = model.apply(params, x)
             loss = jnp.mean((out - y)**2)
-            mark_pipeline(name='2', mark_type='end')
+            if manual_pipeline_layer:
+                mark_pipeline(name='2', mark_type='end')
             return loss
+
+        if manual_pipeline_layer:
+            loss_func = manual_layer_slicing(loss_func)
+        else:
+            loss_func = automatic_layer_slicing(loss_func, layer_num=2,
+                                                use_pipeline=True)
 
         def train_step(state, batch):
             param_grad = parax.grad(loss_func)(state.params, batch['x'],
@@ -116,16 +131,26 @@ class AccumulateGradTest(unittest.TestCase):
 
         executable.shutdown()
 
-    def test_2_layer_bert(self):
+    def run_2_layer_bert(self, manual_pipeline_layer=True,
+                         pipeline_stage_mode="uniform_layer_gpipe"):
+        virtual_mesh = DeviceCluster().get_virtual_mesh()
+        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
+                                pipeline_stage_mode=pipeline_stage_mode)
 
         def train_step(state, batch, apply_fn):
 
-            @manual_layer_slicing
             def loss_func(params, x, y, attention_mask):
                 out = apply_fn(params, x, attention_mask)
                 loss = jnp.mean((out - y)**2)
-                mark_pipeline(name='2', mark_type='end')
+                if manual_pipeline_layer:
+                    mark_pipeline(name='2', mark_type='end')
                 return loss
+
+            if manual_pipeline_layer:
+                loss_func = manual_layer_slicing(loss_func)
+            else:
+                loss_func = automatic_layer_slicing(loss_func, layer_num=2,
+                                                    use_pipeline=True)
 
             grad_param = parax.grad(loss_func)(state.params, batch['x'],
                                                batch['y'],
@@ -145,9 +170,6 @@ class AccumulateGradTest(unittest.TestCase):
             rngkey, (batch_size, seq_len, hidden_size),
             dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
-        # x = jnp.array(np.random.rand(batch_size, seq_len, hidden_size), dtype=jnp.float32)
-        # y = jnp.array(np.random.rand(batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23.0
-        # attention_mask = jnp.array(np.random.rand(batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
         model = BertLayer_Model(
@@ -177,12 +199,43 @@ class AccumulateGradTest(unittest.TestCase):
 
         executable.shutdown()
 
+    def test_mlp(self):
+        self.run_mlp()
+
+    def test_2_layer_bert(self):
+        self.run_2_layer_bert()
+
+    def test_mlp_auto_layer_slicing(self):
+        self.run_mlp(manual_pipeline_layer=False)
+
+    def test_2_layer_bert_auto_layer_slicing(self):
+        self.run_2_layer_bert(manual_pipeline_layer=False)
+
+    def test_mlp_auto_stage_clustering(self):
+        self.run_mlp(pipeline_stage_mode="auto_gpipe")
+
+    def test_2_layer_bert_auto_stage_clustering(self):
+        self.run_2_layer_bert(pipeline_stage_mode="auto_gpipe")
+
+    def test_mlp_auto_layer_and_stage(self):
+        self.run_mlp(manual_pipeline_layer=False,
+                     pipeline_stage_mode="auto_gpipe")
+
+    def test_2_layer_bert_auto_layer_and_stage(self):
+        self.run_2_layer_bert(manual_pipeline_layer=False,
+                              pipeline_stage_mode="auto_gpipe")
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))
-    # TODO(Hao): disable this test and move it back when the precision issue is fixed.
+    suite.addTest(AccumulateGradTest('test_mlp_auto_layer_slicing'))
+    suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
+    suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_2_auto_layer_slicing'))
+    suite.addTest(AccumulateGradTest('test_2_auto_stage_clustering'))
+    suite.addTest(AccumulateGradTest('test_2_auto_layer_and_stage'))
     return suite
 
 

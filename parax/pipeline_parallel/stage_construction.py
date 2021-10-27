@@ -12,10 +12,13 @@ from parax.pipeline_parallel.mesh_slicing import (
 
 
 @numba.jit(nopython=True)
-def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, max_stage_cost):
+def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
+            compute_cost, max_stage_cost):
     # For f, layer ID start from 1
     f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float32)
-    f_stage_max = np.full((num_layers + 1, num_devices + 1), 0.0, dtype=np.float32)
+    f_stage_max = np.full((num_layers + 1, num_devices + 1),
+                          0.0,
+                          dtype=np.float32)
     f_argmin = np.full((num_layers + 1, num_devices + 1, 2), -1, dtype=np.int32)
     f[0, 0] = 0
     for i in range(1, num_layers + 1):
@@ -28,13 +31,15 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_
                         new_cost = f[k - 1, j - s] + stage_cost
                         if stage_cost <= max_stage_cost and new_cost < f[i, j]:
                             f[i, j] = new_cost
-                            f_stage_max[i, j] = max(f_stage_max[k - 1, j - s], stage_cost)
+                            f_stage_max[i, j] = max(f_stage_max[k - 1, j - s],
+                                                    stage_cost)
                             f_argmin[i, j] = (k, m)
 
     if np.isinf(f[num_layers, num_devices]):
         return np.inf, None
 
-    total_cost = f[num_layers, num_devices] + (num_microbatches - 1) * f_stage_max[num_layers, num_devices]
+    total_cost = f[num_layers, num_devices] + (
+        num_microbatches - 1) * f_stage_max[num_layers, num_devices]
     current_layer = num_layers
     current_devices = num_devices
 
@@ -50,7 +55,8 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_
     return total_cost, res
 
 
-def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost):
+def dp(num_layers, num_devices, num_microbatches, submesh_choices,
+       compute_cost):
     all_possible_stage_costs = np.sort(np.unique(compute_cost))
     best_cost = np.inf
     best_solution = None
@@ -62,7 +68,8 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost)
             break
         if max_stage_cost - last_max_stage_cost < gap:
             continue
-        cost, solution = dp_impl(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost, max_stage_cost)
+        cost, solution = dp_impl(num_layers, num_devices, num_microbatches,
+                                 submesh_choices, compute_cost, max_stage_cost)
         if solution is not None:
             solution = list(reversed(solution))
         if cost < best_cost:
@@ -99,28 +106,39 @@ def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
     compute_cost = np.full((num_layers, num_layers), np.inf)
     for start in range(0, num_layers):
         for end in range(start, num_layers):
-            layer_indices = indices[start:end + 1] + indices[2 * num_layers - end - 1:2 * num_layers - start]
-            local_donation_mapping, global_used_list, selected_layers = split_global_use_and_donate(layers, layer_indices, donation_mapping, global_outvars)
-            cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(selected_layers, mesh, local_donation_mapping, global_used_list)
+            layer_indices = indices[start:end +
+                                    1] + indices[2 * num_layers - end -
+                                                 1:2 * num_layers - start]
+            local_donation_mapping, global_used_list, selected_layers = split_global_use_and_donate(
+                layers, layer_indices, donation_mapping, global_outvars)
+            cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(
+                selected_layers, mesh, local_donation_mapping, global_used_list)
             compute_cost[start, end] = np.mean(cost)
     return compute_cost
 
 
-def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping, global_outvars):
+def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
+                     global_outvars):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
-    compute_cost = np.full((num_layers, num_layers, num_submesh_choices), np.inf)
+    compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
+                           np.inf)
     for mesh_id, submesh in enumerate(submesh_choices):
         num_hosts, num_devices = submesh
-        sliced_virtual_mesh = virtual_mesh.slice_2d(list(range(num_hosts)), [list(range(num_devices)) for _ in range(num_hosts)])
+        sliced_virtual_mesh = virtual_mesh.slice_2d(
+            list(range(num_hosts)),
+            [list(range(num_devices)) for _ in range(num_hosts)])
         mesh = sliced_virtual_mesh.get_physical_mesh()
         tic = time()
-        mesh_compute_cost = profile_on_mesh(mesh, layers, donation_mapping, global_outvars)
+        mesh_compute_cost = profile_on_mesh(mesh, layers, donation_mapping,
+                                            global_outvars)
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
         mesh.shutdown()
-        print(f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds')
+        print(
+            f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds'
+        )
         print(f'profiled costs are: {mesh_compute_cost}')
         print('=' * 30)
     return compute_cost
@@ -143,17 +161,21 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
             assert required_num_devices + required_num_hosts <= num_hosts, (
                 "Do not have enough hosts for the solution.")
             virtual_submeshes[i] = virtual_mesh.slice_2d(
-                range(current_host_id, current_host_id + required_num_hosts),
-                [range(num_devices_per_host) for _ in range(required_num_hosts)])
+                range(current_host_id, current_host_id + required_num_hosts), [
+                    range(num_devices_per_host)
+                    for _ in range(required_num_hosts)
+                ])
             current_host_id += required_num_hosts
         else:
             assert required_num_hosts == 1
             assert required_num_devices < num_devices_per_host
-            assert (current_device_id + required_num_devices <= num_devices_per_host), (
-                "Do not have enough devices in a host for the solution")
-            virtual_submeshes[i] = virtual_mesh.slice_2d(
-                [current_host_id],
-                [range(current_device_id, current_device_id + required_num_devices)])
+            assert (current_device_id + required_num_devices <=
+                    num_devices_per_host), (
+                        "Do not have enough devices in a host for the solution")
+            virtual_submeshes[i] = virtual_mesh.slice_2d([current_host_id], [
+                range(current_device_id,
+                      current_device_id + required_num_devices)
+            ])
             current_device_id += required_num_devices
             if current_device_id == num_devices_per_host:
                 current_host_id += 1
@@ -163,20 +185,30 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
     return virtual_submeshes
 
 
-def get_stage_and_mesh_assignments(mesh: VirtualMesh, layers: Sequence[JaxPipelineStage], donation_mapping, global_outvars, num_microbatches, compute_cost=None):
+def get_stage_and_mesh_assignments(mesh: VirtualMesh,
+                                   layers: Sequence[JaxPipelineStage],
+                                   donation_mapping,
+                                   global_outvars,
+                                   num_microbatches,
+                                   compute_cost=None):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     submesh_choices = get_submesh_choices(mesh)
     if compute_cost is None:
-        compute_cost = get_compute_cost(mesh, submesh_choices, layers, donation_mapping, global_outvars)
+        compute_cost = get_compute_cost(mesh, submesh_choices, layers,
+                                        donation_mapping, global_outvars)
     cost, solution = dp(num_layers, mesh.total_devices, num_microbatches,
                         submesh_choices, compute_cost)
-    stage_layer_ids = [list(range(start_id, end_id)) for (start_id, end_id), _ in solution]
-    sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_choices, solution)
+    stage_layer_ids = [
+        list(range(start_id, end_id)) for (start_id, end_id), _ in solution
+    ]
+    sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_choices,
+                                                 solution)
     return stage_layer_ids, sliced_meshes
 
 
-def get_stage_outvars(layers: Sequence[JaxPipelineStage], layer_assignment, global_outvars):
+def get_stage_outvars(layers: Sequence[JaxPipelineStage], layer_assignment,
+                      global_outvars):
     """
     Perform liveness analysis to get the outvars of a stage that is used by
     another stage.
@@ -199,5 +231,3 @@ def get_stage_outvars(layers: Sequence[JaxPipelineStage], layer_assignment, glob
             for var in layers[layer_id].invars:
                 used.add(var)
     return stage_outvars
-
-

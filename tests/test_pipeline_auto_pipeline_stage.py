@@ -56,7 +56,9 @@ class AccumulateGradTest(unittest.TestCase):
         ray.init(address="auto")
         jax.config.update('jax_platform_name', 'cpu')
         virtual_mesh = DeviceCluster().get_virtual_mesh()
-        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel", pipeline_stage_mode="auto_gpipe")
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="3d_parallel",
+                                pipeline_stage_mode="auto_gpipe")
 
     def tearDown(self):
         ray.shutdown()
@@ -140,13 +142,14 @@ class AccumulateGradTest(unittest.TestCase):
         pipelined_train_step = parallelize(train_step)
         pipe_tgt = pipelined_train_step(optimizer, batch, model.apply)
         assert_allclose(corr_tgt, pipe_tgt)
-        pipelined_train_step.get_executable(optimizer, batch, model.apply).shutdown()
+        pipelined_train_step.get_executable(optimizer, batch,
+                                            model.apply).shutdown()
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))
-    # suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert'))
     return suite
 
 

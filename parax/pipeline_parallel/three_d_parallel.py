@@ -9,15 +9,16 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
-from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn, pipeline_p)
+from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
+                                                   pipeline_p)
 from parax.pipeline_parallel.runtime import (
     GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
     gen_linear_pipeline_dependency_with_apply)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
-    compute_grad_to_accumulate_grad, generate_sharded_xla_stages, get_var_mapping,
-    mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
-    rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
+    compute_grad_to_accumulate_grad, generate_sharded_xla_stages,
+    get_var_mapping, mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks,
+    pipeline_dce, rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
     slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars
@@ -35,8 +36,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
     if split_eqn is None:
         logger.warning(
             'Missing barrier between compute and apply. Assume there is no '
-            'apply gradient step. Hint: replace jax.grad by parax.grad.'
-        )
+            'apply gradient step. Hint: replace jax.grad by parax.grad.')
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn],
@@ -221,26 +221,37 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         assert len(jax_pipeline_layers) % 2 == 0
         num_layers = len(jax_pipeline_layers) // 2
         forward_stage_layer_ids, sliced_meshes = get_stage_and_mesh_assignments(
-            virtual_mesh, jax_pipeline_layers, donation_mapping, acc_grad_outvars, num_micro_batches)
+            virtual_mesh, jax_pipeline_layers, donation_mapping,
+            acc_grad_outvars, num_micro_batches)
         num_forward_stages = len(forward_stage_layer_ids)
-        backward_stage_layer_ids = [[2 * num_layers - 1 - i for i in layer_ids] for layer_ids in reversed(forward_stage_layer_ids)]
+        backward_stage_layer_ids = [[
+            2 * num_layers - 1 - i for i in layer_ids
+        ] for layer_ids in reversed(forward_stage_layer_ids)]
         stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
-        stage_to_mesh = list(range(num_forward_stages)) + list(reversed(range(num_forward_stages)))
-        stage_outvars = get_stage_outvars(jax_pipeline_layers, stage_layer_ids, acc_grad_outvars)
+        stage_to_mesh = list(range(num_forward_stages)) + list(
+            reversed(range(num_forward_stages)))
+        stage_outvars = get_stage_outvars(jax_pipeline_layers, stage_layer_ids,
+                                          acc_grad_outvars)
         merged_stages = []
         for stage_id, layer_ids in enumerate(stage_layer_ids):
-            stage_layer_jaxprs = [jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids]
+            stage_layer_jaxprs = [
+                jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids
+            ]
             stage_name = str(stage_id)
-            merged_stage_jaxpr = merge_stage_jaxprs(stage_layer_jaxprs, stage_outvars[stage_id], stage_name, donation_mapping)
-            merged_stage = JaxPipelineStage.from_closed_jaxpr(stage_name, merged_stage_jaxpr)
+            merged_stage_jaxpr = merge_stage_jaxprs(stage_layer_jaxprs,
+                                                    stage_outvars[stage_id],
+                                                    stage_name,
+                                                    donation_mapping)
+            merged_stage = JaxPipelineStage.from_closed_jaxpr(
+                stage_name, merged_stage_jaxpr)
             merged_stages.append(merged_stage)
         num_meshes = num_forward_stages
         jax_pipeline_stages = merged_stages
     elif global_config.pipeline_stage_mode == "uniform_layer_gpipe":
         num_acc_grad_stages = len(jax_pipeline_layers)
         stage_to_mesh = {
-            i: (
-                i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
+            i:
+            (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
             for i, _ in enumerate(jax_pipeline_layers)
         }
         assert num_acc_grad_stages % 2 == 0
@@ -248,7 +259,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         jax_pipeline_stages = jax_pipeline_layers
         sliced_meshes = None
     else:
-        raise ValueError("Unknown pipeline_stage_mode", global_config.pipeline_stage_mode)
+        raise ValueError("Unknown pipeline_stage_mode",
+                         global_config.pipeline_stage_mode)
 
     if have_apply_grad:
         # Process apply gradient:
@@ -267,7 +279,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
             global_outvars)
         sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
-                                                       gradvar_to_mesh, num_meshes)
+                                                       gradvar_to_mesh,
+                                                       num_meshes)
         apply_deps, apply_grad_schedule, _ = info
         sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                            mask,

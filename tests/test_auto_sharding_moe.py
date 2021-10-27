@@ -96,6 +96,7 @@ class AutoShardingMoETest(unittest.TestCase):
 
         @parallelize
         def train_step(state, batch, deterministic, rng_key):
+
             def loss_func(params):
                 rngs = {"dropout": rng_key}
                 logits = state.apply_fn(params,
@@ -107,7 +108,8 @@ class AutoShardingMoETest(unittest.TestCase):
                                         rngs=rngs)[0]
                 label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
                 labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
-                loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+                loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1),
+                                axis=-1)
                 loss = (label_mask * loss).sum() / label_mask.sum()
                 return loss
 
@@ -142,15 +144,15 @@ class AutoShardingMoETest(unittest.TestCase):
             return jax.tree_map(lambda x: x.ndim > 1, pytree)
 
         tx = optax_adafactor(
-            learning_rate=1e-2, weight_decay_mask=weight_decay_mask,
+            learning_rate=1e-2,
+            weight_decay_mask=weight_decay_mask,
             min_dim_size_to_factor=4,
         )
 
-        state = TrainState.create(
-            apply_fn=model.apply,
-            params=params,
-            tx=tx,
-            dynamic_scale=None)
+        state = TrainState.create(apply_fn=model.apply,
+                                  params=params,
+                                  tx=tx,
+                                  dynamic_scale=None)
 
         # JIT compile
         state = train_step(
@@ -227,9 +229,11 @@ class AutoShardingMoETest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            state, hlo_ir, objective = self.run_moe_lm(
-                batch_size, seq_len, num_layers, hidden_size, num_heads,
-                vocab_size, S, E, deterministic, device_mesh)
+            state, hlo_ir, objective = self.run_moe_lm(batch_size, seq_len,
+                                                       num_layers, hidden_size,
+                                                       num_heads, vocab_size, S,
+                                                       E, deterministic,
+                                                       device_mesh)
 
             # Check communication cost
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
@@ -266,7 +270,8 @@ def suite():
     suite.addTest(AutoShardingMoETest("test_moe_layer"))
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
     suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
-    suite.addTest(AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
+    suite.addTest(
+        AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
 
     return suite
 

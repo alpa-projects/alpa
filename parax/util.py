@@ -477,8 +477,8 @@ def to_str_round(x, decimal=6):
     if isinstance(x, str):
         return x
     if isinstance(x, (list, tuple)) or isinstance(x, np.ndarray):
-        return "[" + ", ".join([to_str_round(y, decimal=decimal)
-                                for y in x]) + "]"
+        return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
+                               ]) + "]"
     if isinstance(x, dict):
         return str({k: eval(to_str_round(v)) for k, v in x.items()})
     if isinstance(x, int):

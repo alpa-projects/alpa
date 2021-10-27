@@ -112,8 +112,9 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         self._collective_groups = [
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
-        self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
-                                  for _ in range(self.num_mesh)]
+        self._resharding_tasks = [
+            [dict() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+        ]
 
         # Init and warm-up
         self._prepare_runables()
@@ -427,24 +428,29 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
                     src_mesh_idx = self.physical_meshes.index(val.device_mesh)
                     if global_config.precompile_resharding_tasks:
                         # The tasks have been prepared.
-                        if key not in self._resharding_tasks[src_mesh_idx][mesh_idx]:
-                            raise RuntimeError("Cannot find a ready resharding task.")
-                        resharding_task = self._resharding_tasks[src_mesh_idx][mesh_idx][key]
+                        if key not in self._resharding_tasks[src_mesh_idx][
+                                mesh_idx]:
+                            raise RuntimeError(
+                                "Cannot find a ready resharding task.")
+                        resharding_task = self._resharding_tasks[src_mesh_idx][
+                            mesh_idx][key]
                         resharded_val = resharding_task.do_prepared(val)
                     else:
                         task_spec = self._communicator.resharding_specs[
                             src_mesh_idx][mesh_idx][key]
                         assert task_spec
-                        task = ReshardingTask(task_spec,
-                                              self._collective_groups[src_mesh_idx][mesh_idx],
-                                              self.physical_meshes[src_mesh_idx],
-                                              self.physical_meshes[mesh_idx])
+                        task = ReshardingTask(
+                            task_spec,
+                            self._collective_groups[src_mesh_idx][mesh_idx],
+                            self.physical_meshes[src_mesh_idx],
+                            self.physical_meshes[mesh_idx])
                         resharded_val = task.do(val)
                     inputs_list.append(resharded_val)
             elif isinstance(val, ReplicatedDistributedArray):
                 mesh_idx = list(self.schedule.stage_placement(stage_idx))[0]
                 # find the local copy of val
-                local_replica = val.get_replica_on_mesh(self.physical_meshes[mesh_idx])
+                local_replica = val.get_replica_on_mesh(
+                    self.physical_meshes[mesh_idx])
                 inputs_list.append(local_replica)
             else:
                 # it is a DeviceArray
@@ -460,7 +466,8 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
             else:
                 if isinstance(self._env[key], DistributedArray):
                     # construct the ReplicatedDA, and put it back to env
-                    rda = ReplicatedDistributedArray([self._env[key].device_mesh], [self._env[key]])
+                    rda = ReplicatedDistributedArray(
+                        [self._env[key].device_mesh], [self._env[key]])
                     rda.add_replica(val.device_mesh, val)
                     self._env[key] = rda
                 elif isinstance(self._env[key], ReplicatedDistributedArray):

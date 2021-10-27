@@ -15,11 +15,10 @@ from parax.testing import assert_allclose
 def create_train_state(rngkey, model, params):
     params = model.init(rngkey, *params)
     tx = optax.adam(learning_rate=1e-2)
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              dynamic_scale=None)
     return state
 
 
@@ -45,7 +44,8 @@ class AccumulateGradTest(unittest.TestCase):
         ray.init(address="auto")
         jax.config.update('jax_platform_name', 'cpu')
         self.physical_mesh = DeviceCluster().get_physical_mesh()
-        logical_mesh = self.physical_mesh.get_logical_mesh([2, 2], [2, 2], [1, 0.1])
+        logical_mesh = self.physical_mesh.get_logical_mesh([2, 2], [2, 2],
+                                                           [1, 0.1])
         self.dtype = jnp.float32
         set_parallelize_options(logical_mesh)
 
@@ -79,11 +79,11 @@ class AccumulateGradTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=self.dtype)
 
         # Init model and optimizer
-        model = BertLayer_Model(
-            config=BertConfig(hidden_size=hidden_size,
-                              intermediate_size=hidden_size * 4,
-                              num_attention_heads=num_heads),
-            dtype=self.dtype)
+        model = BertLayer_Model(config=BertConfig(
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads),
+                                dtype=self.dtype)
         rngkey = jax.random.PRNGKey(0)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
@@ -92,22 +92,35 @@ class AccumulateGradTest(unittest.TestCase):
 
         parallel_train_step = parallelize(train_step)
         expected_params, expected_grads = train_step(state, batch, model.apply)
-        actual_params, actual_grads = parallel_train_step(state, batch, model.apply)
+        actual_params, actual_grads = parallel_train_step(
+            state, batch, model.apply)
 
         print("group 1:")
-        print("expected param example: ", jax.tree_util.tree_flatten(expected_params.params)[0][0][0:10])
-        print("actual param example: ", jax.tree_util.tree_flatten(actual_params.params)[0][0]._value[0:10])
-        print("expected grad example: ", jax.tree_util.tree_flatten(expected_grads)[0][0][0:10])
-        print("actual grad example: ", jax.tree_util.tree_flatten(actual_grads)[0][0]._value[0:10])
+        print("expected param example: ",
+              jax.tree_util.tree_flatten(expected_params.params)[0][0][0:10])
+        print(
+            "actual param example: ",
+            jax.tree_util.tree_flatten(actual_params.params)[0][0]._value[0:10])
+        print("expected grad example: ",
+              jax.tree_util.tree_flatten(expected_grads)[0][0][0:10])
+        print("actual grad example: ",
+              jax.tree_util.tree_flatten(actual_grads)[0][0]._value[0:10])
 
         print("group 2:")
-        print("expected param example: ", jax.tree_util.tree_flatten(expected_params.params)[0][-1][0:100])
-        print("actual param example: ", jax.tree_util.tree_flatten(actual_params.params)[0][-1]._value[0:100])
-        print("expected grad example: ", jax.tree_util.tree_flatten(expected_grads)[0][-1][0:100])
-        print("actual grad example: ", jax.tree_util.tree_flatten(actual_grads)[0][-1]._value[0:100])
+        print("expected param example: ",
+              jax.tree_util.tree_flatten(expected_params.params)[0][-1][0:100])
+        print(
+            "actual param example: ",
+            jax.tree_util.tree_flatten(
+                actual_params.params)[0][-1]._value[0:100])
+        print("expected grad example: ",
+              jax.tree_util.tree_flatten(expected_grads)[0][-1][0:100])
+        print("actual grad example: ",
+              jax.tree_util.tree_flatten(actual_grads)[0][-1]._value[0:100])
 
         assert_allclose(expected_params.params, actual_params.params)
         self.physical_mesh.shutdown()
+
 
 def suite():
     suite = unittest.TestSuite()

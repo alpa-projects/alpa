@@ -111,13 +111,14 @@ class JaxPipelineStage(PipelineStage):
     @classmethod
     def from_closed_jaxpr(cls, name, closed_jaxpr: ClosedJaxpr):
         """Construct a JaxPipelineStage from a Jaxpr."""
-        return cls(
-            name=name,
-            invars=closed_jaxpr.jaxpr.invars,
-            outvars=closed_jaxpr.jaxpr.outvars,
-            eqns=closed_jaxpr.eqns,
-            consts_dir={k: v for k, v in zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)}
-        )
+        return cls(name=name,
+                   invars=closed_jaxpr.jaxpr.invars,
+                   outvars=closed_jaxpr.jaxpr.outvars,
+                   eqns=closed_jaxpr.eqns,
+                   consts_dir={
+                       k: v for k, v in zip(closed_jaxpr.jaxpr.constvars,
+                                            closed_jaxpr.consts)
+                   })
 
 
 @dataclass
@@ -598,8 +599,9 @@ def generate_sharded_xla_stages(name: str,
     return stages
 
 
-def mark_gradvar_to_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
-                         stage_to_mesh, mask):
+def mark_gradvar_to_mesh(invars: Sequence[Var],
+                         stages: Sequence[JaxPipelineStage], stage_to_mesh,
+                         mask):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
     for i, stage in enumerate(stages):

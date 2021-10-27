@@ -150,8 +150,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # we create a PipelineMeshWorkerExecutable for each MeshHostWorker
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             for worker_idx, worker in enumerate(physical_mesh.workers):
-                if mesh_idx == 1 and worker_idx == 0:
-                    logging_instructions(self.instruction_lists[worker])
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],

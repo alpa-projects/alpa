@@ -109,8 +109,8 @@ def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
             layer_indices = indices[start:end +
                                     1] + indices[2 * num_layers - end -
                                                  1:2 * num_layers - start]
-            local_donation_mapping, global_used_list, selected_layers = split_global_use_and_donate(
-                layers, layer_indices, donation_mapping, global_outvars)
+            local_donation_mapping, global_used_list, selected_layers = (
+                split_global_use_and_donate(layers, layer_indices, donation_mapping, global_outvars))
             cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(
                 selected_layers, mesh, local_donation_mapping, global_used_list)
             compute_cost[start, end] = np.mean(cost)
@@ -191,6 +191,24 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh,
                                    global_outvars,
                                    num_microbatches,
                                    compute_cost=None):
+    """
+    Automatically cluster layers into stages, slice the device mesh
+    into multiple submeshes, and assign the stages to the submeshes.
+    We first profile the compute cost of layers on different choices
+    of submeshes and find the optimal solution with DP.
+
+    Args:
+        mesh (VirtualMesh): The cluser device mesh.
+        layers (Sequence[JaxPipelineStage]): All the layers.
+        donation_mapping: The donation_mapping for the layers.
+        global_outvars: Global outvars of the layers.
+        num_microbatches: Number of microbatches for GPipe
+        compute_cost (Optional): Override the profiling results.
+
+    Returns:
+        stage_layer_ids (List[List[int]]): The layer IDs of each stage.
+        sliced_meshes (List[VirtualMesh]): The shapes of all submeshes.
+    """
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     submesh_choices = get_submesh_choices(mesh)

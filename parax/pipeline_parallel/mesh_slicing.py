@@ -44,7 +44,7 @@ class CompileWorker:
             proto: the proto of XlaComputation to be compiled
             avals: input avals
             out_avals: output avals
-            donate_invars: donate invars of the computation to be compiled
+            donate_invars: donate invars of the computatest_pipeline_correctness.pytest_pipeline_correctness.pytion to be compiled
         Returns:
             proto: The proto of compiled executable
             strategy_config: The sharding strategy from auto sharding
@@ -364,81 +364,3 @@ def profile_layer_communication_cost(
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
-
-
-########################################
-##### Algorithm
-########################################
-def get_mesh_slicing_configs(
-        grid: VirtualMesh, layers,
-        B) -> Tuple[Sequence[np.ndarray], np.ndarray, Sequence[Sequence[int]]]:
-    '''
-    TODO(yonghao, zhuohan): mesh slicing and layer allocation algorithm
-    Args:
-        grid (VirtualMesh): the whole grid
-        layers (Sequence[JaxPipelineStage]): clustered layers
-        B (number of microbatches)
-    Returns:
-        configs (Sequence[np.ndarray]): mesh slicing configs of each solution
-        costs (np.ndarray): cost of each solution
-        solutions (Sequence[Sequence[int]]): solutions of layer assignment
-            in form of a list recording the number of layers in each stage.
-    '''
-    pass
-
-
-def config_to_logical_meshes(raw_mesh: VirtualMesh, config: np.ndarray):
-    """
-    Translate a config array into logical meshes
-    Args:
-        raw_mesh (VirtualMesh): the total mesh
-        config (np.ndarray): how meshes are sliced. config[i][j] is the mesh for device(i, j)
-    """
-    mesh_info = []
-    M = config.shape[0]
-    N = config.shape[1]
-
-    visited = set()
-    max_num = -1
-    for i in range(M):
-        for j in range(N):
-            if config[i][j] not in visited:
-                mesh_num = config[i][j]
-                visited.add(mesh_num)
-                start = (i, j)
-                for p in range(j, N):
-                    if config[i][p] != mesh_num:
-                        p -= 1
-                        break
-                for q in range(i, M):
-                    if config[q][j] != mesh_num:
-                        q -= 1
-                        break
-                end = (q, p)
-                mesh_info.append((mesh_num, start, end))
-                max_num = max(max_num, mesh_num)
-    assert max_num >= 0
-    meshes = (None for _ in range(max_num))
-    for info in mesh_info:
-        id, start, end = info
-        meshes[id] = raw_mesh.slice(0, range(start[0], end[0] + 1)).slice(
-            1, range(start[1], end[1] + 1))
-    return meshes
-
-
-def slice_mesh(layers: Sequence[JaxPipelineStage]):
-    '''
-    Args:
-        layers (Sequence[JaxPipelineStage]): clustered layers
-    Returns:
-        layer_assignment: the assignment of layers to stages
-        sliced_meshes (Sequence[PhysicalDeviceMesh]): sliced physical meshes
-    '''
-    raw_mesh = global_config.devices
-    B = global_config.num_micro_batches
-    configs, costs, solutions = get_mesh_slicing_configs(raw_mesh, layers, B)
-    best_idx = costs.argmax()[0]
-    best_config = configs[best_idx]
-    layer_assignment = solutions[best_idx]
-    sliced_meshes = config_to_logical_meshes(raw_mesh, best_config)
-    return layer_assignment, sliced_meshes

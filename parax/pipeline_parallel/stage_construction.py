@@ -110,7 +110,8 @@ def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
                                     1] + indices[2 * num_layers - end -
                                                  1:2 * num_layers - start]
             local_donation_mapping, global_used_list, selected_layers = (
-                split_global_use_and_donate(layers, layer_indices, donation_mapping, global_outvars))
+                split_global_use_and_donate(layers, layer_indices,
+                                            donation_mapping, global_outvars))
             cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(
                 selected_layers, mesh, local_donation_mapping, global_used_list)
             compute_cost[start, end] = np.mean(cost)

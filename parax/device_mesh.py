@@ -61,7 +61,7 @@ class MeshHostWorker:
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
         self.buffers = {}  # Dict[uuid -> DeviceArray]
-        self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
+        self.executables = {}
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         set_override_backend(self.backend)
@@ -114,8 +114,7 @@ class MeshHostWorker:
             self.buffers[uuids].block_until_ready()
 
     ##### Executable Related Functions #####
-    def put_executable(self, uuid: int, executable_class: MeshWorkerExecutable,
-                       *args):
+    def put_executable(self, uuid: int, executable_class, *args):
         self.executables[uuid] = executable_class(self, uuid, *args)
 
     def delete_executable(self, uuid: int):
@@ -306,8 +305,7 @@ class MeshHostWorker:
         return self.executables[uuid].profile_with_dummy_inputs(
             self.backend, self.local_devices)
 
-        # TODO(yonghao): the sync function should be carefully reconsidered
-
+    # TODO(yonghao): the sync function should be carefully reconsidered
     def profile_resharding_send_task(self,
                                      uuid,
                                      buf_uuids,
@@ -340,6 +338,10 @@ class MeshHostWorker:
 
     def get_timer(self, name: str):
         return timers(name)
+
+    def reset_timer(self, name : str):
+        timers(name).reset()
+        return True
 
     ##### Other Functions #####
     def sync(self):
@@ -632,6 +634,10 @@ class PhysicalDeviceMesh:
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     input_bufs.append(arg.remote_buffers)
+                elif isinstance(arg, ReplicatedDistributedArray):
+                    replica = arg.get_replica_on_mesh(self)
+                    assert replica.indices == indices
+                    input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
@@ -716,6 +722,13 @@ class PhysicalDeviceMesh:
             return ray.get(self.workers[0].get_timer.remote(timer_name))
         else:
             return timers(timer_name)
+
+    def reset_remote_timer(self, timer_name: str):
+        if self.is_distributed:
+            for worker in self.workers:
+                ray.get(worker.reset_timer.remote(timer_name))
+        else:
+            timers(timer_name).reset()
 
     ##### Other Functions #####
     def sync_workers(self):
@@ -922,8 +935,7 @@ class ReplicatedDistributedArray:
     Warning: do not use this class unless you know exactly how.
     """
 
-    def __init__(self,
-                 device_meshes: List[PhysicalDeviceMesh],
+    def __init__(self, device_meshes: List[PhysicalDeviceMesh],
                  arrays: List[DistributedArray]):
         self._mesh_array_map = dict()
         self._array_mesh_map = dict()

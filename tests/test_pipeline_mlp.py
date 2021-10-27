@@ -5,7 +5,6 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
-from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,

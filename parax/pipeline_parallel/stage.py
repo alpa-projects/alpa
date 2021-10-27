@@ -7,7 +7,7 @@ import logging
 from typing import Sequence, List, Set, Any, Dict
 
 import numpy as np
-from jax import jit
+from jax import jit, linear_util as lu
 from jax._src.util import partial, safe_map
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
 from jax.interpreters import xla
@@ -21,7 +21,9 @@ from parax.mesh_executable import PartialGradAccMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
-                                                compile_with_given_strategy)
+                                                compile_with_given_strategy,
+                                                get_input_output_sharding_specs,
+                                                HloProtoStatus)
 from parax.util import get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias
 
 # pylint: disable=redefined-builtin
@@ -197,9 +199,8 @@ class XlaShardedPipelineStage(PipelineStage):
                    outvars=jax_pipeline_stage.outvars,
                    output_acc_grad_indices=acc_grad_indices)
 
-    def get_runnable(self, mesh=None):
-        """Return a callable of the pipeline stage."""
-        from parax.shard_parallel.auto_sharding import HloProtoStatus
+    # @lu.cache
+    def get_compiled(self, mesh=None):
 
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError(
@@ -212,7 +213,7 @@ class XlaShardedPipelineStage(PipelineStage):
         setup_computation_alias(xla_computation, self.donated_invars)
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
-        num_devices = np.prod(strategy_config.logical_mesh_shape)
+        num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
         compiled = compile_with_given_strategy(
             backend,
@@ -223,6 +224,19 @@ class XlaShardedPipelineStage(PipelineStage):
             HloProtoStatus.SHARDING_ANNOTATED,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
+
+        avals = [var.aval for var in self.invars]
+        out_avals = [var.aval for var in self.outvars]
+        input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
+            compiled.hlo_modules()[0], num_devices, avals, out_avals, strategy_config.logical_mesh_shape)
+        self.input_sharding_specs = input_sharding_specs
+        self.output_sharding_specs = output_sharding_specs
+        return compiled
+
+    def get_runnable(self, mesh=None):
+        """Return a callable of the pipeline stage."""
+
+        compiled = self.get_compiled(mesh)
         hlo_module = compiled.hlo_modules()[0]
 
         # Return the final callable
@@ -231,10 +245,6 @@ class XlaShardedPipelineStage(PipelineStage):
         mesh_executable = PartialGradAccMeshDriverExecutable(
             mesh, compiled, self.strategy_config, avals, out_avals,
             self.donated_invars, self.output_acc_grad_indices)
-
-        # TODO(Hao): make this better
-        self.input_sharding_specs = mesh_executable.input_sharding_specs
-        self.output_sharding_specs = mesh_executable.output_sharding_specs
 
         return mesh_executable.get_driver_callable()
 

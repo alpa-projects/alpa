@@ -1,6 +1,6 @@
 """3D parallel on a Ray cluster."""
 import logging
-from typing import Sequence
+from typing import Sequence, List
 
 import jax
 from jax import linear_util as lu
@@ -9,16 +9,18 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
+from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
-from parax.pipeline_parallel.runtime import (
-    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
-    gen_linear_pipeline_dependency_with_apply)
+from parax.pipeline_parallel.centralized_distributerd_runtime import (
+    CentralizedDistributedRuntime)
+from parax.pipeline_parallel.schedules import GpipeSchedule, gen_linear_pipeline_dependency, \
+    gen_linear_pipeline_dependency_with_apply
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
     compute_to_acc_pipe, generate_sharded_xla_stages, get_var_mapping,
     mark_grad_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
     rearrange_vars, slice_apply_gradient,
-    slice_closed_jaxpr_by_full_pipeline_marks)
+    slice_closed_jaxpr_by_full_pipeline_marks, XlaShardedPipelineStage)
 from parax.util import get_micro_batch, slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
@@ -314,15 +316,15 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             xla_stages[i] = xla_stage
 
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = Jax3DPipeline(pipeline_stages=xla_stages,
-                       global_invars=global_invars,
-                       grad_dummy_invars=grad_in_to_out,
-                       global_outvars=global_outvars,
-                       physical_meshes=physical_meshes,
-                       dependency=dependency,
-                       schedule=schedule,
-                       is_batch=batch_invars,
-                       num_batch=num_batch)
+    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
+                                         global_invars=global_invars,
+                                         grad_dummy_invars=grad_in_to_out,
+                                         global_outvars=global_outvars,
+                                         physical_meshes=physical_meshes,
+                                         dependency=dependency,
+                                         schedule=schedule,
+                                         is_batch=batch_invars,
+                                         num_batch=num_batch)
 
     def ret_func(*args, **kwargs):
         return jp.run(*args, **kwargs)

@@ -233,9 +233,9 @@ def suite():
     suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
     suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert'))
-    suite.addTest(AccumulateGradTest('test_2_auto_layer_slicing'))
-    suite.addTest(AccumulateGradTest('test_2_auto_stage_clustering'))
-    suite.addTest(AccumulateGradTest('test_2_auto_layer_and_stage'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
     return suite
 
 

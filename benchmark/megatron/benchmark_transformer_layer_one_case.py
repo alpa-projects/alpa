@@ -136,8 +136,8 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     repeat = 10
     number = 1
     costs = benchmark_func(run_func, sync_func=sync_func,
-                           warmup=2, repeat=repeat, number=number)
-    timers.log(names, normalizer=repeat * number + 2)
+                           warmup=0, repeat=repeat, number=number)
+    timers.log(names, normalizer=repeat * number)
 
     # Print results
     # if rank == 0:

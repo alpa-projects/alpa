@@ -11,14 +11,13 @@ from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
 from parax.testing import assert_allclose
 
-MB = 1024**2
-
 
 class PipelineMLPTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         assert len(jax.local_devices()) >= 4
+
         ray.init(address='auto')
         device_cluster = DeviceCluster()
         mesh = device_cluster.get_virtual_mesh()
@@ -57,7 +56,7 @@ class PipelineMLPTest(unittest.TestCase):
 
             grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
                                              batch['y'])
-            # FIXME (zhuohan): make the pipeline work with apply_gradient
+
             # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
 
@@ -73,12 +72,16 @@ class PipelineMLPTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # Train step
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
         pipelined_train_step = parallelize(
             donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
                 optimizer, batch, apply_fn, use_manual_pipeline=True))
         args = (optimizer, {"x": x, "y": y}, model.apply)
         gradients_with_pipeline = pipelined_train_step(*args)
+
+        # Check results
         assert_allclose(gradients, gradients_with_pipeline)
         pipelined_train_step.get_executable(*args).shutdown()
 

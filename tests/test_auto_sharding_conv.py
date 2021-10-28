@@ -10,8 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
-from parax.global_env import global_config
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
 from parax.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
@@ -271,13 +270,13 @@ class AutoShardingConvTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
-    #suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
-    #suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
+    suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
+    suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
+    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
     suite.addTest(
         AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
-    #suite.addTest(
-    #    AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
+    suite.addTest(
+        AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
 
     return suite
 

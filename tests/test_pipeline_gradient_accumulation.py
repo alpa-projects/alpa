@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from flax import linen as nn
+import time
 import optax
 import jax
 import jax.numpy as jnp
@@ -46,7 +47,7 @@ class MLP_Model(nn.Module):
         return x
 
 
-class BertLayer_Model(nn.Module):
+class TwoLayerBertLayer_Model(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
@@ -68,6 +69,26 @@ class BertLayer_Model(nn.Module):
         return x
 
 
+class BertLayer_Model(nn.Module):
+    config: BertConfig
+    dtype: jnp.dtype = jnp.float32
+    manual_pipeline_layer: bool = True
+
+    def setup(self):
+        self.layers = [FlaxBertLayer(config=self.config, dtype=self.dtype)
+                       for _ in range(self.config.num_hidden_layers)]
+
+    def __call__(self, x, attention_mask):
+        for i, layer in enumerate(self.layers):
+            if self.manual_pipeline_layer:
+                mark_pipeline(name=str(i), mark_type='start')
+            layer_outputs = layer(x, attention_mask)
+            x = layer_outputs[0]
+            if self.manual_pipeline_layer and i != len(self.layers) - 1:
+                mark_pipeline(name=str(i), mark_type='end')
+        return x
+
+
 class AccumulateGradTest(unittest.TestCase):
 
     def setUp(self):
@@ -76,6 +97,7 @@ class AccumulateGradTest(unittest.TestCase):
 
     def tearDown(self):
         ray.shutdown()
+        time.sleep(5)
 
     def run_mlp(self, manual_pipeline_layer=True,
                 pipeline_stage_mode="uniform_layer_gpipe"):
@@ -83,7 +105,7 @@ class AccumulateGradTest(unittest.TestCase):
         set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
         batch_size = 256
-        hidden_dim = 16
+        hidden_dim = 128
         input_dim = output_dim = hidden_dim
         model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim,
                           manual_pipeline_layer=manual_pipeline_layer)
@@ -127,7 +149,7 @@ class AccumulateGradTest(unittest.TestCase):
             if i > 0:
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch)
-            assert_allclose(expected_new_state.params, actual_new_state.params)
+            assert_allclose(expected_new_state.params, actual_new_state.params, 1e-3, 1e-3)
 
         executable.shutdown()
 
@@ -136,6 +158,11 @@ class AccumulateGradTest(unittest.TestCase):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
+
+        batch_size = 16
+        seq_len = 8
+        hidden_size = 512
+        num_heads = 8
 
         def train_step(state, batch, apply_fn):
 
@@ -159,10 +186,78 @@ class AccumulateGradTest(unittest.TestCase):
             new_state = state.apply_gradients(grads=grad_param)
             return new_state
 
+        rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=jnp.float32)
+        y = jax.random.normal(
+            rngkey, (batch_size, seq_len, hidden_size),
+            dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
+        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+
+        # Init model and optimizer
+        model = TwoLayerBertLayer_Model(
+            config=BertConfig(hidden_size=hidden_size,
+                              intermediate_size=hidden_size * 4,
+                              num_attention_heads=num_heads),
+            manual_pipeline_layer=manual_pipeline_layer)
+        batch = {"x": x, "y": y, "attention_mask": attention_mask}
+        state = create_train_state(rngkey, model, [x, attention_mask])
+
+        global_config.num_micro_batches = 2
+        parallel_train_step = parallelize(train_step)
+        executable = parallel_train_step.get_executable(state, batch,
+                                                        model.apply)
+        expected_new_state = None
+        actual_new_state = None
+
+        # Test ReplicatedDistributedArray correctness
+        for i in range(5):
+            if i > 0:
+                state = expected_new_state
+            expected_new_state = train_step(state, batch, model.apply)
+            if i > 0:
+                state = actual_new_state
+            actual_new_state = parallel_train_step(state, batch, model.apply)
+            assert_allclose(expected_new_state.params, actual_new_state.params,
+                            1e-3, 1e-3)
+
+        executable.shutdown()
+
+
+    def run_n_layer_bert(self, manual_pipeline_layer=True,
+                         pipeline_stage_mode="uniform_layer_gpipe"):
+        virtual_mesh = DeviceCluster().get_virtual_mesh()
+        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
+                                pipeline_stage_mode=pipeline_stage_mode)
+
+        n_layers = 10
         batch_size = 16
         seq_len = 8
         hidden_size = 512
         num_heads = 8
+
+        def train_step(state, batch, apply_fn):
+
+            def loss_func(params, x, y, attention_mask):
+                out = apply_fn(params, x, attention_mask)
+                loss = jnp.mean((out - y)**2)
+                if manual_pipeline_layer:
+                    mark_pipeline(name=str(n_layers - 1), mark_type='end')
+                return loss
+
+            if manual_pipeline_layer:
+                loss_func = manual_layer_slicing(loss_func)
+            else:
+                loss_func = automatic_layer_slicing(loss_func, layer_num=n_layers,
+                                                    use_pipeline=True)
+
+            grad_param = parax.grad(loss_func)(state.params, batch['x'],
+                                               batch['y'],
+                                               batch['attention_mask'])
+
+            new_state = state.apply_gradients(grads=grad_param)
+            return new_state
+
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
@@ -175,7 +270,8 @@ class AccumulateGradTest(unittest.TestCase):
         model = BertLayer_Model(
             config=BertConfig(hidden_size=hidden_size,
                               intermediate_size=hidden_size * 4,
-                              num_attention_heads=num_heads),
+                              num_attention_heads=num_heads,
+                              num_hidden_layers=n_layers),
             manual_pipeline_layer=manual_pipeline_layer)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])

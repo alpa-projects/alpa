@@ -12,14 +12,13 @@ from parax import (parallelize, set_parallelize_options, mark_pipeline,
 from parax.testing import assert_allclose
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 
-MB = 1024**2
-
 
 class PipelineBERTTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         assert len(jax.local_devices()) >= 4
+
         ray.init(address='auto')
         device_cluster = DeviceCluster()
         mesh = device_cluster.get_virtual_mesh()
@@ -43,13 +42,12 @@ class PipelineBERTTest(unittest.TestCase):
 
             def __call__(self, x, attention_mask):
                 mark_pipeline(name='1', mark_type='start')
-                layer_outputs = self.layer0(x, attention_mask)
-                x = layer_outputs[0]
+                out = x
+                out = self.layer0(out, attention_mask)[0]
                 mark_pipeline(name='1', mark_type='end')
                 mark_pipeline(name='2', mark_type='start')
-                layer_outputs = self.layer1(x, attention_mask)
-                x = layer_outputs[0]
-                return x
+                out = self.layer1(out, attention_mask)[0]
+                return out
 
         def train_step(optimizer, batch, apply_fn, use_manual_pipeline=False):
 
@@ -73,12 +71,14 @@ class PipelineBERTTest(unittest.TestCase):
         seq_len = 8
         hidden_size = 512
         num_heads = 8
+        dtype = jnp.float32
 
-        x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
-        y = jnp.ones(
-            (batch_size, seq_len, hidden_size),
-            dtype=jnp.float32) * 23  # * np.arange(hidden_size)[None, None, :]
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+        rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=dtype)
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=dtype)
+        attention_mask = jnp.ones((batch_size, seq_len), dtype=dtype)
 
         # Init model and optimizer
         model = Model(config=BertConfig(hidden_size=hidden_size,
@@ -87,6 +87,8 @@ class PipelineBERTTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
+
+        # Train step
         gradients = train_step(optimizer, {
             "x": x,
             "y": y,
@@ -102,6 +104,8 @@ class PipelineBERTTest(unittest.TestCase):
         }, model.apply)
         executable = pipelined_train_step.get_executable(*args)
         gradients_with_pipeline = pipelined_train_step(*args)
+
+        # Check results
         assert_allclose(gradients, gradients_with_pipeline)
         executable.shutdown()
 

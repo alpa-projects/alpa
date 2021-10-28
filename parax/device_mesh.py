@@ -338,7 +338,7 @@ class MeshHostWorker:
     def get_timer(self, name: str):
         return timers(name)
 
-    def reset_timer(self, name : str):
+    def reset_timer(self, name: str):
         timers(name).reset()
         return True
 

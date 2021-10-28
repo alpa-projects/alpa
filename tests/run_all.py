@@ -36,8 +36,11 @@ def run_unittest_files(files, args):
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument("--filter", type=str, default=None,
-                            help="Run test cases whose names contain the filter string")
+    arg_parser.add_argument(
+        "--filter",
+        type=str,
+        default=None,
+        help="Run test cases whose names contain the filter string")
     args = arg_parser.parse_args()
 
     files = glob.glob("*.py")

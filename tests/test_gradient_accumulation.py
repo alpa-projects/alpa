@@ -23,7 +23,13 @@ class GradAccumulationTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
 
+        # Backup global config
+        self.old_global_config = global_config.backup()
+
     def tearDown(self):
+        # Restore global config
+        global_config.restore(self.old_global_config)
+
         ray.shutdown()
 
     def run_gradient_accumulation(self, use_ray, use_2d_mesh):
@@ -85,7 +91,8 @@ class GradAccumulationTest(unittest.TestCase):
         # Distributed execution
         global_config.num_micro_batches = num_micro_batches
         train_step_parallel = parallelize(train_step)
-        executable = train_step_parallel.get_executable(optimizer, batch, model.apply)
+        executable = train_step_parallel.get_executable(optimizer, batch,
+                                                        model.apply)
         optimizer_actual = train_step_parallel(optimizer, batch, model.apply)
 
         # Check results
@@ -109,7 +116,10 @@ class GradAccumulationTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(accumulate_grad)
-            assert n_total == n_all_reduce == 1
+            if use_2d_mesh:
+                assert n_total == n_all_reduce == 2
+            else:
+                assert n_total == n_all_reduce == 1
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(apply_grad)
@@ -136,8 +146,7 @@ def suite():
     suite.addTest(
         GradAccumulationTest("test_gradient_accumulation_single_host"))
     suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
-    suite.addTest(
-        GradAccumulationTest("test_gradient_accumulation_2d_mesh"))
+    suite.addTest(GradAccumulationTest("test_gradient_accumulation_2d_mesh"))
     suite.addTest(
         GradAccumulationTest("test_gradient_accumulation_reduce_scatter"))
     return suite

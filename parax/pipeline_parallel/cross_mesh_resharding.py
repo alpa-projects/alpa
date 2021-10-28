@@ -192,6 +192,7 @@ class ReshardingTask:
         src_mesh (PhysicalMesh): the source mesh to send.
         dst_mesh (PhysicalMesh): the destiantion mesh to receive.
     """
+
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         self.task_spec = task_spec
         self.collective_group = collective_group
@@ -235,7 +236,8 @@ class ReshardingTask:
         """
         if src_array.device_mesh != self.src_mesh:
             raise RuntimeError("The src array locates on a different mesh `{}` "
-                               "than self.src_mesh `{}`.".format(src_array.device_mesh, self.src_mesh))
+                               "than self.src_mesh `{}`.".format(
+                                   src_array.device_mesh, self.src_mesh))
 
         bufs = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
@@ -252,9 +254,9 @@ class ReshardingTask:
                     for src_tile_index, src_tile in enumerate(src_tiles)
                 ]
                 device_str_to_buf_map[
-                    receiver] = self.same_destination_group_send_recv(src_array,
-                        senders, src_tiles, dst_tile, indices_in_dst_tiles,
-                        receiver)
+                    receiver] = self.same_destination_group_send_recv(
+                        src_array, senders, src_tiles, dst_tile,
+                        indices_in_dst_tiles, receiver)
         # Assemble the buffer based on the order present in indices
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):
@@ -268,8 +270,9 @@ class ReshardingTask:
                                      self.task_spec.dst_indices)
         return dst_array
 
-    def same_destination_group_send_recv(self, src_array, senders, src_tiles, dst_tile,
-                                         indices_in_dst_tiles, receiver):
+    def same_destination_group_send_recv(self, src_array, senders, src_tiles,
+                                         dst_tile, indices_in_dst_tiles,
+                                         receiver):
         """P2P Communication accounting for multiple senders and one receiver (a destination tile)."""
         # construct a remote buf for this tile
         receiver_host_id = self.collective_group.device_str_to_host_id_map[
@@ -323,9 +326,11 @@ class ReshardingTask:
 
             if global_config.pipeline_aggressively_sync:
                 ray.get([send_done_ref, recv_done_ref])
-                logger.debug("We are synchronizing for `send_tile`/`recv_tile`.")
+                logger.debug(
+                    "We are synchronizing for `send_tile`/`recv_tile`.")
             else:
-                logger.debug("We are NOT synchronizing for `send_tile`/`recv_tile`.")
+                logger.debug(
+                    "We are NOT synchronizing for `send_tile`/`recv_tile`.")
         return result_buf
 
     def get_send_recv_tasks(self):
@@ -599,16 +604,18 @@ class CollectiveGroup:
 
     def destroy(self):
         """Destroy the nccl collective group at exit."""
-        logger.debug("Recycling the collective group: {}.".format(self.group_name))
+        logger.debug("Recycling the collective group: {}.".format(
+            self.group_name))
         for worker in self.mesh_workers:
             # This remote call will remove ray named actors (hence it is necessary)
-            ret = ray.get(worker.destroy_collective_group.remote(self.group_name))
+            ret = ray.get(
+                worker.destroy_collective_group.remote(self.group_name))
         # Destroy the declared named actor in ray
 
         # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
         name = "info_" + self.group_name
         try:
-            store =ray.get_actor(name)
+            store = ray.get_actor(name)
             ray.kill(store)
         except ValueError:
             pass

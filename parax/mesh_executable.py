@@ -358,9 +358,9 @@ class NormalMeshWorkerExecutable:
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
 
         # Execute the executable
-        timers(self.timer_name).start(self.sync)
+        timers(self.timer_name).start(self.sync_func)
         output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(self.sync)
+        timers(self.timer_name).stop(self.sync_func)
 
         # Store output buffers
         for i in range(len(output_uuids)):
@@ -504,6 +504,7 @@ class GradAccMeshDriverExecutable:
                     grad_shard_dtypes, strategy_config, donated_invars,
                     batch_invars, num_grads, num_micro_batches,
                     grad_sync_channel_ids)
+            self.grad_sync_channel_ids = grad_sync_channel_ids
         else:
             self.accumulate_grad = accumulate_grad
             self.apply_grad = apply_grad
@@ -950,7 +951,7 @@ class AllocZeroBufferDriverExecutable:
 
 
 class AllocZeroBufferWorkerExecutable:
-    """The driver part of a buffer-allocation executable."""
+    """The worker part of a buffer-allocation executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int,
                  grad_shard_shapes: Sequence[Tuple[int, ...]],

@@ -25,7 +25,6 @@ from parax.util import OrderedSet, get_shard_shape
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
-
 timer_names = {
     "overall": "average",
     "compute": "sum",
@@ -104,8 +103,8 @@ def flatten_uuid_set(container):
 
 def logging_instructions(instructions):
     for ins_idx, instruction in enumerate(instructions):
-        logger.debug(">>> ins_idx {}: op code {}..."
-                     .format(ins_idx, instruction.opcode))
+        logger.debug(">>> ins_idx {}: op code {}...".format(
+            ins_idx, instruction.opcode))
 
 
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
@@ -286,7 +285,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         instructions.append(
                             PipelineInstruction.FREE(uuids[worker_idx]))
             for worker in worker_tmp_instructions:
-                self.instruction_lists[worker].extend(worker_tmp_instructions[worker])
+                self.instruction_lists[worker].extend(
+                    worker_tmp_instructions[worker])
         # output info
         self._compile_collect_outputs(var_at)
         # add FREE insts
@@ -773,7 +773,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 else:
                     assert len(self.output_local_uuid_list[worker]) == num_outs
 
-    def get_execution_time_costs(self, warmup=2, timer_name="overall",
+    def get_execution_time_costs(self,
+                                 warmup=2,
+                                 timer_name="overall",
                                  return_all_costs=False):
         if timer_name not in timer_names:
             raise RuntimeError(

@@ -205,13 +205,23 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
 
     assert len(parameter_shapes) == len(donated_invars)
 
-    ct = 0
-    for i in range(len(parameter_shapes)):
-        if donated_invars[i]:
-            assert parameter_shapes[i].dimensions(
-            ) == result_shapes[ct].dimensions()
-            xla_computation.setup_alias((ct,), i, ())
-            ct += 1
+    p_in = 0
+    p_out = 0
+    while p_in < len(parameter_shapes) and p_out < len(result_shapes):
+        if donated_invars[p_in]:
+            if parameter_shapes[p_in] == result_shapes[p_out]:
+                xla_computation.setup_alias((p_out,), p_in, ())
+                p_in += 1
+                p_out += 1
+            else:
+                p_out += 1
+        else:
+            p_in += 1
+
+    while p_in < len(parameter_shapes):
+        if donated_invars[p_in]:
+            warn("Some vars are not donated")
+        p_in += 1
 
 
 def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
@@ -477,8 +487,8 @@ def to_str_round(x, decimal=6):
     if isinstance(x, str):
         return x
     if isinstance(x, (list, tuple)) or isinstance(x, np.ndarray):
-        return "[" + ", ".join([to_str_round(y, decimal=decimal)
-                                for y in x]) + "]"
+        return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
+                               ]) + "]"
     if isinstance(x, dict):
         return str({k: eval(to_str_round(v)) for k, v in x.items()})
     if isinstance(x, int):

@@ -238,16 +238,14 @@ class AutoShardingMoETest(unittest.TestCase):
 
             if global_config.prefer_reduce_scatter:
                 if global_config.force_data_parallel:
-                    assert n_all_gather <= 2
                     assert n_reduce_scatter <= 2
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
                 else:
-                    assert n_all_gather <= 2
                     assert n_reduce_scatter == 1
                     assert n_all_to_all == 4
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
             else:
-                assert n_all_reduce <= 3
+                assert n_all_reduce <= 4
                 assert n_all_to_all == 4
                 assert n_total == n_all_reduce + n_all_to_all
 

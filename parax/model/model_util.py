@@ -1,11 +1,14 @@
 # flake8: noqa
 from collections import OrderedDict
 from dataclasses import fields
-from typing import Any, Tuple, Optional, Callable, Union
+from typing import Any, Callable, Optional, Tuple, Optional, Union
 
 import flax
-import jaxlib.xla_extension as jax_xla
+from flax.training import train_state
+import jax
 import jax.numpy as jnp
+import jaxlib.xla_extension as jax_xla
+import optax
 
 
 def is_tensor(x):
@@ -251,8 +254,8 @@ def optax_adafactor(
     weight_decay_mask: Optional[Union[Any, Callable[[Any], Any]]] = None,
 ):
     """
-  The same as optax.adafactor but adds the mask for weight decay.
-  """
+    The same as optax.adafactor but adds the mask for weight decay.
+    """
     from optax._src.alias import combine, clipping, factorized, transform,\
             _scale_by_learning_rate
 
@@ -284,3 +287,76 @@ def optax_adafactor(
     # In gradient "descent" we follow the negative gradient.
     tx.append(transform.scale(-1))
     return combine.chain(*tx)
+
+
+class TrainState(train_state.TrainState):
+    master_copy: flax.core.FrozenDict[str, Any]
+    dynamic_scale: flax.optim.DynamicScale
+
+    def apply_gradients(self, *, grads, **kwargs):
+        """Updates `step`, `params`, `opt_state` and `**kwargs` in return value.
+        Note that internally this function calls `.tx.update()` followed by a call
+        to `optax.apply_updates()` to update `params` and `opt_state`.
+        Args:
+          grads: Gradients that have the same pytree structure as `.params`.
+          **kwargs: Additional dataclass attributes that should be `.replace()`-ed.
+        Returns:
+          An updated instance of `self` with `step` incremented by one, `params`
+          and `opt_state` updated by applying `grads`, and additional attributes
+          replaced as specified by `kwargs`.
+        """
+        if self.master_copy is None:
+            master_params = self.params
+        else:
+            master_params = self.master_copy
+
+        updates, new_opt_state = self.tx.update(grads, self.opt_state,
+                                                master_params)
+        new_master_params = optax.apply_updates(master_params, updates)
+
+        if self.master_copy is None:
+            new_master_copy = None
+            new_params = new_master_params
+        else:
+            new_master_copy = new_master_params
+            new_params = jax.tree_util.tree_map(
+                lambda x: jnp.asarray(x, dtype=jnp.float16), new_master_params)
+
+            # A hack to make the donation works perfectly in gradient accumulation:
+            # We need the accumulate_grad to take the old params as input.
+            new_params_flat, tree = jax.tree_util.tree_flatten(new_params)
+            old_params_flat, _ = jax.tree_util.tree_flatten(self.params)
+            new_params_flat = [
+                x + 0.0 * y for x, y in zip(new_params_flat, old_params_flat)
+            ]
+            new_params = jax.tree_util.tree_unflatten(tree, new_params_flat)
+
+        return self.replace(
+            step=self.step + 1,
+            params=new_params,
+            master_copy=new_master_copy,
+            opt_state=new_opt_state,
+            **kwargs,
+        )
+
+    @classmethod
+    def create(cls, *, apply_fn, params, tx, mixed_precision=False, **kwargs):
+        """Creates a new instance with `step=0` and initialized `opt_state`."""
+        opt_state = tx.init(params)
+
+        if mixed_precision:
+            master_copy = params
+            params = jax.tree_util.tree_map(
+                lambda x: jnp.asarray(x, dtype=jnp.float16), params)
+        else:
+            master_copy = None
+
+        return cls(
+            step=0,
+            apply_fn=apply_fn,
+            params=params,
+            master_copy=master_copy,
+            tx=tx,
+            opt_state=opt_state,
+            **kwargs,
+        )

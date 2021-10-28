@@ -1,5 +1,10 @@
 """Run all test cases.
 Run each file in a separate process to avoid GPU memory conflicts.
+
+Usages:
+python3 run_all.py
+python3 run_all.py --filter pipeline
+python3 run_all.py --filter auto_sharding
 """
 
 import argparse
@@ -15,7 +20,7 @@ def run_unittest_files(files, args):
     for filename in files:
         if not filename.startswith("test"):
             continue
-        if args.only_pipeline and not filename.count('pipeline'):
+        if args.filter is not None and args.filter not in filename:
             continue
 
         def func():
@@ -31,9 +36,8 @@ def run_unittest_files(files, args):
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument('--only-pipeline',
-                            action='store_true',
-                            help='only run tests with name pipeline')
+    arg_parser.add_argument("--filter", type=str, default=None,
+                            help="Run test cases whose names contain the filter string")
     args = arg_parser.parse_args()
 
     files = glob.glob("*.py")

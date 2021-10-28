@@ -142,7 +142,6 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     # Parallel configs
     if num_micro_batches > 1:
         grad_func = parax.grad
-        prefer_reduce_scatter = False
     else:
         num_micro_batches = None
         grad_func = jax.grad

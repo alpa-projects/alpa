@@ -220,7 +220,11 @@ class AutoShardingMLPTest(unittest.TestCase):
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i,
+            assert_data_parallel_cost(state,
+                                      hlo_ir,
+                                      objective,
+                                      device_mesh,
+                                      i,
                                       optimizer_type=self.optimizer_type)
 
     def test_n_layer_mlp_model_parallel(self):
@@ -266,9 +270,9 @@ class AutoShardingMLPTest(unittest.TestCase):
         # Test on different device meshes
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 0.1])
-        state, hlo_ir, objective = self.run_n_layer_mlp(
-            num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
-            device_mesh)
+        state, hlo_ir, objective = self.run_n_layer_mlp(num_layers, batch_size,
+                                                        hidden_dim, hidden_dim,
+                                                        hidden_dim, device_mesh)
 
         # Check communication cost
         expected = num_layers * (
@@ -291,8 +295,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         # Check sharding specification
         if global_config.prefer_reduce_scatter:
-            for weight in jax.tree_util.tree_leaves(
-                    state.opt_state):
+            for weight in jax.tree_util.tree_leaves(state.opt_state):
                 if len(weight.shape) > 1:
                     assert_fully_sharded(weight)
         else:
@@ -362,7 +365,9 @@ class AutoShardingMLPTest(unittest.TestCase):
         def init_weight(rngkey):
             params = model.init(rngkey, x, True)
             tx = optax.adam(learning_rate=1e-2)
-            state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+            state = TrainState.create(apply_fn=model.apply,
+                                      params=params,
+                                      tx=tx)
             return state
 
         state = init_weight(rngkey)
@@ -390,7 +395,8 @@ def suite():
         AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
 
     suite.addTest(
-        AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
+        AutoShardingMLPTest(
+            "test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
 
     suite.addTest(AutoShardingMLPTest("test_weight_init"))
 

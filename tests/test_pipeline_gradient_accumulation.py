@@ -19,11 +19,10 @@ from parax.testing import assert_allclose
 def create_train_state(rngkey, model, params):
     params = model.init(rngkey, *params)
     tx = optax.adam(learning_rate=1e-2)
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              dynamic_scale=None)
     return state
 
 
@@ -140,9 +139,11 @@ class AccumulateGradTest(unittest.TestCase):
         hidden_size = 512
         num_heads = 8
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                     dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=jnp.float32)
+        y = jax.random.normal(
+            rngkey, (batch_size, seq_len, hidden_size),
+            dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
         # x = jnp.array(np.random.rand(batch_size, seq_len, hidden_size), dtype=jnp.float32)
         # y = jnp.array(np.random.rand(batch_size, seq_len, hidden_size), dtype=jnp.float32) * 23.0
@@ -158,7 +159,8 @@ class AccumulateGradTest(unittest.TestCase):
 
         global_config.num_micro_batches = 2
         parallel_train_step = parallelize(train_step)
-        executable = parallel_train_step.get_executable(state, batch, model.apply)
+        executable = parallel_train_step.get_executable(state, batch,
+                                                        model.apply)
         expected_new_state = None
         actual_new_state = None
 
@@ -170,7 +172,8 @@ class AccumulateGradTest(unittest.TestCase):
             if i > 0:
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch, model.apply)
-            assert_allclose(expected_new_state.params, actual_new_state.params, 1e-3, 1e-3)
+            assert_allclose(expected_new_state.params, actual_new_state.params,
+                            1e-3, 1e-3)
 
         executable.shutdown()
 

@@ -13,13 +13,9 @@ from parax.pipeline_parallel.stage import PipelineStage, XlaShardedPipelineStage
 
 
 class BaseRuntime(metaclass=ABCMeta):
-    def __init__(self,
-                 *,
-                 pipeline_stages,
-                 global_invars,
-                 global_outvars,
-                 physical_meshes,
-                 **kwargs):
+
+    def __init__(self, *, pipeline_stages, global_invars, global_outvars,
+                 physical_meshes, **kwargs):
         """
         An abstract class for pipeline-parallel runtime.
 
@@ -57,6 +53,7 @@ class BaseRuntime(metaclass=ABCMeta):
 
 
 class BaseDistributedRuntime(BaseRuntime):
+
     def __init__(self,
                  *,
                  pipeline_stages: List[XlaShardedPipelineStage],
@@ -86,11 +83,11 @@ class BaseDistributedRuntime(BaseRuntime):
             num_batch (int): number of microbatches.
             schedule (GpipeSchedule): schedule to follow to execute the pipeline.
         """
-        super(BaseDistributedRuntime, self).__init__(
-            pipeline_stages=pipeline_stages,
-            global_invars=global_invars,
-            global_outvars=global_outvars,
-            physical_meshes=physical_meshes)
+        super(BaseDistributedRuntime,
+              self).__init__(pipeline_stages=pipeline_stages,
+                             global_invars=global_invars,
+                             global_outvars=global_outvars,
+                             physical_meshes=physical_meshes)
         self.grad_dummy_invars = grad_dummy_invars
         self.is_batch = is_batch
         self.dependency = dependency
@@ -106,8 +103,9 @@ class BaseDistributedRuntime(BaseRuntime):
         self._collective_groups: List[List[Any]] = [
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
-        self._resharding_tasks = [[dict() for _ in range(self.num_mesh)]
-                                  for _ in range(self.num_mesh)]
+        self._resharding_tasks = [
+            [dict() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+        ]
         # pre-setup
         self._establish_nccl_groups()
         self._create_resharding_and_get_send_recv_tasks()

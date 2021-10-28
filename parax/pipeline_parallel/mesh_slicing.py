@@ -36,9 +36,8 @@ class CompileWorker:
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
 
-    def compile_stage_with_search(self, new_global_config, logical_mesh,
-                                         proto, avals, out_avals,
-                                         donate_invars):
+    def compile_stage_with_search(self, new_global_config, logical_mesh, proto,
+                                  avals, out_avals, donate_invars):
         """
         Compile a single stage with auto sharding.
         Args:
@@ -188,9 +187,9 @@ def split_sharding_specs(layers: Sequence[JaxPipelineStage],
 
 
 def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
-                                     mesh: PhysicalDeviceMesh,
-                                     donation_mapping: Dict[Var, Var],
-                                     global_used: Set[Var]):
+                                           mesh: PhysicalDeviceMesh,
+                                           donation_mapping: Dict[Var, Var],
+                                           global_used: Set[Var]):
     """
     Args:
         layers (Sequence[JaxPipelineStage]): forward and corresponding backward
@@ -315,10 +314,10 @@ def dummy_resharding_strategy(spec: ReshardingTaskSpec):
     return strategy
 
 
-def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStage,
-                         src_outvar_sharding_spec, dst_invar_sharding_spec,
-                         src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
-                         collective_group: CollectiveGroup):
+def profile_layer_communication_cost(
+        src: JaxPipelineStage, dst: JaxPipelineStage, src_outvar_sharding_spec,
+        dst_invar_sharding_spec, src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
+        collective_group: CollectiveGroup):
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
     tot_cost = 0
     backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
@@ -346,7 +345,8 @@ def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStag
             val = DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                                    remote_buffers, input_indices)
             task = ReshardingTask(task_spec, collective_group,
-                                  collective_group.src_mesh, collective_group.dst_mesh)
+                                  collective_group.src_mesh,
+                                  collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:

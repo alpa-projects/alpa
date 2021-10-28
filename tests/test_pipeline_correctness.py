@@ -19,10 +19,10 @@ from parax.testing import assert_allclose
 
 MB = 1024**2
 
-
 # Note(Hao):
 # In this test case, we turn on/off aggressively sync and compared the pipelined training results.
 # We expect the results should be same.
+
 
 class PipelineMLP(nn.Module):
     hidden_dim: int
@@ -37,6 +37,7 @@ class PipelineMLP(nn.Module):
         mark_pipeline(name='2', mark_type='start')
         x = nn.Dense(features=self.output_dim, use_bias=False)(x)
         return x
+
 
 def train_mlp_step(optimizer, batch, apply_fn, grad_fn):
 
@@ -57,7 +58,7 @@ Transformer = FlaxBertLayerCollection
 def get_train_transformer_step(grad_func, pipeline_mp_size=2):
 
     @partial(parallelize, donate_argnums=())
-    def train_step(state, batch, rng_key):\
+    def train_step(state, batch, rng_key):        \
 
         def loss_func(params):
             rngs = {"dropout": rng_key}
@@ -68,7 +69,7 @@ def get_train_transformer_step(grad_func, pipeline_mp_size=2):
                                  batch["attention_mask"],
                                  deterministic=True,
                                  rngs=rngs)[0]
-            loss = jnp.mean((out - batch["label"]) ** 2)
+            loss = jnp.mean((out - batch["label"])**2)
             if pipeline_mp_size > 1:
                 mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
             return loss
@@ -121,33 +122,38 @@ class PipelineCorrectnessTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        pipelined_train_step = parallelize(
-            donate_argnums=())(lambda optimizer, batch, apply_fn: train_mlp_step(
+        pipelined_train_step = parallelize(donate_argnums=(
+        ))(lambda optimizer, batch, apply_fn: train_mlp_step(
             optimizer, batch, apply_fn, grad_func))
 
-        executable = pipelined_train_step.get_executable(optimizer, batch, model.apply)
+        executable = pipelined_train_step.get_executable(
+            optimizer, batch, model.apply)
 
         # Run sync + no compile
         global_config.pipeline_aggressively_sync = True
         global_config.precompile_resharding_tasks = False
-        gradients_sync_no_compile = pipelined_train_step(optimizer, batch, model.apply)
+        gradients_sync_no_compile = pipelined_train_step(
+            optimizer, batch, model.apply)
 
         # Run async + no compile
         global_config.pipeline_aggressively_sync = False
         global_config.precompile_resharding_tasks = False
-        gradients_async_no_compile = pipelined_train_step(optimizer, batch, model.apply)
+        gradients_async_no_compile = pipelined_train_step(
+            optimizer, batch, model.apply)
         assert_allclose(gradients_sync_no_compile, gradients_async_no_compile)
 
         # Run sync + compile
         global_config.pipeline_aggressively_sync = True
         global_config.precompile_resharding_tasks = True
-        gradients_sync_compile = pipelined_train_step(optimizer, batch, model.apply)
+        gradients_sync_compile = pipelined_train_step(optimizer, batch,
+                                                      model.apply)
         assert_allclose(gradients_sync_no_compile, gradients_sync_compile)
 
         # Run sync + compile
         global_config.pipeline_aggressively_sync = False
         global_config.precompile_resharding_tasks = True
-        gradients_async_compile = pipelined_train_step(optimizer, batch, model.apply)
+        gradients_async_compile = pipelined_train_step(optimizer, batch,
+                                                       model.apply)
         assert_allclose(gradients_sync_no_compile, gradients_async_compile)
 
         executable.shutdown()
@@ -171,22 +177,25 @@ class PipelineCorrectnessTest(unittest.TestCase):
         else:
             grad_func = parax.grad
 
-        model = Transformer(BertConfig(
-            num_hidden_layers=num_layers,
-            hidden_size=hidden_size,
-            intermediate_size=hidden_size * 4,
-            num_attention_heads=num_heads,
-            pipeline_mp_size=pipeline_mp_size))
+        model = Transformer(
+            BertConfig(num_hidden_layers=num_layers,
+                       hidden_size=hidden_size,
+                       intermediate_size=hidden_size * 4,
+                       num_attention_heads=num_heads,
+                       pipeline_mp_size=pipeline_mp_size))
 
         batch = {
-            "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
+            "hidden_states": jnp.ones((batch_size, seq_len, hidden_size),
+                                      dtype=np.float32),
             "attention_mask": jnp.ones((batch_size, seq_len), dtype=np.int32),
-            "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
+            "label": jnp.ones((batch_size, seq_len, hidden_size),
+                              dtype=np.float32),
         }
         rngkey = jax.random.PRNGKey(0)
         state = create_train_state(rngkey, model, batch)
 
-        pipelined_train_step = get_train_transformer_step(grad_func, pipeline_mp_size=pipeline_mp_size)
+        pipelined_train_step = get_train_transformer_step(
+            grad_func, pipeline_mp_size=pipeline_mp_size)
         executable = pipelined_train_step.get_executable(state, batch, rngkey)
 
         # sync + no compile
@@ -241,14 +250,26 @@ class PipelineCorrectnessTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_1"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_2"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_4"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_8"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_transformer_layers_nmb_1"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_transformer_layers_nmb_2"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_transformer_layers_nmb_4"))
-    suite.addTest(PipelineCorrectnessTest("test_pipeline_correctness_transformer_layers_nmb_8"))
+    suite.addTest(
+        PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_1"))
+    suite.addTest(
+        PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_2"))
+    suite.addTest(
+        PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_4"))
+    suite.addTest(
+        PipelineCorrectnessTest("test_pipeline_correctness_mlp_nmb_8"))
+    suite.addTest(
+        PipelineCorrectnessTest(
+            "test_pipeline_correctness_transformer_layers_nmb_1"))
+    suite.addTest(
+        PipelineCorrectnessTest(
+            "test_pipeline_correctness_transformer_layers_nmb_2"))
+    suite.addTest(
+        PipelineCorrectnessTest(
+            "test_pipeline_correctness_transformer_layers_nmb_4"))
+    suite.addTest(
+        PipelineCorrectnessTest(
+            "test_pipeline_correctness_transformer_layers_nmb_8"))
     return suite
 
 

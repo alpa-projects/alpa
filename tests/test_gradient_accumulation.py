@@ -85,7 +85,8 @@ class GradAccumulationTest(unittest.TestCase):
         # Distributed execution
         global_config.num_micro_batches = num_micro_batches
         train_step_parallel = parallelize(train_step)
-        executable = train_step_parallel.get_executable(optimizer, batch, model.apply)
+        executable = train_step_parallel.get_executable(optimizer, batch,
+                                                        model.apply)
         optimizer_actual = train_step_parallel(optimizer, batch, model.apply)
 
         # Check results
@@ -136,8 +137,7 @@ def suite():
     suite.addTest(
         GradAccumulationTest("test_gradient_accumulation_single_host"))
     suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
-    suite.addTest(
-        GradAccumulationTest("test_gradient_accumulation_2d_mesh"))
+    suite.addTest(GradAccumulationTest("test_gradient_accumulation_2d_mesh"))
     suite.addTest(
         GradAccumulationTest("test_gradient_accumulation_reduce_scatter"))
     return suite

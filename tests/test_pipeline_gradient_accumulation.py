@@ -224,13 +224,12 @@ class AccumulateGradTest(unittest.TestCase):
         executable.shutdown()
 
 
-    def run_n_layer_bert(self, manual_pipeline_layer=True,
+    def run_n_layer_bert(self, n_layers, manual_pipeline_layer=True,
                          pipeline_stage_mode="uniform_layer_gpipe"):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
 
-        n_layers = 10
         batch_size = 16
         seq_len = 8
         hidden_size = 512
@@ -299,27 +298,41 @@ class AccumulateGradTest(unittest.TestCase):
     def test_mlp(self):
         self.run_mlp()
 
-    def test_2_layer_bert(self):
-        self.run_2_layer_bert()
-
     def test_mlp_auto_layer_slicing(self):
         self.run_mlp(manual_pipeline_layer=False)
 
-    def test_2_layer_bert_auto_layer_slicing(self):
-        self.run_2_layer_bert(manual_pipeline_layer=False)
-
     def test_mlp_auto_stage_clustering(self):
         self.run_mlp(pipeline_stage_mode="auto_gpipe")
-
-    def test_2_layer_bert_auto_stage_clustering(self):
-        self.run_2_layer_bert(pipeline_stage_mode="auto_gpipe")
 
     def test_mlp_auto_layer_and_stage(self):
         self.run_mlp(manual_pipeline_layer=False,
                      pipeline_stage_mode="auto_gpipe")
 
+    def test_2_layer_bert(self):
+        self.run_2_layer_bert()
+
+    def test_2_layer_bert_auto_layer_slicing(self):
+        self.run_2_layer_bert(manual_pipeline_layer=False)
+
+    def test_2_layer_bert_auto_stage_clustering(self):
+        self.run_2_layer_bert(pipeline_stage_mode="auto_gpipe")
+
     def test_2_layer_bert_auto_layer_and_stage(self):
         self.run_2_layer_bert(manual_pipeline_layer=False,
+                              pipeline_stage_mode="auto_gpipe")
+
+    def test_10_layer_bert(self):
+        self.run_n_layer_bert(n_layers=10)
+
+    def test_10_layer_bert_auto_layer_slicing(self):
+        self.run_n_layer_bert(n_layers=10, manual_pipeline_layer=False)
+
+    def test_10_layer_bert_auto_stage_clustering(self):
+        self.run_n_layer_bert(n_layers=10, pipeline_stage_mode="auto_gpipe")
+
+    def test_10_layer_bert_auto_layer_and_stage(self):
+        self.run_n_layer_bert(n_layers=10,
+                              manual_pipeline_layer=False,
                               pipeline_stage_mode="auto_gpipe")
 
 
@@ -333,6 +346,10 @@ def suite():
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
+    suite.addTest(AccumulateGradTest('test_10_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_10_layer_bert_auto_layer_slicing'))
+    suite.addTest(AccumulateGradTest('test_10_layer_bert_auto_stage_clustering'))
+    suite.addTest(AccumulateGradTest('test_10_layer_bert_auto_layer_and_stage'))
     return suite
 
 

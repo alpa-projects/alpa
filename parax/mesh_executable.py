@@ -950,7 +950,7 @@ class AllocZeroBufferDriverExecutable:
 
 
 class AllocZeroBufferWorkerExecutable:
-    """The driver part of a buffer-allocation executable."""
+    """The worker part of a buffer-allocation executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int,
                  grad_shard_shapes: Sequence[Tuple[int, ...]],

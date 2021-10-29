@@ -13,7 +13,7 @@ from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
                                                    pipeline_p)
 from parax.pipeline_parallel.runtime import (
     GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
-    gen_linear_pipeline_dependency_with_apply)
+    gen_dependency_with_stages)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
     compute_grad_to_accumulate_grad, generate_sharded_xla_stages,
@@ -289,8 +289,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         global_outvars = list(
             map(lambda x: get_var_mapping(out_map, x), global_outvars))
         n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
-        dependency = gen_linear_pipeline_dependency_with_apply(
-            n_stages, num_meshes, apply_deps)
+        dependency = gen_dependency_with_stages(
+            jax_pipeline_stages, len(sliced_apply_grad), apply_deps)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad
 
         used_simultaneously = set()

@@ -501,6 +501,24 @@ class Jax3DPipeline:  # pylint: disable=too-many-instance-attributes
         reset_pipeline_runtime_benchmark_timers()
 
 
+def gen_dependency_with_stages(compute_stages: "Sequence[Jax3DPipeline]", n_apply_stages, apply_deps):
+    n_stages = len(compute_stages) + n_apply_stages
+    d = np.zeros([n_stages, n_stages], dtype=np.int)
+    var_stage_id = {}
+    for i, stage in enumerate(compute_stages):
+        for var in stage.invars:
+            if var in var_stage_id:
+                d[i, var_stage_id[var]] = 1
+            else:
+                # Assume the var is from global_invars
+                pass
+        for var in stage.outvars:
+            var_stage_id[var] = i
+    for apply_stage_id, compute_stage_id in apply_deps:
+        d[apply_stage_id][compute_stage_id] = 1
+    return d
+
+
 def gen_linear_dependency(num_stage):
     """Generate a linear dependency matrix."""
     d = np.zeros([num_stage, num_stage], dtype=np.int)

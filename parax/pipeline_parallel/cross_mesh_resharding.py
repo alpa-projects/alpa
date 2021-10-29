@@ -802,8 +802,12 @@ class ReshardingTaskSpec:
         if not self._strategy:
             raise RuntimeError("Generate and set strategy first.")
         device_strs = set()
+        # senders
         for tile_strategy in self.strategy:
             device_strs = device_strs | set(tile_strategy.flatten().tolist())
+        # receivers
+        for tile in self.dst.tiles.flatten():
+            device_strs = device_strs | set(tile.replica_device_strs)
         return device_strs
 
 

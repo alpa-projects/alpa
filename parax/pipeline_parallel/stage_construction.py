@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import ray
 import numba
 import numpy as np
+from datetime import datetime
 from time import time
 from typing import Sequence, Set, Tuple
 from parax.pipeline_parallel.stage import JaxPipelineStage
@@ -216,7 +217,7 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh,
     if compute_cost is None:
         compute_cost = get_compute_cost(mesh, submesh_choices, layers,
                                         donation_mapping, global_outvars)
-        np.save("compute_cost.npz", compute_cost)
+        np.save(f"compute-cost-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.npz", compute_cost)
     cost, solution = dp(num_layers, mesh.total_devices, num_microbatches,
                         submesh_choices, compute_cost)
     stage_layer_ids = [

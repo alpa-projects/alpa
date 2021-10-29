@@ -216,11 +216,14 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh,
     if compute_cost is None:
         compute_cost = get_compute_cost(mesh, submesh_choices, layers,
                                         donation_mapping, global_outvars)
+        np.save("compute_cost.npz", compute_cost)
     cost, solution = dp(num_layers, mesh.total_devices, num_microbatches,
                         submesh_choices, compute_cost)
     stage_layer_ids = [
         list(range(start_id, end_id)) for (start_id, end_id), _ in solution
     ]
+    print("Result stage_layer_ids:", stage_layer_ids)
+    print("Result meshes:", [submesh_choices[i] for _, i in solution])
     sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_choices,
                                                  solution)
     return stage_layer_ids, sliced_meshes

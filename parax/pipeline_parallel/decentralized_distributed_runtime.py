@@ -107,6 +107,10 @@ def logging_instructions(instructions):
             ins_idx, instruction.opcode))
 
 
+def get_dict(d: Dict[Any, Dict], k) -> Dict:
+    return d.setdefault(k, dict())
+
+
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
     """
     A decentralized pipeline_parallel runtime.
@@ -225,7 +229,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 stage = self.stages[stage_idx]
                 received_keys = OrderedSet()
                 # shard_args for intermediates
-                for invar in stage.invars:
+                to_reshard_vars = []
+                reshard_sharding_specs = []
+                for invar, spec in zip(stage.invars,
+                                       stage.input_sharding_specs):
                     var_key, key = get_invar_key(invar, batch_idx)
                     if mesh_idx in var_at[key]:
                         # have a copy at the current mesh
@@ -233,23 +240,39 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     if len(var_at[key]) > 1:
                         raise NotImplemented(
                             "Not support resharding replicated")
-                    src_idx, src_uuids = list(var_at[key].items())[0]
-                    resharding_task = self._resharding_tasks[src_idx][mesh_idx][
-                        var_key]
-                    recv_uuids = self._compile_resharding_task(
-                        src_idx, mesh_idx, src_uuids, resharding_task)
-                    var_at[key][mesh_idx] = recv_uuids
-                    received_keys.add(key)
+                    to_reshard_vars.append(invar)
+                    reshard_sharding_specs.append(spec)
+                keys = [
+                    get_invar_key(var, batch_idx)[1] for var in to_reshard_vars
+                ]
+                if len(keys):
+                    recv_uuid_list = list(
+                        self._compile_alloc(to_reshard_vars,
+                                            reshard_sharding_specs, mesh_idx,
+                                            var_at, executable_config_lists,
+                                            keys))
+
+                    for invar, recv_uuids in zip(to_reshard_vars,
+                                                 recv_uuid_list):
+                        var_key, key = get_invar_key(invar, batch_idx)
+                        src_idx, src_uuids = list(var_at[key].items())[0]
+                        resharding_task = self._resharding_tasks[src_idx][
+                            mesh_idx][var_key]
+                        resharding_task: ReshardingTask
+                        self._compile_resharding_task(src_idx, mesh_idx,
+                                                      src_uuids,
+                                                      resharding_task,
+                                                      recv_uuids)
+                        received_keys.add(key)
 
                 # execute
                 # allocate uuids for buffers created by RUN
                 for outvar in stage.outvars:
                     key = (repr(outvar), batch_idx)
                     # get uuids of this outvar
-                    var_at.setdefault(key,
-                                      dict())[mesh_idx] = self.get_next_uuids(
-                                          physical_mesh.total_devices).reshape(
-                                              -1, num_devices_per_host)
+                    get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
+                        physical_mesh.total_devices).reshape(
+                            -1, num_devices_per_host)
 
                 exec_uuid = executable_uuids[stage_idx]
                 for worker_idx, worker in enumerate(physical_mesh.workers):
@@ -304,13 +327,42 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         instruction.input_uuids))
                     unused_uuids = list(
                         input_uuids.difference(used_later_uuids))
-                    new_list.append(
-                        PipelineInstruction.FREE(np.array(unused_uuids)))
+                    if len(unused_uuids):
+                        new_list.append(
+                            PipelineInstruction.FREE(np.array(unused_uuids)))
                     used_later_uuids.update(input_uuids)
                 new_list.append(instruction)
             self.instruction_lists[worker] = list(reversed(new_list))
 
         return executable_config_lists, input_local_uuid_list
+
+    def _compile_alloc(self, vars, sharding_specs, mesh_idx, var_at,
+                       executable_config_lists, keys):
+        physical_mesh = self.physical_meshes[mesh_idx]
+        avals = [var.aval for var in vars]
+        sharded_shapes = [
+            get_shard_shape(aval, spec)
+            for aval, spec in zip(avals, sharding_specs)
+        ]
+        dtypes = [aval.dtype for aval in avals]
+
+        exec_uuid = next_mesh_executable_uuid()
+        output_uuids = self.get_next_uuids(
+            len(vars) * physical_mesh.total_devices).reshape(
+                len(physical_mesh.workers), len(vars), -1)
+        for worker_idx, worker in enumerate(physical_mesh.workers):
+            executable_config_lists[worker].append(
+                AllocateZeroWorkerExecutableConfig(exec_uuid, sharded_shapes,
+                                                   dtypes))
+            self.instruction_lists[worker].append(
+                PipelineInstruction.RUN(exec_uuid, [], output_uuids[worker_idx],
+                                        {}))
+        # (args, workers, devices)
+        transposed = output_uuids.transpose([1, 0, 2])
+        for var_idx in range(len(vars)):
+            key = keys[var_idx]
+            get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
+        return transposed
 
     def _compile_task_configs(self, var_at):
         """
@@ -355,32 +407,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 grad_var_spec_dict = mesh_grad_vars[mesh_idx]
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
-                grad_avals = [var.aval for var in grad_vars]
-                grad_shard_shapes = [
-                    get_shard_shape(aval, spec)
-                    for aval, spec in zip(grad_avals, grad_sharding_specs)
-                ]
-                grad_shard_dtypes = [aval.dtype for aval in grad_avals]
-
-                physical_mesh = self.physical_meshes[mesh_idx]
-                exec_uuid = next_mesh_executable_uuid()
-                output_uuids = self.get_next_uuids(
-                    len(grad_vars) * physical_mesh.total_devices).reshape(
-                        len(physical_mesh.workers), len(grad_vars), -1)
-                for worker_idx, worker in enumerate(physical_mesh.workers):
-                    executable_config_lists[worker].append(
-                        AllocateZeroWorkerExecutableConfig(
-                            exec_uuid, grad_shard_shapes, grad_shard_dtypes))
-                    self.instruction_lists[worker].append(
-                        PipelineInstruction.RUN(exec_uuid, [],
-                                                output_uuids[worker_idx], {}))
-                # (args, workers, devices)
-                output_uuids = output_uuids.transpose([1, 0, 2])
-                for var_idx, var in enumerate(grad_vars):
-                    # TODO(yonghao): only works for GPipeSchedule
-                    key = (repr(var), self.num_batch - 1)
-                    var_at.setdefault(key,
-                                      dict())[mesh_idx] = output_uuids[var_idx]
+                # TODO(yonghao): only works for GPipeSchedule
+                keys = [(repr(var), self.num_batch - 1) for var in grad_vars]
+                self._compile_alloc(grad_vars, grad_sharding_specs, mesh_idx,
+                                    var_at, executable_config_lists, keys)
 
         # 2. PartialGradAccMeshExecutable
         for stage_idx, stage in enumerate(self.stages):
@@ -485,7 +515,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     num_args, -1, physical_mesh.num_devices_per_host)
             for arg_idx, key in enumerate(mesh_arg_lists[mesh_idx]):
                 key = repr(key[0]), key[1]
-                var_at.setdefault(key, dict())[mesh_idx] = arg_uuids[arg_idx]
+                get_dict(var_at, key)[mesh_idx] = arg_uuids[arg_idx]
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     input_local_uuid_list.setdefault(worker, list()).append(
                         arg_uuids[arg_idx, worker_idx])
@@ -544,7 +574,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.mesh_output_indices.append(mesh_out_indices)
 
     def _compile_resharding_task(self, src_mesh_idx, dst_mesh_idx, src_uuids,
-                                 resharding_task: ReshardingTask):
+                                 resharding_task: ReshardingTask, recv_uuids):
         """
         Add SEND and RECV PipelineInstructions for a ReshardingTask.
         Args:
@@ -552,7 +582,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             dst_mesh_idx: mesh index of the dst mesh
             src_uuids (np.ndarray): uuids of resharded buffer in src mesh
             resharding_task (ReshardingTask): the task to be compiled
-        Returns:
             recv_uuids (np.ndarray): uuids of resharded buffer in dst mesh
         """
         src_mesh = self.physical_meshes[src_mesh_idx]
@@ -579,8 +608,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.instruction_lists[w].append(
                 PipelineInstruction.SEND(task_uuid, input_uuids))
 
-        recv_uuids = self.get_next_uuids(dst_mesh.total_devices).reshape(
-            -1, num_devices_per_host)
         # collect uuids of each recv_tile in each worker according to resharding_task's plan
         for receiver_str in resharding_task.receiver_uuid_plan:
             receiver_worker = resharding_task.collective_group.device_str_to_mesh_worker_map[
@@ -596,9 +623,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for w, task_uuid in resharding_task.recv_worker_task_ids.items():
             output_uuids = recv_buf_uuids[w]
             self.instruction_lists[w].append(
-                PipelineInstruction.RECV(task_uuid, output_uuids, True))
-        # no need to set default because of sent mesh
-        return recv_uuids
+                PipelineInstruction.RECV(task_uuid, output_uuids, False))
 
     def _exec_split_args(self, args, batch_dim=0):
         split_args = []

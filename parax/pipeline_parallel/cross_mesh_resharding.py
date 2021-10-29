@@ -770,8 +770,9 @@ class ReshardingTaskSpec:
         device_strs = set()
         for tile_strategy in self.strategy:
             device_strs = device_strs | set(tile_strategy.flatten().tolist())
+        for tile in self.dst.tiles.flatten():
+            device_strs = device_strs | set(tile.replica_device_strs)
         return device_strs
-
 
 def unflatten_tile_index(index, shape):
     """Unroll a flattend index based on the given shape."""

@@ -10,8 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
-from parax.global_env import global_config
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
 from parax.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
@@ -52,17 +51,19 @@ def assert_data_parallel_cost(state,
 
     if global_config.prefer_reduce_scatter:
         assert n_all_reduce == num_batch_norm * 2
-        assert n_reduce_scatter == 2
-        assert n_all_gather == 1
+        assert n_reduce_scatter == num_batch_norm + 2
+        assert n_all_gather == num_batch_norm + 1
         assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
     else:
         assert n_all_reduce == 1 + num_batch_norm * 2
         assert n_total == n_all_reduce
 
     if global_config.prefer_reduce_scatter:
-        for weight in params:
-            if len(weight.shape) > 1:
-                assert is_sharded(weight)
+        num_not_sharded = 0
+        for weight in opt_state:
+            if not is_sharded(weight) and len(weight.shape) > 1:
+                num_not_sharded += 1
+        assert num_not_sharded == 0
     else:
         for weight in params:
             assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))

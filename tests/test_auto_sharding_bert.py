@@ -8,8 +8,7 @@ import numpy as np
 from flax import optim, linen as nn
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
-from parax.model.bert_model import (BertConfig, FlaxBertAttention,
-                                    FlaxBertLayerCollection,
+from parax.model.bert_model import (BertConfig, FlaxBertLayerCollection,
                                     FlaxBertForMaskedLMModule)
 from parax.util import count_communication_primitives
 from test_auto_sharding_mlp import (

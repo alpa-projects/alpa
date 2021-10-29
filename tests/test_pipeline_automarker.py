@@ -1,4 +1,3 @@
-import copy
 from functools import partial
 import unittest
 
@@ -15,7 +14,7 @@ from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.testing import assert_allclose
 
 
-class MLP_Model(nn.Module):
+class MLPModel(nn.Module):
     hidden_dim: int
     output_dim: int
 
@@ -29,7 +28,7 @@ class MLP_Model(nn.Module):
         return x
 
 
-class BertLayer_Model(nn.Module):
+class BertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
 
@@ -38,11 +37,10 @@ class BertLayer_Model(nn.Module):
         self.layer1 = FlaxBertLayer(config=self.config, dtype=self.dtype)
 
     def __call__(self, x, attention_mask):
-        layer_outputs = self.layer0(x, attention_mask)
-        x = layer_outputs[0]
-        layer_outputs = self.layer1(x, attention_mask)
-        x = layer_outputs[0]
-        return x
+        out = x
+        out = self.layer0(out, attention_mask)[0]
+        out = self.layer1(out, attention_mask)[0]
+        return out
 
 
 class PipelineAutoMarkerTest(unittest.TestCase):
@@ -50,6 +48,7 @@ class PipelineAutoMarkerTest(unittest.TestCase):
     def setUp(self):
         ray.init(address="auto")
         jax.config.update('jax_platform_name', 'cpu')
+
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
 
@@ -60,33 +59,37 @@ class PipelineAutoMarkerTest(unittest.TestCase):
         batch_size = 256
         hidden_dim = 16
         input_dim = output_dim = hidden_dim
-        model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim)
-        x = jnp.array(np.random.rand(batch_size, input_dim))
-        y = jnp.array(np.random.rand(batch_size, output_dim))
+
+        # Init model
+        model = MLPModel(hidden_dim=hidden_dim, output_dim=output_dim)
         rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, input_dim))
+        y = jax.random.normal(rngkey, (batch_size, output_dim))
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
         batch = {'x': x, 'y': y}
 
-        @partial(automatic_layer_slicing, layer_num=2, use_pipeline=True)
-        def loss_func(params, x, y):
-            out = model.apply(params, x)
-            loss = jnp.mean((out - y)**2)
-            return loss
-
         def train_step(optimizer, batch):
+
+            @partial(automatic_layer_slicing, layer_num=2, use_pipeline=True)
+            def loss_func(params, x, y):
+                out = model.apply(params, x)
+                loss = jnp.mean((out - y)**2)
+                return loss
+
             param_grad = parax.grad(loss_func)(optimizer.target, batch['x'],
                                                batch['y'])
             new_optimizer = optimizer.apply_gradient(param_grad)
             return new_optimizer.target
 
         global_config.num_micro_batches = 4
-
-        # copy to prevent from donation
-        corr = train_step(optimizer, batch)
         parallel_train_step = parallelize(train_step)
-        new_optimizer = parallel_train_step(optimizer, batch)
-        assert_allclose(new_optimizer, corr)
+
+        # Run and check results
+        expected = train_step(optimizer, batch)
+        actual = parallel_train_step(optimizer, batch)
+        assert_allclose(expected, actual)
+
         parallel_train_step.get_executable(optimizer, batch).shutdown()
 
     def test_2_layer_bert(self):
@@ -111,28 +114,29 @@ class PipelineAutoMarkerTest(unittest.TestCase):
         hidden_size = 512
         num_heads = 8
 
-        x = jnp.ones((batch_size, seq_len, hidden_size), dtype=jnp.float32)
-        y = jnp.ones(
-            (batch_size, seq_len, hidden_size),
-            dtype=jnp.float32) * 23  # * np.arange(hidden_size)[None, None, :]
+        rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
-        model = BertLayer_Model(
-            config=BertConfig(hidden_size=hidden_size,
-                              intermediate_size=hidden_size * 4,
-                              num_attention_heads=num_heads))
-        rngkey = jax.random.PRNGKey(0)
+        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
+                                                 intermediate_size=hidden_size *
+                                                 4,
+                                                 num_attention_heads=num_heads))
         params = model.init(rngkey, x, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
 
         global_config.num_micro_batches = 2
-
-        corr_tgt = train_step(optimizer, batch, model.apply)
         pipelined_train_step = parallelize(train_step)
-        pipe_tgt = pipelined_train_step(optimizer, batch, model.apply)
-        assert_allclose(corr_tgt, pipe_tgt)
+
+        # Run and check results
+        expected = train_step(optimizer, batch, model.apply)
+        actual = pipelined_train_step(optimizer, batch, model.apply)
+        assert_allclose(expected, actual)
         pipelined_train_step.get_executable(optimizer, batch,
                                             model.apply).shutdown()
 

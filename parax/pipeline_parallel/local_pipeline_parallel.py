@@ -13,7 +13,6 @@ from parax.pipeline_parallel.stage import (
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.base_runtime import BaseRuntime
 
-
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -62,6 +61,7 @@ class LocalPipelineRunner:
 
 
 class LocalRuntime(BaseRuntime):
+
     def __init__(self,
                  *,
                  pipeline_stages: Sequence[PipelineStage],

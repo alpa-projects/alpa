@@ -37,6 +37,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
     This runtime uses a central driver process to dynamically coordinate among distributed workers and
     schedule their pipelined training.
     """
+
     def __init__(self,
                  *,
                  pipeline_stages,
@@ -48,16 +49,16 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                  schedule,
                  is_batch,
                  num_batch=1):
-        super(CentralizedDistributedRuntime, self).__init__(
-            pipeline_stages=pipeline_stages,
-            global_invars=global_invars,
-            grad_dummy_invars=grad_dummy_invars,
-            global_outvars=global_outvars,
-            physical_meshes=physical_meshes,
-            dependency=dependency,
-            schedule=schedule,
-            is_batch=is_batch,
-            num_batch=num_batch)
+        super(CentralizedDistributedRuntime,
+              self).__init__(pipeline_stages=pipeline_stages,
+                             global_invars=global_invars,
+                             grad_dummy_invars=grad_dummy_invars,
+                             global_outvars=global_outvars,
+                             physical_meshes=physical_meshes,
+                             dependency=dependency,
+                             schedule=schedule,
+                             is_batch=is_batch,
+                             num_batch=num_batch)
 
         # private attributes
         self._runnables = None
@@ -296,24 +297,29 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                     src_mesh_idx = self.physical_meshes.index(val.device_mesh)
                     if global_config.precompile_resharding_tasks:
                         # The tasks have been prepared.
-                        if key not in self._resharding_tasks[src_mesh_idx][mesh_idx]:
-                            raise RuntimeError("Cannot find a ready resharding task.")
-                        resharding_task = self._resharding_tasks[src_mesh_idx][mesh_idx][key]
+                        if key not in self._resharding_tasks[src_mesh_idx][
+                                mesh_idx]:
+                            raise RuntimeError(
+                                "Cannot find a ready resharding task.")
+                        resharding_task = self._resharding_tasks[src_mesh_idx][
+                            mesh_idx][key]
                         resharded_val = resharding_task.do_prepared(val)
                     else:
                         task_spec = self._communicator.resharding_specs[
                             src_mesh_idx][mesh_idx][key]
                         assert task_spec
-                        task = ReshardingTask(task_spec,
-                                              self._collective_groups[src_mesh_idx][mesh_idx],
-                                              self.physical_meshes[src_mesh_idx],
-                                              self.physical_meshes[mesh_idx])
+                        task = ReshardingTask(
+                            task_spec,
+                            self._collective_groups[src_mesh_idx][mesh_idx],
+                            self.physical_meshes[src_mesh_idx],
+                            self.physical_meshes[mesh_idx])
                         resharded_val = task.do(val)
                     inputs_list.append(resharded_val)
             elif isinstance(val, ReplicatedDistributedArray):
                 mesh_idx = list(self.schedule.stage_placement(stage_idx))[0]
                 # find the local copy of val
-                local_replica = val.get_replica_on_mesh(self.physical_meshes[mesh_idx])
+                local_replica = val.get_replica_on_mesh(
+                    self.physical_meshes[mesh_idx])
                 inputs_list.append(local_replica)
             else:
                 # it is a DeviceArray
@@ -329,7 +335,8 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
             else:
                 if isinstance(self._env[key], DistributedArray):
                     # construct the ReplicatedDA, and put it back to env
-                    rda = ReplicatedDistributedArray([self._env[key].device_mesh], [self._env[key]])
+                    rda = ReplicatedDistributedArray(
+                        [self._env[key].device_mesh], [self._env[key]])
                     rda.add_replica(val.device_mesh, val)
                     self._env[key] = rda
                 elif isinstance(self._env[key], ReplicatedDistributedArray):

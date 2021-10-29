@@ -28,10 +28,9 @@ from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWor
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
-from parax.util import (benchmark_func, get_dim_last_value,
-                        list_gpu_info, GB, to_cupy,
-                        to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
-                        jax_buffer_to_xla_buffer)
+from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
+                        to_cupy, to_jax_tensor, jax_buffer_set,
+                        xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -339,7 +338,7 @@ class MeshHostWorker:
     def get_timer(self, name: str):
         return timers(name)
 
-    def reset_timer(self, name : str):
+    def reset_timer(self, name: str):
         timers(name).reset()
         return True
 

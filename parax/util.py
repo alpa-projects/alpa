@@ -205,13 +205,23 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
 
     assert len(parameter_shapes) == len(donated_invars)
 
-    ct = 0
-    for i in range(len(parameter_shapes)):
-        if donated_invars[i]:
-            assert parameter_shapes[i].dimensions(
-            ) == result_shapes[ct].dimensions()
-            xla_computation.setup_alias((ct,), i, ())
-            ct += 1
+    p_in = 0
+    p_out = 0
+    while p_in < len(parameter_shapes) and p_out < len(result_shapes):
+        if donated_invars[p_in]:
+            if parameter_shapes[p_in] == result_shapes[p_out]:
+                xla_computation.setup_alias((p_out,), p_in, ())
+                p_in += 1
+                p_out += 1
+            else:
+                p_out += 1
+        else:
+            p_in += 1
+
+    while p_in < len(parameter_shapes):
+        if donated_invars[p_in]:
+            warn("Some vars are not donated")
+        p_in += 1
 
 
 def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
@@ -289,6 +299,66 @@ class XlaPassContext:
     def __exit__(self, exc_type, exc_value, exc_traceback):
         XlaPassContext.current = None
         xe.clear_pass_context()
+
+
+########################################
+##### Jaxpr Utilities
+########################################
+
+
+def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
+    """Divide the batch dimension by #micro-batches."""
+    avals = []
+    for aval, is_batch_var in zip(raw_avals, batch_invars):
+        if is_batch_var:
+            assert aval.shape[0] % num_micro_batches == 0,\
+                "The batch dimension must be divisable by num_micro_batches."
+            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
+            avals.append(aval.update(shape=shape))
+        else:
+            avals.append(aval)
+    return avals
+
+
+def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
+                    sliced_eqns) -> Sequence[ClosedJaxpr]:
+    """Wrap sliced equations to a list of ClosedJaxpr."""
+    N = len(sliced_eqns)
+    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    global_outvars = set(
+        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+    result = []
+    layer_invars = [set() for _ in range(N)]
+    layer_outvars = [set() for _ in range(N)]
+    layer_consts = [dict() for _ in range(N)]
+    var_layer_dict = {}
+    for i, eqns in enumerate(sliced_eqns):
+        for eqn in eqns:
+            for var in eqn.invars:
+                if isinstance(var, Literal):
+                    continue
+                if var in global_consts:
+                    layer_consts[i][var] = global_consts[var]
+                elif var in global_invars:
+                    layer_invars[i].add(var)
+                elif var_layer_dict[var] != i:
+                    layer_invars[i].add(var)
+                    layer_outvars[var_layer_dict[var]].add(var)
+                else:
+                    assert var_layer_dict[var] == i
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar):
+                    var_layer_dict[var] = i
+                if var in global_outvars:
+                    layer_outvars[i].add(var)
+    for i, eqns in enumerate(sliced_eqns):
+        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
+                          list(layer_outvars[i]), eqns)
+        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
+                                       list(layer_consts[i].values()))
+        result.append(new_closed_jaxpr)
+    return result
 
 
 ########################################
@@ -477,8 +547,8 @@ def to_str_round(x, decimal=6):
     if isinstance(x, str):
         return x
     if isinstance(x, (list, tuple)) or isinstance(x, np.ndarray):
-        return "[" + ", ".join([to_str_round(y, decimal=decimal)
-                                for y in x]) + "]"
+        return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
+                               ]) + "]"
     if isinstance(x, dict):
         return str({k: eval(to_str_round(v)) for k, v in x.items()})
     if isinstance(x, int):
@@ -531,56 +601,3 @@ def compute_param_number(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
-
-
-def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
-    avals = []
-    for aval, is_batch_var in zip(raw_avals, batch_invars):
-        if is_batch_var:
-            assert aval.shape[0] % num_micro_batches == 0,\
-                "The batch dimension must be divisable by num_micro_batches."
-            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
-            avals.append(aval.update(shape=shape))
-        else:
-            avals.append(aval)
-    return avals
-
-
-def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                    sliced_eqns) -> Sequence[ClosedJaxpr]:
-    N = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    global_outvars = set(
-        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    result = []
-    layer_invars = [set() for _ in range(N)]
-    layer_outvars = [set() for _ in range(N)]
-    layer_consts = [dict() for _ in range(N)]
-    var_layer_dict = {}
-    for i, eqns in enumerate(sliced_eqns):
-        for eqn in eqns:
-            for var in eqn.invars:
-                if isinstance(var, Literal):
-                    continue
-                if var in global_consts:
-                    layer_consts[i][var] = global_consts[var]
-                elif var in global_invars:
-                    layer_invars[i].add(var)
-                elif var_layer_dict[var] != i:
-                    layer_invars[i].add(var)
-                    layer_outvars[var_layer_dict[var]].add(var)
-                else:
-                    assert var_layer_dict[var] == i
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    var_layer_dict[var] = i
-                if var in global_outvars:
-                    layer_outvars[i].add(var)
-    for i, eqns in enumerate(sliced_eqns):
-        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
-                          list(layer_outvars[i]), eqns)
-        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
-                                       list(layer_consts[i].values()))
-        result.append(new_closed_jaxpr)
-    return result

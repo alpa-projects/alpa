@@ -29,11 +29,11 @@ from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
-                        to_cupy, to_jax_tensor, jax_buffer_set,
-                        xla_buffer_to_jax_buffer, jax_buffer_to_xla_buffer)
+                        jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
+                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer, xla_buffer_to_cupy, cupy_to_xla_buffer)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -131,9 +131,25 @@ class MeshHostWorker:
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
     def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
-        """Send a slice of a source buffer to a target GPU."""
-        src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
-        to_send = to_cupy(src_buffer[tuple(offset)])
+        """
+        Send a slice of a source buffer to a target GPU.
+
+        Args:
+            uuid (int64): the uuid of the xla buffers.
+            offset (List[slice]): the slice to be sent in the buffer.
+            dst_rank (int): destination rank to send.
+            dst_gpu_idx (int): the gpu index on the destination rank.
+            group_name (str): collective group name
+        """
+        slice_shape = tuple(ind.stop - ind.start for ind in offset)
+        if slice_shape == self.buffers[uuid].shape:
+            # fast path
+            to_send = xla_buffer_to_cupy(self.buffers[uuid])
+        else:
+            # slower path, because of indexing.
+            # TODO(Hao): implement a custom, faster kernel for indexing
+            src_buffer = xla_buffer_to_jax_tensor(self.buffers[uuid])[tuple(offset)]
+            to_send = jax_tensor_to_cupy(src_buffer)
         # logger.debug(
         #     ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
         #     "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
@@ -144,30 +160,50 @@ class MeshHostWorker:
 
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
                   src_gpu_idx, group_name):
-        """Recv a slice from a source GPU and in-place write it on the target buffer."""
+        """
+        Recv a slice from a source GPU and in-place write it on the target buffer.
+
+        Args:
+            uuid (int64): the uuid of the xla buffers.
+            device_id (int): the device where the buffer is received, used to allocate tmp buffer.
+            indices_in_dst_tile (List[slice]): the slice index to be written on destination buffer.
+            src_rank (int): source rank to receive from.
+            src_gpu_idx (int): the sender gpu index on the source rank.
+            group_name (str): collective group name.
+        """
         if uuid not in self.buffers:
             raise RuntimeError()
-        tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
-        tmp_buffer = device_put(
-            jnp.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
-            self.local_devices[device_id])
-        to_recv = to_cupy(tmp_buffer)
-        col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-
-        # Hao: if the following line cannot print, meaning NCCL hangs...
-        # logger.debug(
-        #     ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
-        #     .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
-        #             to_recv[0]))
-        recv_tensor = to_jax_tensor(to_recv)
-
-        # 0-copy version
-        start_indices = tuple(
-            ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
-        new_buffer = jax_buffer_set(
-            xla_buffer_to_jax_buffer(self.buffers[uuid]), recv_tensor,
-            start_indices)
-        self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
+        tileslice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
+        # logger.debug("uuid xla  before {}: {}, {}..".format(uuid, self.buffers[uuid], self.buffers[uuid].__cuda_array_interface__["data"]))
+        if tileslice_shape == self.buffers[uuid].shape:
+            to_recv = xla_buffer_to_cupy(self.buffers[uuid], take_ownership=True)
+            col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
+        else:
+            tmp_buffer = device_put(
+                jnp.ones(tileslice_shape, dtype=self.buffers[uuid].dtype),
+                self.local_devices[device_id])
+            # logger.debug("uuid temp before {}: {}, {}..".format(uuid, tmp_buffer, tmp_buffer.device_buffer.__cuda_array_interface__["data"]))
+            to_recv = jax_tensor_to_cupy(tmp_buffer)
+            # logger.debug("uuid cupy before {}: {}, {}..".format(uuid, to_recv, to_recv.__cuda_array_interface__["data"]))
+            col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            # logger.debug("uuid cupy after {}: {}, {}..".format(uuid, to_recv, to_recv.__cuda_array_interface__["data"]))
+            # logger.debug("uuid temp after {}: {}, {}..".format(uuid, tmp_buffer, tmp_buffer.device_buffer.__cuda_array_interface__["data"]))
+            # Hao: if the following line cannot print, meaning NCCL hangs...
+            # logger.debug(
+            #     ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
+            #     .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
+            #             to_recv[0]))
+            recv_tensor = cupy_to_jax_tensor(to_recv)
+            # logger.debug("uuid recv_tensor after {}: {}, {}..".format(uuid, recv_tensor, recv_tensor.device_buffer.__cuda_array_interface__["data"]))
+            # 0-copy version
+            start_indices = tuple(
+                ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
+            new_buffer = jax_tensor_set(
+                xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
+                start_indices)
+            self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+            # logger.debug("uuid xla  after {}: {}, {}..".format(uuid, self.buffers[uuid], self.buffers[uuid].__cuda_array_interface__["data"]))
         return True
 
     def put_resharding_send_task(self, uuid, tasks, group_name):

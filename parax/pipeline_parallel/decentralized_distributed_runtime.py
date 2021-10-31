@@ -683,7 +683,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     for buf in bufs:
                         buf.set_deleted_on_workers()
 
-        # TODO(Hao): how to sync and check results?
         # construct output_bufs first.
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             num_devices_per_host = physical_mesh.num_devices_per_host

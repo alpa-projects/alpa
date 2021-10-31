@@ -275,7 +275,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                              num_batch=num_batch)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
-    # TODO(Hao): delay the creation of physical mesh here
     for i, mesh in enumerate(schedule.meshes):
         logger.debug("Launch the {}th mesh...".format(i))
         physical_meshes.append(mesh.get_physical_mesh())

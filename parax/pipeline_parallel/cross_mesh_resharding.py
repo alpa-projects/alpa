@@ -608,8 +608,7 @@ class CollectiveGroup:
             self.group_name))
         for worker in self.mesh_workers:
             # This remote call will remove ray named actors (hence it is necessary)
-            ret = ray.get(
-                worker.destroy_collective_group.remote(self.group_name))
+            ray.get(worker.destroy_collective_group.remote(self.group_name))
         # Destroy the declared named actor in ray
 
         # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
@@ -849,11 +848,7 @@ class CrossMeshCommunicator:
         # Do not mutate
         self._sharded_stages = sharded_stages
         self._schedule = schedule
-
         self.resharding_specs = None
-
-        # TODO(Hao): implement the cache later.
-        self.resharding_cache = dict()
 
         # Loads for load balancing.
         self._sender_loads = {

@@ -23,7 +23,7 @@ from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)
+logger.setLevel(logging.INFO)
 
 timer_names = {
     "overall": "average",
@@ -292,7 +292,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     kwargs = {
                         "skip_grad_sync": not (stage_idx >= num_mesh and
                                                stage_idx < num_mesh * 2 and
-                                               batch_idx == 0)
+                                               batch_idx == 0),
+                        "sync_before": False,
+                        "sync_after": False,
                     }
 
                     worker_tmp_instructions[worker].append(
@@ -356,7 +358,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                                    dtypes))
             self.instruction_lists[worker].append(
                 PipelineInstruction.RUN(exec_uuid, [], output_uuids[worker_idx],
-                                        {}))
+                                        {"sync_before": False, "sync_after": False}
+                                        ))
         # (args, workers, devices)
         transposed = output_uuids.transpose([1, 0, 2])
         for var_idx in range(len(vars)):
@@ -680,7 +683,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     for buf in bufs:
                         buf.set_deleted_on_workers()
 
-        # TODO(Hao): how to sync and check results?
         # construct output_bufs first.
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             num_devices_per_host = physical_mesh.num_devices_per_host

@@ -350,17 +350,21 @@ class NormalMeshWorkerExecutable:
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]]):
+                          output_uuids: List[List[int]],
+                          sync_before=True,
+                          sync_after=True):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
         # Get input buffers from uuids
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
 
+        before_sync_func = self.sync_func if sync_before else None
+        after_sync_func = self.sync_func if sync_after else None
         # Execute the executable
-        timers(self.timer_name).start(self.sync_func)
+        timers(self.timer_name).start(before_sync_func)
         output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(after_sync_func)
 
         # Store output buffers
         for i in range(len(output_uuids)):
@@ -850,12 +854,13 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
             self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
     def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]], skip_grad_sync):
+                          output_uuids: List[List[int]], skip_grad_sync=False,
+                          **kwargs):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] =\
             self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshWorkerExecutable,
-                     self).execute_on_worker(input_uuids, output_uuids)
+                     self).execute_on_worker(input_uuids, output_uuids, **kwargs)
 
 
 class AllocZeroBufferDriverExecutable:
@@ -964,12 +969,17 @@ class AllocZeroBufferWorkerExecutable:
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids, output_uuids):
+    def execute_on_worker(self, input_uuids, output_uuids,
+                          sync_before=True, sync_after=True):
         buffer_dict = self.worker.buffers
-        timers(self.timer_name).start(self.sync_func)
+        before_sync_func = self.sync_func if sync_before else None
+        after_sync_func = self.sync_func if sync_after else None
+
+        # Execute
+        timers(self.timer_name).start(before_sync_func)
         grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
             [])
-        timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(after_sync_func)
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], grad_bufs[i])
 

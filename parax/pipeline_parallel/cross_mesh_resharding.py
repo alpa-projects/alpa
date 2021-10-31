@@ -290,13 +290,13 @@ class ReshardingTask:
         # Put an empty buffer first.
         if global_config.pipeline_aggressively_sync:
             ray.get(
-                receiver_worker.put_empty_buffer.remote(result_buf.uuid,
+                receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
                                                         result_buf.device_id,
                                                         dst_tile.tile_shape,
                                                         result_buf.dtype))
             logger.debug("We are synchronizing for `put_empty_buffer`.")
         else:
-            receiver_worker.put_empty_buffer.remote(result_buf.uuid,
+            receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
                                                     result_buf.device_id,
                                                     dst_tile.tile_shape,
                                                     result_buf.dtype)

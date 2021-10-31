@@ -71,20 +71,6 @@ class MeshHostWorker:
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
-    def put_empty_buffer(self,
-                         uuid: int,
-                         device_id: int,
-                         shape: Tuple[int, ...],
-                         dtype=np.float32):
-        """Put an all-zero empty buffer on the given device.
-
-        Note: This function is blocking (synchronous).
-        """
-        assert uuid not in self.buffers
-        self.buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.empty(shape, dtype),
-                                           self.local_devices[device_id])
-
     def put_non_zero_buffer(self,
                             uuid: int,
                             device_id: int,
@@ -227,7 +213,7 @@ class MeshHostWorker:
         task = self.recv_tasks[uuid]
         for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             if set_empty_buffer:
-                self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
+                self.put_non_zero_buffer(buf_uuid, *(recv_detail[0:-1]))
             for recv_subtask in recv_detail[-1]:
                 self.recv_tile(buf_uuid,
                                recv_detail[0],

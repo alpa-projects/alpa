@@ -31,7 +31,7 @@ This repo depends on our private fork of jax and tensorflow.
     
     # Install the latest Ray, replace `LINK_TO_WHEEL` with links provided:
     # https://docs.ray.io/en/latest/installation.html#daily-releases-nightlies
-    pip install -U ray[default]@LINK_TO_WHEEL.whl
+    pip3 install -U ray[default]@LINK_TO_WHEEL.whl
     ```
   - ILP Solver:
     ```bash

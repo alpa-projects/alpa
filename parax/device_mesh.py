@@ -33,7 +33,7 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         is_continuous_subset, infer_offset_and_n_elements)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):

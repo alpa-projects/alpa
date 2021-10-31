@@ -358,9 +358,9 @@ class NormalMeshWorkerExecutable:
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
 
         # Execute the executable
-        # timers(self.timer_name).start(self.sync_func)
+        timers(self.timer_name).start(self.sync_func)
         output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
-        # timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(self.sync_func)
 
         # Store output buffers
         for i in range(len(output_uuids)):
@@ -966,10 +966,10 @@ class AllocZeroBufferWorkerExecutable:
 
     def execute_on_worker(self, input_uuids, output_uuids):
         buffer_dict = self.worker.buffers
-        # timers(self.timer_name).start(self.sync_func)
+        timers(self.timer_name).start(self.sync_func)
         grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
             [])
-        # timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(self.sync_func)
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], grad_bufs[i])
 

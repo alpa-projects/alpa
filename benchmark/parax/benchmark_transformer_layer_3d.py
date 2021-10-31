@@ -152,7 +152,7 @@ def benchmark_transformer_one_case(benchmark_case):
     print_used_time("Benchmark")
 
 
-    report_pipeline_breakdown(executable, ["resharding", "compute"])
+    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"])
     # Log benchmark results
     heads = ["Type", "Model Config", "Parallel Config", "# Microbatch", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:5]), str(benchmark_case[5:]),
@@ -181,13 +181,12 @@ benchmark_suite_2_gpu = [
 
 
 benchmark_suite_4_gpu = [
-    # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
+    # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, True, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, True, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 4, True, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 8, True, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 16, True, False),
-    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 32, True, False), # wrong case
 
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 1, False, False),
     (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
@@ -201,16 +200,15 @@ benchmark_suite_4_gpu = [
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 4, True, False),
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 8, True, False),
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 16, True, False),
-    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 32, True, False),  # wrong case
 
-    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 1, False, False), # OOM
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 1, False, False), # might OOM
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 2, False, False),
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 4, False, False),
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 8, False, False),
     (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 16, False, False),
-    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 32, False, False), # OOM
+    (32,  1024, 1536, 4,  1536//96,  1,  2, 2, 32, False, False), # might OOM
 
-    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 1, False, False), # OOM
+    (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 1, False, False), # might OOM
     (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 2, False, False),
     (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 4, False, False),
     (32,  1024, 1536, 4,  1536//96,  1,  1, 4, 8, False, False),

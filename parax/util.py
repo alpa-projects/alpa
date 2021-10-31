@@ -14,7 +14,7 @@ import flax
 from flax.training import train_state
 import jax
 from jax._src.api import FLAGS
-from jax._src.dlpack import from_dlpack
+from jax._src.dlpack import from_dlpack, to_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
 from jax.experimental.maps import FrozenDict
@@ -450,8 +450,51 @@ def benchmark_func(run_func,
 ##### Array conversion
 ########################################
 
+def is_continuous_subset(slice, tensor_shape, row_major=True):
+    """
+    Figure out whether a slice is a continuous subset of the tensor.
 
-def xla_buffer_to_jax_buffer(xla_buf):
+    Args:
+        slice_shape (Sequence(slice)): the shape of the slice.
+        tensor_shape (Sequence(int)): the shape of the tensor.
+        row_major (bool): whether the tensor layout is row-majored.
+
+    Returns:
+        is_continuous (bool)
+    """
+    if not row_major:
+        raise NotImplementedError("Do not support column major.")
+    ndim = len(tensor_shape)
+    if len(slice) != ndim:
+        raise RuntimeError("ndims mismatch.")
+    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    for dim, dim_shape in enumerate(slice_shape):
+        if dim + 1 > ndim:
+            return True
+        if dim_shape == 1:
+            continue
+        if slice_shape[dim+1:] == tensor_shape[dim+1:]:
+            return True
+        else:
+            return False
+
+
+def infer_offset_and_n_elements(slice):
+    """Calculate the offset and #elements before making NCCL calls.
+
+    This function assumes the slice is a continuous subset of the original tensor.
+    """
+    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    offset = tuple()
+    n_elements = np.prod(slice_shape)
+    for dim, dim_shape in enumerate(slice_shape):
+        offset = offset + (slice[dim].start, )
+        if dim_shape > 1:
+            break
+    return offset, n_elements
+
+
+def xla_buffer_to_jax_tensor(xla_buf):
     """
     Convert an xla buffer to a JAX DeviceArray.
 
@@ -461,14 +504,49 @@ def xla_buffer_to_jax_buffer(xla_buf):
     return _DeviceArray(aval, xla_buf.device(), xla_buf)
 
 
-def jax_buffer_to_xla_buffer(jax_buf):
+def jax_tensor_to_xla_buffer(jax_buf):
     """Convert a JAX Device array back to XLA buffer."""
     return jax_buf.device_buffer
 
 
+def xla_buffer_to_cupy(xla_buf, take_ownership=False):
+    """Convert an xla buffer directly to cupy, w/o transitioning from jax buffer."""
+    return cp.fromDlpack(
+        xc._xla.buffer_to_dlpack_managed_tensor(xla_buf,
+                                                take_ownership=take_ownership))
+
+
+def cupy_to_xla_buffer(tensor):
+    """Convert cupy tensors to XLA buffers."""
+    if isinstance(tensor, list):
+        return list(map(cupy_to_xla_buffer, tensor))
+    cpu_backend = xb.get_backend("cpu")
+    try:
+        gpu_backend = xb.get_backend("gpu")
+    except RuntimeError:
+        gpu_backend = None
+    buf = xc._xla.dlpack_managed_tensor_to_buffer(
+        tensor.toDlpack(), cpu_backend, gpu_backend)
+    return buf
+
+
+def jax_tensor_to_cupy(tensors, take_ownership=False):
+    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
+    if isinstance(tensors, list):
+        return list(map(jax_tensor_to_cupy, tensors))
+    return cp.fromDlpack(to_dlpack(tensors, take_ownership=take_ownership))
+
+
+def cupy_to_jax_tensor(tensors):
+    """Convert cupy tensors to JAX tensors."""
+    if isinstance(tensors, list):
+        return list(map(cupy_to_jax_tensor, tensors))
+    return from_dlpack(tensors.toDlpack())
+
+
 # Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
 @partial(jax.jit, donate_argnums=0, static_argnums=2)
-def jax_buffer_set(src_buf, update, start_indices):
+def jax_tensor_set(src_buf, update, start_indices):
     """
     In-place write on a JAX buffer.
 
@@ -480,27 +558,6 @@ def jax_buffer_set(src_buf, update, start_indices):
     # src_buf = src_buf.at[indices].set(update)
     src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
     return src_buf
-
-
-def to_cupy(tensors):
-    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
-    if isinstance(tensors, list):
-        return list(map(to_cupy, tensors))
-    ctensor = cp.fromDlpack(get_jax_dlpack(tensors))
-    return ctensor
-
-
-def to_jax_tensor(tensor):
-    """Convert cupy tensors to JAX tensors."""
-    if isinstance(tensor, list):
-        return list(map(to_jax_tensor, tensor))
-    return from_dlpack(tensor.toDlpack())
-
-
-def get_jax_dlpack(tensor):
-    """Helper function for calling dlpack in JAX."""
-    return xc._xla.buffer_to_dlpack_managed_tensor(tensor.device_buffer,
-                                                   take_ownership=False)
 
 
 ########################################

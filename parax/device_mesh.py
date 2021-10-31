@@ -10,7 +10,6 @@ from operator import attrgetter
 import numpy as np
 import ray
 import ray.util.collective as col
-from ray.util import ActorPool
 
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
@@ -20,11 +19,11 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client
 import jax.numpy as jnp
 
 from parax.global_env import global_config
-from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
+from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
@@ -188,27 +187,26 @@ class MeshHostWorker:
                                   group_name, n_elements=n_elements)
             self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
         else:
+            # The following call will allocate memory and cause a few H2D and D2D kernels.
+            # See:https://github.com/parax-project/parax/issues/145
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
-            # logger.debug("uuid temp before {}: {}, {}..".format(uuid, tmp_buffer, tmp_buffer.device_buffer.__cuda_array_interface__["data"]))
-            to_recv = jax_tensor_to_cupy(tmp_buffer)
+            to_recv = jax_tensor_to_cupy(tmp_buffer, take_ownership=True)
             col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-            # Hao: if the following line cannot print, meaning NCCL hangs...
-            # logger.debug(
-            #     ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
-            #     .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
-            #             to_recv[0]))
             recv_tensor = cupy_to_jax_tensor(to_recv)
-            # logger.debug("uuid recv_tensor after {}: {}, {}..".format(uuid, recv_tensor, recv_tensor.device_buffer.__cuda_array_interface__["data"]))
-            # 0-copy version
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
+
+            # The following in-place write will cause a D2D copy kernel
+            # See: https://github.com/parax-project/parax/issues/144
+            # It is unavoidable, but it is better than:
+            # new_buffer = dynamic_update_slice(src_buf, update, start_indices)
+            # which is not in-place and will cause extra allocation-related kernels.
             new_buffer = jax_tensor_set(
                 xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
-            # logger.debug("uuid xla  after {}: {}, {}..".format(uuid, self.buffers[uuid], self.buffers[uuid].__cuda_array_interface__["data"]))
         return True
 
     def put_resharding_send_task(self, uuid, tasks, group_name):

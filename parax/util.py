@@ -450,6 +450,49 @@ def benchmark_func(run_func,
 ##### Array conversion
 ########################################
 
+def is_continuous_subset(slice, tensor_shape, row_major=True):
+    """
+    Figure out whether a slice is a continuous subset of the tensor.
+
+    Args:
+        slice_shape (Sequence(slice)): the shape of the slice.
+        tensor_shape (Sequence(int)): the shape of the tensor.
+        row_major (bool): whether the tensor layout is row-majored.
+
+    Returns:
+        is_continuous (bool)
+    """
+    if not row_major:
+        raise NotImplementedError("Do not support column major.")
+    ndim = len(tensor_shape)
+    if len(slice) != ndim:
+        raise RuntimeError("ndims mismatch.")
+    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    for dim, dim_shape in enumerate(slice_shape):
+        if dim + 1 > ndim:
+            return True
+        if dim_shape == 1:
+            continue
+        if slice_shape[dim+1:] == tensor_shape[dim+1:]:
+            return True
+        else:
+            return False
+
+
+def infer_offset_and_n_elements(slice):
+    """Calculate the offset and #elements before making NCCL calls.
+
+    This function assumes the slice is a continuous subset of the original tensor.
+    """
+    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    offset = tuple()
+    n_elements = np.prod(slice_shape)
+    for dim, dim_shape in enumerate(slice_shape):
+        offset = offset + (slice[dim].start, )
+        if dim_shape > 1:
+            break
+    return offset, n_elements
+
 
 def xla_buffer_to_jax_tensor(xla_buf):
     """
@@ -491,7 +534,7 @@ def jax_tensor_to_cupy(tensors, take_ownership=False):
     """Convert a Jax DeviceArray to cupy tensor; zero copy."""
     if isinstance(tensors, list):
         return list(map(jax_tensor_to_cupy, tensors))
-    return to_dlpack(tensors, take_ownership=take_ownership)
+    return cp.fromDlpack(to_dlpack(tensors, take_ownership=take_ownership))
 
 
 def cupy_to_jax_tensor(tensors):

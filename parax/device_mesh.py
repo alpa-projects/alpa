@@ -30,7 +30,8 @@ from parax.shard_parallel.profile_communication import profile_collective_one_co
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
-                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer, xla_buffer_to_cupy, cupy_to_xla_buffer)
+                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer, xla_buffer_to_cupy, cupy_to_xla_buffer,
+                        is_continuous_subset, infer_offset_and_n_elements)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -141,21 +142,23 @@ class MeshHostWorker:
             dst_gpu_idx (int): the gpu index on the destination rank.
             group_name (str): collective group name
         """
-        slice_shape = tuple(ind.stop - ind.start for ind in offset)
-        if slice_shape == self.buffers[uuid].shape:
-            # fast path
+        tensor_shape = self.buffers[uuid].shape
+        if is_continuous_subset(offset, tensor_shape):
+            # fast path, two cases: (1) same shape, (2) continuous subset.
+            slice_shape = tuple(ind.stop - ind.start for ind in offset)
             to_send = xla_buffer_to_cupy(self.buffers[uuid])
+            if slice_shape == tensor_shape:
+                col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
+            else:
+                ind, n_elements = infer_offset_and_n_elements(offset)
+                col.send_multigpu(to_send[ind], dst_rank, dst_gpu_idx,
+                                  group_name, n_elements=n_elements)
         else:
             # slower path, because of indexing.
             # TODO(Hao): implement a custom, faster kernel for indexing
             src_buffer = xla_buffer_to_jax_tensor(self.buffers[uuid])[tuple(offset)]
             to_send = jax_tensor_to_cupy(src_buffer)
-        # logger.debug(
-        #     ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
-        #     "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
-        #                                to_send.shape, to_send.dtype,
-        #                                to_send[0]))
-        col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
+            col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
@@ -172,23 +175,25 @@ class MeshHostWorker:
             group_name (str): collective group name.
         """
         if uuid not in self.buffers:
-            raise RuntimeError()
-        tileslice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
-        # logger.debug("uuid xla  before {}: {}, {}..".format(uuid, self.buffers[uuid], self.buffers[uuid].__cuda_array_interface__["data"]))
-        if tileslice_shape == self.buffers[uuid].shape:
+            raise RuntimeError("Buffer has not been created.")
+        tensor_shape = self.buffers[uuid].shape
+        slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
+        if is_continuous_subset(indices_in_dst_tile, tensor_shape):
             to_recv = xla_buffer_to_cupy(self.buffers[uuid], take_ownership=True)
-            col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            if slice_shape == tensor_shape:
+                col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            else:
+                ind, n_elements = infer_offset_and_n_elements(indices_in_dst_tile)
+                col.recv_multigpu(to_recv[ind], src_rank, src_gpu_idx,
+                                  group_name, n_elements=n_elements)
             self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
         else:
             tmp_buffer = device_put(
-                jnp.ones(tileslice_shape, dtype=self.buffers[uuid].dtype),
+                jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
             # logger.debug("uuid temp before {}: {}, {}..".format(uuid, tmp_buffer, tmp_buffer.device_buffer.__cuda_array_interface__["data"]))
             to_recv = jax_tensor_to_cupy(tmp_buffer)
-            # logger.debug("uuid cupy before {}: {}, {}..".format(uuid, to_recv, to_recv.__cuda_array_interface__["data"]))
             col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
-            # logger.debug("uuid cupy after {}: {}, {}..".format(uuid, to_recv, to_recv.__cuda_array_interface__["data"]))
-            # logger.debug("uuid temp after {}: {}, {}..".format(uuid, tmp_buffer, tmp_buffer.device_buffer.__cuda_array_interface__["data"]))
             # Hao: if the following line cannot print, meaning NCCL hangs...
             # logger.debug(
             #     ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."

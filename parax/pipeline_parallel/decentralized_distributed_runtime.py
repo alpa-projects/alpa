@@ -292,7 +292,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     kwargs = {
                         "skip_grad_sync": not (stage_idx >= num_mesh and
                                                stage_idx < num_mesh * 2 and
-                                               batch_idx == 0)
+                                               batch_idx == 0),
+                        "sync_before": False,
+                        "sync_after": False,
                     }
 
                     worker_tmp_instructions[worker].append(

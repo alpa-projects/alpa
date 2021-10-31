@@ -854,12 +854,13 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
             self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
     def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]], skip_grad_sync):
+                          output_uuids: List[List[int]], skip_grad_sync=False,
+                          **kwargs):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] =\
             self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshWorkerExecutable,
-                     self).execute_on_worker(input_uuids, output_uuids)
+                     self).execute_on_worker(input_uuids, output_uuids, **kwargs)
 
 
 class AllocZeroBufferDriverExecutable:

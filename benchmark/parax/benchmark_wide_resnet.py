@@ -31,7 +31,8 @@ def compute_metrics(logits, labels):
 
 
 def cross_entropy_loss(logits, labels):
-    one_hot_labels = common_utils.onehot(labels, num_classes=1000)
+    num_classes = logits.shape[-1]
+    one_hot_labels = common_utils.onehot(labels, num_classes=num_classes)
     xentropy = optax.softmax_cross_entropy(logits=logits, labels=one_hot_labels)
     return jnp.mean(xentropy)
 
@@ -176,7 +177,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Setup device mesh")
 
     # Prepare input batch
-    num_classes = 1000
+    num_classes = 1024
     batch = {
         "images": jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
         "labels": jnp.ones((batch_size), dtype=jnp.int32),
@@ -205,6 +206,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     physical_mesh.sync_workers()
     print_used_time("Compile (workers)")
     alloc_mem = executable.get_total_allocation_size()
+    print(f"{alloc_mem / GB:.2f}")
 
     # Benchmark step time
     if alloc_mem > 28 * GB:
@@ -268,7 +270,8 @@ def benchmark_one_case(case):
 # NB = num_micro_batches, FD = force_data_parallel,
 # RS = prefer_reduce_scatter, CK = use_checkpoint
 
-default_benchmark_suite = {  # key = number of gpus, value = a list of cases
+# benchmark suite for GPUs with 32GB memory
+benchmark_suite_32gb = {  # key = number of gpus, value = a list of cases
 1: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
     (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, True,  False),
@@ -283,30 +286,75 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 ],
 }
 
-oom_benchmark_suite = {  # key = number of gpus, value = a list of cases
-2: [
+# benchmark suite for GPUs with 16GB memory
+benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
+1: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  320, 4, "fp32", 2,  1,  1,  True,  True,  False),
+    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False),
 ],
 
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  640, 4, "fp32", 8,  1,  1,  True,  True,  False),
+    # data-parallel
+    #(128,  224, 50,  192, 2, "fp32", 8,  1,  1,  True,  True,  False),
+    #(512,  224, 50,  192, 2, "fp32", 8,  1,  4,  True,  True,  False),
+    #(128,  224, 50,  192, 2, "fp32", 8,  1,  1,  False, True,  False),
+    #(512,  224, 50,  192, 2, "fp32", 8,  1,  4,  False, True,  False),
+
+    # model-parallel
+    #(16,   224, 50,  320, 2, "fp32", 8,  1,  1,  True,   True,  False),
+    #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  True,   True,  False),
+    #(16,   224, 50,  320, 2, "fp32", 8,  1,  1,  False,  True,  False),
+    #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  False,  True,  False),
+
+    # 2d mesh
+    #(64,   224, 50,  320, 2, "fp32", 2,  4,  4,  False, False, False),
 ],
+
+16: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    # 1d mesh
+    # data-parallel
+    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  True,  False, False),
+    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  True,  False, False),
+    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  False, False, False),
+    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  False, False, False),
+    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  True,  True,  False),
+    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  True,  True,  False),
+    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  False, True,  False),
+    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  False, True,  False),
+    # model-parallel
+    #(16,   224, 50,  320, 4, "fp32", 16,  1,  1,  False,  False, False),
+    #(16,   224, 50,  320, 4, "fp32", 16,  1,  1,  True,   True,  False),
+    #(16,   224, 50,  320, 4, "fp32", 16,  1,  1,  False,  True,  False),
+    #(64,   224, 50,  320, 4, "fp32", 16,  1,  4,  False,  False, False),
+    #(64,   224, 50,  320, 4, "fp32", 16,  1,  4,  True,   True,  False),
+    #(64,   224, 50,  320, 4, "fp32", 16,  1,  4,  False,  True,  False),
+
+    # 2d mesh
+    #(32,   224, 50,  320, 2, "fp32", 2,  8,  1,  False, False, False),
+    #(32,   224, 50,  320, 2, "fp32", 2,  8,  1,  False, True,  False),
+    #(32,   224, 50,  320, 2, "fp32", 16, 1,  1,  True,  True,  False),
+    #(32,   224, 50,  320, 2, "fp32", 16, 1,  1,  False, True,  False),
+    #(128,  224, 50,  320, 2, "fp32", 2,  8,  4,  False, False, False),
+    #(128,  224, 50,  320, 2, "fp32", 2,  8,  4,  False, True,  False),
+    #(128,  224, 50,  320, 2, "fp32", 16, 1,  4,  True,  True,  False),
+    #(128,  224, 50,  320, 2, "fp32", 16, 1,  4,  False, True,  False),
+],
+
 }
 
 benchmark_suites = {
-    "default": default_benchmark_suite,
-    "oom": oom_benchmark_suite,
+    "32gb": benchmark_suite_32gb,
+    "16gb": benchmark_suite_16gb,
 }
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
-    parser.add_argument("--suite", choices=["default", "oom"], default="default",
+    parser.add_argument("--suite", choices=["32gb", "16gb"], default="16gb",
         help="The benchmark suite")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")

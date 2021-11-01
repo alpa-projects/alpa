@@ -560,6 +560,12 @@ def jax_tensor_set(src_buf, update, start_indices):
     return src_buf
 
 
+@partial(jax.jit, static_argnums=(1, 2))
+def jax_tensor_index(src_tensor, indices, size):
+    dst_tensor = jax.lax.dynamic_slice(src_tensor, indices, size)
+    return dst_tensor
+
+
 ########################################
 ##### OS / IO Utilities
 ########################################

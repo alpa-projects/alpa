@@ -126,7 +126,8 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
     num_submesh_choices = len(submesh_choices)
     compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
                            np.inf)
-    for mesh_id, submesh in enumerate(submesh_choices):
+    # Reverse submesh_choices to test larger meshes first
+    for mesh_id, submesh in reversed(list(enumerate(submesh_choices))):
         num_hosts, num_devices = submesh
         sliced_virtual_mesh = virtual_mesh.slice_2d(
             list(range(num_hosts)),

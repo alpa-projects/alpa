@@ -231,9 +231,9 @@ class AccumulateGradTest(unittest.TestCase):
                                 pipeline_stage_mode=pipeline_stage_mode)
 
         batch_size = 16
-        seq_len = 8
+        seq_len = 256
         hidden_size = 512
-        num_heads = 8
+        num_heads = 512 // 64
 
         def train_step(state, batch, apply_fn):
 
@@ -338,16 +338,16 @@ class AccumulateGradTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AccumulateGradTest('test_mlp'))
-    suite.addTest(AccumulateGradTest('test_mlp_auto_layer_slicing'))
-    suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
-    suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
-    suite.addTest(AccumulateGradTest('test_2_layer_bert'))
-    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
-    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
-    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
-    suite.addTest(AccumulateGradTest('test_8_layer_bert'))
-    suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_slicing'))
+    # suite.addTest(AccumulateGradTest('test_mlp'))
+    # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_slicing'))
+    # suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
+    # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
+    # suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
+    # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
+    # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
+    # suite.addTest(AccumulateGradTest('test_8_layer_bert'))
+    # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_slicing'))
     suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_stage_clustering'))
     suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_and_stage'))
     return suite

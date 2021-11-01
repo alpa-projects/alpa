@@ -30,7 +30,7 @@ from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
                         xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer, xla_buffer_to_cupy, cupy_to_xla_buffer,
-                        is_continuous_subset, infer_offset_and_n_elements)
+                        is_continuous_subset, infer_offset_and_n_elements, jax_tensor_index)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -140,8 +140,10 @@ class MeshHostWorker:
                                   group_name, n_elements=n_elements)
         else:
             # slower path, because of indexing.
-            # TODO(Hao): implement a custom, faster kernel for indexing
-            src_buffer = xla_buffer_to_jax_tensor(self.buffers[uuid])[tuple(offset)]
+            start_indices = tuple(o.start for o in offset)
+            slice_sizes = tuple(o.stop - o.start for o in offset)
+            src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(self.buffers[uuid]),
+                                          start_indices, slice_sizes)
             to_send = jax_tensor_to_cupy(src_buffer)
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True

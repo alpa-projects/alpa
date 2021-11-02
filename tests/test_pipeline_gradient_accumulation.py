@@ -234,9 +234,10 @@ class AccumulateGradTest(unittest.TestCase):
 
         def train_step(state, batch, apply_fn):
 
-            def loss_func(params, x, y, attention_mask):
-                out = apply_fn(params, x, attention_mask)
-                loss = jnp.mean((out - y)**2)
+            def loss_func(params):
+                out = state.apply_fn(params, batch["x"],
+                                     batch["attention_mask"])
+                loss = jnp.mean((out - batch["y"])**2)
                 if manual_pipeline_layer:
                     mark_pipeline(name=str(n_layers - 1), mark_type='end')
                 return loss
@@ -247,10 +248,7 @@ class AccumulateGradTest(unittest.TestCase):
                 loss_func = automatic_layer_slicing(loss_func, layer_num=n_layers,
                                                     use_pipeline=True)
 
-            grad_param = parax.grad(loss_func)(state.params, batch['x'],
-                                               batch['y'],
-                                               batch['attention_mask'])
-
+            grad_param = parax.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grad_param)
             return new_state
 

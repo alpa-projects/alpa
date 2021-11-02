@@ -205,12 +205,23 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
 
     physical_mesh.sync_workers()
     print_used_time("Compile (workers)")
+
+    # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
-    print(f"{alloc_mem / GB:.2f}")
+    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
+    hlo_text = executable.get_hlo_text()
+    with open("last.hlo", "w") as fout:
+        fout.write(hlo_text)
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+        count_communication_primitives(hlo_text)
+
+    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+          f"#all-to-all: {n_all_to_all}")
+    print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 28 * GB:
-        # out of memory
+    if alloc_mem > 28 * GB: # out of memory
         latencies = [-1]
     else:
         for i in range(niter):
@@ -218,18 +229,6 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
 
         latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
-
-    # Check sharding strategy
-    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
-    hlo_text = executable.get_hlo_text()
-
-    with open("last.hlo", "w") as fout:
-        fout.write(hlo_text)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-        count_communication_primitives(hlo_text)
-    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
-          f"#all-to-all: {n_all_to_all}")
 
     # Compute statistics
     num_gpus = mesh_dim0 * mesh_dim1
@@ -284,6 +283,18 @@ benchmark_suite_32gb = {  # key = number of gpus, value = a list of cases
     (128,  224, 50,  512, 4, "fp32", 2,  4,  2,  False, True,  False),
     (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, True,  False),
 ],
+
+16: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    (64,   224, 50,  576, 4, "fp32", 2,  8,  1,  False, False, False),
+    (256,  224, 50,  576, 4, "fp32", 2,  8,  4,  False, False, False),
+    (512,  224, 50,  576, 4, "fp32", 2,  8,  8,  False, False, False),
+
+    (64,   224, 50,  576, 4, "fp32", 2,  8,  1,  False, True,  False),
+    (256,  224, 50,  576, 4, "fp32", 2,  8,  4,  False, True,  False),
+    (512,  224, 50,  576, 4, "fp32", 2,  8,  8,  False, True,  False),
+],
+
 }
 
 # benchmark suite for GPUs with 16GB memory

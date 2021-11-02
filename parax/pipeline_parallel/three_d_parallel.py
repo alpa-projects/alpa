@@ -137,7 +137,7 @@ def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
     1. local invars not used later in this mesh, not main copy
     2. local invars not used later in all meshes, main copy
     Args:
-        donation_mapping (Dict[Var, Var]): known mapping of donations, including 
+        donation_mapping (Dict[Var, Var]): known mapping of donations, including
             global invar-outvar and accumulate gradients
         stages: slices in topology order of execution.
     Returns:
@@ -229,7 +229,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             acc_grad_outvars, num_micro_batches, compute_cost=compute_cost)
         num_forward_stages = len(forward_stage_layer_ids)
         backward_stage_layer_ids = [[
-            2 * num_layers - 1 - i for i in layer_ids
+            2 * num_layers - 1 - i for i in reversed(layer_ids)
         ] for layer_ids in reversed(forward_stage_layer_ids)]
         stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
         stage_to_mesh = list(range(num_forward_stages)) + list(

@@ -331,13 +331,13 @@ class AccumulateGradTest(unittest.TestCase):
 
     def test_8_layer_bert_auto_stage_clustering(self):
         self.run_n_layer_bert(n_layers=8, pipeline_stage_mode="auto_gpipe",
-                              cache_compute_cost=None)
+                              cache_compute_cost="compute-cost-2021-11-01-21-47-48.npz.npy")
 
     def test_8_layer_bert_auto_layer_and_stage(self):
         self.run_n_layer_bert(n_layers=8,
                               manual_pipeline_layer=False,
                               pipeline_stage_mode="auto_gpipe",
-                              cache_compute_cost=None)
+                              cache_compute_cost="compute-cost-2021-11-01-22-00-11.npz.npy")
 
 
 def suite():
@@ -352,7 +352,7 @@ def suite():
     # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_slicing'))
-    suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_stage_clustering'))
+    # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_stage_clustering'))
     suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_and_stage'))
     return suite
 

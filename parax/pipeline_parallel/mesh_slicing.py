@@ -44,7 +44,7 @@ class CompileWorker:
             proto: the proto of XlaComputation to be compiled
             avals: input avals
             out_avals: output avals
-            donate_invars: donate invars of the computatest_pipeline_correctness.pytest_pipeline_correctness.pytion to be compiled
+            donate_invars: donate invars of the computation to be compiled
         Returns:
             proto: The proto of compiled executable
             strategy_config: The sharding strategy from auto sharding

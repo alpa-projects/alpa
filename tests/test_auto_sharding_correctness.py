@@ -102,7 +102,6 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
         physical_mesh.shutdown()
 
 
-
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(

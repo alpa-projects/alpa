@@ -2,6 +2,7 @@
 import logging
 from typing import Sequence
 
+import numpy as np
 import jax
 from jax import linear_util as lu
 from jax.core import ClosedJaxpr, DropVar, Jaxpr, gensym
@@ -220,9 +221,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         # Assume each forward layer corresponds to a backward layer
         assert len(jax_pipeline_layers) % 2 == 0
         num_layers = len(jax_pipeline_layers) // 2
+        compute_cost = None
+        if global_config.cache_compute_cost is not None:
+            compute_cost = np.load(global_config.cache_compute_cost)
         forward_stage_layer_ids, sliced_meshes = get_stage_and_mesh_assignments(
             virtual_mesh, jax_pipeline_layers, donation_mapping,
-            acc_grad_outvars, num_micro_batches)
+            acc_grad_outvars, num_micro_batches, compute_cost=compute_cost)
         num_forward_stages = len(forward_stage_layer_ids)
         backward_stage_layer_ids = [[
             2 * num_layers - 1 - i for i in layer_ids

@@ -340,56 +340,6 @@ def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
     return input_sharding_specs, output_sharding_specs
 
 
-def _hlo_sharding_to_sharding_spec_no_tuple_old(proto_tuple, aval,
-                                                logical_mesh):
-    """The internal function of hlo_sharding_to_sharding_spec."""
-    sharding_type, tile_assignment_dimensions, tile_assignment_devices, \
-        _, _ = proto_tuple
-
-    sharding = []
-    mesh_mapping = []
-    if sharding_type == OpSharding.Type.OTHER:
-        # try to map dimension between provided mesh and real mesh
-        mesh_mapping = [None] * len(logical_mesh.id_mesh.shape)
-        tensor_dim_to_mesh_dim = logical_mesh.get_tensor_dim_to_mesh_dim(
-            len(aval.shape), tile_assignment_dimensions,
-            tile_assignment_devices)
-
-        if tensor_dim_to_mesh_dim:
-            pt = 0
-            for tensor_dim in range(len(aval.shape)):
-                if tile_assignment_dimensions[tensor_dim] == 1:
-                    sharding.append(pxla.NoSharding())
-                else:
-                    sharding.append(
-                        pxla.Chunked([tile_assignment_dimensions[tensor_dim]]))
-                    mesh_dim = tensor_dim_to_mesh_dim[tensor_dim]
-                    mesh_mapping[mesh_dim] = pxla.ShardedAxis(pt)
-                    pt += 1
-
-            # All other dims are replicated
-            for mesh_dim, _ in enumerate(mesh_mapping):
-                if mesh_mapping[mesh_dim] is None:
-                    mesh_mapping[mesh_dim] = \
-                        pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
-        else:
-            assert len(aval.shape) == 1, "Only support 1d case"
-            assert len(tile_assignment_dimensions) == len(aval.shape)
-            for col in range(len(tile_assignment_devices)):
-                if tile_assignment_devices[col] == 1:
-                    break
-            sharding = (pxla.Chunked(
-                (tile_assignment_dimensions[0] // col, col)),)
-            mesh_mapping = (pxla.ShardedAxis(1), pxla.ShardedAxis(0))
-    elif sharding_type == OpSharding.Type.REPLICATED:
-        sharding = (pxla.NoSharding(),) * len(aval.shape)
-        mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)
-    else:
-        raise NotImplementedError("Type: " + str(sharding_type))
-
-    return pxla.ShardingSpec(sharding, mesh_mapping)
-
-
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     """The internal function of hlo_sharding_to_sharding_spec."""
     sharding_type, tile_assignment_dimensions, tile_assignment_devices, \

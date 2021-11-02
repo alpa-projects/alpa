@@ -29,8 +29,10 @@ from parax.shard_parallel.profile_communication import profile_collective_one_co
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
-                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer, xla_buffer_to_cupy, cupy_to_xla_buffer,
-                        is_continuous_subset, infer_offset_and_n_elements, jax_tensor_index)
+                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
+                        xla_buffer_to_cupy, cupy_to_xla_buffer,
+                        is_continuous_subset, infer_offset_and_n_elements,
+                        jax_tensor_index)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -136,14 +138,18 @@ class MeshHostWorker:
                 col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
             else:
                 ind, n_elements = infer_offset_and_n_elements(offset)
-                col.send_multigpu(to_send[ind], dst_rank, dst_gpu_idx,
-                                  group_name, n_elements=n_elements)
+                col.send_multigpu(to_send[ind],
+                                  dst_rank,
+                                  dst_gpu_idx,
+                                  group_name,
+                                  n_elements=n_elements)
         else:
             # slower path, because of indexing.
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
-            src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(self.buffers[uuid]),
-                                          start_indices, slice_sizes)
+            src_buffer = jax_tensor_index(
+                xla_buffer_to_jax_tensor(self.buffers[uuid]), start_indices,
+                slice_sizes)
             to_send = jax_tensor_to_cupy(src_buffer)
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
@@ -166,13 +172,18 @@ class MeshHostWorker:
         tensor_shape = self.buffers[uuid].shape
         slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
         if is_continuous_subset(indices_in_dst_tile, tensor_shape):
-            to_recv = xla_buffer_to_cupy(self.buffers[uuid], take_ownership=True)
+            to_recv = xla_buffer_to_cupy(self.buffers[uuid],
+                                         take_ownership=True)
             if slice_shape == tensor_shape:
                 col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
             else:
-                ind, n_elements = infer_offset_and_n_elements(indices_in_dst_tile)
-                col.recv_multigpu(to_recv[ind], src_rank, src_gpu_idx,
-                                  group_name, n_elements=n_elements)
+                ind, n_elements = infer_offset_and_n_elements(
+                    indices_in_dst_tile)
+                col.recv_multigpu(to_recv[ind],
+                                  src_rank,
+                                  src_gpu_idx,
+                                  group_name,
+                                  n_elements=n_elements)
             self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
@@ -1076,6 +1087,15 @@ class VirtualMesh:
                                head_ip=self.head_ip,
                                num_devices_per_host=len(indices[0]),
                                devices=indices)
+
+    def slice_2d(self, host_indices, device_indices):
+        host_ids = [self.host_ids[x] for x in host_indices]
+        host_info = [self.host_info[x] for x in host_indices]
+        return VirtualMesh(host_ids=host_ids,
+                           host_info=host_info,
+                           head_ip=self.head_ip,
+                           num_devices_per_host=len(device_indices[0]),
+                           devices=device_indices)
 
     @property
     def total_devices(self):

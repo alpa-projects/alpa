@@ -13,7 +13,7 @@ from parax.pipeline_parallel.mesh_slicing import (compile_all,
                                                   generate_stage_info,
                                                   split_global_use_and_donate)
 from parax.pipeline_parallel.three_d_parallel import (
-    split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
+    split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 
 ray.init(address="auto")
@@ -77,7 +77,7 @@ batch = {"x": x, "y": y, "attention_mask": attention_mask}
 
 origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch,
                                                            model.apply)
-compute_jaxpr, _, _ = split_compute_and_apply(origin_jaxpr)
+compute_jaxpr, _, _ = split_compute_grad_and_apply_grad(origin_jaxpr)
 gensym_fn = gensym([compute_jaxpr.jaxpr])
 acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_to_acc_pipe(
     compute_jaxpr, gensym_fn)

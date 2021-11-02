@@ -8,11 +8,11 @@ import numpy as np
 import parax
 from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing
 from parax.pipeline_parallel.stage import (
-    apply_grad_add_marker, compute_to_acc_pipe, apply_grad_get_mean,
+    apply_grad_add_marker, compute_grad_to_accumulate_grad, apply_grad_get_mean,
     get_var_mapping, slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks, mark_grad_mesh, slice_apply_gradient,
+    mark_missing_vars_in_pipeline_marks, mark_gradvar_to_mesh, slice_apply_gradient,
     replace_all_with)
-from parax.pipeline_parallel.three_d_parallel import split_compute_and_apply, split_donate_invars
+from parax.pipeline_parallel.three_d_parallel import split_compute_grad_and_apply_grad, split_donate_invars
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 
 from flax import linen as nn, optim
@@ -70,8 +70,8 @@ def test_compute_to_accumulate():
     compute_grad_jaxpr = make_jaxpr(compute_grad)(params, x, y)
     gensym_fn = gensym([compute_grad_jaxpr.jaxpr])
     flatten_args, _ = tree_flatten((params, x, y))
-    acc_grad_jaxpr, grad_outs, _ = compute_to_acc_pipe(compute_grad_jaxpr,
-                                                       gensym_fn)
+    acc_grad_jaxpr, grad_outs, _ = compute_grad_to_accumulate_grad(compute_grad_jaxpr,
+                                                                   gensym_fn)
     grad_zeros = [jnp.zeros_like(val) for val in acc_grad_jaxpr.out_avals]
     # donate_argnums = [
     #     i for i in range(len(donated_invars)) if donated_invars[i]
@@ -125,10 +125,10 @@ def get_and_set(closed_jaxpr, env, batch_num=0, donate_argnums=()):
 def test_compute_and_apply_basic():
     closed_jaxpr = make_jaxpr(train_step)(optimizer, batch)
     gensym_func = gensym([closed_jaxpr.jaxpr])
-    compute_grad_jaxpr, old_apply_grad_jaxpr, barrier = split_compute_and_apply(
+    compute_grad_jaxpr, old_apply_grad_jaxpr, barrier = split_compute_grad_and_apply_grad(
         closed_jaxpr)
     # compute grad to accumulate grad
-    acc_grad_jaxpr, acc_grad_dict, _ = compute_to_acc_pipe(
+    acc_grad_jaxpr, acc_grad_dict, _ = compute_grad_to_accumulate_grad(
         compute_grad_jaxpr, gensym_func)
     # apply-grad
     mask = {
@@ -184,11 +184,11 @@ def donate_invars_to_argnums(donate_invars):
 def test_compute_and_apply(microbatches):
     closed_jaxpr = make_jaxpr(train_step)(optimizer, batch)
     gensym_func = gensym([closed_jaxpr.jaxpr])
-    compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_and_apply(
+    compute_grad_jaxpr, apply_grad_jaxpr, barrier = split_compute_grad_and_apply_grad(
         closed_jaxpr)
     # compute grad to accumulate grad
     global grad_in_to_out
-    acc_grad_jaxpr, acc_grad_dict, grad_glob_in = compute_to_acc_pipe(
+    acc_grad_jaxpr, acc_grad_dict, grad_glob_in = compute_grad_to_accumulate_grad(
         compute_grad_jaxpr, gensym_func)
     grad_in_to_out = grad_glob_in
     # slice accumulate grad
@@ -214,8 +214,8 @@ def test_compute_and_apply(microbatches):
     }
     # slice apply-grad stages
     global_outvars = closed_jaxpr.jaxpr.outvars
-    grad_mesh = mark_grad_mesh(apply_grad_jaxpr.jaxpr.invars,
-                               jax_pipeline_stages, stage_to_mesh, mask)
+    grad_mesh = mark_gradvar_to_mesh(apply_grad_jaxpr.jaxpr.invars,
+                                     jax_pipeline_stages, stage_to_mesh, mask)
     gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
     apply_grad_jaxpr, global_outvars = apply_grad_get_mean(apply_grad_jaxpr,
                                                        gradients,

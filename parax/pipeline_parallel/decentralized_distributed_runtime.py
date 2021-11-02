@@ -358,8 +358,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                                    dtypes))
             self.instruction_lists[worker].append(
                 PipelineInstruction.RUN(exec_uuid, [], output_uuids[worker_idx],
-                                        {"sync_before": False, "sync_after": False}
-                                        ))
+                                        {
+                                            "sync_before": False,
+                                            "sync_after": False
+                                        }))
         # (args, workers, devices)
         transposed = output_uuids.transpose([1, 0, 2])
         for var_idx in range(len(vars)):
@@ -923,7 +925,8 @@ class PipelineMeshWorkerExecutable:
                 self.worker.delete_buffers(instruction.input_uuids)
 
         for timer_name in ["compute", "resharding_send", "resharding_recv"]:
-            timers(timer_name).stop()
+            if timer_name in timers:
+                timers(timer_name).stop()
         timers("overall").stop(sync_func=self.worker.sync)
 
         # copy to global env

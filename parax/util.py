@@ -100,7 +100,7 @@ def get_dim_last_value(array, dim):
 
 
 def check_arithmetic_sequence(array):
-    """Check the input 1-D array is an arithmetic sequence. Return 
+    """Check the input 1-D array is an arithmetic sequence. Return
     the delta if Ture and None otherwise."""
     if len(array) < 2:
         return None
@@ -215,7 +215,10 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
     parameter_shapes = program_shape.parameter_shapes()
     result_shapes = program_shape.result_shape().tuple_shapes()
 
-    assert len(parameter_shapes) == len(donated_invars)
+    print("before assert", parameter_shapes, donated_invars)
+    assert len(parameter_shapes) == len(donated_invars), (
+        "Zhuohan: This error might be caused by an error in "
+        "XLA stage slicing.")
 
     p_in = 0
     p_out = 0

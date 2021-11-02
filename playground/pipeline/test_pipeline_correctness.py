@@ -58,7 +58,7 @@ Transformer = FlaxBertLayerCollection
 def get_train_transformer_step(grad_func, pipeline_mp_size=2):
 
     @partial(parallelize, donate_argnums=())
-    def train_step(state, batch, rng_key):        \
+    def train_step(state, batch, rng_key):
 
         def loss_func(params):
             rngs = {"dropout": rng_key}

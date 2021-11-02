@@ -57,6 +57,25 @@ def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
     return d
 
 
+def gen_dependency_with_stages(compute_stages: "Sequence[Jax3DPipeline]",
+                               n_apply_stages, apply_deps):
+    n_stages = len(compute_stages) + n_apply_stages
+    d = np.zeros([n_stages, n_stages], dtype=np.int)
+    var_stage_id = {}
+    for i, stage in enumerate(compute_stages):
+        for var in stage.invars:
+            if var in var_stage_id:
+                d[i, var_stage_id[var]] = 1
+            else:
+                # Assume the var is from global_invars
+                pass
+        for var in stage.outvars:
+            var_stage_id[var] = i
+    for apply_stage_id, compute_stage_id in apply_deps:
+        d[apply_stage_id][compute_stage_id] = 1
+    return d
+
+
 class GpipeSchedule:
     """
     Construct a Gpipe-like schedule.

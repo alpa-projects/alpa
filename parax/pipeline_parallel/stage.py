@@ -11,6 +11,7 @@ from jax import jit, linear_util as lu
 from jax._src.util import partial, safe_map
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
 from jax.interpreters import xla
+from jax.lax import add_p
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jax.core import (Atom, ClosedJaxpr, JaxprEqn, Jaxpr, Var, Literal, DropVar,
                       gensym, new_jaxpr_eqn, jaxpr_as_fun)
@@ -108,6 +109,18 @@ class JaxPipelineStage(PipelineStage):
         """Return a JIT callable of the pipeline stage."""
         closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
+
+    @classmethod
+    def from_closed_jaxpr(cls, name, closed_jaxpr: ClosedJaxpr):
+        """Construct a JaxPipelineStage from a Jaxpr."""
+        return cls(name=name,
+                   invars=closed_jaxpr.jaxpr.invars,
+                   outvars=closed_jaxpr.jaxpr.outvars,
+                   eqns=closed_jaxpr.eqns,
+                   consts_dir={
+                       k: v for k, v in zip(closed_jaxpr.jaxpr.constvars,
+                                            closed_jaxpr.consts)
+                   })
 
 
 @dataclass
@@ -248,6 +261,10 @@ class XlaShardedPipelineStage(PipelineStage):
             self.donated_invars, self.output_acc_grad_indices)
 
         return mesh_executable.get_driver_callable()
+
+    def hlo_proto_str(self):
+        xla_computation = xc.XlaComputation(self.hlo_proto)
+        return xla_computation.as_hlo_text()
 
 
 def get_var_mapping(mapping, var):
@@ -597,8 +614,9 @@ def generate_sharded_xla_stages(name: str,
     return stages
 
 
-def mark_grad_mesh(invars: Sequence[Var], stages: Sequence[JaxPipelineStage],
-                   stage_to_mesh, mask):
+def mark_gradvar_to_mesh(invars: Sequence[Var],
+                         stages: Sequence[JaxPipelineStage], stage_to_mesh,
+                         mask):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
     for i, stage in enumerate(stages):
@@ -626,7 +644,7 @@ def get_gradient(compute_jaxpr: ClosedJaxpr, slices: Sequence[ClosedJaxpr]):
     return is_gradients
 
 
-def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
+def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     """
     Transform compute grad jaxpr with pipeline markers into accumulate grad jaxpr
     Args:
@@ -637,7 +655,6 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
         update_outs (Dict[Var, Var]): From original output(grad) to new output(acc grad)
         grad_in_to_out (Dict[Var, Var]): From accumulated gradient inputs to outputs
     """
-    from jax.lax import add_p
     raw_gradients = set([
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
@@ -654,17 +671,17 @@ def compute_to_acc_pipe(compute_jaxpr: ClosedJaxpr, gensym_fn):
                     gradients[outvar] = eqn.invars[i]
                     reverse_gradients[eqn.invars[i]] = outvar
                 elif outvar in reverse_gradients:
-                    """
-                    in case that:
-                    invar = compute gradient
-                    invar' = pipeline end(invar)
-                    outvar = pipeline start(invar')
-                    final = pipeline end(outvar)
-                    gradients[final] should finally maps invar instead of outvar, then acc grad there
-                    """
+                    # in case that:
+                    #   invar = compute gradient
+                    #   invar' = pipeline end(invar)
+                    #   outvar = pipeline start(invar')
+                    #   final = pipeline end(outvar)
+                    # gradients[final] should finally maps invar instead of
+                    # outvar, then acc grad there
                     final_outvar = reverse_gradients[outvar]
                     gradients[final_outvar] = eqn.invars[i]
                     reverse_gradients[eqn.invars[i]] = final_outvar
+    # FIXME(zhuohan): Should support auxiliary outputs in the future (e.g. loss)
     for outvar in raw_gradients:
         assert outvar in gradients, 'all gradients should be captured by pipeline marker'
     grad_values = list(gradients.values())
@@ -768,7 +785,7 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
 def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
                  global_outvars):
     """
-    clear unused vars cross pipeline stages. 
+    clear unused vars cross pipeline stages.
     mainly to remove grad and only keep accumulated grad
     """
 
@@ -862,8 +879,8 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
-        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function. 
-        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at. 
+        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function.
+        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at.
         If not in the dict, the variable should be a global parameter.
         mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
@@ -871,7 +888,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
         info: A tuple of:
             deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient stages
-            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned 
+            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned
             infered_global_invars (Dict[Var, List[int]]): Indicating which clusters each
             input variable of apply_gradient function should be sent to.
     """
@@ -980,7 +997,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
 def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
     """
     Add pipeline markers for sliced apply grads, keep invars and outvars still unless
-    the invar is in mask or invar is outvar. 
+    the invar is in mask or invar is outvar.
     In the first case, the final invar follows the mask;
     In the second case, the final outvar is recorded in outvar_map
     Args:
@@ -1031,10 +1048,10 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
     return results, outvar_map
 
 
-def merge_stages(jaxprs: Sequence[ClosedJaxpr],
-                 used: Set[Var],
-                 new_marker_name,
-                 donation_mapping=None) -> ClosedJaxpr:
+def merge_stage_jaxprs(jaxprs: Sequence[ClosedJaxpr],
+                       used: Set[Var],
+                       new_marker_name,
+                       donation_mapping=None) -> ClosedJaxpr:
     """
     Merge continuous jaxprs and remove pipe markers
     Args:

@@ -9,14 +9,12 @@ from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client
 
-from parax.api import parallelize
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
-from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages
-from parax.pipeline_parallel.three_d_parallel import get_donation_mapping_and_modify
+from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stage_jaxprs
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
@@ -124,7 +122,7 @@ class CompileWorkerPool:
 def split_global_use_and_donate(layers, layer_indices, donation_mapping,
                                 global_outvars):
     '''
-    Pick some layers(no need to be consecutive) and assume they are on a mesh, 
+    Pick some layers(no need to be consecutive) and assume they are on a mesh,
     this function then returns donation_mapping and global_use of each selected layer.
     Args:
         layers (Sequence[JaxPipelineStage]): all layers
@@ -146,6 +144,9 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
     used = set(global_outvars)
     local_used = set()  # limit donation
     new_layers = []
+    # FIXME(zhuohan): Do not import in a function
+    from parax.pipeline_parallel.three_d_parallel import (
+        get_donation_mapping_and_modify)
     for idx in reversed(range(num_layers)):
         layer = layers[idx]
         if idx in layer_indices:
@@ -207,8 +208,8 @@ def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    mixed_jaxpr = merge_stages(jaxprs, global_used, 'profile_tmp',
-                               donation_mapping)
+    mixed_jaxpr = merge_stage_jaxprs(jaxprs, global_used, 'profile_tmp',
+                                     donation_mapping)
     donate_argnums = [
         idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
         if var in donation_mapping
@@ -218,6 +219,8 @@ def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
+    # FIXME(zhuohan): Do not import in a function
+    from parax.api import parallelize
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)
     ret = executable.profile_with_dummy_inputs()
@@ -238,7 +241,8 @@ def generate_stage_info(stages, selected_indices, donation_mapping,
 
     jaxprs = [stage.closed_jaxpr() for stage in stages]
 
-    merged = merge_stages(jaxprs, used_outside, '0', selected_donation_mapping)
+    merged = merge_stage_jaxprs(jaxprs, used_outside, '0',
+                                selected_donation_mapping)
     outvars = set(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
@@ -361,81 +365,3 @@ def profile_layer_communication_cost(
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
-
-
-########################################
-##### Algorithm
-########################################
-def get_mesh_slicing_configs(
-        grid: VirtualMesh, layers,
-        B) -> Tuple[Sequence[np.ndarray], np.ndarray, Sequence[Sequence[int]]]:
-    '''
-    TODO(yonghao, zhuohan): mesh slicing and layer allocation algorithm
-    Args:
-        grid (VirtualMesh): the whole grid
-        layers (Sequence[JaxPipelineStage]): clustered layers
-        B (number of microbatches)
-    Returns:
-        configs (Sequence[np.ndarray]): mesh slicing configs of each solution
-        costs (np.ndarray): cost of each solution
-        solutions (Sequence[Sequence[int]]): solutions of layer assignment
-            in form of a list recording the number of layers in each stage.
-    '''
-    pass
-
-
-def config_to_logical_meshes(raw_mesh: VirtualMesh, config: np.ndarray):
-    """
-    Translate a config array into logical meshes
-    Args:
-        raw_mesh (VirtualMesh): the total mesh
-        config (np.ndarray): how meshes are sliced. config[i][j] is the mesh for device(i, j)
-    """
-    mesh_info = []
-    M = config.shape[0]
-    N = config.shape[1]
-
-    visited = set()
-    max_num = -1
-    for i in range(M):
-        for j in range(N):
-            if config[i][j] not in visited:
-                mesh_num = config[i][j]
-                visited.add(mesh_num)
-                start = (i, j)
-                for p in range(j, N):
-                    if config[i][p] != mesh_num:
-                        p -= 1
-                        break
-                for q in range(i, M):
-                    if config[q][j] != mesh_num:
-                        q -= 1
-                        break
-                end = (q, p)
-                mesh_info.append((mesh_num, start, end))
-                max_num = max(max_num, mesh_num)
-    assert max_num >= 0
-    meshes = (None for _ in range(max_num))
-    for info in mesh_info:
-        id, start, end = info
-        meshes[id] = raw_mesh.slice(0, range(start[0], end[0] + 1)).slice(
-            1, range(start[1], end[1] + 1))
-    return meshes
-
-
-def slice_mesh(layers, **kwargs):
-    '''
-    Args:
-        layers (Sequence[JaxPipelineStage]): clustered layers
-    Returns:
-        layer_assignment: the assignment of layers
-        sliced_meshes (Sequence[PhysicalDeviceMesh]): sliced physical meshes
-    '''
-    raw_mesh = global_config.devices
-    B = global_config.num_micro_batches
-    configs, costs, solutions = get_mesh_slicing_configs(raw_mesh, layers, B)
-    best_idx = costs.argmax()[0]
-    best_config = configs[best_idx]
-    layer_assignment = solutions[best_idx]
-    sliced_meshes = config_to_logical_meshes(raw_mesh, best_config)
-    return layer_assignment, sliced_meshes

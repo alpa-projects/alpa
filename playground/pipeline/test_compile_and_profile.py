@@ -97,13 +97,13 @@ args = [jnp.zeros((N, N)) for _ in range(4)]
 origin_jaxpr = make_jaxpr(dummy_large_trans)(*args)
 
 from parax.pipeline_parallel.three_d_parallel import (
-    split_compute_and_apply, slice_closed_jaxpr_by_full_pipeline_marks,
+    split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.mesh_slicing import (
     compile_and_profile_stage_compute_cost, create_collective_group,
     profile_layer_communication_cost)
 
-compute_jaxpr, _, _ = split_compute_and_apply(origin_jaxpr)
+compute_jaxpr, _, _ = split_compute_grad_and_apply_grad(origin_jaxpr)
 stages = slice_closed_jaxpr_by_full_pipeline_marks(compute_jaxpr)
 stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
                                              compute_jaxpr.jaxpr.outvars)

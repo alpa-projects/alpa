@@ -27,6 +27,10 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
+        ########## Options for pipeline stage ##########
+        self.pipeline_stage_mode = "uniform_layer_gpipe"
+        self.cache_compute_cost = None  # The path to the file containing the compute cost profile
+
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
@@ -50,7 +54,7 @@ class GlobalConfig:
 
     def backup(self):
         """Backup the configs."""
-        return copy.deepcopy(self.__dict__)
+        return copy.copy(self.__dict__)
 
     def restore(self, saved_dict):
         """Restore the configs from a backup."""
@@ -69,7 +73,9 @@ def set_parallelize_options(devices=None,
                             num_micro_batches=None,
                             profile_communication=False,
                             cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False):
+                            cache_compute_cost=None,
+                            cache_auto_sharding_ilp_solution=False,
+                            pipeline_stage_mode="uniform_layer_gpipe"):
     """
     Set the global options for all @parallelize decorator.
 
@@ -93,6 +99,9 @@ def set_parallelize_options(devices=None,
       cache_folder (str): The folder to store cached profiling results and strategies.
       cache_auto_sharding_ilp_solution (bool): Whether to cache the ilp solution
         generated during auto-sharding pass.
+      cache_compute_cost (Optional[str]): The file name of the cached compute cost.
+      pipeline_stage_mode (str): The algorithm used to construct pipeline
+        stages. Possible choice: {"uniform_layer_gpipe", "auto_gpipe"}
     """
     global global_config
 
@@ -106,6 +115,8 @@ def set_parallelize_options(devices=None,
     global_config.profile_communication = profile_communication
     global_config.cache_folder = cache_folder
     global_config.cache_auto_sharding_ilp_solution = cache_auto_sharding_ilp_solution
+    global_config.cache_compute_cost = cache_compute_cost
+    global_config.pipeline_stage_mode = pipeline_stage_mode
 
 
 # Don't let the compilation on the driver node use GPUs.

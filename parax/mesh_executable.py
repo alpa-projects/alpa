@@ -349,7 +349,8 @@ class NormalMeshWorkerExecutable:
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids: List[List[int]],
+    def execute_on_worker(self,
+                          input_uuids: List[List[int]],
                           output_uuids: List[List[int]],
                           sync_before=True,
                           sync_after=True):
@@ -853,14 +854,17 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         self.skip_allreduce_env_name =\
             self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
-    def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]], skip_grad_sync=False,
+    def execute_on_worker(self,
+                          input_uuids: List[List[int]],
+                          output_uuids: List[List[int]],
+                          skip_grad_sync=False,
                           **kwargs):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] =\
             self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshWorkerExecutable,
-                     self).execute_on_worker(input_uuids, output_uuids, **kwargs)
+                     self).execute_on_worker(input_uuids, output_uuids,
+                                             **kwargs)
 
 
 class AllocZeroBufferDriverExecutable:
@@ -969,8 +973,11 @@ class AllocZeroBufferWorkerExecutable:
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids, output_uuids,
-                          sync_before=True, sync_after=True):
+    def execute_on_worker(self,
+                          input_uuids,
+                          output_uuids,
+                          sync_before=True,
+                          sync_after=True):
         buffer_dict = self.worker.buffers
         before_sync_func = self.sync_func if sync_before else None
         after_sync_func = self.sync_func if sync_after else None

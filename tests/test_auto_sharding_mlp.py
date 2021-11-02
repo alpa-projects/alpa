@@ -37,7 +37,7 @@ def assert_row_partitioned(x, num_chunks, mesh_dim):
 def assert_expert_partitioned(x, num_chunks, mesh_dim):
     assert x.sharding_spec.sharding == (Chunked([num_chunks]), NoSharding(),
                                         NoSharding())
-    assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)
+    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_replicated_column_partitioned(x, mesh_shape):

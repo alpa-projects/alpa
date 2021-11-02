@@ -11,7 +11,7 @@ from jax.interpreters import partial_eval as pe
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
-from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
+from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn, pipeline_p)
 from parax.pipeline_parallel.centralized_distributerd_runtime import (
     CentralizedDistributedRuntime)
 from parax.pipeline_parallel.schedules import (GpipeSchedule, gen_linear_pipeline_dependency,
@@ -20,7 +20,7 @@ from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
     compute_grad_to_accumulate_grad, generate_sharded_xla_stages, get_var_mapping,
     mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
-    rearrange_vars, slice_apply_gradient,
+    rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
     slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars

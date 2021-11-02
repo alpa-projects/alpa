@@ -59,11 +59,11 @@ class TwoLayerBertLayerModel(nn.Module):
     def __call__(self, x, attention_mask):
         if self.manual_pipeline_layer:
             mark_pipeline(name='1', mark_type='start')
-        x = self.layer0(x, attention_mask)
+        x = self.layer0(x, attention_mask)[0]
         if self.manual_pipeline_layer:
             mark_pipeline(name='1', mark_type='end')
             mark_pipeline(name='2', mark_type='start')
-        x = self.layer1(x, attention_mask)
+        x = self.layer1(x, attention_mask)[0]
         return x
 
 
@@ -321,13 +321,13 @@ class AccumulateGradTest(unittest.TestCase):
 
     def test_8_layer_bert_auto_stage_clustering(self):
         self.run_n_layer_bert(n_layers=8, pipeline_stage_mode="auto_gpipe",
-                              cache_compute_cost="compute-cost-2021-11-01-21-47-48.npz.npy")
+                              cache_compute_cost=None)
 
     def test_8_layer_bert_auto_layer_and_stage(self):
         self.run_n_layer_bert(n_layers=8,
                               manual_pipeline_layer=False,
                               pipeline_stage_mode="auto_gpipe",
-                              cache_compute_cost="compute-cost-2021-11-01-22-00-11.npz.npy")
+                              cache_compute_cost=None)
 
 
 def suite():
@@ -335,7 +335,7 @@ def suite():
     # suite.addTest(AccumulateGradTest('test_mlp'))
     # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_slicing'))
     # suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
-    # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
+    suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
     # suite.addTest(AccumulateGradTest('test_2_layer_bert'))
     # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
     # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
@@ -343,7 +343,7 @@ def suite():
     # suite.addTest(AccumulateGradTest('test_8_layer_bert'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_slicing'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_stage_clustering'))
-    suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_and_stage'))
+    # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_and_stage'))
     return suite
 
 

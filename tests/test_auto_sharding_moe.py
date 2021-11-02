@@ -2,16 +2,15 @@
 
 import unittest
 
-import jax
-import jax.numpy as jnp
-import numpy as np
 from flax import linen as nn
 from flax import optim
+import jax
+import jax.numpy as jnp
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
+import numpy as np
 import optax
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
-from parax.global_env import global_config
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
 from parax.util import map_to_shape, count_communication_primitives
 from parax.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
 from parax.model.model_util import optax_adafactor
@@ -242,16 +241,14 @@ class AutoShardingMoETest(unittest.TestCase):
 
             if global_config.prefer_reduce_scatter:
                 if global_config.force_data_parallel:
-                    assert n_all_gather <= 2
                     assert n_reduce_scatter <= 2
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
                 else:
-                    assert n_all_gather <= 2
                     assert n_reduce_scatter == 1
                     assert n_all_to_all == 4
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
             else:
-                assert n_all_reduce <= 3
+                assert n_all_reduce <= 4
                 assert n_all_to_all == 4
                 assert n_total == n_all_reduce + n_all_to_all
 

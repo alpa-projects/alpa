@@ -14,7 +14,7 @@ import flax
 from flax.training import train_state
 import jax
 from jax._src.api import FLAGS
-from jax._src.dlpack import from_dlpack
+from jax._src.dlpack import from_dlpack, to_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
 from jax.experimental.maps import FrozenDict
@@ -97,6 +97,18 @@ def get_dim_last_value(array, dim):
     indices = tuple(0 if i != dim else array.shape[dim] - 1
                     for i in range(len(array.shape)))
     return array[indices]
+
+
+def check_arithmetic_sequence(array):
+    """Check the input 1-D array is an arithmetic sequence. Return 
+    the delta if Ture and None otherwise."""
+    if len(array) < 2:
+        return None
+    delta = array[1] - array[0]
+    for i in range(2, len(array)):
+        if array[i] - array[i - 1] != delta:
+            return None
+    return delta
 
 
 class FastLookupList:
@@ -205,13 +217,23 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
 
     assert len(parameter_shapes) == len(donated_invars)
 
-    ct = 0
-    for i in range(len(parameter_shapes)):
-        if donated_invars[i]:
-            assert parameter_shapes[i].dimensions(
-            ) == result_shapes[ct].dimensions()
-            xla_computation.setup_alias((ct,), i, ())
-            ct += 1
+    p_in = 0
+    p_out = 0
+    while p_in < len(parameter_shapes) and p_out < len(result_shapes):
+        if donated_invars[p_in]:
+            if parameter_shapes[p_in] == result_shapes[p_out]:
+                xla_computation.setup_alias((p_out,), p_in, ())
+                p_in += 1
+                p_out += 1
+            else:
+                p_out += 1
+        else:
+            p_in += 1
+
+    while p_in < len(parameter_shapes):
+        if donated_invars[p_in]:
+            warn("Some vars are not donated")
+        p_in += 1
 
 
 def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
@@ -289,6 +311,66 @@ class XlaPassContext:
     def __exit__(self, exc_type, exc_value, exc_traceback):
         XlaPassContext.current = None
         xe.clear_pass_context()
+
+
+########################################
+##### Jaxpr Utilities
+########################################
+
+
+def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
+    """Divide the batch dimension by #micro-batches."""
+    avals = []
+    for aval, is_batch_var in zip(raw_avals, batch_invars):
+        if is_batch_var:
+            assert aval.shape[0] % num_micro_batches == 0,\
+                "The batch dimension must be divisable by num_micro_batches."
+            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
+            avals.append(aval.update(shape=shape))
+        else:
+            avals.append(aval)
+    return avals
+
+
+def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
+                    sliced_eqns) -> Sequence[ClosedJaxpr]:
+    """Wrap sliced equations to a list of ClosedJaxpr."""
+    N = len(sliced_eqns)
+    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+    global_outvars = set(
+        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
+    result = []
+    layer_invars = [set() for _ in range(N)]
+    layer_outvars = [set() for _ in range(N)]
+    layer_consts = [dict() for _ in range(N)]
+    var_layer_dict = {}
+    for i, eqns in enumerate(sliced_eqns):
+        for eqn in eqns:
+            for var in eqn.invars:
+                if isinstance(var, Literal):
+                    continue
+                if var in global_consts:
+                    layer_consts[i][var] = global_consts[var]
+                elif var in global_invars:
+                    layer_invars[i].add(var)
+                elif var_layer_dict[var] != i:
+                    layer_invars[i].add(var)
+                    layer_outvars[var_layer_dict[var]].add(var)
+                else:
+                    assert var_layer_dict[var] == i
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar):
+                    var_layer_dict[var] = i
+                if var in global_outvars:
+                    layer_outvars[i].add(var)
+    for i, eqns in enumerate(sliced_eqns):
+        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
+                          list(layer_outvars[i]), eqns)
+        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
+                                       list(layer_consts[i].values()))
+        result.append(new_closed_jaxpr)
+    return result
 
 
 ########################################
@@ -381,7 +463,51 @@ def benchmark_func(run_func,
 ########################################
 
 
-def xla_buffer_to_jax_buffer(xla_buf):
+def is_continuous_subset(slice, tensor_shape, row_major=True):
+    """
+    Figure out whether a slice is a continuous subset of the tensor.
+
+    Args:
+        slice_shape (Sequence(slice)): the shape of the slice.
+        tensor_shape (Sequence(int)): the shape of the tensor.
+        row_major (bool): whether the tensor layout is row-majored.
+
+    Returns:
+        is_continuous (bool)
+    """
+    if not row_major:
+        raise NotImplementedError("Do not support column major.")
+    ndim = len(tensor_shape)
+    if len(slice) != ndim:
+        raise RuntimeError("ndims mismatch.")
+    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    for dim, dim_shape in enumerate(slice_shape):
+        if dim + 1 > ndim:
+            return True
+        if dim_shape == 1:
+            continue
+        if slice_shape[dim + 1:] == tensor_shape[dim + 1:]:
+            return True
+        else:
+            return False
+
+
+def infer_offset_and_n_elements(slice):
+    """Calculate the offset and #elements before making NCCL calls.
+
+    This function assumes the slice is a continuous subset of the original tensor.
+    """
+    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    offset = tuple()
+    n_elements = np.prod(slice_shape)
+    for dim, dim_shape in enumerate(slice_shape):
+        offset = offset + (slice[dim].start,)
+        if dim_shape > 1:
+            break
+    return offset, n_elements
+
+
+def xla_buffer_to_jax_tensor(xla_buf):
     """
     Convert an xla buffer to a JAX DeviceArray.
 
@@ -391,14 +517,49 @@ def xla_buffer_to_jax_buffer(xla_buf):
     return _DeviceArray(aval, xla_buf.device(), xla_buf)
 
 
-def jax_buffer_to_xla_buffer(jax_buf):
+def jax_tensor_to_xla_buffer(jax_buf):
     """Convert a JAX Device array back to XLA buffer."""
     return jax_buf.device_buffer
 
 
+def xla_buffer_to_cupy(xla_buf, take_ownership=False):
+    """Convert an xla buffer directly to cupy, w/o transitioning from jax buffer."""
+    return cp.fromDlpack(
+        xc._xla.buffer_to_dlpack_managed_tensor(xla_buf,
+                                                take_ownership=take_ownership))
+
+
+def cupy_to_xla_buffer(tensor):
+    """Convert cupy tensors to XLA buffers."""
+    if isinstance(tensor, list):
+        return list(map(cupy_to_xla_buffer, tensor))
+    cpu_backend = xb.get_backend("cpu")
+    try:
+        gpu_backend = xb.get_backend("gpu")
+    except RuntimeError:
+        gpu_backend = None
+    buf = xc._xla.dlpack_managed_tensor_to_buffer(tensor.toDlpack(),
+                                                  cpu_backend, gpu_backend)
+    return buf
+
+
+def jax_tensor_to_cupy(tensors, take_ownership=False):
+    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
+    if isinstance(tensors, list):
+        return list(map(jax_tensor_to_cupy, tensors))
+    return cp.fromDlpack(to_dlpack(tensors, take_ownership=take_ownership))
+
+
+def cupy_to_jax_tensor(tensors):
+    """Convert cupy tensors to JAX tensors."""
+    if isinstance(tensors, list):
+        return list(map(cupy_to_jax_tensor, tensors))
+    return from_dlpack(tensors.toDlpack())
+
+
 # Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
 @partial(jax.jit, donate_argnums=0, static_argnums=2)
-def jax_buffer_set(src_buf, update, start_indices):
+def jax_tensor_set(src_buf, update, start_indices):
     """
     In-place write on a JAX buffer.
 
@@ -412,25 +573,10 @@ def jax_buffer_set(src_buf, update, start_indices):
     return src_buf
 
 
-def to_cupy(tensors):
-    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
-    if isinstance(tensors, list):
-        return list(map(to_cupy, tensors))
-    ctensor = cp.fromDlpack(get_jax_dlpack(tensors))
-    return ctensor
-
-
-def to_jax_tensor(tensor):
-    """Convert cupy tensors to JAX tensors."""
-    if isinstance(tensor, list):
-        return list(map(to_jax_tensor, tensor))
-    return from_dlpack(tensor.toDlpack())
-
-
-def get_jax_dlpack(tensor):
-    """Helper function for calling dlpack in JAX."""
-    return xc._xla.buffer_to_dlpack_managed_tensor(tensor.device_buffer,
-                                                   take_ownership=False)
+@partial(jax.jit, static_argnums=(1, 2))
+def jax_tensor_index(src_tensor, indices, size):
+    dst_tensor = jax.lax.dynamic_slice(src_tensor, indices, size)
+    return dst_tensor
 
 
 ########################################
@@ -531,56 +677,3 @@ def compute_param_number(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
-
-
-def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
-    avals = []
-    for aval, is_batch_var in zip(raw_avals, batch_invars):
-        if is_batch_var:
-            assert aval.shape[0] % num_micro_batches == 0,\
-                "The batch dimension must be divisable by num_micro_batches."
-            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
-            avals.append(aval.update(shape=shape))
-        else:
-            avals.append(aval)
-    return avals
-
-
-def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                    sliced_eqns) -> Sequence[ClosedJaxpr]:
-    N = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
-    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    global_outvars = set(
-        var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    result = []
-    layer_invars = [set() for _ in range(N)]
-    layer_outvars = [set() for _ in range(N)]
-    layer_consts = [dict() for _ in range(N)]
-    var_layer_dict = {}
-    for i, eqns in enumerate(sliced_eqns):
-        for eqn in eqns:
-            for var in eqn.invars:
-                if isinstance(var, Literal):
-                    continue
-                if var in global_consts:
-                    layer_consts[i][var] = global_consts[var]
-                elif var in global_invars:
-                    layer_invars[i].add(var)
-                elif var_layer_dict[var] != i:
-                    layer_invars[i].add(var)
-                    layer_outvars[var_layer_dict[var]].add(var)
-                else:
-                    assert var_layer_dict[var] == i
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    var_layer_dict[var] = i
-                if var in global_outvars:
-                    layer_outvars[i].add(var)
-    for i, eqns in enumerate(sliced_eqns):
-        new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
-                          list(layer_outvars[i]), eqns)
-        new_closed_jaxpr = ClosedJaxpr(new_jaxpr,
-                                       list(layer_consts[i].values()))
-        result.append(new_closed_jaxpr)
-    return result

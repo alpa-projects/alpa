@@ -343,24 +343,28 @@ class NormalMeshWorkerExecutable:
                                                     strategy_config,
                                                     num_devices, False,
                                                     hlo_proto_status)
-        self.buffer_dict = worker.buffers
+        self.worker = worker
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]]):
+                          output_uuids: List[List[int]],
+                          sync_before=True,
+                          sync_after=True):
         """Run the executable on the worker."""
-        buffer_dict = self.buffer_dict
+        buffer_dict = self.worker.buffers
 
         # Get input buffers from uuids
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
 
+        before_sync_func = self.sync_func if sync_before else None
+        after_sync_func = self.sync_func if sync_after else None
         # Execute the executable
-        timers(self.timer_name).start(self.sync_func)
+        timers(self.timer_name).start(before_sync_func)
         output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(after_sync_func)
 
         # Store output buffers
         for i in range(len(output_uuids)):
@@ -504,6 +508,7 @@ class GradAccMeshDriverExecutable:
                     grad_shard_dtypes, strategy_config, donated_invars,
                     batch_invars, num_grads, num_micro_batches,
                     grad_sync_channel_ids)
+            self.grad_sync_channel_ids = grad_sync_channel_ids
         else:
             self.accumulate_grad = accumulate_grad
             self.apply_grad = apply_grad
@@ -849,12 +854,13 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
             self.compiled.hlo_modules()[0].name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
 
     def execute_on_worker(self, input_uuids: List[List[int]],
-                          output_uuids: List[List[int]], skip_grad_sync):
+                          output_uuids: List[List[int]], skip_grad_sync=False,
+                          **kwargs):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] =\
             self.grad_sync_channel_ids if skip_grad_sync else ""
         return super(PartialGradAccMeshWorkerExecutable,
-                     self).execute_on_worker(input_uuids, output_uuids)
+                     self).execute_on_worker(input_uuids, output_uuids, **kwargs)
 
 
 class AllocZeroBufferDriverExecutable:
@@ -908,7 +914,7 @@ class AllocZeroBufferDriverExecutable:
             # Execute SPMD binary
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
-                    self.exec_uuid, output_uuids[i])
+                    self.exec_uuid, [], output_uuids[i])
 
             output_uuids = output_uuids.transpose([1, 0, 2])
 
@@ -950,7 +956,7 @@ class AllocZeroBufferDriverExecutable:
 
 
 class AllocZeroBufferWorkerExecutable:
-    """The driver part of a buffer-allocation executable."""
+    """The worker part of a buffer-allocation executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int,
                  grad_shard_shapes: Sequence[Tuple[int, ...]],
@@ -958,17 +964,22 @@ class AllocZeroBufferWorkerExecutable:
         num_devices = len(worker.backend.devices())
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
             worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
-        self.buffer_dict = worker.buffers
+        self.worker = worker
 
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, output_uuids):
-        buffer_dict = self.buffer_dict
-        timers(self.timer_name).start(self.sync_func)
+    def execute_on_worker(self, input_uuids, output_uuids,
+                          sync_before=True, sync_after=True):
+        buffer_dict = self.worker.buffers
+        before_sync_func = self.sync_func if sync_before else None
+        after_sync_func = self.sync_func if sync_after else None
+
+        # Execute
+        timers(self.timer_name).start(before_sync_func)
         grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
             [])
-        timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(after_sync_func)
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], grad_bufs[i])
 

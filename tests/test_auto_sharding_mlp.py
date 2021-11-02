@@ -26,18 +26,18 @@ def assert_less_equal(x, y):
 
 def assert_column_partitioned(x, num_chunks, mesh_dim):
     assert x.sharding_spec.sharding == (NoSharding(), Chunked([num_chunks]))
-    assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)
+    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_row_partitioned(x, num_chunks, mesh_dim):
     assert x.sharding_spec.sharding == (Chunked([num_chunks]), NoSharding())
-    assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)
+    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_expert_partitioned(x, num_chunks, mesh_dim):
     assert x.sharding_spec.sharding == (Chunked([num_chunks]), NoSharding(),
                                         NoSharding())
-    assert x.sharding_spec.mesh_mapping[mesh_dim] == ShardedAxis(0)
+    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_replicated_column_partitioned(x, mesh_shape):
@@ -126,12 +126,6 @@ def assert_data_parallel_cost(state,
 
     # Check sharding specification
     if global_config.prefer_reduce_scatter:
-        num_not_sharded = 0
-        for weight in params:
-            if not is_sharded(weight):
-                num_not_sharded += 1
-        assert num_not_sharded <= allow_not_sharded_params * 2
-
         num_not_sharded = 0
         for weight in opt_state:
             if not is_sharded(weight) and len(weight.shape) > 0:

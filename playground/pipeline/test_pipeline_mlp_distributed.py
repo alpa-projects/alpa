@@ -76,7 +76,6 @@ def train_step(optimizer, batch, apply_fn):
         return loss
 
     grad_param, grad_x = jax.grad(loss_func, argnums = (0, 1))(optimizer.target, batch['x'], batch['y'])
-    # FIXME (zhuohan): make the pipeline work with apply_gradient
     # new_optimizer = optimizer.apply_gradient(grad_param)
     return grad_param
 

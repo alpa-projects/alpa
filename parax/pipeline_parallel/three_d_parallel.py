@@ -1,6 +1,6 @@
 """3D parallel on a Ray cluster."""
 import logging
-from typing import Sequence
+from typing import Sequence, List
 
 import numpy as np
 import jax
@@ -10,16 +10,17 @@ from jax.interpreters import partial_eval as pe
 
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
-from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
-                                                   pipeline_p)
-from parax.pipeline_parallel.runtime import (
-    GpipeSchedule, Jax3DPipeline, gen_linear_pipeline_dependency,
+from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
+from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
+from parax.pipeline_parallel.centralized_distributerd_runtime import (
+    CentralizedDistributedRuntime)
+from parax.pipeline_parallel.schedules import (GpipeSchedule, gen_linear_pipeline_dependency,
     gen_dependency_with_stages)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
-    compute_grad_to_accumulate_grad, generate_sharded_xla_stages,
-    get_var_mapping, mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks,
-    pipeline_dce, rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
+    compute_grad_to_accumulate_grad, generate_sharded_xla_stages, get_var_mapping,
+    mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
+    rearrange_vars, slice_apply_gradient,
     slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars
@@ -320,7 +321,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                              sliced_meshes=sliced_meshes)
     physical_meshes = []
     n_meshes = len(schedule.meshes)
-    # TODO(Hao): delay the creation of physical mesh here
     for i, mesh in enumerate(schedule.meshes):
         logger.debug("Launch the {}th mesh...".format(i))
         physical_meshes.append(mesh.get_physical_mesh())
@@ -361,15 +361,15 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             xla_stages[i] = xla_stage
 
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = Jax3DPipeline(pipeline_stages=xla_stages,
-                       global_invars=global_invars,
-                       grad_dummy_invars=grad_in_to_out,
-                       global_outvars=global_outvars,
-                       physical_meshes=physical_meshes,
-                       dependency=dependency,
-                       schedule=schedule,
-                       is_batch=batch_invars,
-                       num_batch=num_micro_batches)
+    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
+                                         global_invars=global_invars,
+                                         grad_dummy_invars=grad_in_to_out,
+                                         global_outvars=global_outvars,
+                                         physical_meshes=physical_meshes,
+                                         dependency=dependency,
+                                         schedule=schedule,
+                                         is_batch=batch_invars,
+                                         num_batch=num_micro_batches)
 
     def ret_func(*args, **kwargs):
         return jp.run(*args, **kwargs)

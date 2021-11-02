@@ -11,7 +11,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
+from parax import parallelize, set_parallelize_options, testing
 
 from test_auto_sharding_mlp import assert_close
 
@@ -41,10 +41,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         # Assert b is sharded
         assert b.sharding_spec == pxla.ShardingSpec(
             sharding=(NoSharding(), Chunked([4])),
-            mesh_mapping=(Replicated(1), ShardedAxis(0))) or\
+            mesh_mapping=(ShardedAxis(0),)) or\
                b.sharding_spec == pxla.ShardingSpec(
             sharding=(Chunked([4]), NoSharding()),
-            mesh_mapping=(Replicated(1), ShardedAxis(0)))
+            mesh_mapping=(ShardedAxis(0),))
 
     def test_dot_reshape_transpose(self):
         set_parallelize_options(memory_budget_per_device=1 * MB)

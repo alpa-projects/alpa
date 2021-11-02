@@ -27,7 +27,7 @@ def create_train_state(rngkey, model, params):
     return state
 
 
-class MLP_Model(nn.Module):
+class MLPModel(nn.Module):
     hidden_dim: int
     output_dim: int
     manual_pipeline_layer: bool = True
@@ -47,7 +47,7 @@ class MLP_Model(nn.Module):
         return x
 
 
-class TwoLayerBertLayer_Model(nn.Module):
+class TwoLayerBertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
@@ -59,17 +59,15 @@ class TwoLayerBertLayer_Model(nn.Module):
     def __call__(self, x, attention_mask):
         if self.manual_pipeline_layer:
             mark_pipeline(name='1', mark_type='start')
-        layer_outputs = self.layer0(x, attention_mask)
-        x = layer_outputs[0]
+        x = self.layer0(x, attention_mask)
         if self.manual_pipeline_layer:
             mark_pipeline(name='1', mark_type='end')
             mark_pipeline(name='2', mark_type='start')
-        layer_outputs = self.layer1(x, attention_mask)
-        x = layer_outputs[0]
+        x = self.layer1(x, attention_mask)
         return x
 
 
-class BertLayer_Model(nn.Module):
+class BertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
@@ -107,41 +105,40 @@ class AccumulateGradTest(unittest.TestCase):
         batch_size = 256
         hidden_dim = 128
         input_dim = output_dim = hidden_dim
-        model = MLP_Model(hidden_dim=hidden_dim, output_dim=output_dim,
-                          manual_pipeline_layer=manual_pipeline_layer)
-        x = jnp.array(np.random.rand(batch_size, input_dim))
-        y = jnp.array(np.random.rand(batch_size, output_dim))
+
+        model = MLPModel(hidden_dim=hidden_dim, output_dim=output_dim, manual_pipeline_layer=manual_pipeline_layer)
         rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, input_dim))
+        y = jax.random.normal(rngkey, (batch_size, output_dim))
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
-        def loss_func(params, x, y):
-            out = model.apply(params, x)
-            loss = jnp.mean((out - y)**2)
-            if manual_pipeline_layer:
-                mark_pipeline(name='2', mark_type='end')
-            return loss
-
-        if manual_pipeline_layer:
-            loss_func = manual_layer_slicing(loss_func)
-        else:
-            loss_func = automatic_layer_slicing(loss_func, layer_num=2,
-                                                use_pipeline=True)
-
         def train_step(state, batch):
-            param_grad = parax.grad(loss_func)(state.params, batch['x'],
-                                               batch['y'])
+
+            def loss_func(params):
+                out = state.apply_fn(params, batch["x"])
+                loss = jnp.mean((out - batch["y"])**2)
+                if manual_pipeline_layer:
+                    mark_pipeline(name='2', mark_type='end')
+                return loss
+
+            if manual_pipeline_layer:
+                loss_func = manual_layer_slicing(loss_func)
+            else:
+                loss_func = automatic_layer_slicing(loss_func, layer_num=2,
+                                                    use_pipeline=True)
+
+            param_grad = parax.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=param_grad)
             return new_state
 
         global_config.num_micro_batches = 4
 
-        nstep = 5
+        nstep = 3
         parallel_train_step = parallelize(train_step)
         executable = parallel_train_step.get_executable(state, batch)
         expected_new_state = None
         actual_new_state = None
-        # Test ReplicatedDistributedArray correctness
         for i in range(nstep):
             if i > 0:
                 state = expected_new_state
@@ -166,9 +163,10 @@ class AccumulateGradTest(unittest.TestCase):
 
         def train_step(state, batch, apply_fn):
 
-            def loss_func(params, x, y, attention_mask):
-                out = apply_fn(params, x, attention_mask)
-                loss = jnp.mean((out - y)**2)
+            def loss_func(params):
+                out = state.apply_fn(params, batch["x"],
+                                     batch["attention_mask"])
+                loss = jnp.mean((out - batch["y"])**2)
                 if manual_pipeline_layer:
                     mark_pipeline(name='2', mark_type='end')
                 return loss
@@ -179,10 +177,7 @@ class AccumulateGradTest(unittest.TestCase):
                 loss_func = automatic_layer_slicing(loss_func, layer_num=2,
                                                     use_pipeline=True)
 
-            grad_param = parax.grad(loss_func)(state.params, batch['x'],
-                                               batch['y'],
-                                               batch['attention_mask'])
-
+            grad_param = parax.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grad_param)
             return new_state
 
@@ -195,7 +190,7 @@ class AccumulateGradTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
-        model = TwoLayerBertLayer_Model(
+        model = TwoLayerBertLayerModel(
             config=BertConfig(hidden_size=hidden_size,
                               intermediate_size=hidden_size * 4,
                               num_attention_heads=num_heads),
@@ -211,7 +206,7 @@ class AccumulateGradTest(unittest.TestCase):
         actual_new_state = None
 
         # Test ReplicatedDistributedArray correctness
-        for i in range(5):
+        for i in range(3):
             if i > 0:
                 state = expected_new_state
             expected_new_state = train_step(state, batch, model.apply)
@@ -219,7 +214,7 @@ class AccumulateGradTest(unittest.TestCase):
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch, model.apply)
             assert_allclose(expected_new_state.params, actual_new_state.params,
-                            1e-3, 1e-3)
+                            5e-4, 5e-4)
 
         executable.shutdown()
 
@@ -262,18 +257,16 @@ class AccumulateGradTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
-        y = jax.random.normal(
-            rngkey, (batch_size, seq_len, hidden_size),
-            dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
-        model = BertLayer_Model(
-            config=BertConfig(hidden_size=hidden_size,
-                              intermediate_size=hidden_size * 4,
-                              num_attention_heads=num_heads,
-                              num_hidden_layers=n_layers),
-            manual_pipeline_layer=manual_pipeline_layer)
+        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
+                                                 intermediate_size=hidden_size *
+                                                 4,
+                                                 num_attention_heads=num_heads),
+                               manual_pipeline_layer=manual_pipeline_layer)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
 
@@ -284,8 +277,7 @@ class AccumulateGradTest(unittest.TestCase):
         expected_new_state = None
         actual_new_state = None
 
-        # Test ReplicatedDistributedArray correctness
-        for i in range(5):
+        for i in range(3):
             if i > 0:
                 state = expected_new_state
             expected_new_state = train_step(state, batch, model.apply)
@@ -293,7 +285,7 @@ class AccumulateGradTest(unittest.TestCase):
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch, model.apply)
             assert_allclose(expected_new_state.params, actual_new_state.params,
-                            1e-3, 1e-3)
+                            5e-4, 5e-4)
 
         executable.shutdown()
 

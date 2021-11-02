@@ -178,7 +178,7 @@ if __name__ == "__main__":
             #"NCCL_ALGO": "tree",
             #"NCCL_DEBUG": "INFO",
         }
-        workers.append(GpuHost.options(override_environment_variables=env_vars)\
+        workers.append(GpuHost.options(runtime_env={"env_vars": env_vars})\
                               .remote(i, num_gpus, nccl_uuid_list))
 
     ray.get([w.profile.remote() for w in workers])

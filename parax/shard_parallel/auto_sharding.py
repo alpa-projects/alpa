@@ -15,7 +15,7 @@ from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file)
 from parax.mesh_executable import NormalMeshDriverExecutable
-from parax.util import get_compile_options, to_int_tuple, XlaPassContext
+from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -348,30 +348,49 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     sharding = []
     mesh_mapping = []
     if sharding_type == OpSharding.Type.OTHER:
-        # try to map dimension between provided mesh and real mesh
-        mesh_mapping = [None] * len(logical_mesh.id_mesh.shape)
-        tensor_dim_to_mesh_dim = logical_mesh.get_tensor_dim_to_mesh_dim(
-            len(aval.shape), tile_assignment_dimensions,
-            tile_assignment_devices)
+        tile_assignment = np.array(tile_assignment_devices).reshape(
+            tile_assignment_dimensions)
 
-        if tensor_dim_to_mesh_dim:
-            pt = 0
-            for tensor_dim in range(len(aval.shape)):
-                if tile_assignment_dimensions[tensor_dim] == 1:
+        tile_dims = []
+        for i in range(len(tile_assignment_dimensions)):
+            if tile_assignment_dimensions[i] != 1:
+                tile_dims.append(i)
+
+        tile_dims_delta = []
+        success = True
+        for dim in tile_dims:
+            indices = tuple(0 if i != dim else slice(None)
+                            for i in range(tile_assignment.ndim))
+            device_ids = tile_assignment[indices]
+            delta = check_arithmetic_sequence(device_ids)
+            if delta is None:
+                success = False
+                break
+            tile_dims_delta.append(delta)
+
+        if success:
+            tile_dims_order = list(range(len(tile_dims)))
+            tile_dims_order.sort(key=lambda i: -tile_dims_delta[i])
+
+            ct = 0
+            for i in range(len(aval.shape)):
+                if tile_assignment_dimensions[i] == 1:
                     sharding.append(pxla.NoSharding())
                 else:
                     sharding.append(
-                        pxla.Chunked([tile_assignment_dimensions[tensor_dim]]))
-                    mesh_dim = tensor_dim_to_mesh_dim[tensor_dim]
-                    mesh_mapping[mesh_dim] = pxla.ShardedAxis(pt)
-                    pt += 1
+                        pxla.Chunked([tile_assignment_dimensions[i]]))
+                    mesh_mapping.append(pxla.ShardedAxis(ct))
+                    ct += 1
 
-            # All other dims are replicated
-            for mesh_dim, _ in enumerate(mesh_mapping):
-                if mesh_mapping[mesh_dim] is None:
-                    mesh_mapping[mesh_dim] = \
-                        pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
+            if len(tile_dims) > len(mesh_mapping):
+                # replicate on the last tile dim
+                mesh_mapping.append(
+                    pxla.Replicated(tile_assignment_dimensions[-1]))
+
+            mesh_mapping = [mesh_mapping[idx] for idx in tile_dims_order]
         else:
+            # The normal path fails, because one tensor dim is chunked into
+            # mutliple parts. We only handle a special case here.
             assert len(aval.shape) == 1, "Only support 1d case"
             assert len(tile_assignment_dimensions) == len(aval.shape)
             for col in range(len(tile_assignment_devices)):

@@ -137,17 +137,17 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     number = 1
     costs = benchmark_func(run_func, sync_func=sync_func,
                            warmup=0, repeat=repeat, number=number)
-    # timers.log(names, normalizer=repeat * number)
+    timers.log(names, normalizer=repeat * number)
 
     # Print results
-    if rank == 0:
-        peak_mem = torch.cuda.max_memory_allocated(0)
-        heads = ["Type", "Case", "Mesh Shape", "#MB", "DDP Impl",
-                 "Peak Mem", "Mean Time", "Std Time"]
-        values = ["transformer-layer", str(benchmark_case[:-3]),
-                  str(benchmark_case[-6:-3]), str(benchmark_case[-3]), str(benchmark_case[-2]),
-                  f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
-        write_tsv(heads, values, "result_trans.tsv")
+    # if rank == 0:
+    peak_mem = torch.cuda.max_memory_allocated(0)
+    heads = ["Type", "Case", "Mesh Shape", "#MB", "DDP Impl",
+             "Peak Mem", "Mean Time", "Std Time"]
+    values = ["transformer-layer", str(benchmark_case[:-3]),
+              str(benchmark_case[-6:-3]), str(benchmark_case[-3]), str(benchmark_case[-2]),
+              f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+    write_tsv(heads, values, "result_trans.tsv")
 
 
 if __name__ == "__main__":

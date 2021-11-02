@@ -122,7 +122,7 @@ class CompileWorkerPool:
 def split_global_use_and_donate(layers, layer_indices, donation_mapping,
                                 global_outvars):
     '''
-    Pick some layers(no need to be consecutive) and assume they are on a mesh, 
+    Pick some layers(no need to be consecutive) and assume they are on a mesh,
     this function then returns donation_mapping and global_use of each selected layer.
     Args:
         layers (Sequence[JaxPipelineStage]): all layers
@@ -353,7 +353,7 @@ def profile_layer_communication_cost(
             tasks.append(task)
 
     for task in tasks:
-        task.prepare_send_recv_tasks()
+        task.put_send_recv_tasks()
     src_phy_mesh.sync_workers()
     collective_group.dst_mesh.sync_workers()
     results = []

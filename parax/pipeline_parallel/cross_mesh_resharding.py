@@ -1,11 +1,13 @@
 """Cross mesh resharding for pipeline parallelism."""
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import List
 import logging
+from typing import List
 
 import numpy as np
 import ray
 import ray.util.collective as col
+import jax.linear_util as lu
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
@@ -150,13 +152,17 @@ class VirtualDistributedArray:
                 # get its index
                 tile_index = unflatten_tile_index(tile_index_flat,
                                                   self.tile_shape)
-                device_ids = list(self.tile_assignments[tuple(tile_index)])
                 indices = [None] * len(self.tensor_shape)
                 for i, dim in enumerate(self.tensor_shape):
                     tile_size, ragged = divmod(dim, self.tile_shape[i])
                     assert not ragged
                     indices[i] = slice(tile_size * tile_index[i],
                                        tile_size * (tile_index[i] + 1))
+                device_ids = self.tile_assignments[tuple(tile_index)]
+                if not isinstance(device_ids, Iterable):
+                    device_ids = [device_ids]
+                else:
+                    device_ids = list(device_ids)
                 device_strs = [
                     self.device_mesh.device_strs[d] for d in device_ids
                 ]
@@ -180,6 +186,7 @@ class VirtualDistributedArray:
 VDA = VirtualDistributedArray
 
 
+# TODO(Hao): maybe we should derive two classes: Eager and Lazy Resharding tasks.
 class ReshardingTask:
     """
     A helper class that launch the NCCL communication based on a resharding task spec.
@@ -197,8 +204,37 @@ class ReshardingTask:
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
 
+        # internal states
+        self._sender_tasks = None
+        self._receiver_tasks = None
+        self._has_put_send_recv_tasks = False
+
+    @property
+    def has_initialized_send_recv_tasks(self):
+        if self._sender_tasks is not None and self._receiver_tasks is not None:
+            return True
+        return False
+
+    @property
+    def has_put_send_recv_tasks(self):
+        return self._has_put_send_recv_tasks
+
+    @property
+    def sender_tasks(self):
+        if not self.has_initialized_send_recv_tasks:
+            raise RuntimeError("Sender tasks have not been initialized.")
+        return self._sender_tasks
+
+    @property
+    def receiver_tasks(self):
+        if not self.has_initialized_send_recv_tasks:
+            raise RuntimeError("Receiver tasks have not been initialized.")
+        return self._receiver_tasks
+
     def do(self, src_array):
         """According to the task_spec, launch send/recv operations.
+
+        Used in dynamic mode.
 
         Args:
             src_array (DistributedArray): the source array to be resharded.
@@ -259,16 +295,15 @@ class ReshardingTask:
         # Put an empty buffer first.
         if global_config.pipeline_aggressively_sync:
             ray.get(
-                receiver_worker.put_empty_buffer.remote(result_buf.uuid,
-                                                        result_buf.device_id,
-                                                        dst_tile.tile_shape,
-                                                        result_buf.dtype))
+                receiver_worker.put_non_zero_buffer.remote(
+                    result_buf.uuid, result_buf.device_id, dst_tile.tile_shape,
+                    result_buf.dtype))
             logger.debug("We are synchronizing for `put_empty_buffer`.")
         else:
-            receiver_worker.put_empty_buffer.remote(result_buf.uuid,
-                                                    result_buf.device_id,
-                                                    dst_tile.tile_shape,
-                                                    result_buf.dtype)
+            receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
+                                                       result_buf.device_id,
+                                                       dst_tile.tile_shape,
+                                                       result_buf.dtype)
             logger.debug("We are NOT synchronizing for `put_empty_buffer`.")
 
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
@@ -302,10 +337,13 @@ class ReshardingTask:
                     "We are NOT synchronizing for `send_tile`/`recv_tile`.")
         return result_buf
 
-    def prepare_send_recv_tasks(self):
-        sender_tasks = {host: list() for host in self.src_mesh.workers}
-        receiver_tasks = {host: list() for host in self.dst_mesh.workers}
-        group_name = self.collective_group.group_name
+    def get_send_recv_tasks(self):
+        """Init send/recv tasks if not yet."""
+        if self.has_initialized_send_recv_tasks:
+            return self.sender_tasks, self.receiver_tasks
+
+        self._sender_tasks = {host: list() for host in self.src_mesh.workers}
+        self._receiver_tasks = {host: list() for host in self.dst_mesh.workers}
 
         self.sender_uuid_plan = []
         self.receiver_uuid_plan = []
@@ -335,7 +373,7 @@ class ReshardingTask:
                     tile = src_tiles[i]
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                         sender]
-                    sender_tasks[sender_worker].append(
+                    self._sender_tasks[sender_worker].append(
                         (tile.offset, receiver_rank, receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
@@ -347,8 +385,17 @@ class ReshardingTask:
                         (indices_in_dst_tile, sender_rank, sender_gpu_idx))
                 receiver_task.append(receiver_subtasks)
 
-                receiver_tasks[receiver_worker].append(receiver_task)
+                self._receiver_tasks[receiver_worker].append(receiver_task)
 
+        # return read-only
+        return self.sender_tasks, self.receiver_tasks
+
+    def put_send_recv_tasks(self):
+        """Put send recv tasks to remote worker."""
+        if self.has_put_send_recv_tasks:
+            return
+        sender_tasks, receiver_tasks = self.get_send_recv_tasks()
+        group_name = self.collective_group.group_name
         self.send_worker_task_ids = dict()
         task_dones = []
         for worker, task in sender_tasks.items():
@@ -356,7 +403,6 @@ class ReshardingTask:
             self.send_worker_task_ids[worker] = uuid
             task_dones.append(
                 worker.put_resharding_send_task.remote(uuid, task, group_name))
-
         self.recv_worker_task_ids = dict()
         for worker, task in receiver_tasks.items():
             uuid = next_resharding_task_uuid()
@@ -364,6 +410,7 @@ class ReshardingTask:
             task_dones.append(
                 worker.put_resharding_recv_task.remote(uuid, task, group_name))
         ray.get(task_dones)
+        self._has_put_send_recv_tasks = True
 
     def do_prepared(self, src_array, profiling=False):
         send_buf_uuids = {host: list() for host in self.src_mesh.workers}
@@ -510,14 +557,12 @@ class CollectiveGroup:
     """
 
     def __init__(self, device_strs, src_mesh, dst_mesh):
-        self.device_strs = list(device_strs)
+        self.device_strs = device_strs
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
 
         # generate a group name
         self.group_name = ",".join(self.device_strs)
-
-        self._destroyed = False
 
         # construct a device str -> rank: (process_rank, gpu_index) map
         self.device_str_to_rank_map = dict()
@@ -567,8 +612,7 @@ class CollectiveGroup:
             self.group_name))
         for worker in self.mesh_workers:
             # This remote call will remove ray named actors (hence it is necessary)
-            ret = ray.get(
-                worker.destroy_collective_group.remote(self.group_name))
+            ray.get(worker.destroy_collective_group.remote(self.group_name))
         # Destroy the declared named actor in ray
 
         # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
@@ -578,13 +622,6 @@ class CollectiveGroup:
             ray.kill(store)
         except ValueError:
             pass
-        self._destroyed = True
-
-    def __del__(self):
-        if not self._destroyed:
-            self.destroy()
-            self._destroyed = True
-        return
 
 
 class ReshardingTaskSpec:
@@ -768,8 +805,10 @@ class ReshardingTaskSpec:
         if not self._strategy:
             raise RuntimeError("Generate and set strategy first.")
         device_strs = set()
+        # senders
         for tile_strategy in self.strategy:
             device_strs = device_strs | set(tile_strategy.flatten().tolist())
+        # receivers
         for tile in self.dst.tiles.flatten():
             device_strs = device_strs | set(tile.replica_device_strs)
         return device_strs
@@ -812,11 +851,7 @@ class CrossMeshCommunicator:
         # Do not mutate
         self._sharded_stages = sharded_stages
         self._schedule = schedule
-
         self.resharding_specs = None
-
-        # TODO(Hao): implement the cache later.
-        self.resharding_cache = dict()
 
         # Loads for load balancing.
         self._sender_loads = {
@@ -915,6 +950,7 @@ class CrossMeshCommunicator:
                     continue
                 yield i, j, self.resharding_specs[i][j]
 
+    # TODO(Hao): implement another send/recv strategy similar to the scatter-gather optimization in megatron.
     def _generate_resharding_strategy_by_loads(self, spec):
         """
         Generate the resharding strategy for a resharding task spec.

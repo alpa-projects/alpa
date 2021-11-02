@@ -225,10 +225,12 @@ class AccumulateGradTest(unittest.TestCase):
 
 
     def run_n_layer_bert(self, n_layers, manual_pipeline_layer=True,
-                         pipeline_stage_mode="uniform_layer_gpipe"):
+                         pipeline_stage_mode="uniform_layer_gpipe",
+                         cache_compute_cost=None):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
-                                pipeline_stage_mode=pipeline_stage_mode)
+                                pipeline_stage_mode=pipeline_stage_mode,
+                                cache_compute_cost=cache_compute_cost)
 
         batch_size = 16
         seq_len = 256
@@ -328,12 +330,14 @@ class AccumulateGradTest(unittest.TestCase):
         self.run_n_layer_bert(n_layers=8, manual_pipeline_layer=False)
 
     def test_8_layer_bert_auto_stage_clustering(self):
-        self.run_n_layer_bert(n_layers=8, pipeline_stage_mode="auto_gpipe")
+        self.run_n_layer_bert(n_layers=8, pipeline_stage_mode="auto_gpipe",
+                              cache_compute_cost=None)
 
     def test_8_layer_bert_auto_layer_and_stage(self):
         self.run_n_layer_bert(n_layers=8,
                               manual_pipeline_layer=False,
-                              pipeline_stage_mode="auto_gpipe")
+                              pipeline_stage_mode="auto_gpipe",
+                              cache_compute_cost=None)
 
 
 def suite():

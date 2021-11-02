@@ -112,6 +112,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             else:
                 force_batch_dim_to_mesh_dim = -1
 
+        grad_acc_num_micro_batches = None
+
         with XlaPassContext({
                 # Build options
                 "build_option::bypass_device_assignment_check": bypass_device_assignment_check,

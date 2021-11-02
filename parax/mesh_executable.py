@@ -403,6 +403,14 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
     (e.g., ".0.12." means channel id 0 and 12)
     """
     return xla_extension.get_grad_sync_channel_ids(hlo_module)
+    #hlo_ir = hlo_module.to_string()
+    #import re
+    #ids = []
+    #for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups", hlo_ir):
+    #    ids.append(item)
+
+    #ids = "." + ".".join(ids) + "."
+    #return ids
 
 
 class GradAccMeshDriverExecutable:
@@ -475,6 +483,7 @@ class GradAccMeshDriverExecutable:
         # Get the channel ids of gradient sync all-reduce
         grad_sync_channel_ids =\
             get_grad_sync_channel_ids(accumulate_grad.hlo_modules()[0])
+        # print(grad_sync_channel_ids)
 
         # Cache results for input and output sharding
         global_arg_shard_indices = [

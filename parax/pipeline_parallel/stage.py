@@ -262,6 +262,10 @@ class XlaShardedPipelineStage(PipelineStage):
 
         return mesh_executable.get_driver_callable()
 
+    def hlo_proto_str(self):
+        xla_computation = xc.XlaComputation(self.hlo_proto)
+        return xla_computation.as_hlo_text()
+
 
 def get_var_mapping(mapping, var):
     if isinstance(var, Var) and var in mapping:
@@ -781,7 +785,7 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
 def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
                  global_outvars):
     """
-    clear unused vars cross pipeline stages. 
+    clear unused vars cross pipeline stages.
     mainly to remove grad and only keep accumulated grad
     """
 
@@ -875,8 +879,8 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
-        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function. 
-        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at. 
+        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function.
+        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at.
         If not in the dict, the variable should be a global parameter.
         mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
@@ -884,7 +888,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
         info: A tuple of:
             deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient stages
-            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned 
+            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned
             infered_global_invars (Dict[Var, List[int]]): Indicating which clusters each
             input variable of apply_gradient function should be sent to.
     """
@@ -993,7 +997,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
 def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
     """
     Add pipeline markers for sliced apply grads, keep invars and outvars still unless
-    the invar is in mask or invar is outvar. 
+    the invar is in mask or invar is outvar.
     In the first case, the final invar follows the mask;
     In the second case, the final outvar is recorded in outvar_map
     Args:

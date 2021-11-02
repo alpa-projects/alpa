@@ -15,7 +15,7 @@ from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file)
 from parax.mesh_executable import NormalMeshDriverExecutable
-from parax.util import get_compile_options, to_int_tuple, XlaPassContext
+from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -340,7 +340,8 @@ def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
     return input_sharding_specs, output_sharding_specs
 
 
-def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
+def _hlo_sharding_to_sharding_spec_no_tuple_old(proto_tuple, aval,
+                                                logical_mesh):
     """The internal function of hlo_sharding_to_sharding_spec."""
     sharding_type, tile_assignment_dimensions, tile_assignment_devices, \
         _, _ = proto_tuple
@@ -372,6 +373,74 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
                     mesh_mapping[mesh_dim] = \
                         pxla.Replicated(logical_mesh.id_mesh.shape[mesh_dim])
         else:
+            assert len(aval.shape) == 1, "Only support 1d case"
+            assert len(tile_assignment_dimensions) == len(aval.shape)
+            for col in range(len(tile_assignment_devices)):
+                if tile_assignment_devices[col] == 1:
+                    break
+            sharding = (pxla.Chunked(
+                (tile_assignment_dimensions[0] // col, col)),)
+            mesh_mapping = (pxla.ShardedAxis(1), pxla.ShardedAxis(0))
+    elif sharding_type == OpSharding.Type.REPLICATED:
+        sharding = (pxla.NoSharding(),) * len(aval.shape)
+        mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)
+    else:
+        raise NotImplementedError("Type: " + str(sharding_type))
+
+    return pxla.ShardingSpec(sharding, mesh_mapping)
+
+
+def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
+    """The internal function of hlo_sharding_to_sharding_spec."""
+    sharding_type, tile_assignment_dimensions, tile_assignment_devices, \
+        _, _ = proto_tuple
+
+    sharding = []
+    mesh_mapping = []
+    if sharding_type == OpSharding.Type.OTHER:
+        tile_assignment = np.array(tile_assignment_devices).reshape(
+            tile_assignment_dimensions)
+
+        tile_dims = []
+        for i in range(len(tile_assignment_dimensions)):
+            if tile_assignment_dimensions[i] != 1:
+                tile_dims.append(i)
+
+        tile_dims_delta = []
+        success = True
+        for dim in tile_dims:
+            indices = tuple(0 if i != dim else slice(None)
+                            for i in range(tile_assignment.ndim))
+            device_ids = tile_assignment[indices]
+            delta = check_arithmetic_sequence(device_ids)
+            if delta is None:
+                success = False
+                break
+            tile_dims_delta.append(delta)
+
+        if success:
+            tile_dims_order = list(range(len(tile_dims)))
+            tile_dims_order.sort(key=lambda i: -tile_dims_delta[i])
+
+            ct = 0
+            for i in range(len(aval.shape)):
+                if tile_assignment_dimensions[i] == 1:
+                    sharding.append(pxla.NoSharding())
+                else:
+                    sharding.append(
+                        pxla.Chunked([tile_assignment_dimensions[i]]))
+                    mesh_mapping.append(pxla.ShardedAxis(ct))
+                    ct += 1
+
+            if len(tile_dims) > len(mesh_mapping):
+                # replicate on the last tile dim
+                mesh_mapping.append(
+                    pxla.Replicated(tile_assignment_dimensions[-1]))
+
+            mesh_mapping = [mesh_mapping[idx] for idx in tile_dims_order]
+        else:
+            # The normal path fails, because one tensor dim is chunked into
+            # mutliple parts. We only handle a special case here.
             assert len(aval.shape) == 1, "Only support 1d case"
             assert len(tile_assignment_dimensions) == len(aval.shape)
             for col in range(len(tile_assignment_devices)):

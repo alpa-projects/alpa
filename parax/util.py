@@ -99,6 +99,18 @@ def get_dim_last_value(array, dim):
     return array[indices]
 
 
+def check_arithmetic_sequence(array):
+    """Check the input 1-D array is an arithmetic sequence. Return 
+    the delta if Ture and None otherwise."""
+    if len(array) < 2:
+        return None
+    delta = array[1] - array[0]
+    for i in range(2, len(array)):
+        if array[i] - array[i - 1] != delta:
+            return None
+    return delta
+
+
 class FastLookupList:
 
     def __init__(self, iterable=()):
@@ -450,6 +462,7 @@ def benchmark_func(run_func,
 ##### Array conversion
 ########################################
 
+
 def is_continuous_subset(slice, tensor_shape, row_major=True):
     """
     Figure out whether a slice is a continuous subset of the tensor.
@@ -473,7 +486,7 @@ def is_continuous_subset(slice, tensor_shape, row_major=True):
             return True
         if dim_shape == 1:
             continue
-        if slice_shape[dim+1:] == tensor_shape[dim+1:]:
+        if slice_shape[dim + 1:] == tensor_shape[dim + 1:]:
             return True
         else:
             return False
@@ -488,7 +501,7 @@ def infer_offset_and_n_elements(slice):
     offset = tuple()
     n_elements = np.prod(slice_shape)
     for dim, dim_shape in enumerate(slice_shape):
-        offset = offset + (slice[dim].start, )
+        offset = offset + (slice[dim].start,)
         if dim_shape > 1:
             break
     return offset, n_elements
@@ -525,8 +538,8 @@ def cupy_to_xla_buffer(tensor):
         gpu_backend = xb.get_backend("gpu")
     except RuntimeError:
         gpu_backend = None
-    buf = xc._xla.dlpack_managed_tensor_to_buffer(
-        tensor.toDlpack(), cpu_backend, gpu_backend)
+    buf = xc._xla.dlpack_managed_tensor_to_buffer(tensor.toDlpack(),
+                                                  cpu_backend, gpu_backend)
     return buf
 
 

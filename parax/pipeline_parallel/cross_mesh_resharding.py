@@ -1,7 +1,8 @@
 """Cross mesh resharding for pipeline parallelism."""
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import List
 import logging
+from typing import List
 
 import numpy as np
 import ray
@@ -151,13 +152,17 @@ class VirtualDistributedArray:
                 # get its index
                 tile_index = unflatten_tile_index(tile_index_flat,
                                                   self.tile_shape)
-                device_ids = list(self.tile_assignments[tuple(tile_index)])
                 indices = [None] * len(self.tensor_shape)
                 for i, dim in enumerate(self.tensor_shape):
                     tile_size, ragged = divmod(dim, self.tile_shape[i])
                     assert not ragged
                     indices[i] = slice(tile_size * tile_index[i],
                                        tile_size * (tile_index[i] + 1))
+                device_ids = self.tile_assignments[tuple(tile_index)]
+                if not isinstance(device_ids, Iterable):
+                    device_ids = [device_ids]
+                else:
+                    device_ids = list(device_ids)
                 device_strs = [
                     self.device_mesh.device_strs[d] for d in device_ids
                 ]
@@ -290,16 +295,15 @@ class ReshardingTask:
         # Put an empty buffer first.
         if global_config.pipeline_aggressively_sync:
             ray.get(
-                receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
-                                                        result_buf.device_id,
-                                                        dst_tile.tile_shape,
-                                                        result_buf.dtype))
+                receiver_worker.put_non_zero_buffer.remote(
+                    result_buf.uuid, result_buf.device_id, dst_tile.tile_shape,
+                    result_buf.dtype))
             logger.debug("We are synchronizing for `put_empty_buffer`.")
         else:
             receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
-                                                    result_buf.device_id,
-                                                    dst_tile.tile_shape,
-                                                    result_buf.dtype)
+                                                       result_buf.device_id,
+                                                       dst_tile.tile_shape,
+                                                       result_buf.dtype)
             logger.debug("We are NOT synchronizing for `put_empty_buffer`.")
 
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[

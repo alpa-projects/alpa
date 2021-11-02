@@ -813,6 +813,7 @@ class ReshardingTaskSpec:
             device_strs = device_strs | set(tile.replica_device_strs)
         return device_strs
 
+
 def unflatten_tile_index(index, shape):
     """Unroll a flattend index based on the given shape."""
     unflattened_index = []

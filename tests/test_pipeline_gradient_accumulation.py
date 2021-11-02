@@ -73,8 +73,10 @@ class BertLayerModel(nn.Module):
     manual_pipeline_layer: bool = True
 
     def setup(self):
-        self.layers = [FlaxBertLayer(config=self.config, dtype=self.dtype)
-                       for _ in range(self.config.num_hidden_layers)]
+        self.layers = [
+            FlaxBertLayer(config=self.config, dtype=self.dtype)
+            for _ in range(self.config.num_hidden_layers)
+        ]
 
     def __call__(self, x, attention_mask):
         for i, layer in enumerate(self.layers):
@@ -97,16 +99,20 @@ class AccumulateGradTest(unittest.TestCase):
         ray.shutdown()
         time.sleep(5)
 
-    def run_mlp(self, manual_pipeline_layer=True,
+    def run_mlp(self,
+                manual_pipeline_layer=True,
                 pipeline_stage_mode="uniform_layer_gpipe"):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
-        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
         batch_size = 256
         hidden_dim = 128
         input_dim = output_dim = hidden_dim
 
-        model = MLPModel(hidden_dim=hidden_dim, output_dim=output_dim, manual_pipeline_layer=manual_pipeline_layer)
+        model = MLPModel(hidden_dim=hidden_dim,
+                         output_dim=output_dim,
+                         manual_pipeline_layer=manual_pipeline_layer)
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, input_dim))
         y = jax.random.normal(rngkey, (batch_size, output_dim))
@@ -125,7 +131,8 @@ class AccumulateGradTest(unittest.TestCase):
             if manual_pipeline_layer:
                 loss_func = manual_layer_slicing(loss_func)
             else:
-                loss_func = automatic_layer_slicing(loss_func, layer_num=2,
+                loss_func = automatic_layer_slicing(loss_func,
+                                                    layer_num=2,
                                                     use_pipeline=True)
 
             param_grad = parax.grad(loss_func)(state.params)
@@ -146,14 +153,17 @@ class AccumulateGradTest(unittest.TestCase):
             if i > 0:
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch)
-            assert_allclose(expected_new_state.params, actual_new_state.params, 1e-3, 1e-3)
+            assert_allclose(expected_new_state.params, actual_new_state.params,
+                            1e-3, 1e-3)
 
         executable.shutdown()
 
-    def run_2_layer_bert(self, manual_pipeline_layer=True,
+    def run_2_layer_bert(self,
+                         manual_pipeline_layer=True,
                          pipeline_stage_mode="uniform_layer_gpipe"):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
-        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
 
         batch_size = 16
@@ -174,7 +184,8 @@ class AccumulateGradTest(unittest.TestCase):
             if manual_pipeline_layer:
                 loss_func = manual_layer_slicing(loss_func)
             else:
-                loss_func = automatic_layer_slicing(loss_func, layer_num=2,
+                loss_func = automatic_layer_slicing(loss_func,
+                                                    layer_num=2,
                                                     use_pipeline=True)
 
             grad_param = parax.grad(loss_func)(state.params)
@@ -218,12 +229,14 @@ class AccumulateGradTest(unittest.TestCase):
 
         executable.shutdown()
 
-
-    def run_n_layer_bert(self, n_layers, manual_pipeline_layer=True,
+    def run_n_layer_bert(self,
+                         n_layers,
+                         manual_pipeline_layer=True,
                          pipeline_stage_mode="uniform_layer_gpipe",
                          cache_compute_cost=None):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
-        set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel",
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 cache_compute_cost=cache_compute_cost)
 
@@ -245,7 +258,8 @@ class AccumulateGradTest(unittest.TestCase):
             if manual_pipeline_layer:
                 loss_func = manual_layer_slicing(loss_func)
             else:
-                loss_func = automatic_layer_slicing(loss_func, layer_num=n_layers,
+                loss_func = automatic_layer_slicing(loss_func,
+                                                    layer_num=n_layers,
                                                     use_pipeline=True)
 
             grad_param = parax.grad(loss_func)(state.params)
@@ -320,7 +334,8 @@ class AccumulateGradTest(unittest.TestCase):
         self.run_n_layer_bert(n_layers=8, manual_pipeline_layer=False)
 
     def test_8_layer_bert_auto_stage_clustering(self):
-        self.run_n_layer_bert(n_layers=8, pipeline_stage_mode="auto_gpipe",
+        self.run_n_layer_bert(n_layers=8,
+                              pipeline_stage_mode="auto_gpipe",
                               cache_compute_cost=None)
 
     def test_8_layer_bert_auto_layer_and_stage(self):

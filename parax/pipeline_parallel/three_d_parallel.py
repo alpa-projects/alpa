@@ -11,16 +11,18 @@ from jax.interpreters import partial_eval as pe
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
-from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn, pipeline_p)
+from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
+                                                   pipeline_p)
 from parax.pipeline_parallel.centralized_distributerd_runtime import (
     CentralizedDistributedRuntime)
-from parax.pipeline_parallel.schedules import (GpipeSchedule, gen_linear_pipeline_dependency,
-    gen_dependency_with_stages)
+from parax.pipeline_parallel.schedules import (GpipeSchedule,
+                                               gen_linear_pipeline_dependency,
+                                               gen_dependency_with_stages)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
-    compute_grad_to_accumulate_grad, generate_sharded_xla_stages, get_var_mapping,
-    mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks, pipeline_dce,
-    rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
+    compute_grad_to_accumulate_grad, generate_sharded_xla_stages,
+    get_var_mapping, mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks,
+    pipeline_dce, rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
     slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars
@@ -226,8 +228,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         if global_config.cache_compute_cost is not None:
             compute_cost = np.load(global_config.cache_compute_cost)
         forward_stage_layer_ids, sliced_meshes = get_stage_and_mesh_assignments(
-            virtual_mesh, jax_pipeline_layers, donation_mapping,
-            acc_grad_outvars, num_micro_batches, compute_cost=compute_cost)
+            virtual_mesh,
+            jax_pipeline_layers,
+            donation_mapping,
+            acc_grad_outvars,
+            num_micro_batches,
+            compute_cost=compute_cost)
         num_forward_stages = len(forward_stage_layer_ids)
         backward_stage_layer_ids = [[
             2 * num_layers - 1 - i for i in reversed(layer_ids)
@@ -294,8 +300,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         global_outvars = list(
             map(lambda x: get_var_mapping(out_map, x), global_outvars))
         n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
-        dependency = gen_dependency_with_stages(
-            jax_pipeline_stages, len(sliced_apply_grad), apply_deps)
+        dependency = gen_dependency_with_stages(jax_pipeline_stages,
+                                                len(sliced_apply_grad),
+                                                apply_deps)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad
 
         used_simultaneously = set()

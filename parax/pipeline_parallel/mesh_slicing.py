@@ -241,7 +241,8 @@ def generate_stage_info(stages, selected_indices, donation_mapping,
 
     jaxprs = [stage.closed_jaxpr() for stage in stages]
 
-    merged = merge_stage_jaxprs(jaxprs, used_outside, '0', selected_donation_mapping)
+    merged = merge_stage_jaxprs(jaxprs, used_outside, '0',
+                                selected_donation_mapping)
     outvars = set(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]

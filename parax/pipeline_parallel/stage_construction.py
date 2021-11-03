@@ -8,7 +8,7 @@ from time import time
 from typing import Sequence, Set, Tuple
 from parax.pipeline_parallel.stage import JaxPipelineStage
 from parax.device_mesh import VirtualMesh
-from parax.pipeline_parallel.mesh_slicing import (
+from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, split_global_use_and_donate)
 
 

@@ -9,9 +9,9 @@ import ray
 
 from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
 from parax.model.bert_model import BertConfig, FlaxBertLayer
-from parax.pipeline_parallel.mesh_slicing import (compile_all,
-                                                  generate_stage_info,
-                                                  split_global_use_and_donate)
+from parax.pipeline_parallel.stage_profiling import (compile_all,
+                                                     generate_stage_info,
+                                                     split_global_use_and_donate)
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)

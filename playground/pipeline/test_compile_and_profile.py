@@ -99,7 +99,7 @@ origin_jaxpr = make_jaxpr(dummy_large_trans)(*args)
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
-from parax.pipeline_parallel.mesh_slicing import (
+from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, create_collective_group,
     profile_layer_communication_cost)
 

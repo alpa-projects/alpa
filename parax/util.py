@@ -215,7 +215,6 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
     parameter_shapes = program_shape.parameter_shapes()
     result_shapes = program_shape.result_shape().tuple_shapes()
 
-    print("before assert", parameter_shapes, donated_invars)
     assert len(parameter_shapes) == len(donated_invars), (
         "Zhuohan: This error might be caused by an error in "
         "XLA stage slicing.")

@@ -16,7 +16,6 @@ from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
 from parax.pipeline_parallel.centralized_distributerd_runtime import (
     CentralizedDistributedRuntime)
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
-                                               gen_linear_pipeline_dependency,
                                                gen_dependency_with_stages)
 from parax.pipeline_parallel.stage import (
     JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
@@ -317,7 +316,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     else:
         jax_all_stages = jax_pipeline_stages
         n_stages = len(jax_pipeline_stages)
-        dependency = gen_linear_pipeline_dependency(n_stages)
+        dependency = gen_dependency_with_stages(jax_pipeline_stages)
         apply_grad_schedule = {}
     # Generate schedule and placement
     schedule = GpipeSchedule(dependency=dependency,

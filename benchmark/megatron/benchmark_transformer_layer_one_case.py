@@ -147,7 +147,8 @@ def benchmark_transformer_layer_one_case(benchmark_case):
     values = ["transformer-layer", str(benchmark_case[:-3]),
               str(benchmark_case[-6:-3]), str(benchmark_case[-3]), str(benchmark_case[-2]),
               f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
-    write_tsv(heads, values, "result_trans.tsv")
+    result_tsv = "result_trans-" + str(rank) + ".tsv"
+    write_tsv(heads, values, result_tsv)
 
 
 if __name__ == "__main__":

@@ -277,7 +277,8 @@ class AccumulateGradTest(unittest.TestCase):
         model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
                                                  intermediate_size=hidden_size *
                                                  4,
-                                                 num_attention_heads=num_heads),
+                                                 num_attention_heads=num_heads,
+                                                 num_hidden_layers=n_layers),
                                manual_pipeline_layer=manual_pipeline_layer)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])

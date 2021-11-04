@@ -58,7 +58,8 @@ def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
 
 
 def gen_dependency_with_stages(compute_stages: "Sequence[Jax3DPipeline]",
-                               n_apply_stages=0, apply_deps=()):
+                               n_apply_stages=0,
+                               apply_deps=()):
     n_stages = len(compute_stages) + n_apply_stages
     d = np.zeros([n_stages, n_stages], dtype=np.int)
     var_stage_id = {}

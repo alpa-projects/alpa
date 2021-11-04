@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime
 from time import time
 from typing import Sequence, Set, Tuple
-from parax.pipeline_parallel.stage import JaxPipelineStage
+from parax.pipeline_parallel.computation import JaxPipelineComputation
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, split_global_use_and_donate)
@@ -189,7 +189,7 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_choices, solution):
 
 
 def get_stage_and_mesh_assignments(mesh: VirtualMesh,
-                                   layers: Sequence[JaxPipelineStage],
+                                   layers: Sequence[JaxPipelineComputation],
                                    donation_mapping,
                                    global_outvars,
                                    num_microbatches,
@@ -202,7 +202,7 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh,
 
     Args:
         mesh (VirtualMesh): The cluser device mesh.
-        layers (Sequence[JaxPipelineStage]): All the layers.
+        layers (Sequence[JaxPipelineComputation]): All the layers.
         donation_mapping: The donation_mapping for the layers.
         global_outvars: Global outvars of the layers.
         num_microbatches: Number of microbatches for GPipe
@@ -233,8 +233,8 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh,
     return stage_layer_ids, sliced_meshes
 
 
-def get_stage_outvars(layers: Sequence[JaxPipelineStage], layer_assignment,
-                      global_outvars):
+def get_stage_outvars(layers: Sequence[JaxPipelineComputation],
+                      layer_assignment, global_outvars):
     """
     Perform liveness analysis to get the outvars of a stage that is used by
     another stage.

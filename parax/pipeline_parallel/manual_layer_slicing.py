@@ -6,8 +6,8 @@ from jax import tree_flatten, tree_unflatten
 from jax._src.api import make_jaxpr
 from jax.core import jaxpr_as_fun
 
-from parax.pipeline_parallel.stage import (slice_eqns_by_pipeline_marks,
-                                           add_pipeline_marks_for_sliced_eqns)
+from parax.pipeline_parallel.computation import (
+    slice_eqns_by_pipeline_marks, add_pipeline_marks_for_sliced_eqns)
 
 
 def log_jaxpr(jaxpr, name):

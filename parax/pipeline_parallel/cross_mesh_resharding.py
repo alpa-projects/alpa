@@ -12,7 +12,7 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
 from parax.device_mesh import DistributedArray, RemoteBufferRef
-from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.global_env import global_config
 
 logger = logging.getLogger(__name__)
@@ -838,15 +838,17 @@ class CrossMeshCommunicator:
     with physical meshes, buffer creations, or other execution-time work.
 
     Args:
-        sharded_stages (List[XlaShardedPipelineStage]): list of stages to form the pipeline.
+        sharded_stages (List[XlaShardedPipelineComputation]): list of stages to form the pipeline.
         schedule (Any): the pipelining schedule for these stages.
     """
 
     def __init__(self, sharded_stages, schedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
-        if not all(
-            [isinstance(s, XlaShardedPipelineStage) for s in sharded_stages]):
+        if not all([
+                isinstance(s, XlaShardedPipelineComputation)
+                for s in sharded_stages
+        ]):
             raise RuntimeError("Require a list of sharded stages.")
 
         # Do not mutate

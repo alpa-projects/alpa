@@ -1,4 +1,4 @@
-"""pipeline stage definitions."""
+"""pipeline computation definitions."""
 from abc import ABC, abstractmethod
 from copy import copy
 from dataclasses import dataclass, field
@@ -35,12 +35,12 @@ logger.setLevel(logging.INFO)
 
 
 @dataclass
-class PipelineStage(ABC):
+class PipelineComputation(ABC):
     """
-    Base class of pipeline stages.
+    Base class of pipeline computations.
 
     Attributes:
-        name (str): The name of the pipeline stage.
+        name (str): The name of the pipeline computation.
         invars (Sequence[Var]): The list of input variables, corresponding to
             the order of the runnable inputs.
         outvars (Sequence[Var]): The list of output variables, corresponding to
@@ -53,37 +53,38 @@ class PipelineStage(ABC):
 
     @abstractmethod
     def get_runnable(self, mesh=None):
-        """Compile the stage and get the runnable."""
+        """Compile the computation and get the runnable."""
         raise NotImplementedError()
 
 
 @dataclass
-class StrVarPipelineStage:
-    """Stringified stage with all Set/Dict have string keys."""
+class StrVarPipelineComputation:
+    """Stringified computation with all Set/Dict have string keys."""
 
     name: str
     invars: Sequence[str]
     outvars: Sequence[str]
 
     @classmethod
-    def from_pipeline_stage(cls, pipeline_stage: PipelineStage):
-        """Construct a StrVarPipelineStage from a PipelineStage."""
+    def from_pipeline_computation(cls,
+                                  pipeline_computation: PipelineComputation):
+        """Construct a StrVarPipelineComputation from a PipelineComputation."""
         return cls(
-            name=pipeline_stage.name,
-            invars=[repr(var) for var in pipeline_stage.invars],
-            outvars=[repr(var) for var in pipeline_stage.outvars],
+            name=pipeline_computation.name,
+            invars=[repr(var) for var in pipeline_computation.invars],
+            outvars=[repr(var) for var in pipeline_computation.outvars],
         )
 
 
 @dataclass
-class JaxPipelineStage(PipelineStage):
+class JaxPipelineComputation(PipelineComputation):
     """
-    A pipeline stage defined by Jaxpr.
+    A pipeline computation defined by Jaxpr.
 
     Attributes:
-        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline stage.
+        eqns (List[JaxprEqn]): Jaxpr equations of the pipeline computation.
         consts_dir: Dict[Atom, Any]: All the constants used in the pipeline
-            stage.
+            computation.
     """
 
     eqns: List[JaxprEqn] = field(default_factory=list)
@@ -91,7 +92,7 @@ class JaxPipelineStage(PipelineStage):
 
     def closed_jaxpr(self) -> ClosedJaxpr:
         """
-        Get the closed Jaxpr of the pipeline stage.
+        Get the closed Jaxpr of the pipeline computation.
 
         Returns:
             ClosedJaxpr: The result ClosedJaxpr.
@@ -106,13 +107,13 @@ class JaxPipelineStage(PipelineStage):
         return closed_jaxpr
 
     def get_runnable(self, mesh=None):
-        """Return a JIT callable of the pipeline stage."""
+        """Return a JIT callable of the pipeline computation."""
         closed_jaxpr = self.closed_jaxpr()
         return jit(jaxpr_as_fun(closed_jaxpr))
 
     @classmethod
     def from_closed_jaxpr(cls, name, closed_jaxpr: ClosedJaxpr):
-        """Construct a JaxPipelineStage from a Jaxpr."""
+        """Construct a JaxPipelineComputation from a Jaxpr."""
         return cls(name=name,
                    invars=closed_jaxpr.jaxpr.invars,
                    outvars=closed_jaxpr.jaxpr.outvars,
@@ -124,33 +125,34 @@ class JaxPipelineStage(PipelineStage):
 
 
 @dataclass
-class XlaPipelineStage(PipelineStage):
-    """A pipeline stage defined by XLA HLO proto."""
+class XlaPipelineComputation(PipelineComputation):
+    """A pipeline computation defined by XLA HLO proto."""
 
     hlo_proto: bytes = field(default_factory=b"")
 
     @classmethod
-    def from_jax_pipeline_stage(cls, jax_pipeline_stage: JaxPipelineStage):
+    def from_jax_pipeline_computation(
+            cls, jax_pipeline_computation: JaxPipelineComputation):
         """
-        Construct a XlaPipelineStage from a JaxPipelineStage.
+        Construct a XlaPipelineComputation from a JaxPipelineComputation.
 
         Args:
-            jax_pipeline_stage (JaxPipelineStage): the source JaxPipelineStage.
+            jax_pipeline_computation (JaxPipelineComputation): the source JaxPipelineComputation.
         """
-        closed_jaxpr = jax_pipeline_stage.closed_jaxpr()
+        closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
         backend = xb.get_backend("gpu")
-        name = "pipeline_stage_{}".format(jax_pipeline_stage.name)
+        name = "pipeline_computation_{}".format(jax_pipeline_computation.name)
         built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
 
         return cls(
-            name=jax_pipeline_stage.name,
+            name=jax_pipeline_computation.name,
             hlo_proto=built.as_serialized_hlo_module_proto(),
-            invars=jax_pipeline_stage.invars,
-            outvars=jax_pipeline_stage.outvars,
+            invars=jax_pipeline_computation.invars,
+            outvars=jax_pipeline_computation.outvars,
         )
 
     def get_runnable(self, mesh=None):
-        """Return a callable of the pipeline stage."""
+        """Return a callable of the pipeline computation."""
         out_avals = [var.aval for var in self.outvars]
         xla_computation = xc.XlaComputation(self.hlo_proto)
         tuple_args = len(
@@ -176,8 +178,8 @@ class XlaPipelineStage(PipelineStage):
 
 
 @dataclass
-class XlaShardedPipelineStage(PipelineStage):
-    """A pipeline stage defined by XLA HLO proto. The XLA HLO is annotated by sharding spec."""
+class XlaShardedPipelineComputation(PipelineComputation):
+    """A pipeline computation defined by XLA HLO proto. The XLA HLO is annotated by sharding spec."""
 
     hlo_proto: Any = None
     donated_invars: Any = None
@@ -187,29 +189,31 @@ class XlaShardedPipelineStage(PipelineStage):
     output_acc_grad_indices: Sequence[int] = None
 
     @classmethod
-    def from_auto_sharded_stage(cls,
-                                *,
-                                jax_pipeline_stage: JaxPipelineStage,
-                                auto_sharded_hlo_proto: xc.XlaComputation,
-                                strategy_config: StrategyConfig,
-                                donated_invars=None,
-                                acc_grad_outvars=set()):
+    def from_auto_sharded_computation(
+        cls,
+        *,
+        jax_pipeline_computation: JaxPipelineComputation,
+        auto_sharded_hlo_proto: xc.XlaComputation,
+        strategy_config: StrategyConfig,
+        donated_invars=None,
+        acc_grad_outvars=set()):
         # pylint: disable=too-many-locals
-        """Run auto-sharding optimizer on a Jax pipeline stage."""
+        """Run auto-sharding optimizer on a Jax pipeline computation."""
         if not donated_invars:
-            donated_invars = (False,) * len(jax_pipeline_stage.invars)
+            donated_invars = (False,) * len(jax_pipeline_computation.invars)
 
         acc_grad_indices = [
-            out_idx for out_idx, outvar in enumerate(jax_pipeline_stage.outvars)
+            out_idx
+            for out_idx, outvar in enumerate(jax_pipeline_computation.outvars)
             if outvar in acc_grad_outvars
         ]
 
-        return cls(name=jax_pipeline_stage.name,
+        return cls(name=jax_pipeline_computation.name,
                    hlo_proto=auto_sharded_hlo_proto,
                    strategy_config=strategy_config,
                    donated_invars=donated_invars,
-                   invars=jax_pipeline_stage.invars,
-                   outvars=jax_pipeline_stage.outvars,
+                   invars=jax_pipeline_computation.invars,
+                   outvars=jax_pipeline_computation.outvars,
                    output_acc_grad_indices=acc_grad_indices)
 
     # @lu.cache
@@ -248,7 +252,7 @@ class XlaShardedPipelineStage(PipelineStage):
         return compiled
 
     def get_runnable(self, mesh=None):
-        """Return a callable of the pipeline stage."""
+        """Return a callable of the pipeline computation."""
 
         compiled = self.get_compiled(mesh)
         hlo_module = compiled.hlo_modules()[0]
@@ -276,20 +280,20 @@ def get_var_mapping(mapping, var):
 
 def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
     sliced_eqns = []
-    current_stage_eqns = None
+    current_computation_eqns = None
 
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
-            assert current_stage_eqns is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage_eqns = []
+            assert current_computation_eqns is None, "Defining a pipeline computation inside a pipeline computation is not allowed."
+            current_computation_eqns = []
         elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            assert current_stage_eqns is not None, "Ending a pipeline stage before its start."
-            sliced_eqns.append(current_stage_eqns)
-            current_stage_eqns = None
+            assert current_computation_eqns is not None, "Ending a pipeline computation before its start."
+            sliced_eqns.append(current_computation_eqns)
+            current_computation_eqns = None
         else:
-            assert current_stage_eqns is not None
-            current_stage_eqns.append(eqn)
-    assert current_stage_eqns is None
+            assert current_computation_eqns is not None
+            current_computation_eqns.append(eqn)
+    assert current_computation_eqns is None
     return sliced_eqns
 
 
@@ -328,7 +332,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     new_eqns = []
     for i, eqns in enumerate(sliced_eqns):
         # pipeline start eqn
-        stage_var_mapping = {}
+        computation_var_mapping = {}
 
         pipeline_start_invars = []
         pipeline_start_outvars = []
@@ -336,14 +340,15 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             new_var = gensym_func(var.aval)
             pipeline_start_invars.append(get_var_mapping(var_mapping, var))
             pipeline_start_outvars.append(new_var)
-            stage_var_mapping[var] = new_var
+            computation_var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_start_invars,
                                    pipeline_start_outvars, str(i), 'start'))
         # all other eqns
         for eqn in eqns:
             new_invars = [
-                get_var_mapping(stage_var_mapping, var) for var in eqn.invars
+                get_var_mapping(computation_var_mapping, var)
+                for var in eqn.invars
             ]
             new_eqns.append(
                 new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
@@ -353,7 +358,8 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
         pipeline_end_outvars = []
         for var in layer_pipeline_outvars[i]:
             new_var = gensym_func(var.aval)
-            pipeline_end_invars.append(get_var_mapping(stage_var_mapping, var))
+            pipeline_end_invars.append(
+                get_var_mapping(computation_var_mapping, var))
             pipeline_end_outvars.append(new_var)
             var_mapping[var] = new_var
         new_eqns.append(
@@ -373,126 +379,134 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
-        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineStage]:  # noqa MC0001
+    closed_jaxpr: ClosedJaxpr
+) -> Sequence[JaxPipelineComputation]:  # noqa MC0001
     global_consts_dir = dict(
         zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
 
-    result_stages = []
-    current_stage = None
+    result_computations = []
+    current_computation = None
 
     from parax.pipeline_parallel.manual_layer_slicing import log_jaxpr
     log_jaxpr(closed_jaxpr, "new_jaxpr")
 
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
-            assert current_stage is None, "Defining a pipeline stage inside a pipeline stage is not allowed."
-            current_stage = JaxPipelineStage(name=eqn.params['name'])
+            assert current_computation is None, "Defining a pipeline computation inside a pipeline computation is not allowed."
+            current_computation = JaxPipelineComputation(
+                name=eqn.params['name'])
             for var in eqn.invars:
                 if isinstance(var, Literal):
                     pass
                 elif var in global_consts_dir:
-                    current_stage.consts_dir[var] = global_consts_dir[var]
+                    current_computation.consts_dir[var] = global_consts_dir[var]
                 else:
-                    current_stage.invars.append(var)
+                    current_computation.invars.append(var)
 
-        assert current_stage is not None
-        current_stage.eqns.append(eqn)
+        assert current_computation is not None
+        current_computation.eqns.append(eqn)
 
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            assert current_stage is not None, "Ending a pipeline stage before its start."
-            assert current_stage.name == eqn.params[
-                'name'], "Ending a pipeline stage different from its start."
+            assert current_computation is not None, "Ending a pipeline computation before its start."
+            assert current_computation.name == eqn.params[
+                'name'], "Ending a pipeline computation different from its start."
             for var in eqn.outvars:
-                current_stage.outvars.append(var)
-            result_stages.append(current_stage)
-            current_stage = None
+                current_computation.outvars.append(var)
+            result_computations.append(current_computation)
+            current_computation = None
 
-    return result_stages
+    return result_computations
 
 
-def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
-                                        global_invars, global_outvars):
-    gensym_func = gensym([stage.closed_jaxpr().jaxpr for stage in stages])
-    var_stage_id = {}
+def mark_missing_vars_in_pipeline_marks(
+        computations: Sequence[JaxPipelineComputation], global_invars,
+        global_outvars):
+    gensym_func = gensym(
+        [computation.closed_jaxpr().jaxpr for computation in computations])
+    var_computation_id = {}
     for var in global_invars:
         if not isinstance(var, Literal):
-            var_stage_id[var] = -1
+            var_computation_id[var] = -1
 
-    stage_additional_invars = [set() for _ in stages]
-    stage_additional_outvars = [set() for _ in stages]
-    for i, stage in enumerate(stages):
-        for eqn in stage.eqns:
+    computation_additional_invars = [set() for _ in computations]
+    computation_additional_outvars = [set() for _ in computations]
+    for i, computation in enumerate(computations):
+        for eqn in computation.eqns:
             for var in eqn.invars:
                 if (not isinstance(var, Literal) and
-                        var not in stage.consts_dir and
-                        var not in stage.invars):
-                    source_stage_id = var_stage_id[var]
-                    if source_stage_id != i:
-                        if (source_stage_id != -1 and
-                                var not in stages[source_stage_id].outvars):
-                            stage_additional_outvars[source_stage_id].add(var)
-                        stage_additional_invars[i].add(var)
+                        var not in computation.consts_dir and
+                        var not in computation.invars):
+                    source_computation_id = var_computation_id[var]
+                    if source_computation_id != i:
+                        if (source_computation_id != -1 and var not in
+                                computations[source_computation_id].outvars):
+                            computation_additional_outvars[
+                                source_computation_id].add(var)
+                        computation_additional_invars[i].add(var)
             for var in eqn.outvars:
-                var_stage_id[var] = i
+                var_computation_id[var] = i
 
     for var in global_outvars:
-        source_stage_id = var_stage_id[var]
-        if source_stage_id != -1 and var not in stages[source_stage_id].outvars:
-            stage_additional_outvars[source_stage_id].add(var)
+        source_computation_id = var_computation_id[var]
+        if source_computation_id != -1 and var not in computations[
+                source_computation_id].outvars:
+            computation_additional_outvars[source_computation_id].add(var)
 
-    new_stages = []
+    new_computations = []
 
-    for i, stage in enumerate(stages):
-        assert stage.eqns[0].primitive is pipeline_p and stage.eqns[0].params[
-            'mark_type'] == 'start'
-        assert stage.eqns[-1].primitive is pipeline_p and stage.eqns[-1].params[
-            'mark_type'] == 'end'
-        new_stage = JaxPipelineStage(stage.name, consts_dir=stage.consts_dir)
+    for i, computation in enumerate(computations):
+        assert computation.eqns[0].primitive is pipeline_p and computation.eqns[
+            0].params['mark_type'] == 'start'
+        assert computation.eqns[-1].primitive is pipeline_p and computation.eqns[
+            -1].params['mark_type'] == 'end'
+        new_computation = JaxPipelineComputation(
+            computation.name, consts_dir=computation.consts_dir)
 
-        stage_var_mapping = {
+        computation_var_mapping = {
             var: gensym_func(var.aval)
-            for var in stage_additional_invars[i] | stage_additional_outvars[i]
+            for var in computation_additional_invars[i] |
+            computation_additional_outvars[i]
         }
-        pipeline_start_invars = list(stage.eqns[0].invars)
+        pipeline_start_invars = list(computation.eqns[0].invars)
         pipeline_start_outvars = [
-            get_var_mapping(stage_var_mapping, var)
-            for var in stage.eqns[0].outvars
+            get_var_mapping(computation_var_mapping, var)
+            for var in computation.eqns[0].outvars
         ]
-        new_stage.invars = list(stage.invars)
-        for var in stage_additional_invars[i]:
+        new_computation.invars = list(computation.invars)
+        for var in computation_additional_invars[i]:
             pipeline_start_invars.append(var)
-            pipeline_start_outvars.append(stage_var_mapping[var])
+            pipeline_start_outvars.append(computation_var_mapping[var])
         pipeline_start_invars_without_literal = []
         pipeline_start_outvars_without_literal = []
         for invar, outvar in zip(pipeline_start_invars, pipeline_start_outvars):
             if isinstance(invar, Literal):
-                stage_var_mapping[outvar] = invar
+                computation_var_mapping[outvar] = invar
             else:
                 pipeline_start_invars_without_literal.append(invar)
                 pipeline_start_outvars_without_literal.append(outvar)
-        new_stage.invars = list(pipeline_start_invars_without_literal)
-        new_stage.eqns.append(stage.eqns[0]._replace(
+        new_computation.invars = list(pipeline_start_invars_without_literal)
+        new_computation.eqns.append(computation.eqns[0]._replace(
             invars=pipeline_start_invars_without_literal,
             outvars=pipeline_start_outvars_without_literal))
 
-        for eqn in stage.eqns[1:-1]:
-            new_stage.eqns.append(
+        for eqn in computation.eqns[1:-1]:
+            new_computation.eqns.append(
                 eqn._replace(invars=[
-                    get_var_mapping(stage_var_mapping, var)
+                    get_var_mapping(computation_var_mapping, var)
                     for var in eqn.invars
                 ],
                              outvars=[
-                                 get_var_mapping(stage_var_mapping, var)
+                                 get_var_mapping(computation_var_mapping, var)
                                  for var in eqn.outvars
                              ]))
 
         pipeline_end_invars = [
-            get_var_mapping(stage_var_mapping, var)
-            for var in stage.eqns[-1].invars
+            get_var_mapping(computation_var_mapping, var)
+            for var in computation.eqns[-1].invars
         ]
-        pipeline_end_outvars = list(stage.eqns[-1].outvars)
-        for var in stage_additional_outvars[i]:
-            pipeline_end_invars.append(stage_var_mapping[var])
+        pipeline_end_outvars = list(computation.eqns[-1].outvars)
+        for var in computation_additional_outvars[i]:
+            pipeline_end_invars.append(computation_var_mapping[var])
             pipeline_end_outvars.append(var)
         pipeline_end_invars_without_dropvar = []
         pipeline_end_outvars_without_dropvar = []
@@ -500,13 +514,13 @@ def mark_missing_vars_in_pipeline_marks(stages: Sequence[JaxPipelineStage],
             if not isinstance(outvar, DropVar):
                 pipeline_end_invars_without_dropvar.append(invar)
                 pipeline_end_outvars_without_dropvar.append(outvar)
-        new_stage.outvars = list(pipeline_end_outvars_without_dropvar)
-        new_stage.eqns.append(stage.eqns[-1]._replace(
+        new_computation.outvars = list(pipeline_end_outvars_without_dropvar)
+        new_computation.eqns.append(computation.eqns[-1]._replace(
             invars=pipeline_end_invars_without_dropvar,
             outvars=pipeline_end_outvars_without_dropvar))
-        new_stages.append(new_stage)
+        new_computations.append(new_computation)
 
-    return new_stages
+    return new_computations
 
 
 def rearrange_vars(vars,
@@ -549,28 +563,28 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_sharded_xla_stages(name: str,
-                                jax_stages: Sequence[JaxPipelineStage],
-                                stage_donate_invars, physical_mesh,
-                                logical_mesh_choices, logical_mesh_search_mode,
-                                memory_budget_per_device, acc_grad_outvars,
-                                search_task, record_file):
-    """Generate sharded XLA stages by running the sharding optimizer given JaxPipleStages."""
+def generate_sharded_xla_computations(
+        name: str, jax_computations: Sequence[JaxPipelineComputation],
+        computation_donate_invars, physical_mesh, logical_mesh_choices,
+        logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
+        search_task, record_file):
+    """Generate sharded XLA computations by running the sharding optimizer given JaxPipelineComputations."""
     invars = set()
     outvars = set()
     donation_mapping = dict()
     eqns = []
     consts_dir = {}
-    for stage, donation in zip(jax_stages, stage_donate_invars):
-        consts_dir.update(stage.consts_dir)
+    for computation, donation in zip(jax_computations,
+                                     computation_donate_invars):
+        consts_dir.update(computation.consts_dir)
         # Do not add local invars into the invars
-        invars.update([var for var in stage.invars if var not in outvars])
-        outvars.update(stage.outvars)
-        for idx, var in enumerate(stage.invars):
+        invars.update([var for var in computation.invars if var not in outvars])
+        outvars.update(computation.outvars)
+        for idx, var in enumerate(computation.invars):
             if not donation[idx] or var not in invars:
                 continue
-            donation_mapping[stage.invars[idx]] = stage.outvars[idx]
-        eqns += stage.eqns
+            donation_mapping[computation.invars[idx]] = computation.outvars[idx]
+        eqns += computation.eqns
     invars = rearrange_vars(invars, donation_mapping.keys())
     outvars = rearrange_vars(outvars, donation_mapping.values())
     jaxpr = Jaxpr(
@@ -587,7 +601,7 @@ def generate_sharded_xla_stages(name: str,
     backend_name = 'gpu'
     backend = xb.get_backend(backend_name)
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
-    stage_protos, strategy_config = compile_with_search(
+    computation_protos, strategy_config = compile_with_search(
         backend,
         built,
         invars,
@@ -602,27 +616,28 @@ def generate_sharded_xla_stages(name: str,
         multiple_stages=True,
         grad_acc_num_micro_batches=None,
         bypass_device_assignment_check=physical_mesh.is_distributed)
-    stages = [
-        XlaShardedPipelineStage.from_auto_sharded_stage(
+    computations = [
+        XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,
-            jax_pipeline_stage=stage,
+            jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars) for stage, proto, donate_invars
-        in zip(jax_stages, stage_protos, stage_donate_invars)
+            acc_grad_outvars=acc_grad_outvars)
+        for computation, proto, donate_invars in zip(
+            jax_computations, computation_protos, computation_donate_invars)
     ]
-    return stages
+    return computations
 
 
 def mark_gradvar_to_mesh(invars: Sequence[Var],
-                         stages: Sequence[JaxPipelineStage], stage_to_mesh,
-                         mask):
+                         computations: Sequence[JaxPipelineComputation],
+                         computation_to_mesh, mask):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
-    for i, stage in enumerate(stages):
-        for var in stage.outvars:
+    for i, computation in enumerate(computations):
+        for var in computation.outvars:
             if isinstance(var, Var):
-                outvar2mesh[var] = stage_to_mesh[i]
+                outvar2mesh[var] = computation_to_mesh[i]
     return {
         invar: outvar2mesh[mask[invar]]
         for invar in invars
@@ -715,11 +730,11 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                 pipe_start = eqn
                 for outvar in eqn.outvars:
                     if not isinstance(outvar, DropVar) and outvar in gradients:
-                        # collect gradients in this stage
+                        # collect gradients in this computation
                         to_acc.append(outvar)
                 continue
             if eqn.params['mark_type'] == 'end':
-                # add grad used in this stage in pipeline start
+                # add grad used in this computation in pipeline start
                 grad_in_after_pipe = {
                     outvar: gensym_fn(outvar.aval) for outvar in to_acc
                 }
@@ -740,7 +755,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                         new_jaxpr_eqn([grad_in_after_pipe[gradient], gradient],
                                       [grad_out_before_pipe[gradient]], add_p,
                                       {}))
-                # add grad created in this stage in pipeline end
+                # add grad created in this computation in pipeline end
                 new_pipe_end = mark_pipeline_jaxpreqn(
                     eqn.invars + map(lambda x: grad_out_before_pipe[x], to_acc),
                     eqn.outvars + map(lambda x: grad_outs[x], to_acc),
@@ -753,7 +768,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
         pipe_eqns.append(eqn)
         for outvar in eqn.outvars:
             if not isinstance(outvar, DropVar) and outvar in gradients:
-                # collect gradients in this stage
+                # collect gradients in this computation
                 to_acc.append(outvar)
     jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
                   new_glob_outvars, new_eqns)
@@ -782,10 +797,10 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
 
-def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
+def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                  global_outvars):
     """
-    clear unused vars cross pipeline stages.
+    clear unused vars cross pipeline computations.
     mainly to remove grad and only keep accumulated grad
     """
 
@@ -800,19 +815,19 @@ def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
         return new_marker
 
     global_used = set(global_outvars)
-    new_stages = []
-    for stage in reversed(jax_pipeline_stages):
+    new_computations = []
+    for computation in reversed(jax_pipeline_computations):
         new_eqns = []
         # handle pipe end
-        pipe_end = stage.eqns[-1]
+        pipe_end = computation.eqns[-1]
         assert (pipe_end.primitive is pipeline_p and
                 pipe_end.params['mark_type']
-                == 'end'), 'stage not ended by a pipeline marker'
+                == 'end'), 'computation not ended by a pipeline marker'
         new_pipe_end = dce_pipe_marker(pipe_end, global_used)
         new_eqns.append(new_pipe_end)
         # handle normal instructions
         local_used = set(new_pipe_end.invars)
-        for eqn in reversed(stage.eqns[1:-1]):
+        for eqn in reversed(computation.eqns[1:-1]):
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar) and outvar in local_used:
                     new_eqns.append(eqn)
@@ -820,23 +835,24 @@ def pipeline_dce(jax_pipeline_stages: Sequence[JaxPipelineStage],
                         invar for invar in eqn.invars if isinstance(invar, Var)
                     ])
         # handle pipe start
-        pipe_start = stage.eqns[0]
+        pipe_start = computation.eqns[0]
         assert (pipe_start.primitive is pipeline_p and
                 pipe_start.params['mark_type']
-                == 'start'), 'stage not started by a pipeline marker'
+                == 'start'), 'computation not started by a pipeline marker'
         new_pipe_start = dce_pipe_marker(pipe_start, local_used)
         new_eqns.append(new_pipe_start)
         global_used.update(new_pipe_start.invars)
 
         new_eqns = list(reversed(new_eqns))
-        new_stage = JaxPipelineStage(stage.name,
-                                     invars=new_pipe_start.invars,
-                                     outvars=new_pipe_end.outvars,
-                                     eqns=new_eqns,
-                                     consts_dir=stage.consts_dir)
-        new_stages.append(new_stage)
-    new_stages = list(reversed(new_stages))
-    return new_stages
+        new_computation = JaxPipelineComputation(
+            computation.name,
+            invars=new_pipe_start.invars,
+            outvars=new_pipe_end.outvars,
+            eqns=new_eqns,
+            consts_dir=computation.consts_dir)
+        new_computations.append(new_computation)
+    new_computations = list(reversed(new_computations))
+    return new_computations
 
 
 def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
@@ -887,8 +903,8 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
         info: A tuple of:
-            deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient stages
-            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad stage is assigned
+            deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient computations
+            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad computation is assigned
             infered_global_invars (Dict[Var, List[int]]): Indicating which clusters each
             input variable of apply_gradient function should be sent to.
     """
@@ -978,13 +994,13 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     for i in range(mesh_num):
         if not outvars[i]:
             continue
-        stage_idx = mesh_num * 2 + len(jaxprs)
-        # assign the current stage into mesh i
-        mesh_assignment[stage_idx] = i
+        computation_idx = mesh_num * 2 + len(jaxprs)
+        # assign the current computation into mesh i
+        mesh_assignment[computation_idx] = i
         for v in invars[i]:
             if v in grad_mesh:
-                # Add dependency as (stage, compute grad stage)
-                deps.append((stage_idx, mesh_num * 2 - 1 - grad_mesh[v]))
+                # Add dependency as (computation, compute grad computation)
+                deps.append((computation_idx, mesh_num * 2 - 1 - grad_mesh[v]))
         jaxprs.append(
             ClosedJaxpr(
                 Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),
@@ -994,7 +1010,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     return jaxprs, info
 
 
-def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
+def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
     """
     Add pipeline markers for sliced apply grads, keep invars and outvars still unless
     the invar is in mask or invar is outvar.
@@ -1004,7 +1020,7 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
         jaxprs(Sequence[ClosedJaxpr]): sliced apply grads.
         mask: mask[gradient] is the corresponding accumulated gradient(real invar).
         gensym_fn: gensym function of the whole jaxpr.
-        stage(Bool): output JaxPipelineStage or ClosedJaxpr.
+        computation(Bool): output JaxPipelineComputation or ClosedJaxpr.
     """
     results = []
     outvar_map = dict()
@@ -1036,11 +1052,11 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
                                             name=name,
                                             mark_type='end')
         new_eqns = [start_marker] + replaced.eqns + [end_marker]
-        if stage:
+        if computation:
             results.append(
-                JaxPipelineStage(name, new_invars, new_outvars, new_eqns,
-                                 dict(zip(jaxpr.jaxpr.constvars,
-                                          jaxpr.consts))))
+                JaxPipelineComputation(
+                    name, new_invars, new_outvars, new_eqns,
+                    dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts))))
         else:
             new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars, new_outvars,
                               new_eqns)
@@ -1048,10 +1064,10 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, stage=False):
     return results, outvar_map
 
 
-def merge_stage_jaxprs(jaxprs: Sequence[ClosedJaxpr],
-                       used: Set[Var],
-                       new_marker_name,
-                       donation_mapping=None) -> ClosedJaxpr:
+def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
+                             used: Set[Var],
+                             new_marker_name,
+                             donation_mapping=None) -> ClosedJaxpr:
     """
     Merge continuous jaxprs and remove pipe markers
     Args:
@@ -1078,7 +1094,7 @@ def merge_stage_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                 # is not local output, the outvar is kept
                 if invar in new_constvars:
                     continue
-                # is already set in earlier stages
+                # is already set in earlier computations
                 if invar in new_invars:
                     var_map[outvar] = new_invars[invar]
                     continue

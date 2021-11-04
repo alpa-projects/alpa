@@ -17,12 +17,12 @@ from parax.pipeline_parallel.centralized_distributerd_runtime import (
     CentralizedDistributedRuntime)
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages)
-from parax.pipeline_parallel.stage import (
-    JaxPipelineStage, apply_grad_add_marker, apply_grad_get_mean,
-    compute_grad_to_accumulate_grad, generate_sharded_xla_stages,
+from parax.pipeline_parallel.computation import (
+    JaxPipelineComputation, apply_grad_add_marker, apply_grad_get_mean,
+    compute_grad_to_accumulate_grad, generate_sharded_xla_computations,
     get_var_mapping, mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks,
-    pipeline_dce, rearrange_vars, slice_apply_gradient, merge_stage_jaxprs,
-    slice_closed_jaxpr_by_full_pipeline_marks)
+    pipeline_dce, rearrange_vars, slice_apply_gradient,
+    merge_computation_jaxprs, slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
 from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars
 
@@ -124,12 +124,13 @@ def get_donation_mapping_and_modify(stage, reversed_donation_mapping,
                                                new_eqns[-1], False)
     new_eqns[0] = new_pipe_start
     new_eqns[-1] = new_pipe_end
-    new_stage = JaxPipelineStage(stage.name, new_invars, new_outvars, new_eqns,
-                                 stage.consts_dir)
+    new_stage = JaxPipelineComputation(stage.name, new_invars, new_outvars,
+                                       new_eqns, stage.consts_dir)
     return donation_mapping, new_stage
 
 
-def split_donate_invars(donation_mapping, stages: Sequence[JaxPipelineStage]):
+def split_donate_invars(donation_mapping,
+                        stages: Sequence[JaxPipelineComputation]):
     """
     Split donated invars for sliced jaxprs, then rewrite stages.
     Currently, we only donate:
@@ -248,11 +249,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                 jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids
             ]
             stage_name = str(stage_id)
-            merged_stage_jaxpr = merge_stage_jaxprs(stage_layer_jaxprs,
-                                                    stage_outvars[stage_id],
-                                                    stage_name,
-                                                    donation_mapping)
-            merged_stage = JaxPipelineStage.from_closed_jaxpr(
+            merged_stage_jaxpr = merge_computation_jaxprs(
+                stage_layer_jaxprs, stage_outvars[stage_id], stage_name,
+                donation_mapping)
+            merged_stage = JaxPipelineComputation.from_closed_jaxpr(
                 stage_name, merged_stage_jaxpr)
             merged_stages.append(merged_stage)
         num_meshes = num_forward_stages
@@ -295,7 +295,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                            mask,
                                                            gensym_func,
-                                                           stage=True)
+                                                           computation=True)
         global_outvars = list(
             map(lambda x: get_var_mapping(out_map, x), global_outvars))
         n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
@@ -358,7 +358,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         ]
         search_task = None
         record_file = None
-        sharded_xla_stages = generate_sharded_xla_stages(
+        sharded_xla_stages = generate_sharded_xla_computations(
             str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
             physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
             memory_budget_per_device, acc_grad_outvars, search_task,

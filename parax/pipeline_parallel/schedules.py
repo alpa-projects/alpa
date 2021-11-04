@@ -99,7 +99,7 @@ class GpipeSchedule:
                  mesh,
                  num_pipeline_worker,
                  apply_grad_schedule,
-                 sliced_meshes=None,
+                 sliced_meshes,
                  num_batch=1,
                  costs=None):
         self.dependency = dependency
@@ -111,10 +111,6 @@ class GpipeSchedule:
         self.num_stage = dependency.shape[0]
 
         self.num_pipeline_worker = num_pipeline_worker
-        # TODO (zhuohan): Seperate device placement and runtime scheduling
-        if not self.meshes:
-            # These are virtual meshes
-            self.meshes = self.slice_mesh(self.original_mesh)
         if len(self.meshes) != self.num_pipeline_worker:
             raise RuntimeError("Gpipe schedule requires #meshes = #workers.")
         self._schedules = self._generate_schedule()
@@ -241,46 +237,3 @@ class GpipeSchedule:
     def num_mesh(self):
         """Return the number of meshes in the schedule."""
         return self.num_pipeline_worker
-
-    def slice_mesh(self, original_mesh):
-        """
-        Slice the mesh for each remote runner.
-
-        In this impl, we guarantee the slicing follows:
-        - len(sliced_meshes) == num_stages / 2 (place forward/backward in a mesh);
-        - higher priority to slice over the node dimension rather than gpu dimension.
-
-        Args:
-            original_mesh: a virtual device mesh.
-
-        Returns:
-            sliced_meshes (List[Mesh]): List of meshes to spawn worker on.
-        """
-        output_meshes = []
-        num_mesh_expected = self.num_pipeline_worker
-        if not original_mesh.is_distributed:
-            raise RuntimeError("SingleDeviceMesh is not supported.")
-        if original_mesh.total_devices < num_mesh_expected:
-            raise RuntimeError("#device < #workers.")
-
-        num_device_per_mesh = int(original_mesh.total_devices /
-                                  num_mesh_expected)
-        num_device_per_host = original_mesh.num_devices_per_host
-        num_host = original_mesh.num_hosts
-        if num_device_per_host >= num_device_per_mesh:
-            num_mesh_per_host = num_device_per_host // num_device_per_mesh
-            for i in range(num_mesh_expected):
-                host_idx = i // num_mesh_per_host
-                mesh_idx = i % num_mesh_per_host
-                ind = list(range(num_device_per_host))
-                mesh = original_mesh.slice(0, [host_idx])\
-                    .slice(1, [ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) * num_device_per_mesh]])
-                output_meshes.append(mesh)
-        else:
-            num_host_per_mesh = math.ceil(num_device_per_mesh /
-                                          num_device_per_host)
-            ind = list(range(num_host))
-            for i in range(num_mesh_expected):
-                output_meshes.append((original_mesh.slice(
-                    0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
-        return output_meshes

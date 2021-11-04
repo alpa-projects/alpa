@@ -9,7 +9,7 @@ from jax.core import Var
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, \
     CollectiveGroup, ReshardingTask
-from parax.pipeline_parallel.stage import PipelineStage, XlaShardedPipelineStage
+from parax.pipeline_parallel.computation import PipelineComputation, XlaShardedPipelineComputation
 
 
 class BaseRuntime(metaclass=ABCMeta):
@@ -20,7 +20,7 @@ class BaseRuntime(metaclass=ABCMeta):
         An abstract class for pipeline-parallel runtime.
 
         Args:
-            pipeline_stages (Sequence[PipelineStage, XlaShardedPipelineStage]):  pipeline stages.
+            pipeline_stages (Sequence[PipelineComputation, XlaShardedPipelineComputation]):  pipeline stages.
             global_invars (Sequence[Var]): input variables.
             global_outvars (input variables.): output varialbes.
         """
@@ -56,7 +56,7 @@ class BaseDistributedRuntime(BaseRuntime):
 
     def __init__(self,
                  *,
-                 pipeline_stages: List[XlaShardedPipelineStage],
+                 pipeline_stages: List[XlaShardedPipelineComputation],
                  global_invars: List[Var],
                  grad_dummy_invars,
                  global_outvars: List[Var],
@@ -73,7 +73,7 @@ class BaseDistributedRuntime(BaseRuntime):
         across different distributed runtime implementations.
 
         Args:
-            pipeline_stages (List[XlaShardedPipelineStage]): list of pipeline stage programs.
+            pipeline_stages (List[XlaShardedPipelineComputation]): list of pipeline stage programs.
             global_invars (List[Var]): input variables.
             global_outvars (List[Var]): output variables.
             physical_meshes (List[PhysicalDeviceMesh]): the cluster meshes to pipeline over.

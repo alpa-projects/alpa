@@ -18,7 +18,7 @@ from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
-from parax.pipeline_parallel.stage import XlaShardedPipelineStage
+from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
 
@@ -122,7 +122,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def __init__(self,
                  *,
-                 pipeline_stages: List[XlaShardedPipelineStage],
+                 pipeline_stages: List[XlaShardedPipelineComputation],
                  global_invars: List[Var],
                  grad_dummy_invars,
                  global_outvars: List[Var],

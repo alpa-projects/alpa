@@ -295,7 +295,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                            mask,
                                                            gensym_func,
-                                                           stage=True)
+                                                           computation=True)
         global_outvars = list(
             map(lambda x: get_var_mapping(out_map, x), global_outvars))
         n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)

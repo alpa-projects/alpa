@@ -9,7 +9,8 @@ from jax.core import Var, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_parallel.computation import (
-    PipelineComputation, XlaPipelineComputation, slice_closed_jaxpr_by_full_pipeline_marks,
+    PipelineComputation, XlaPipelineComputation,
+    slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.base_runtime import BaseRuntime
 

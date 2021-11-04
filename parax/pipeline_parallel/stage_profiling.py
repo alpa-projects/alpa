@@ -187,10 +187,9 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineComputation],
-                                           mesh: PhysicalDeviceMesh,
-                                           donation_mapping: Dict[Var, Var],
-                                           global_used: Set[Var]):
+def compile_and_profile_stage_compute_cost(
+        layers: Sequence[JaxPipelineComputation], mesh: PhysicalDeviceMesh,
+        donation_mapping: Dict[Var, Var], global_used: Set[Var]):
     """
     Args:
         layers (Sequence[JaxPipelineComputation]): forward and corresponding backward
@@ -209,7 +208,7 @@ def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineComputati
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
     mixed_jaxpr = merge_computation_jaxprs(jaxprs, global_used, 'profile_tmp',
-                                     donation_mapping)
+                                           donation_mapping)
     donate_argnums = [
         idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
         if var in donation_mapping
@@ -242,7 +241,7 @@ def generate_stage_info(stages, selected_indices, donation_mapping,
     jaxprs = [stage.closed_jaxpr() for stage in stages]
 
     merged = merge_computation_jaxprs(jaxprs, used_outside, '0',
-                                selected_donation_mapping)
+                                      selected_donation_mapping)
     outvars = set(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
@@ -319,8 +318,9 @@ def dummy_resharding_strategy(spec: ReshardingTaskSpec):
 
 
 def profile_layer_communication_cost(
-        src: JaxPipelineComputation, dst: JaxPipelineComputation, src_outvar_sharding_spec,
-        dst_invar_sharding_spec, src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
+        src: JaxPipelineComputation, dst: JaxPipelineComputation,
+        src_outvar_sharding_spec, dst_invar_sharding_spec,
+        src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
         collective_group: CollectiveGroup):
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
     tot_cost = 0

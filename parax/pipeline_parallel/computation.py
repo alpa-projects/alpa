@@ -66,7 +66,8 @@ class StrVarPipelineComputation:
     outvars: Sequence[str]
 
     @classmethod
-    def from_pipeline_computation(cls, pipeline_computation: PipelineComputation):
+    def from_pipeline_computation(cls,
+                                  pipeline_computation: PipelineComputation):
         """Construct a StrVarPipelineComputation from a PipelineComputation."""
         return cls(
             name=pipeline_computation.name,
@@ -130,7 +131,8 @@ class XlaPipelineComputation(PipelineComputation):
     hlo_proto: bytes = field(default_factory=b"")
 
     @classmethod
-    def from_jax_pipeline_computation(cls, jax_pipeline_computation: JaxPipelineComputation):
+    def from_jax_pipeline_computation(
+            cls, jax_pipeline_computation: JaxPipelineComputation):
         """
         Construct a XlaPipelineComputation from a JaxPipelineComputation.
 
@@ -187,20 +189,22 @@ class XlaShardedPipelineComputation(PipelineComputation):
     output_acc_grad_indices: Sequence[int] = None
 
     @classmethod
-    def from_auto_sharded_computation(cls,
-                                *,
-                                jax_pipeline_computation: JaxPipelineComputation,
-                                auto_sharded_hlo_proto: xc.XlaComputation,
-                                strategy_config: StrategyConfig,
-                                donated_invars=None,
-                                acc_grad_outvars=set()):
+    def from_auto_sharded_computation(
+        cls,
+        *,
+        jax_pipeline_computation: JaxPipelineComputation,
+        auto_sharded_hlo_proto: xc.XlaComputation,
+        strategy_config: StrategyConfig,
+        donated_invars=None,
+        acc_grad_outvars=set()):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline computation."""
         if not donated_invars:
             donated_invars = (False,) * len(jax_pipeline_computation.invars)
 
         acc_grad_indices = [
-            out_idx for out_idx, outvar in enumerate(jax_pipeline_computation.outvars)
+            out_idx
+            for out_idx, outvar in enumerate(jax_pipeline_computation.outvars)
             if outvar in acc_grad_outvars
         ]
 
@@ -343,7 +347,8 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
         # all other eqns
         for eqn in eqns:
             new_invars = [
-                get_var_mapping(computation_var_mapping, var) for var in eqn.invars
+                get_var_mapping(computation_var_mapping, var)
+                for var in eqn.invars
             ]
             new_eqns.append(
                 new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
@@ -353,7 +358,8 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
         pipeline_end_outvars = []
         for var in layer_pipeline_outvars[i]:
             new_var = gensym_func(var.aval)
-            pipeline_end_invars.append(get_var_mapping(computation_var_mapping, var))
+            pipeline_end_invars.append(
+                get_var_mapping(computation_var_mapping, var))
             pipeline_end_outvars.append(new_var)
             var_mapping[var] = new_var
         new_eqns.append(
@@ -373,7 +379,8 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
-        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineComputation]:  # noqa MC0001
+    closed_jaxpr: ClosedJaxpr
+) -> Sequence[JaxPipelineComputation]:  # noqa MC0001
     global_consts_dir = dict(
         zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
 
@@ -386,7 +393,8 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
             assert current_computation is None, "Defining a pipeline computation inside a pipeline computation is not allowed."
-            current_computation = JaxPipelineComputation(name=eqn.params['name'])
+            current_computation = JaxPipelineComputation(
+                name=eqn.params['name'])
             for var in eqn.invars:
                 if isinstance(var, Literal):
                     pass
@@ -410,9 +418,11 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     return result_computations
 
 
-def mark_missing_vars_in_pipeline_marks(computations: Sequence[JaxPipelineComputation],
-                                        global_invars, global_outvars):
-    gensym_func = gensym([computation.closed_jaxpr().jaxpr for computation in computations])
+def mark_missing_vars_in_pipeline_marks(
+        computations: Sequence[JaxPipelineComputation], global_invars,
+        global_outvars):
+    gensym_func = gensym(
+        [computation.closed_jaxpr().jaxpr for computation in computations])
     var_computation_id = {}
     for var in global_invars:
         if not isinstance(var, Literal):
@@ -428,30 +438,34 @@ def mark_missing_vars_in_pipeline_marks(computations: Sequence[JaxPipelineComput
                         var not in computation.invars):
                     source_computation_id = var_computation_id[var]
                     if source_computation_id != i:
-                        if (source_computation_id != -1 and
-                                var not in computations[source_computation_id].outvars):
-                            computation_additional_outvars[source_computation_id].add(var)
+                        if (source_computation_id != -1 and var not in
+                                computations[source_computation_id].outvars):
+                            computation_additional_outvars[
+                                source_computation_id].add(var)
                         computation_additional_invars[i].add(var)
             for var in eqn.outvars:
                 var_computation_id[var] = i
 
     for var in global_outvars:
         source_computation_id = var_computation_id[var]
-        if source_computation_id != -1 and var not in computations[source_computation_id].outvars:
+        if source_computation_id != -1 and var not in computations[
+                source_computation_id].outvars:
             computation_additional_outvars[source_computation_id].add(var)
 
     new_computations = []
 
     for i, computation in enumerate(computations):
-        assert computation.eqns[0].primitive is pipeline_p and computation.eqns[0].params[
-            'mark_type'] == 'start'
-        assert computation.eqns[-1].primitive is pipeline_p and computation.eqns[-1].params[
-            'mark_type'] == 'end'
-        new_computation = JaxPipelineComputation(computation.name, consts_dir=computation.consts_dir)
+        assert computation.eqns[0].primitive is pipeline_p and computation.eqns[
+            0].params['mark_type'] == 'start'
+        assert computation.eqns[-1].primitive is pipeline_p and computation.eqns[
+            -1].params['mark_type'] == 'end'
+        new_computation = JaxPipelineComputation(
+            computation.name, consts_dir=computation.consts_dir)
 
         computation_var_mapping = {
             var: gensym_func(var.aval)
-            for var in computation_additional_invars[i] | computation_additional_outvars[i]
+            for var in computation_additional_invars[i] |
+            computation_additional_outvars[i]
         }
         pipeline_start_invars = list(computation.eqns[0].invars)
         pipeline_start_outvars = [
@@ -549,19 +563,19 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_sharded_xla_computations(name: str,
-                                jax_computations: Sequence[JaxPipelineComputation],
-                                computation_donate_invars, physical_mesh,
-                                logical_mesh_choices, logical_mesh_search_mode,
-                                memory_budget_per_device, acc_grad_outvars,
-                                search_task, record_file):
+def generate_sharded_xla_computations(
+        name: str, jax_computations: Sequence[JaxPipelineComputation],
+        computation_donate_invars, physical_mesh, logical_mesh_choices,
+        logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
+        search_task, record_file):
     """Generate sharded XLA computations by running the sharding optimizer given JaxPipelineComputations."""
     invars = set()
     outvars = set()
     donation_mapping = dict()
     eqns = []
     consts_dir = {}
-    for computation, donation in zip(jax_computations, computation_donate_invars):
+    for computation, donation in zip(jax_computations,
+                                     computation_donate_invars):
         consts_dir.update(computation.consts_dir)
         # Do not add local invars into the invars
         invars.update([var for var in computation.invars if var not in outvars])
@@ -608,15 +622,16 @@ def generate_sharded_xla_computations(name: str,
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars) for computation, proto, donate_invars
-        in zip(jax_computations, computation_protos, computation_donate_invars)
+            acc_grad_outvars=acc_grad_outvars)
+        for computation, proto, donate_invars in zip(
+            jax_computations, computation_protos, computation_donate_invars)
     ]
     return computations
 
 
 def mark_gradvar_to_mesh(invars: Sequence[Var],
-                         computations: Sequence[JaxPipelineComputation], computation_to_mesh,
-                         mask):
+                         computations: Sequence[JaxPipelineComputation],
+                         computation_to_mesh, mask):
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}
     for i, computation in enumerate(computations):
@@ -829,11 +844,12 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         global_used.update(new_pipe_start.invars)
 
         new_eqns = list(reversed(new_eqns))
-        new_computation = JaxPipelineComputation(computation.name,
-                                     invars=new_pipe_start.invars,
-                                     outvars=new_pipe_end.outvars,
-                                     eqns=new_eqns,
-                                     consts_dir=computation.consts_dir)
+        new_computation = JaxPipelineComputation(
+            computation.name,
+            invars=new_pipe_start.invars,
+            outvars=new_pipe_end.outvars,
+            eqns=new_eqns,
+            consts_dir=computation.consts_dir)
         new_computations.append(new_computation)
     new_computations = list(reversed(new_computations))
     return new_computations
@@ -1038,9 +1054,9 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
         new_eqns = [start_marker] + replaced.eqns + [end_marker]
         if computation:
             results.append(
-                JaxPipelineComputation(name, new_invars, new_outvars, new_eqns,
-                                 dict(zip(jaxpr.jaxpr.constvars,
-                                          jaxpr.consts))))
+                JaxPipelineComputation(
+                    name, new_invars, new_outvars, new_eqns,
+                    dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts))))
         else:
             new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars, new_outvars,
                               new_eqns)
@@ -1049,9 +1065,9 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
 
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
-                       used: Set[Var],
-                       new_marker_name,
-                       donation_mapping=None) -> ClosedJaxpr:
+                             used: Set[Var],
+                             new_marker_name,
+                             donation_mapping=None) -> ClosedJaxpr:
     """
     Merge continuous jaxprs and remove pipe markers
     Args:

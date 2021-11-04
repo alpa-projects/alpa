@@ -233,8 +233,8 @@ def get_stage_and_mesh_assignments(mesh: VirtualMesh,
     return stage_layer_ids, sliced_meshes
 
 
-def get_stage_outvars(layers: Sequence[JaxPipelineComputation], layer_assignment,
-                      global_outvars):
+def get_stage_outvars(layers: Sequence[JaxPipelineComputation],
+                      layer_assignment, global_outvars):
     """
     Perform liveness analysis to get the outvars of a stage that is used by
     another stage.

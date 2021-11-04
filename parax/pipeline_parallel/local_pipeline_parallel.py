@@ -156,7 +156,7 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
         jax_pipeline_stages, global_invars, global_outvars)
     xla_pipeline_stages = [
-        XlaPipelineComputation.from_jax_pipeline_stage(stage)
+        XlaPipelineComputation.from_jax_pipeline_computation(stage)
         for stage in jax_pipeline_stages
     ]
 

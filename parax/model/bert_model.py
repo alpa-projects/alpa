@@ -340,8 +340,13 @@ class FlaxBertLayerCollection(nn.Module):
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
+        if self.config.gradient_checkpointing:
+            trans_func = partial(nn.remat, concrete=True)
+        else:
+            trans_func = lambda x : x
+
         self.layers = [
-            FlaxBertLayer(self.config, name=str(i), dtype=self.dtype)
+            trans_func(FlaxBertLayer)(self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
 
@@ -355,8 +360,6 @@ class FlaxBertLayerCollection(nn.Module):
             self.pipeline_marker_positions = [
                 num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)
             ]
-            # for i in range(1, self.pipeline_mp_size):
-            #     self.pipeline_marker_positions = (self.pipeline_marker_positions, num_layer_per_stage * i, )
 
     def __call__(
         self,
@@ -370,22 +373,11 @@ class FlaxBertLayerCollection(nn.Module):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
-        # if self.pipeline_mp_size > 1:
-        #     id = 0
-        #     # this stage contains ops before transformer layers
-        #     hidden_states, = mark_pipeline(hidden_states, name=str(id - 1), mark_type="end")
-        #     hidden_states, = mark_pipeline(hidden_states, name=str(id), mark_type="start")
         id = 0
         for i, layer in enumerate(self.layers):
             if self.pipeline_mp_size > 1:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
-                    # hidden_states, = mark_pipeline(hidden_states,
-                    #                                name=str(id),
-                    #                                mark_type="end")
-                    # hidden_states, = mark_pipeline(hidden_states,
-                    #                                name=str(id + 1),
-                    #                                mark_type="start")
                     mark_pipeline(name=str(id), mark_type="end")
                     mark_pipeline(name=str(id + 1), mark_type="start")
                     id = id + 1

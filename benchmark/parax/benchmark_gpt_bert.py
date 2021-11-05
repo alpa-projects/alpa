@@ -100,11 +100,10 @@ def create_train_state(rngkey, model, dtype, batch):
     return state
  
 
-def get_train_step(grad_func, num_layers, use_remat, dtype):
+def get_train_step(grad_func, num_layers, dtype):
 
     @parallelize
     def train_step(state, batch, rng_key):
-        @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             logits = state.apply_fn(params,
@@ -177,6 +176,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
             vocab_size=vocab_size,
             max_position_embeddings=seq_len,
             type_vocab_size=0,
+            gradient_checkpointing=use_remat,
         ), dtype=dtype)
     elif model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
@@ -187,6 +187,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
             vocab_size=vocab_size,
             max_position_embeddings=seq_len,
             type_vocab_size=0,
+            gradient_checkpointing=use_remat,
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
@@ -196,7 +197,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, dtype)
+    train_step = get_train_step(grad_func, num_layers, dtype)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -286,6 +287,7 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (8,    1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  True,  False),
     (8,    1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, True,  False),
     (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  False),
+    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  True),
 ],
 
 16: [

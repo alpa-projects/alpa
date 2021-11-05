@@ -1,8 +1,9 @@
 import gc
+from typing import Dict, Sequence, Set, Tuple
+
 import numpy as np
 import ray
 from ray.util import ActorPool
-from typing import Dict, Sequence, Set, Tuple
 
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
@@ -14,7 +15,9 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
-from parax.pipeline_parallel.computation import JaxPipelineComputation, merge_computation_jaxprs
+from parax.pipeline_parallel.computation import (
+    JaxPipelineComputation, get_donation_mapping_and_modify,
+    merge_computation_jaxprs)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
@@ -144,9 +147,6 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
     used = set(global_outvars)
     local_used = set()  # limit donation
     new_layers = []
-    # FIXME(zhuohan): Do not import in a function
-    from parax.pipeline_parallel.three_d_parallel import (
-        get_donation_mapping_and_modify)
     for idx in reversed(range(num_layers)):
         layer = layers[idx]
         if idx in layer_indices:
@@ -218,7 +218,6 @@ def compile_and_profile_stage_compute_cost(
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
-    # FIXME(zhuohan): Do not import in a function
     from parax.api import parallelize
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)

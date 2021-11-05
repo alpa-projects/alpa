@@ -164,10 +164,10 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     return new_closed_jaxpr, update_outs, grad_in_to_out
 
 
-def process_apply_gradient(barrier, jax_pipeline_stages, stage_to_mesh,
-                           gensym_func, num_micro_batches, num_meshes,
-                           acc_grad_dict, global_invars, global_outvars,
-                           apply_grad_jaxpr, donated_invars):
+def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
+                           jax_pipeline_stages, stage_to_mesh, gensym_func,
+                           num_micro_batches, num_meshes, global_invars,
+                           global_outvars, donated_invars):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
 
     # Process apply gradient:

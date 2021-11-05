@@ -103,9 +103,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Process apply_gradient and donation
     if have_apply_grad:
         jax_all_stages, n_stages, dependency, apply_grad_placement, global_outvars, donated_invars =\
-            process_apply_gradient(barrier, jax_pipeline_stages, stage_to_mesh,
-                    gensym_func, num_micro_batches, num_meshes, acc_grad_dict,
-                    global_invars, global_outvars, apply_grad_jaxpr, donated_invars)
+            process_apply_gradient(apply_grad_jaxpr,
+                barrier, acc_grad_dict, jax_pipeline_stages, stage_to_mesh,
+                gensym_func, num_micro_batches, num_meshes,
+                global_invars, global_outvars, donated_invars)
     else:
         jax_all_stages = jax_pipeline_stages
         n_stages = len(jax_pipeline_stages)

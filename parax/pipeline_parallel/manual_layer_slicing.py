@@ -1,10 +1,10 @@
 """Layer clustering and remat by layer."""
 from functools import partial, wraps
-from typing import List, Callable
+from typing import Callable
 
 from jax import tree_flatten, tree_unflatten
 from jax._src.api import make_jaxpr
-from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
+from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
 from jax.interpreters.partial_eval import remat_call_p
 
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
@@ -136,11 +136,6 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     return new_closed_jaxpr
 
 
-def manual_layer_slicing(fn: Callable, static_argnums=()):
-    return transform_pipeline_forward(fn, add_pipeline_marks_for_sliced_eqns,
-                                      static_argnums)
-
-
 def remat_jaxpr(origin_jaxpr, sliced_eqns, use_pipeline):
     """
     The input function should be marked by pipeline markers without input
@@ -169,11 +164,6 @@ def remat_jaxpr(origin_jaxpr, sliced_eqns, use_pipeline):
     return new_closed_jaxpr
 
 
-def remat(fn: Callable, static_argnums=(), use_pipeline=True):
-    remat_fn = partial(remat_jaxpr, use_pipeline=use_pipeline)
-    return transform_pipeline_forward(fn, remat_fn, static_argnums)
-
-
 def insert_marker(origin_jaxpr, sliced_eqns):
     new_eqns = []
     for i, slices in enumerate(sliced_eqns):
@@ -183,3 +173,15 @@ def insert_marker(origin_jaxpr, sliced_eqns):
     return ClosedJaxpr(
         Jaxpr(origin_jaxpr.jaxpr.constvars, origin_jaxpr.jaxpr.invars,
               origin_jaxpr.jaxpr.outvars, new_eqns), origin_jaxpr.consts)
+
+
+def manual_layer_slicing(fn: Callable, static_argnums=()):
+    """TODO(yonghao): always document top-level API."""
+    return transform_pipeline_forward(fn, add_pipeline_marks_for_sliced_eqns,
+                                      static_argnums)
+
+
+def remat(fn: Callable, static_argnums=(), use_pipeline=True):
+    """TODO(yonghao): always document top-level API."""
+    remat_fn = partial(remat_jaxpr, use_pipeline=use_pipeline)
+    return transform_pipeline_forward(fn, remat_fn, static_argnums)

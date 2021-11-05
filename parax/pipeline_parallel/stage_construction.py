@@ -229,12 +229,12 @@ def uniform_slice_mesh(original_mesh, num_meshes):
         for i in range(num_meshes):
             output_meshes.append((original_mesh.slice(
                 0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
-        return output_meshes
+    return output_meshes
 
 
 def cluster_layers_and_slice_mesh(layers, mesh, donation_mapping,
                                   global_outvars, num_micro_batches,
-                                  pipeline_stage_mode="auto_gpipe",
+                                  pipeline_stage_mode="uniform_layer_gpipe",
                                   cache_compute_cost=None,
                                   forward_stage_layer_ids=None,
                                   submesh_shapes=None):

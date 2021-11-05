@@ -2,6 +2,7 @@
 """Common utilities."""
 from collections import OrderedDict
 from functools import partial
+import functools
 import itertools as it
 import os
 import subprocess
@@ -147,6 +148,23 @@ class OrderedSet:
     def __iter__(self):
         for x in self.dict:
             yield x
+
+
+def cached_property(fn, *args, **kwargs):
+    """
+    Decorator to make a function a "cached property".
+
+    This means that it is a property whose return value is cached after the
+    first time it is called.
+
+    Args:
+        fn: The function to be made a cached property
+        *args: Any args for the function
+        **kwargs: Any kwargs for the function
+    Returns:
+        function
+    """
+    return property(functools.lru_cache()(fn, *args, **kwargs))
 
 
 ########################################
@@ -373,6 +391,13 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                                        list(layer_consts[i].values()))
         result.append(new_closed_jaxpr)
     return result
+
+
+def log_jaxpr(jaxpr, name):
+    """Print jaxpr int a temporary file for debugging purposes."""
+    path = "/tmp/" + name
+    with open(path, "w") as f:
+        f.write(repr(jaxpr))
 
 
 ########################################

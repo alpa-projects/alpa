@@ -22,9 +22,9 @@ from parax.pipeline_parallel.computation import (
     compute_grad_to_accumulate_grad, generate_sharded_xla_computations,
     get_var_mapping, mark_gradvar_to_mesh, mark_missing_vars_in_pipeline_marks,
     pipeline_dce, rearrange_vars, slice_apply_gradient,
-    merge_computation_jaxprs, slice_closed_jaxpr_by_full_pipeline_marks)
+    slice_closed_jaxpr_by_full_pipeline_marks)
 from parax.util import get_micro_batch, slices_to_jaxpr
-from parax.pipeline_parallel.stage_construction import get_stage_and_mesh_assignments, get_stage_outvars
+from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -218,59 +218,18 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     else:
         donation_mapping = dict()
 
-    # For mesh-slicing's profiling, we can use the create_donation_mapping
-    # to get a sketchy donation_mapping: only accumulate grad, no applygrad
-    if global_config.pipeline_stage_mode == "auto_gpipe":
-        # Assume each forward layer corresponds to a backward layer
-        assert len(jax_pipeline_layers) % 2 == 0
-        num_layers = len(jax_pipeline_layers) // 2
-        compute_cost = None
-        if global_config.cache_compute_cost is not None:
-            compute_cost = np.load(global_config.cache_compute_cost)
-        forward_stage_layer_ids, sliced_meshes = get_stage_and_mesh_assignments(
-            virtual_mesh,
+    jax_pipeline_stages, stage_to_mesh, sliced_meshes = (
+        cluster_layers_and_slice_mesh(
             jax_pipeline_layers,
+            virtual_mesh,
             donation_mapping,
             acc_grad_outvars,
             num_micro_batches,
-            compute_cost=compute_cost)
-        num_forward_stages = len(forward_stage_layer_ids)
-        backward_stage_layer_ids = [[
-            2 * num_layers - 1 - i for i in reversed(layer_ids)
-        ] for layer_ids in reversed(forward_stage_layer_ids)]
-        stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
-        stage_to_mesh = list(range(num_forward_stages)) + list(
-            reversed(range(num_forward_stages)))
-        stage_outvars = get_stage_outvars(jax_pipeline_layers, stage_layer_ids,
-                                          acc_grad_outvars)
-        merged_stages = []
-        for stage_id, layer_ids in enumerate(stage_layer_ids):
-            stage_layer_jaxprs = [
-                jax_pipeline_layers[i].closed_jaxpr() for i in layer_ids
-            ]
-            stage_name = str(stage_id)
-            merged_stage_jaxpr = merge_computation_jaxprs(
-                stage_layer_jaxprs, stage_outvars[stage_id], stage_name,
-                donation_mapping)
-            merged_stage = JaxPipelineComputation.from_closed_jaxpr(
-                stage_name, merged_stage_jaxpr)
-            merged_stages.append(merged_stage)
-        num_meshes = num_forward_stages
-        jax_pipeline_stages = merged_stages
-    elif global_config.pipeline_stage_mode == "uniform_layer_gpipe":
-        num_acc_grad_stages = len(jax_pipeline_layers)
-        stage_to_mesh = {
-            i:
-            (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
-            for i, _ in enumerate(jax_pipeline_layers)
-        }
-        assert num_acc_grad_stages % 2 == 0
-        num_meshes = num_acc_grad_stages // 2
-        jax_pipeline_stages = jax_pipeline_layers
-        sliced_meshes = None
-    else:
-        raise ValueError("Unknown pipeline_stage_mode",
-                         global_config.pipeline_stage_mode)
+            pipeline_stage_mode=global_config.pipeline_stage_mode,
+            cache_compute_cost=global_config.cache_compute_cost,
+            forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+            submesh_shapes=global_config.submesh_shapes))
+    num_meshes = len(sliced_meshes)
 
     if have_apply_grad:
         # Process apply gradient:

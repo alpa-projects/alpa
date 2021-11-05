@@ -233,12 +233,16 @@ class AccumulateGradTest(unittest.TestCase):
                          n_layers,
                          manual_pipeline_layer=True,
                          pipeline_stage_mode="uniform_layer_gpipe",
-                         cache_compute_cost=None):
+                         cache_compute_cost=None,
+                         forward_stage_layer_ids=None,
+                         submesh_shapes=None):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
-                                cache_compute_cost=cache_compute_cost)
+                                cache_compute_cost=cache_compute_cost,
+                                forward_stage_layer_ids=forward_stage_layer_ids,
+                                submesh_shapes=submesh_shapes)
 
         batch_size = 16
         seq_len = 256
@@ -298,7 +302,7 @@ class AccumulateGradTest(unittest.TestCase):
                 state = actual_new_state
             actual_new_state = parallel_train_step(state, batch, model.apply)
             assert_allclose(expected_new_state.params, actual_new_state.params,
-                            5e-4, 5e-4)
+                            1e-3, 1e-3)
 
         executable.shutdown()
 
@@ -331,6 +335,13 @@ class AccumulateGradTest(unittest.TestCase):
     def test_8_layer_bert(self):
         self.run_n_layer_bert(n_layers=8)
 
+    def test_8_layer_bert_manual_stage_assignment(self):
+        self.run_n_layer_bert(n_layers=8,
+                              pipeline_stage_mode="manual_gpipe",
+                              forward_stage_layer_ids=[[0, 1, 2, 3],
+                                                       [4, 5, 6, 7]],
+                              submesh_shapes=[(1, 4), (1, 4)])
+
     def test_8_layer_bert_auto_layer_slicing(self):
         self.run_n_layer_bert(n_layers=8, manual_pipeline_layer=False)
 
@@ -349,18 +360,20 @@ class AccumulateGradTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))
-    # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_slicing'))
+    suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
     # FIXME(zhuohan): The following 2 tests are failing because stage slicing
     #   in XLA will move the stages around and thus don't have correct order
     #   if stages on a same mesh doesn't have dependecies. Need to fix this
     #   in stage slicing in XLA.
-    # suite.addTest(AccumulateGradTest('test_mlp_auto_stage_clustering'))
+    # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_slicing'))
     # suite.addTest(AccumulateGradTest('test_mlp_auto_layer_and_stage'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert'))
-    # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
-    # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
-    # suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
-    # suite.addTest(AccumulateGradTest('test_8_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
+    suite.addTest(AccumulateGradTest('test_8_layer_bert'))
+    suite.addTest(
+        AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_slicing'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_stage_clustering'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_and_stage'))

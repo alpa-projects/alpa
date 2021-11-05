@@ -10,6 +10,7 @@ Requirements
 ```
 CuDNN >= 8.1
 CUDA >= 11.1
+python >= 3.7
 ```
 
 Install

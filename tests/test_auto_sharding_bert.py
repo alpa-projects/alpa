@@ -36,7 +36,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_bert_layers(self, batch_size, seq_len, num_layers, hidden_size,
-                        num_heads, deterministic, device_mesh):
+                        num_heads, deterministic, use_remat, device_mesh):
         set_parallelize_options(devices=device_mesh)
 
         @parallelize
@@ -65,7 +65,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
             BertConfig(num_hidden_layers=num_layers,
                        hidden_size=hidden_size,
                        intermediate_size=hidden_size * 4,
-                       num_attention_heads=num_heads))
+                       num_attention_heads=num_heads,
+                       gradient_checkpointing=use_remat))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.Adam(1e-2).create(params)
@@ -156,13 +157,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 32
         num_heads = 8
         deterministic = False
+        use_remat = False
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_layers(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
-                deterministic, device_mesh)
+                deterministic, use_remat, device_mesh)
 
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
                                       i)
@@ -174,13 +176,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 128
         num_heads = 8
         deterministic = False
+        use_remat = False
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             optimizer, hlo_ir, objective = self.run_bert_layers(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
-                deterministic, device_mesh)
+                deterministic, use_remat, device_mesh)
 
             # Check communication cost
             expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
@@ -221,13 +224,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 128
         num_heads = 8
         deterministic = False
+        use_remat = False
 
         # Test on different logical mesh shapes
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
         optimizer, hlo_ir, objective = self.run_bert_layers(
             batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, device_mesh)
+            deterministic, use_remat, device_mesh)
 
         # Check communication cost
         params = jax.tree_util.tree_leaves(optimizer.target)
@@ -521,6 +525,32 @@ class AutoShardingAttentionTest(unittest.TestCase):
         global_config.prefer_reduce_scatter = True
         self.test_bert_mlm_2d_mesh()
 
+    def test_bert_layer_model_parallel_remat(self):
+        batch_size = 8
+        seq_len = 8
+        num_layers = 2
+        hidden_size = 128
+        num_heads = 8
+        deterministic = False
+        use_remat = True
+
+        # Test on different logical mesh shapes
+        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
+            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            optimizer, hlo_ir, objective = self.run_bert_layers(
+                batch_size, seq_len, num_layers, hidden_size, num_heads,
+                deterministic, use_remat, device_mesh)
+
+            expected = (num_layers * 6 - 1) * device_mesh.all_reduce_cost(
+                batch_size * seq_len * hidden_size * 4, i)
+            assert_close(objective, expected)
+
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
+                count_communication_primitives(hlo_ir)
+            assert n_total == num_layers * 6 - 1
+            assert n_all_reduce == num_layers * 6 - 1
+            assert n_total == n_all_reduce
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -550,6 +580,8 @@ def suite():
             "test_bert_mlm_model_parallel_reduce_scatter"))
     suite.addTest(
         AutoShardingAttentionTest("test_bert_mlm_2d_mesh_reduce_scatter"))
+
+    suite.addTest(AutoShardingAttentionTest("test_bert_layer_model_parallel_remat"))
 
     return suite
 

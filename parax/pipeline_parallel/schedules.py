@@ -1,66 +1,18 @@
-import functools
-import math
+"""Generate pipeline schedules."""
+
+from typing import List
 
 import numpy as np
 
-
-def cached_property(fn, *args, **kwargs):
-    """
-    Decorator to make a function a "cached property".
-
-    This means that it is a property whose return value is cached after the
-    first time it is called.
-
-    Args:
-        fn: The function to be made a cached property
-        *args: Any args for the function
-        **kwargs: Any kwargs for the function
-    Returns:
-        function
-    """
-    return property(functools.lru_cache()(fn, *args, **kwargs))
+from parax.pipeline_parallel.computation import PipelineComputation
+from parax.util import cached_property
 
 
-def gen_linear_dependency(num_stage):
-    """Generate a linear dependency matrix."""
-    d = np.zeros([num_stage, num_stage], dtype=np.int)
-    for i in range(num_stage - 1):
-        d[i + 1][i] = 1
-    return d
-
-
-def gen_linear_pipeline_dependency(num_stage):
-    """
-    Generate a dependency matrix that marks the neighbors and forward/backward
-    stage pairs as neighbors.
-    """
-    assert num_stage % 2 == 0
-    d = np.zeros([num_stage, num_stage], dtype=np.int)
-    for i in range(num_stage - 1):
-        d[i + 1][i] = 1
-    for i in range(num_stage // 2):
-        d[num_stage - 1 - i][i] = 1
-    return d
-
-
-def gen_linear_pipeline_dependency_with_apply(num_stage, mesh_num, apply_deps):
-    """
-    Generate dependency matrix marks compute grad and apply grad
-    """
-    d = np.zeros((num_stage, num_stage), dtype=np.int32)
-    for i in range(mesh_num * 2 - 1):
-        d[i + 1][i] = 1
-    for i in range(mesh_num):
-        d[mesh_num * 2 - 1 - i][i] = 1
-    for pair in apply_deps:
-        d[pair[0]][pair[1]] = 1
-    return d
-
-
-def gen_dependency_with_stages(compute_stages: "Sequence[Jax3DPipeline]",
-                               n_apply_stages=0,
-                               apply_deps=()):
-    n_stages = len(compute_stages) + n_apply_stages
+def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
+                               n_apply_grad_stages=0,
+                               apply_grad_deps=()):
+    """Generate the dependency matrix for a list of pipeline stages."""
+    n_stages = len(compute_stages) + n_apply_grad_stages
     d = np.zeros([n_stages, n_stages], dtype=np.int)
     var_stage_id = {}
     for i, stage in enumerate(compute_stages):
@@ -72,7 +24,9 @@ def gen_dependency_with_stages(compute_stages: "Sequence[Jax3DPipeline]",
                 pass
         for var in stage.outvars:
             var_stage_id[var] = i
-    for apply_stage_id, compute_stage_id in apply_deps:
+
+    # TODO(yonghao): this can be inferred as well.
+    for apply_stage_id, compute_stage_id in apply_grad_deps:
         d[apply_stage_id][compute_stage_id] = 1
     return d
 
@@ -83,36 +37,26 @@ class GpipeSchedule:
 
     Args:
         dependency (np.array): dependency adjacency matrix.
-        mesh (VirtualMesh): a virtual mesh representing the entire cluster.
         sliced_mesh (List[VirtualMesh]): a list of pre-sliced virtual meshes
             to assign workers on.
-        num_pipeline_worker (int):
-        apply_grad_schedule (Dict[int, int]): A map from apply grad's stage idx
-            to the worker it is assigned
+        apply_grad_placement (Dict[int, int]): A map from apply grad's stage idx
+            to the worker it is assigned.
         num_batch (int): number of microbatches.
-        costs (List[int]): running costs of each stage.
     """
 
     def __init__(self,
                  *,
                  dependency,
-                 mesh,
-                 num_pipeline_worker,
-                 apply_grad_schedule,
                  sliced_meshes,
-                 num_batch=1,
-                 costs=None):
+                 apply_grad_placement,
+                 num_batch=1):
         self.dependency = dependency
-        self.original_mesh = mesh
         self.meshes = sliced_meshes
-        self.apply_grad_schedule = apply_grad_schedule
+        self.apply_grad_placement = apply_grad_placement
         self.num_batch = num_batch
-        self.costs = costs
         self.num_stage = dependency.shape[0]
-
-        self.num_pipeline_worker = num_pipeline_worker
-        if len(self.meshes) != self.num_pipeline_worker:
-            raise RuntimeError("Gpipe schedule requires #meshes = #workers.")
+        self.num_worker = len(sliced_meshes)
+        self.num_mesh = len(sliced_meshes)
         self._schedules = self._generate_schedule()
 
     def _generate_schedule(self):
@@ -136,7 +80,7 @@ class GpipeSchedule:
         5 reverse...
         """
         m = self.num_batch
-        n = self.num_pipeline_worker
+        n = self.num_worker
         num_clock = m + n - 1
         schedules = []
         for k in range(num_clock):
@@ -158,9 +102,10 @@ class GpipeSchedule:
         for k in range(num_clock):
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
-        # apply grad schedules
+
+        # apply_grad schedules
         scheds = [None] * n
-        for stage_idx, worker in self.apply_grad_schedule.items():
+        for stage_idx, worker in self.apply_grad_placement.items():
             scheds[worker] = (0, stage_idx)
         schedules.append(scheds)
         return schedules
@@ -220,20 +165,7 @@ class GpipeSchedule:
         """Return the schedules as a matrix."""
         return self._schedules
 
-    def __len__(self):
-        return len(self._schedules)
-
     @property
     def num_clock(self):
         """Return the number of clocks in the schedule."""
         return len(self._schedules)
-
-    @property
-    def num_worker(self):
-        """Return the number of workers (physical meshes)."""
-        return self.num_pipeline_worker
-
-    @property
-    def num_mesh(self):
-        """Return the number of meshes in the schedule."""
-        return self.num_pipeline_worker

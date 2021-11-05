@@ -204,9 +204,8 @@ class AccumulateGradTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
-        y = jax.random.normal(
-            rngkey, (batch_size, seq_len, hidden_size),
-            dtype=jnp.float32)  # * np.arange(hidden_size)[None, None, :]
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
@@ -397,7 +396,8 @@ def suite():
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert_remat'))
-    suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_slicing_remat'))
+    suite.addTest(
+        AccumulateGradTest('test_2_layer_bert_auto_layer_slicing_remat'))
     suite.addTest(AccumulateGradTest('test_8_layer_bert'))
     suite.addTest(
         AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))

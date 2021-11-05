@@ -1,10 +1,9 @@
 """Abstract runtime classes and methods."""
-import ray
-from abc import ABCMeta
-from abc import abstractmethod
+from abc import ABCMeta, abstractmethod
 from typing import Sequence, List, Any
 
 from jax.core import Var
+import ray
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import CrossMeshCommunicator, \

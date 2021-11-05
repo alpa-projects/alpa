@@ -1,11 +1,10 @@
-"""Layer clustering and remat by layer."""
+"""Cluster small operators into layers.
+Do rematerialization at the boundary of layer."""
+
 from functools import partial, wraps
 from typing import List, Callable
+
 from jax._src.tree_util import tree_unflatten
-
-import numba
-import numpy as np
-
 import jax
 from jax import tree_flatten
 from jax import lax
@@ -13,6 +12,8 @@ from jax._src.api import make_jaxpr, _check_scalar
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun
 from jax.interpreters import xla
+import numba
+import numpy as np
 
 from parax.pipeline_parallel.manual_layer_slicing import insert_marker, manual_layer_slicing, remat_jaxpr
 
@@ -20,6 +21,7 @@ gpu_backend = xc.get_local_backend("gpu")
 
 
 def call_to_xla_computation(eqn: JaxprEqn):
+    """Convert a jaxpr equation to a XLA computation for FLOP analysis."""
     xe = xc._xla
     prim = eqn.primitive
     backend = gpu_backend
@@ -52,6 +54,7 @@ def call_to_xla_computation(eqn: JaxprEqn):
 
 
 def eqn_flops(eqn: JaxprEqn) -> float:
+    """Get the FLOP of a jaxpr equation."""
     if eqn.primitive in xla.call_translations:
         xla_computation = call_to_xla_computation(eqn)
     else:
@@ -149,7 +152,17 @@ def automatic_layer_slicing(fn: Callable,
                             eps: float = 0,
                             use_pipeline: bool = False,
                             use_remat: bool = False):
-    ''''''
+    '''
+    Automatically slice the jaxpr into layers.
+    Pipeline markers and rematerialization can be added at the boundary of layers.
+
+    Args:
+        fun: The forward function
+        layer_num: The number of output layers
+        eps: A parameter to control the imbalance tolerance among layers.
+        use_pipeline: Whether to insert pipeline markers at the boundary of layers.
+        use_remat: Whether to use rematerialization at the boundary of layers.
+    '''
     if use_remat or use_pipeline:
 
         @wraps(fn)

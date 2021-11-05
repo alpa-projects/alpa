@@ -180,6 +180,7 @@ class FlaxBertSelfAttention(nn.Module):
             attention_bias = None
 
         dropout_rng = None
+
         if not deterministic and self.config.attention_probs_dropout_prob > 0.0:
             dropout_rng = self.make_rng("dropout")
 
@@ -317,6 +318,12 @@ class FlaxBertLayer(nn.Module):
                  attention_mask,
                  deterministic: bool = True,
                  output_attentions: bool = False):
+
+        if not isinstance(deterministic, bool):
+            # A temporary hack to walkaround the bug in flax.nn.remat
+            deterministic = True
+            output_attentions = True
+
         attention_outputs = self.attention(hidden_states,
                                            attention_mask,
                                            deterministic=deterministic,

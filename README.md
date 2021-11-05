@@ -28,7 +28,7 @@ This repo depends on our private fork of jax and tensorflow.
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install numpy scipy flax numba pybind11 cupy-cuda111
+    pip3 install cmake numpy scipy flax numba pybind11 cupy-cuda111
     
     # Install the latest Ray, replace `LINK_TO_WHEEL` with links provided:
     # https://docs.ray.io/en/latest/installation.html#daily-releases-nightlies

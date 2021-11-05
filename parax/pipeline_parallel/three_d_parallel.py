@@ -18,16 +18,12 @@ from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages)
 from parax.pipeline_parallel.computation import (
-    JaxPipelineComputation,
-    create_donation_mapping,
-    generate_sharded_xla_computations,
-    mark_missing_vars_in_pipeline_marks,
-    pipeline_dce,
-    slice_closed_jaxpr_by_full_pipeline_marks,
+    JaxPipelineComputation, create_donation_mapping,
+    generate_sharded_xla_computations, mark_missing_vars_in_pipeline_marks,
+    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars)
 from parax.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad,
-    process_apply_gradient,
+    compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
 from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
 from parax.util import get_micro_batch
@@ -160,7 +156,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             record_file)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
-
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}

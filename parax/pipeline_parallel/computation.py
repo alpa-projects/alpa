@@ -267,8 +267,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
-    closed_jaxpr: ClosedJaxpr
-) -> Sequence[JaxPipelineComputation]:
+        closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineComputation]:
     """Slice a closed jaxpr into multiple JaxPipelineComputation by full pipeline markers."""
     global_consts_dir = dict(
         zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))

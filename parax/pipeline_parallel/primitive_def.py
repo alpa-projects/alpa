@@ -13,11 +13,11 @@ xc.register_custom_call_target(b'xla_pipeline_marker',
                                platform='gpu')
 xc.register_custom_call_target(b'identity', identity(), platform='gpu')
 
-
 ########## Public APIs ##########
 
 # Define a Jax primitive to mark start/end of a pipeline computation.
 pipeline_p = Primitive('pipeline')
+
 
 def mark_pipeline(*args, name: str, mark_type: str):
     """
@@ -56,6 +56,7 @@ def mark_gradient(grad):
 
 
 ########## Internal Registration ##########
+
 
 def flatten_shape_byte_sizes(shape):
 

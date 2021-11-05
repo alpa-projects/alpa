@@ -353,10 +353,12 @@ class FlaxBertLayerCollection(nn.Module):
         if self.config.gradient_checkpointing:
             trans_func = partial(nn.remat, concrete=True)
         else:
-            trans_func = lambda x : x
+            trans_func = lambda x: x
 
         self.layers = [
-            trans_func(FlaxBertLayer)(self.config, name=str(i), dtype=self.dtype)
+            trans_func(FlaxBertLayer)(self.config,
+                                      name=str(i),
+                                      dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
 

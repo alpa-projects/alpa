@@ -4,7 +4,7 @@ import logging
 from typing import Sequence, Set, Dict
 
 from jax._src.util import safe_map
-from jax.core import  Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
+from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
 from jax.lax import add_p
 import numpy as np
 
@@ -17,7 +17,6 @@ from parax.util import slices_to_jaxpr
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -166,16 +165,16 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
 
 
 def process_apply_gradient(barrier, jax_pipeline_stages, stage_to_mesh,
-                           gensym_func, num_micro_batches, num_meshes, acc_grad_dict,
-                           global_invars, global_outvars, apply_grad_jaxpr, donated_invars):
+                           gensym_func, num_micro_batches, num_meshes,
+                           acc_grad_dict, global_invars, global_outvars,
+                           apply_grad_jaxpr, donated_invars):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
 
     # Process apply gradient:
     # 1. change invars of apply grad to output of accumulate grad
     gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
     mask = {
-        outv: acc_grad_dict[inv]
-        for outv, inv in zip(gradients, barrier.invars)
+        outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
     }
 
     # 2. Add compute mean and slice apply-grad stages
@@ -187,8 +186,7 @@ def process_apply_gradient(barrier, jax_pipeline_stages, stage_to_mesh,
         apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
         global_outvars)
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
-                                                   gradvar_to_mesh,
-                                                   num_meshes)
+                                                   gradvar_to_mesh, num_meshes)
     apply_deps, apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        mask,
@@ -198,8 +196,7 @@ def process_apply_gradient(barrier, jax_pipeline_stages, stage_to_mesh,
         map(lambda x: get_var_mapping(out_map, x), global_outvars))
     n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
     dependency = gen_dependency_with_stages(jax_pipeline_stages,
-                                            len(sliced_apply_grad),
-                                            apply_deps)
+                                            len(sliced_apply_grad), apply_deps)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad
 
     used_simultaneously = set()

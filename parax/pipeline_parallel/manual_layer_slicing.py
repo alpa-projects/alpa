@@ -136,8 +136,6 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     return new_closed_jaxpr
 
 
-
-
 def manual_layer_slicing(fn: Callable, static_argnums=()):
     return transform_pipeline_forward(fn, add_pipeline_marks_for_sliced_eqns,
                                       static_argnums)

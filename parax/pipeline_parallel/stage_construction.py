@@ -210,8 +210,7 @@ def uniform_slice_mesh(original_mesh, num_meshes):
     if original_mesh.total_devices < num_meshes:
         raise RuntimeError("#device < #workers.")
 
-    num_device_per_mesh = int(original_mesh.total_devices /
-                              num_meshes)
+    num_device_per_mesh = int(original_mesh.total_devices / num_meshes)
     num_device_per_host = original_mesh.num_devices_per_host
     num_host = original_mesh.num_hosts
     if num_device_per_host >= num_device_per_mesh:
@@ -220,11 +219,14 @@ def uniform_slice_mesh(original_mesh, num_meshes):
             host_idx = i // num_mesh_per_host
             mesh_idx = i % num_mesh_per_host
             ind = list(range(num_device_per_host))
-            mesh = original_mesh.slice(0, [host_idx]).slice(1, [ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) * num_device_per_mesh]])
+            mesh = original_mesh.slice(0, [host_idx]).slice(
+                1, [
+                    ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) *
+                        num_device_per_mesh]
+                ])
             output_meshes.append(mesh)
     else:
-        num_host_per_mesh = math.ceil(num_device_per_mesh /
-                                      num_device_per_host)
+        num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)
         ind = list(range(num_host))
         for i in range(num_meshes):
             output_meshes.append((original_mesh.slice(
@@ -232,8 +234,11 @@ def uniform_slice_mesh(original_mesh, num_meshes):
     return output_meshes
 
 
-def cluster_layers_and_slice_mesh(layers, mesh, donation_mapping,
-                                  global_outvars, num_micro_batches,
+def cluster_layers_and_slice_mesh(layers,
+                                  mesh,
+                                  donation_mapping,
+                                  global_outvars,
+                                  num_micro_batches,
                                   pipeline_stage_mode="uniform_layer_gpipe",
                                   cache_compute_cost=None,
                                   forward_stage_layer_ids=None,
@@ -269,14 +274,17 @@ def cluster_layers_and_slice_mesh(layers, mesh, donation_mapping,
                 compute_cost = np.load(cache_compute_cost)
             else:
                 compute_cost = get_compute_cost(mesh, submesh_choices, layers,
-                                                donation_mapping, global_outvars)
+                                                donation_mapping,
+                                                global_outvars)
                 np.save(
                     f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.npz",
                     compute_cost)
-            cost, solution = dp(num_layers, mesh.total_devices, num_micro_batches,
-                                submesh_choices, compute_cost)
+            cost, solution = dp(num_layers, mesh.total_devices,
+                                num_micro_batches, submesh_choices,
+                                compute_cost)
             forward_stage_layer_ids = [
-                list(range(start_id, end_id)) for (start_id, end_id), _ in solution
+                list(range(start_id, end_id))
+                for (start_id, end_id), _ in solution
             ]
             submesh_shapes = [submesh_choices[i] for _, i in solution]
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
@@ -297,7 +305,8 @@ def cluster_layers_and_slice_mesh(layers, mesh, donation_mapping,
             for shape in submesh_shapes:
                 assert shape in submesh_choices
         else:
-            raise NotImplementedError("Unknown pipeline_stage_mode", pipeline_stage_mode)
+            raise NotImplementedError("Unknown pipeline_stage_mode",
+                                      pipeline_stage_mode)
 
         sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_shapes)
         num_forward_stages = len(forward_stage_layer_ids)
@@ -311,9 +320,7 @@ def cluster_layers_and_slice_mesh(layers, mesh, donation_mapping,
                                           global_outvars)
         merged_stages = []
         for stage_id, layer_ids in enumerate(stage_layer_ids):
-            stage_layer_jaxprs = [
-                layers[i].closed_jaxpr() for i in layer_ids
-            ]
+            stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
             stage_name = str(stage_id)
             merged_stage_jaxpr = merge_computation_jaxprs(
                 stage_layer_jaxprs, stage_outvars[stage_id], stage_name,
@@ -334,8 +341,7 @@ def cluster_layers_and_slice_mesh(layers, mesh, donation_mapping,
         stages = layers
         sliced_meshes = uniform_slice_mesh(mesh, num_meshes)
     else:
-        raise ValueError("Unknown pipeline_stage_mode",
-                         pipeline_stage_mode)
+        raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
     return stages, stage_to_mesh, sliced_meshes
 
 

@@ -219,11 +219,16 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         donation_mapping = dict()
 
     jax_pipeline_stages, stage_to_mesh, sliced_meshes = (
-        cluster_layers_and_slice_mesh(jax_pipeline_layers, virtual_mesh, donation_mapping,
-                                      acc_grad_outvars, num_micro_batches, pipeline_stage_mode=global_config.pipeline_stage_mode,
-                                      cache_compute_cost=global_config.cache_compute_cost,
-                                      forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-                                      submesh_shapes=global_config.submesh_shapes))
+        cluster_layers_and_slice_mesh(
+            jax_pipeline_layers,
+            virtual_mesh,
+            donation_mapping,
+            acc_grad_outvars,
+            num_micro_batches,
+            pipeline_stage_mode=global_config.pipeline_stage_mode,
+            cache_compute_cost=global_config.cache_compute_cost,
+            forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+            submesh_shapes=global_config.submesh_shapes))
     num_meshes = len(sliced_meshes)
 
     if have_apply_grad:

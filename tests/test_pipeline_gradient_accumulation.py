@@ -338,7 +338,8 @@ class AccumulateGradTest(unittest.TestCase):
     def test_8_layer_bert_manual_stage_assignment(self):
         self.run_n_layer_bert(n_layers=8,
                               pipeline_stage_mode="manual_gpipe",
-                              forward_stage_layer_ids=[[0, 1, 2, 3], [4, 5, 6, 7]],
+                              forward_stage_layer_ids=[[0, 1, 2, 3],
+                                                       [4, 5, 6, 7]],
                               submesh_shapes=[(1, 4), (1, 4)])
 
     def test_8_layer_bert_auto_layer_slicing(self):
@@ -371,7 +372,8 @@ def suite():
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_stage_clustering'))
     suite.addTest(AccumulateGradTest('test_2_layer_bert_auto_layer_and_stage'))
     suite.addTest(AccumulateGradTest('test_8_layer_bert'))
-    suite.addTest(AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))
+    suite.addTest(
+        AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_slicing'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_stage_clustering'))
     # suite.addTest(AccumulateGradTest('test_8_layer_bert_auto_layer_and_stage'))

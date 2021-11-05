@@ -321,6 +321,9 @@ class FlaxBertLayer(nn.Module):
 
         if not isinstance(deterministic, bool):
             # A temporary hack to walkaround the bug in flax.nn.remat
+            # Using `nn.remat(concrete=True)` works for regular use cases
+            # (e.g., train_step, init) but does not work for init_dummy.
+            # So we still need this hack.
             deterministic = True
             output_attentions = True
 

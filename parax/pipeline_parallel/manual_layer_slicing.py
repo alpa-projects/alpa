@@ -7,9 +7,9 @@ from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Jaxpr, jaxpr_as_fun, new_jaxpr_eqn
 from jax.interpreters.partial_eval import remat_call_p
 
+from parax.pipeline_parallel.computation import (
+    slice_eqns_by_pipeline_marks, add_pipeline_marks_for_sliced_eqns)
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
-from parax.pipeline_parallel.stage import (slice_eqns_by_pipeline_marks,
-                                           add_pipeline_marks_for_sliced_eqns)
 from parax.util import slices_to_jaxpr
 
 

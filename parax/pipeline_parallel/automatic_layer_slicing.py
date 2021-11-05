@@ -1,6 +1,7 @@
 """Layer clustering and remat by layer."""
-from functools import wraps
+from functools import partial, wraps
 from typing import List, Callable
+from jax._src.tree_util import tree_unflatten
 
 import numba
 import numpy as np
@@ -13,9 +14,7 @@ from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun
 from jax.interpreters import xla
 
-from ..util import slices_to_jaxpr
-from .primitive_def import mark_pipeline
-from .manual_layer_slicing import manual_layer_slicing
+from parax.pipeline_parallel.manual_layer_slicing import insert_marker, manual_layer_slicing, remat_jaxpr
 
 gpu_backend = xc.get_local_backend("gpu")
 
@@ -156,35 +155,19 @@ def automatic_layer_slicing(fn: Callable,
         @wraps(fn)
         @manual_layer_slicing
         def wrapped(*args):
-            origin_jaxpr = make_jaxpr(fn)(*args)
-            solution = slice_jaxpr(origin_jaxpr, layer_num, eps)
-            global_invars = origin_jaxpr.jaxpr.invars
+            origin_jaxpr, out_shape_tree = make_jaxpr(fn,
+                                                      static_argnums=(),
+                                                      return_shape=True)(*args)
+            flatten_args, _ = tree_flatten(args)
 
-            sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, solution)
-            sliced_callables = [
-                jax.remat(jaxpr_as_fun(layer))
-                if use_remat else jaxpr_as_fun(layer) for layer in sliced_jaxprs
-            ]
-
-            flatten_inputs, _ = tree_flatten(args)
-            glob_vars = dict(zip(global_invars, flatten_inputs))
-            cnt = 0
-            for (closed_jaxpr, runnable) in zip(sliced_jaxprs,
-                                                sliced_callables):
-                args = []
-                for invar in closed_jaxpr.jaxpr.invars:
-                    args.append(glob_vars[invar])
-                if use_pipeline:
-                    mark_pipeline(name=str(cnt), mark_type='start')
-                ans = runnable(*args)
-                if use_pipeline:
-                    mark_pipeline(name=str(cnt), mark_type='end')
-                for i, outvar in enumerate(closed_jaxpr.jaxpr.outvars):
-                    glob_vars[outvar] = ans[i]
-                cnt += 1
-            assert len(ans) == 1
-            _check_scalar(ans[0])
-            return ans[0]
+            slices = slice_jaxpr(origin_jaxpr, layer_num, eps)
+            transformation = partial(
+                remat_jaxpr,
+                use_pipeline=use_pipeline) if use_remat else insert_marker
+            new_jaxpr = transformation(origin_jaxpr, slices)
+            ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
+            _, out_tree = tree_flatten(out_shape_tree)
+            return tree_unflatten(out_tree, ans)
 
         return wrapped
     else:

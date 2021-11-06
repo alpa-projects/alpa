@@ -143,7 +143,7 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
         k = A_argmin[r, q]
         reversed_sliced_eqns.append(jaxpr.eqns[k:r])
         r = k
-    assert r == 0, 'no solution for layer clustering' if r == -1 else 'unknown error'
+    assert r == 0, "no solution for layer clustering" if r == -1 else "unknown error"
     return list(reversed(reversed_sliced_eqns))
 
 
@@ -152,7 +152,7 @@ def automatic_layer_slicing(fn: Callable,
                             eps: float = 0,
                             use_pipeline: bool = False,
                             use_remat: bool = False):
-    '''
+    """
     Automatically slice the jaxpr into layers.
     Pipeline markers and rematerialization can be added at the boundary of layers.
 
@@ -162,7 +162,7 @@ def automatic_layer_slicing(fn: Callable,
         eps: A parameter to control the imbalance tolerance among layers.
         use_pipeline: Whether to insert pipeline markers at the boundary of layers.
         use_remat: Whether to use rematerialization at the boundary of layers.
-    '''
+    """
     if use_remat or use_pipeline:
 
         @wraps(fn)

@@ -278,10 +278,10 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     log_jaxpr(closed_jaxpr, "new_jaxpr")
 
     for eqn in closed_jaxpr.jaxpr.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
+        if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "start":
             assert current_computation is None, "Defining a pipeline computation inside a pipeline computation is not allowed."
             current_computation = JaxPipelineComputation(
-                name=eqn.params['name'])
+                name=eqn.params["name"])
             for var in eqn.invars:
                 if isinstance(var, Literal):
                     pass
@@ -293,10 +293,10 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
         assert current_computation is not None
         current_computation.eqns.append(eqn)
 
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
+        if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "end":
             assert current_computation is not None, "Ending a pipeline computation before its start."
             assert current_computation.name == eqn.params[
-                'name'], "Ending a pipeline computation different from its start."
+                "name"], "Ending a pipeline computation different from its start."
             for var in eqn.outvars:
                 current_computation.outvars.append(var)
             result_computations.append(current_computation)
@@ -344,9 +344,9 @@ def mark_missing_vars_in_pipeline_marks(
 
     for i, computation in enumerate(computations):
         assert computation.eqns[0].primitive is pipeline_p and computation.eqns[
-            0].params['mark_type'] == 'start'
+            0].params["mark_type"] == "start"
         assert computation.eqns[-1].primitive is pipeline_p and computation.eqns[
-            -1].params['mark_type'] == 'end'
+            -1].params["mark_type"] == "end"
         new_computation = JaxPipelineComputation(
             computation.name, consts_dir=computation.consts_dir)
 
@@ -424,8 +424,8 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         ]
         new_marker = mark_pipeline_jaxpreqn(
             [marker.invars[i] for i in kept_indices],
-            [marker.outvars[i] for i in kept_indices], marker.params['name'],
-            marker.params['mark_type'])
+            [marker.outvars[i] for i in kept_indices], marker.params["name"],
+            marker.params["mark_type"])
         return new_marker
 
     global_used = set(global_outvars)
@@ -435,8 +435,8 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         # handle pipe end
         pipe_end = computation.eqns[-1]
         assert (pipe_end.primitive is pipeline_p and
-                pipe_end.params['mark_type']
-                == 'end'), 'computation not ended by a pipeline marker'
+                pipe_end.params["mark_type"]
+                == "end"), "computation not ended by a pipeline marker"
         new_pipe_end = dce_pipe_marker(pipe_end, global_used)
         new_eqns.append(new_pipe_end)
         # handle normal instructions
@@ -451,8 +451,8 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         # handle pipe start
         pipe_start = computation.eqns[0]
         assert (pipe_start.primitive is pipeline_p and
-                pipe_start.params['mark_type']
-                == 'start'), 'computation not started by a pipeline marker'
+                pipe_start.params["mark_type"]
+                == "start"), "computation not started by a pipeline marker"
         new_pipe_start = dce_pipe_marker(pipe_start, local_used)
         new_eqns.append(new_pipe_start)
         global_used.update(new_pipe_start.invars)
@@ -474,7 +474,7 @@ def rearrange_vars(vars,
                    pipe_marker=None,
                    is_input=True):
     """
-    Rearrange vars to let those in selected be the first. If the pipe_marker is given,
+    Rearrange vars to let those in selected be first. If the pipe_marker is given,
     rearrange invars and outvars in pipemarker also.
 
     Args:
@@ -505,8 +505,8 @@ def rearrange_vars(vars,
             pipe_marker.invars[outvar_idx[var]] for var in new_outvars
         ]
     new_marker = mark_pipeline_jaxpreqn(new_invars, new_outvars,
-                                        pipe_marker.params['name'],
-                                        pipe_marker.params['mark_type'])
+                                        pipe_marker.params["name"],
+                                        pipe_marker.params["mark_type"])
     return new_vars, new_marker
 
 
@@ -546,7 +546,7 @@ def generate_sharded_xla_computations(
     dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) -
                                                                 donation_num)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
-    backend_name = 'gpu'
+    backend_name = "gpu"
     backend = xb.get_backend(backend_name)
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
     computation_protos, strategy_config = compile_with_search(
@@ -631,10 +631,10 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
 
     new_pipe_start = mark_pipeline_jaxpreqn(list(new_invars.keys()),
                                             list(new_invars.values()),
-                                            new_marker_name, 'start')
+                                            new_marker_name, "start")
     new_pipe_end = mark_pipeline_jaxpreqn(list(new_outvars.values()),
                                           list(new_outvars.keys()),
-                                          new_marker_name, 'end')
+                                          new_marker_name, "end")
     new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
     constvars = set(new_constvars.keys())
     new_invars = [k for k in new_invars.keys() if k not in constvars]
@@ -672,16 +672,16 @@ def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
             break
         if invar not in donation_mapping:
             logger.warning(
-                f"{invar} is marked as donated but actually no match outvar")
+                f"{invar} is marked donated but no match outvar for it")
     return donation_mapping
 
 
-def get_donation_mapping_and_modify(stage, reversed_donation_mapping,
+def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
                                     gensym_fn):
-    invars = set(stage.invars)
+    invars = set(computation.invars)
     donation_mapping = dict()
     appended_invars = set()
-    for var in stage.outvars:
+    for var in computation.outvars:
         if var not in reversed_donation_mapping:
             continue
         invar = reversed_donation_mapping[var]
@@ -690,11 +690,11 @@ def get_donation_mapping_and_modify(stage, reversed_donation_mapping,
         if invar not in invars:
             appended_invars.add(invar)
     if not donation_mapping:
-        return donation_mapping, stage
+        return donation_mapping, computation
     # append invars for donation
-    new_invars = list(stage.invars)
-    new_outvars = list(stage.outvars)
-    new_eqns = list(stage.eqns)
+    new_invars = list(computation.invars)
+    new_outvars = list(computation.outvars)
+    new_eqns = list(computation.eqns)
     appended_invars = list(appended_invars)
     if appended_invars:
         new_invars = new_invars + appended_invars
@@ -702,7 +702,7 @@ def get_donation_mapping_and_modify(stage, reversed_donation_mapping,
         new_eqns[0] = mark_pipeline_jaxpreqn(
             pipe_start.invars + appended_invars, pipe_start.outvars +
             list(map(lambda v: gensym_fn(v.aval), appended_invars)),
-            pipe_start.params['name'], pipe_start.params['mark_type'])
+            pipe_start.params["name"], pipe_start.params["mark_type"])
     # rearrange to keep donated invars and outvars have same index
     new_invars, new_pipe_start = rearrange_vars(new_invars,
                                                 list(donation_mapping.keys()),
@@ -712,9 +712,10 @@ def get_donation_mapping_and_modify(stage, reversed_donation_mapping,
                                                new_eqns[-1], False)
     new_eqns[0] = new_pipe_start
     new_eqns[-1] = new_pipe_end
-    new_stage = JaxPipelineComputation(stage.name, new_invars, new_outvars,
-                                       new_eqns, stage.consts_dir)
-    return donation_mapping, new_stage
+    new_computation = JaxPipelineComputation(computation.name, new_invars,
+                                             new_outvars, new_eqns,
+                                             computation.consts_dir)
+    return donation_mapping, new_computation
 
 
 def split_donate_invars(donation_mapping,
@@ -737,7 +738,6 @@ def split_donate_invars(donation_mapping,
     """
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
     gensym_fn = gensym([stage.closed_jaxpr().jaxpr for stage in stages])
-    # global last use to consider if the main copy can be discarded
 
     ans = [None for _ in range(len(stages))]
     new_stages = []

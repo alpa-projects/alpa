@@ -170,10 +170,10 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
 def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
                          mixed_jaxpr: ClosedJaxpr, in_sharding_specs,
                          out_sharding_specs):
-    '''
+    """
     Split sharding specs of layers. Some intermediate sharding specs are missed,
     but they do not cross mesh so this does not matter.
-    '''
+    """
 
     in_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.invars, in_sharding_specs))
     out_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.outvars, out_sharding_specs))
@@ -207,7 +207,7 @@ def compile_and_profile_stage_compute_cost(
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    mixed_jaxpr = merge_computation_jaxprs(jaxprs, global_used, 'profile_tmp',
+    mixed_jaxpr = merge_computation_jaxprs(jaxprs, global_used, "profile_tmp",
                                            donation_mapping)
     donate_argnums = [
         idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
@@ -232,14 +232,14 @@ def compile_and_profile_stage_compute_cost(
 
 def generate_stage_info(stages, selected_indices, donation_mapping,
                         global_outvars, name):
-    backend = xla_bridge.get_backend('gpu')
+    backend = xla_bridge.get_backend("gpu")
 
     selected_donation_mapping, used_outside, stages = split_global_use_and_donate(
         stages, selected_indices, donation_mapping, global_outvars)
 
     jaxprs = [stage.closed_jaxpr() for stage in stages]
 
-    merged = merge_computation_jaxprs(jaxprs, used_outside, '0',
+    merged = merge_computation_jaxprs(jaxprs, used_outside, "0",
                                       selected_donation_mapping)
     outvars = set(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]

@@ -54,7 +54,7 @@ class PipelineInstruction:
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=output_uuids,
-                   opaques={'kwargs': kwargs})
+                   opaques={"kwargs": kwargs})
 
     @classmethod
     def SEND(cls, task_uuid, input_uuids):
@@ -70,7 +70,7 @@ class PipelineInstruction:
                    task_uuid=task_uuid,
                    input_uuids=None,
                    output_uuids=output_uuids,
-                   opaques={'set_empty_buffer': set_empty_buffer})
+                   opaques={"set_empty_buffer": set_empty_buffer})
 
     @classmethod
     def FREE(cls, input_uuids):
@@ -371,7 +371,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _compile_task_configs(self, var_at):
         """
-        Assign uuids for each task and prepare configs, as a replacement of MeshWorkerExecutable.__init__
+        Assign uuids for each task and prepare configs, as a replacement of MeshDriverExecutable.__init__
 
         Returns:
             executable_config_lists (Dict[MeshHostWorker, Sequence[ExecutableConfig]]):
@@ -394,7 +394,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # 1. AllocZeroBuffer executables
         mesh_grad_vars = [dict() for _ in range(num_mesh)]
         # TODO(yonghao): replicated code. abstract this part?
-        # collect buffers to allocate in each mesh
+        # collect intermediate buffers in each mesh
         for stage_idx, stage in enumerate(self.stages):
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
             assert len(mesh_indices) == 1
@@ -405,7 +405,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if invar in self.grad_dummy_invars:
                     if invar in grad_var_spec_dict:
                         raise NotImplemented(
-                            f'accumulate {invar} in a mesh but multiple stages')
+                            f"accumulate {invar} at multiple stages in a mesh")
                     grad_var_spec_dict[invar] = input_specs[var_idx]
         if len(grad_var_spec_dict):
             for mesh_idx in range(num_mesh):
@@ -440,11 +440,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _compile_split_input_to_microbatches(self, not_batch_invars, var_at):
         """
-        Split input info like donation into each mesh after expand it.
+        Split input info e.g. donation into each mesh after expand batch args.
         The expansion is like:
         before:
         a, b, c, d
-        after(b, d are batch invars and #mb=2):
+        after(b, d are batch args and #mb=2):
         a, b0, b1, c, d0, d1
         Returns:
             mesh_arg_indices (Sequence[Sequence[int]]):
@@ -528,8 +528,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _compile_collect_outputs(self, var_at):
         """
-        dispatch output infos to each mesh including local_uuid,
-        local indices to global indices and output specs.
+        Dispatch output infos including local uuid, local indices to global
+        indices and output specs to each mesh .
         Returns:
             output_local_uuid_list (Dict[MeshHostWorker, Sequence[np.ndarray]]):
                 output local uuid of each MeshHostWorker
@@ -596,7 +596,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         recv_buf_uuids = {worker: list() for worker in dst_mesh.workers}
         num_device_sender_host = src_mesh.num_devices_per_host
 
-        # collect uuids of each send_tile in each worker according to resharding_task's plan
+        # collect uuids of each send_tile in each worker based on resharding_task's plan
         for sender_str in resharding_task.sender_uuid_plan:
             send_worker = resharding_task.collective_group.device_str_to_mesh_worker_map[
                 sender_str]
@@ -613,7 +613,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.instruction_lists[w].append(
                 PipelineInstruction.SEND(task_uuid, input_uuids))
 
-        # collect uuids of each recv_tile in each worker according to resharding_task's plan
+        # collect uuids of each recv_tile in each worker based on resharding_task's plan
         for receiver_str in resharding_task.receiver_uuid_plan:
             receiver_worker = resharding_task.collective_group.device_str_to_mesh_worker_map[
                 receiver_str]
@@ -666,8 +666,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             input_uuids[mesh_idx] = get_uuid_np_array(input_bufs[mesh_idx])\
                 .reshape(len(mesh_args), num_hosts, num_devices_per_host) \
                 .transpose([1, 0, 2])
-            output_uuids[mesh_idx] = next_remote_buffer_uuid(num_hosts * num_outs[mesh_idx] * num_devices_per_host) \
-                .reshape(num_hosts, num_outs[mesh_idx], num_devices_per_host)
+            output_uuids[mesh_idx] = next_remote_buffer_uuid(
+                num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
+                    num_hosts, num_outs[mesh_idx], num_devices_per_host)
 
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -919,7 +920,7 @@ class PipelineMeshWorkerExecutable:
                 timers("resharding_recv").start()
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
-                    instruction.opaques['set_empty_buffer'])
+                    instruction.opaques["set_empty_buffer"])
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 self.worker.delete_buffers(instruction.input_uuids)

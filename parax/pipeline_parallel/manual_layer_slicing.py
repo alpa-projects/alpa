@@ -4,7 +4,8 @@ from typing import Callable
 
 from jax import tree_flatten, tree_unflatten
 from jax._src.api import make_jaxpr
-from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
+from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
+                      new_jaxpr_eqn, gensym)
 from jax.interpreters.partial_eval import remat_call_p
 
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
@@ -176,12 +177,54 @@ def insert_marker(origin_jaxpr, sliced_eqns):
 
 
 def manual_layer_slicing(fn: Callable, static_argnums=()):
-    """TODO(yonghao): always document top-level API."""
+    """
+    A helper for manual layer slicing to mark all variables sent cross layers.
+    Args:
+        fn (Callable): function fully marked by empty markers.
+            by "fully", it means each tensor computation is between a start
+            marker and its corresponding end marker.
+            by "empty", it means each marker does not mark any variable.
+        static_argnums (Tuple[int]): same definition as jax
+    Returns:
+        transformed_fn (Callable): function fully marked by filled markers.
+            by "filled", it means each start marker exactly marks variables
+            used between start and end marker, but not generated between the
+            range. End marker of stages generating them marks them as well.
+            Only such transformed fn can be analyzed by 3d_pipeline
+    Example:
+    @manual_layer_slicing
+    def loss_fn(params, batch):
+        mark_pipeline("1", "start")
+        activation1 = layer1.apply(params["layer1"], batch["x"])
+        mark_pipeline("1", "end")
+        mark_pipeline("2", "start")
+        activation2 = layer2.apply(params["layer2"], activation1)
+        predicted = jax.nn.sigmoid(activation2)
+        loss = jax.numpy.mean((predicted - batch["y"]) ** 2)
+        mark_pipeline("2", "end")
+        return loss
+    Result markers:
+        mark_pipeline("1", "start"): marks params["layer1"], batch["x"]
+        mark_pipeline("1", "end"): marks activation1
+        mark_pipeline("2", "start"): marks params["layer2"], activation1
+        mark_pipeline("2", "end"): marks loss
+    """
     return transform_pipeline_forward(fn, add_pipeline_marks_for_sliced_eqns,
                                       static_argnums)
 
 
 def remat(fn: Callable, static_argnums=(), use_pipeline=True):
-    """TODO(yonghao): always document top-level API."""
+    """
+    Add remat according to existing pipeline markers:
+    Args:
+        fn (Callable): forward function fully marked by empty markers
+        static_argnums (Tuple[int]): same definition as jax
+        use_pipeline (Bool): whether the returned function keeps markers
+    Returns:
+        transformed_fn (Callable):
+            forward function with remat according layer division. Is not
+            marked if use_pipeline=False. Otherwise still fully marked by
+            empty markers.
+    """
     remat_fn = partial(remat_jaxpr, use_pipeline=use_pipeline)
     return transform_pipeline_forward(fn, remat_fn, static_argnums)

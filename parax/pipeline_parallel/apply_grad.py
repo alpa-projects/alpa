@@ -30,8 +30,8 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
             split_idx = idx
     if split_eqn is None:
         logger.warning(
-            'Missing barrier between compute and apply. Assume there is no '
-            'apply gradient step. Hint: replace jax.grad by parax.grad.')
+            "Missing barrier between compute and apply. Assume there is no "
+            "apply gradient step. Hint: replace jax.grad by parax.grad.")
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn],
@@ -40,7 +40,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
     compute_grad, _, apply_grad = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
     if len(apply_grad.eqns) == 0:
         logger.warning(
-            'the apply gradient part is None. hint: apply() after parax.grad')
+            "the apply gradient part is empty. Hint: apply() after parax.grad")
     return compute_grad, apply_grad, split_eqn
 
 
@@ -84,7 +84,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                     reverse_gradients[eqn.invars[i]] = final_outvar
     # FIXME(zhuohan): Should support auxiliary outputs in the future (e.g. loss)
     for outvar in raw_gradients:
-        assert outvar in gradients, 'all gradients should be captured by pipeline marker'
+        assert outvar in gradients, "all gradients should be captured by pipeline marker"
     grad_values = list(gradients.values())
     # generate new variables
     grad_invars = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
@@ -103,7 +103,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
             grad_in_to_out[grad_invars[gradients[outvar]]] = grad_outs[
                 gradients[outvar]]
         else:
-            raise NotImplemented('gradients cannot be Literal')
+            raise NotImplemented("gradients cannot be Literal")
     gradients = set(grad_values)
     # rewrite eqns
     new_eqns = []
@@ -112,14 +112,14 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     to_acc = []
     for eqn in compute_jaxpr.eqns:
         if eqn.primitive is pipeline_p:
-            if eqn.params['mark_type'] == 'start':
+            if eqn.params["mark_type"] == "start":
                 pipe_start = eqn
                 for outvar in eqn.outvars:
                     if not isinstance(outvar, DropVar) and outvar in gradients:
                         # collect gradients in this computation
                         to_acc.append(outvar)
                 continue
-            if eqn.params['mark_type'] == 'end':
+            if eqn.params["mark_type"] == "end":
                 # add grad used in this computation in pipeline start
                 grad_in_after_pipe = {
                     outvar: gensym_fn(outvar.aval) for outvar in to_acc
@@ -169,9 +169,10 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                            num_micro_batches, num_meshes, global_invars,
                            global_outvars, donated_invars):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
+    # TODO(yonghao): the condition of creating RDA variable should be extended.
 
     # Process apply gradient:
-    # 1. change invars of apply grad to output of accumulate grad
+    # 1. change invars of apply grad to outvars of accumulate grad
     gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
     mask = {
         outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
@@ -282,10 +283,10 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
         info: A tuple of:
-            deps (List[Tuple[int, int]]): Indicating dependencies of apply gradient computations
-            mesh_assignment (Dict[int, int]): Indicating mesh the apply grad computation is assigned
-            infered_global_invars (Dict[Var, List[int]]): Indicating which clusters each
-            input variable of apply_gradient function should be sent to.
+            deps (List[Tuple[int, int]]): dependencies of apply gradient computations
+            mesh_assignment (Dict[int, int]): From apply grad index to the its mesh's index
+            infered_global_invars (Dict[Var, List[int]]): From invar index to meshes need
+            this invar.
     """
 
     def add_allocation(cur: Set, add: Set):

@@ -13,15 +13,12 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.pipeline_parallel.centralized_distributerd_runtime import (
     CentralizedDistributedRuntime)
-from parax.pipeline_parallel.primitive_def import (mark_pipeline_jaxpreqn,
-                                                   pipeline_p)
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages)
 from parax.pipeline_parallel.computation import (
-    JaxPipelineComputation, create_donation_mapping,
-    generate_sharded_xla_computations, mark_missing_vars_in_pipeline_marks,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
-    split_donate_invars)
+    create_donation_mapping, generate_sharded_xla_computations,
+    mark_missing_vars_in_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars)
 from parax.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
@@ -47,7 +44,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     virtual_mesh = devices
     num_micro_batches = global_config.num_micro_batches
     if num_micro_batches is None:
-        logger.warning('num microbatch is unset. Use 1 by default.')
+        logger.warning("num microbatch is unset. Use 1 by default.")
         num_micro_batches = 1
     microbatch_avals = get_micro_batch(batch_invars, num_micro_batches, *avals)
     with jax.disable_jit():

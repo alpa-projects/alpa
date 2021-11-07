@@ -515,8 +515,13 @@ def generate_sharded_xla_computations(
         computation_donate_invars, physical_mesh, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
         search_task, record_file):
-    """Generate sharded XLA computations by running the auto-sharding pass 
-    on the given JaxPipelineComputations."""
+    """
+    Generate sharded XLA computations by running the auto-sharding pass
+    on the given JaxPipelineComputations.
+
+    Note: we merge the colocated forward and backward computation and compile
+    them together to get a sharding strategy config.
+    """
     invars = set()
     outvars = set()
     donation_mapping = dict()

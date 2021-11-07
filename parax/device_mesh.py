@@ -1061,7 +1061,7 @@ class VirtualMesh:
                 for i in devices_this_host
             ])
 
-    def slice(self, dim, indices):
+    def slice_1d(self, dim, indices):
         """
         Slice a mesh given the slicing config.
 

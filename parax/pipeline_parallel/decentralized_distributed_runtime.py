@@ -165,11 +165,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_grad_uuids = list(grad_uuids[mesh_idx])
             for worker_idx, worker in enumerate(physical_mesh.workers):
+                acc_grad_local_uuids = []
+                if len(mesh_grad_uuids):
+                    acc_grad_local_uuids = mesh_grad_uuids[worker_idx]
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],
                         executable_config_lists[worker],
-                        mesh_grad_uuids[worker_idx],
+                        acc_grad_local_uuids,
                         accumulated_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
@@ -349,7 +352,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for worker in self.instruction_lists:
             used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
             mesh_idx, worker_idx = worker_to_idx[worker]
-            accumulated_uuids = list(grad_uuids[mesh_idx])[worker_idx]
+            accumulated_uuids = list(grad_uuids[mesh_idx])
+            if len(accumulated_uuids):
+                accumulated_uuids = accumulated_uuids[worker_idx]
             # numpy for (arg, device)
             accumulated_uuids = [[
                 recursive_lookup(donation_mapping[mesh_idx], uuid)

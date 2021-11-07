@@ -999,15 +999,22 @@ class AllocZeroBufferWorkerExecutable:
 
 class MemzeroWorkerExecutable:
 
-    def __init__(self, worker:"MeshHostWorker", uuid: int, buffer_shard_shapes, buffer_shard_dtypes):
-        num_devices = len(worker.backend.devices())
-        self.memzero = compile_memset_zero_buffers(worker.backend, num_devices, buffer_shard_shapes, buffer_shard_dtypes)
+    def __init__(self, worker: "MeshHostWorker", uuid: int, buffer_shard_shapes,
+                 buffer_shard_dtypes):
+        num_devices = len(worker.local_devices)
+        self.memzero = compile_memset_zero_buffers(worker.backend, num_devices,
+                                                   buffer_shard_shapes,
+                                                   buffer_shard_dtypes)
         self.worker = worker
 
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids, output_uuids, sync_before=False, sync_after=False):
+    def execute_on_worker(self,
+                          input_uuids,
+                          output_uuids,
+                          sync_before=False,
+                          sync_after=False):
         buffer_dict = self.worker.buffers
         before_sync_func = self.sync_func if sync_before else None
         after_sync_func = self.sync_func if sync_after else None

@@ -40,7 +40,7 @@ class GlobalConfig:
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
-        ########## Options for pipeline runtime ##########
+        ########## Options for eager pipeline runtime ##########
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
 
@@ -79,7 +79,8 @@ def set_parallelize_options(devices=None,
                             pipeline_stage_mode="uniform_layer_gpipe",
                             cache_compute_cost=None,
                             forward_stage_layer_ids=None,
-                            submesh_shapes=None):
+                            sub_physical_mesh_shapes=None,
+                            sub_logical_mesh_shapes=None):
     """
     Set the global options for all @parallelize decorator.
 
@@ -112,8 +113,10 @@ def set_parallelize_options(devices=None,
         cost. Used for "auto_gpipe".
       forward_stage_layer_ids (Optional[List[List[int]]]): Layer IDs of each
         forward stage. Used for "manual_gpipe".
-      submesh_shapes (Optional[List[Tuple[int, int]]]): The shapes of submeshes
+      sub_physical_mesh_shapes (Optional[List[Tuple[int, int]]]): The shapes of submeshes
         for each forward stage. Used for "manual_gpipe".
+      sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
+        submeshes for each forward stage. Used for manual layer slicing.
     """
     global global_config
 
@@ -130,7 +133,9 @@ def set_parallelize_options(devices=None,
     global_config.pipeline_stage_mode = pipeline_stage_mode
     global_config.cache_compute_cost = cache_compute_cost
     global_config.forward_stage_layer_ids = forward_stage_layer_ids
-    global_config.submesh_shapes = submesh_shapes
+    global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
+    # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
+    global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
 
 
 # Don't let the compilation on the driver node use GPUs.

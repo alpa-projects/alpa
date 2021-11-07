@@ -10,7 +10,7 @@ from typing import Sequence, Set, Tuple
 from parax.pipeline_parallel.computation import JaxPipelineComputation
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, split_global_use_and_donate)
+    compile_and_profile_stage_compute_cost, split_global_use_and_donate, generate_stage_info, compile_all)
 from parax.pipeline_parallel.computation import merge_computation_jaxprs
 
 
@@ -120,6 +120,26 @@ def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
             compute_cost[start, end] = np.mean(cost)
     return compute_cost
 
+
+def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    indices = list(range(2 * num_layers))
+    compute_cost = np.full((num_layers, num_layers), np.inf)
+    stage_infos = []
+    for start in range(0, num_layers):
+        for end in range(start, num_layers):
+            layer_indices = indices[start:end +
+                                    1] + indices[2 * num_layers - end -
+                                                 1:2 * num_layers - start]
+            stage_info = generate_stage_info(layers, layer_indices, donation_mapping, global_outvars)
+            stage_infos.append(stage_info)
+    # FIXME(zhuohan): set num_gpus and num_cpus as suitable parameters
+    compiled_outputs = compile_all(stage_infos,
+                                   mesh.get_default_logical_mesh(), 16,
+                                   4)
+    # TODO(zhuohan): finish here
+    return compute_cost
 
 def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
                      global_outvars):

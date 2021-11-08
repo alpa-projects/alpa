@@ -5,12 +5,11 @@ from functools import partial, wraps
 from typing import List, Callable
 
 from jax._src.tree_util import tree_unflatten
-import jax
 from jax import tree_flatten
 from jax import lax
-from jax._src.api import make_jaxpr, _check_scalar
+from jax._src.api import make_jaxpr
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun
+from jax.core import JaxprEqn, Jaxpr, Var, jaxpr_as_fun, CallPrimitive
 from jax.interpreters import xla
 import numba
 import numpy as np
@@ -82,12 +81,24 @@ def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
 
 non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 
+def is_nontrivial(eqn):
+    if eqn.primitive in non_trivial_primitive:
+        return True
+    if isinstance(eqn.primitive, CallPrimitive):
+        assert "call_jaxpr" in eqn.params
+        called = eqn.params["call_jaxpr"]
+        for subjaxpr_eqn in called.eqns:
+            if is_nontrivial(subjaxpr_eqn):
+                return True
+    return False
 
-def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
+def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False):
+    layer_num = int(layer_num)
     length = len(jaxpr.eqns)
-    non_trivial = [eqn.primitive in non_trivial_primitive for eqn in jaxpr.eqns]
-    non_trivial = np.array(non_trivial)
-    C = np.full((length + 1, length + 1), 0, dtype=np.float32)
+    length = len(jaxpr.eqns)
+    non_trivial = [is_nontrivial(eqn) for eqn in jaxpr.eqns]
+    non_trivial = np.array(non_trivial, dtype=np.int32)
+    Cost = np.full((length + 1, length + 1), 0, dtype=np.float32)
     # init
 
     outvars = set()
@@ -102,39 +113,42 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
                   and invar not in invars:
                     invars.add(invar)
                     tot += invar.aval.size
-            C[k, r] = tot
+            Cost[k, r] = tot
 
-    LAYER_HEAVY_OP_BOUND = non_trivial.sum() / layer_num
-    LAYER_HEAVY_OP_BOUND = max(LAYER_HEAVY_OP_BOUND + 1,
-                               LAYER_HEAVY_OP_BOUND * (1 + eps))
+    LAYER_HEAVY_OP_AVG = non_trivial.sum() / layer_num
+    LAYER_HEAVY_OP_BOUND = max(LAYER_HEAVY_OP_AVG + 5,
+                               LAYER_HEAVY_OP_AVG * (1 + eps))
+    LAYER_HEAVY_OP_LOW_BOUND = 3
+    if LAYER_HEAVY_OP_AVG < LAYER_HEAVY_OP_LOW_BOUND:
+        layer_num = int(non_trivial.sum() / LAYER_HEAVY_OP_LOW_BOUND)
 
     @numba.jit(nopython=True)
-    def DP(C):
-        A = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
-        A_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int32)
-        B = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
-        A[0, 0] = 0
+    def DP(Cost):
+        MaxCost = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
+        MaxCost_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int32)
+        Available = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
+        MaxCost[0, 0] = 0
         for l in range(1, length + 1):
             cnt = 0
             for r in range(l, length + 1):
                 if non_trivial[r - 1]:
                     cnt += 1
-                if cnt < 1:
+                if cnt < LAYER_HEAVY_OP_LOW_BOUND:
                     continue
                 elif cnt <= LAYER_HEAVY_OP_BOUND:
-                    B[l, r] = 0
+                    Available[l, r] = 0
                 else:
                     break
         for q in range(1, layer_num + 1):
             for r in range(1, length + 1):
                 for k in range(0, r):
-                    new_value = A[k, q - 1] + B[k + 1, r] + C[k, r]
-                    if new_value < A[r, q]:
-                        A[r, q] = new_value
-                        A_argmin[r, q] = k
-        return A_argmin
+                    new_value = max(MaxCost[k, q - 1], Available[k + 1, r] + Cost[k, r])
+                    if new_value < MaxCost[r, q]:
+                        MaxCost[r, q] = new_value
+                        MaxCost_argmin[r, q] = k
+        return MaxCost_argmin, MaxCost[length, layer_num]
 
-    A_argmin = DP(C)
+    A_argmin, value = DP(Cost)
 
     reversed_sliced_eqns = []
 
@@ -144,7 +158,10 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float):
         reversed_sliced_eqns.append(jaxpr.eqns[k:r])
         r = k
     assert r == 0, "no solution for layer clustering" if r == -1 else "unknown error"
-    return list(reversed(reversed_sliced_eqns))
+    solution = list(reversed(reversed_sliced_eqns))
+    if return_value:
+        return solution, value
+    return solution
 
 
 def automatic_layer_slicing(fn: Callable,

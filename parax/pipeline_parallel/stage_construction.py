@@ -133,7 +133,8 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
             layer_indices = indices[start:end +
                                     1] + indices[2 * num_layers - end -
                                                  1:2 * num_layers - start]
-            stage_info = generate_stage_info(layers, layer_indices, donation_mapping, global_outvars)
+            stage_name = "stage_{}_{}".format(start, end)
+            stage_info = generate_stage_info(layers, layer_indices, donation_mapping, global_outvars, stage_name)
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
     # TODO(zhuohan): set the number of workers as a tunable parameter

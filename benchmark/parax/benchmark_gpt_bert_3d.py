@@ -1,40 +1,21 @@
 import argparse
-import time
-from functools import partial
 
-import copy
 import jax
 import jax.numpy as jnp
 import numpy as np
-import parax
 import ray
-from flax import optim
 import optax
 
+import parax
 from benchmark.parax.benchmark_transformer_layer_3d import report_pipeline_breakdown
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.pipeline_parallel import automatic_layer_slicing
 from parax.util import write_tsv, print_used_time
 from benchmark.parax.benchmark_gpt_bert import compute_parameter_count, compute_tflops
 
 GB = 1024 ** 3
-
-
-def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
-    """For debugging usage."""
-    shapes = jax.tree_util.tree_map(lambda x : np.prod(x.shape), optimizer.target)
-    sizes = jax.tree_util.tree_leaves(shapes)
-    cost = 0
-    print(logical_mesh.mesh_beta)
-    for size in sizes:
-        cost += logical_mesh.all_reduce_cost(size * 4, 0)
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,4), (1,5), (2,6), (3,7),), size / 4, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,2,4,6,), (1,3,5,7)), size / 2, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,1,2,3,4,5,6,7),), size, "float32")
-    print(cost)
 
 
 def create_train_state(rngkey, model, batch, dtype):
@@ -135,25 +116,6 @@ def benchmark_one_case(benchmark_case):
     }
     print_used_time("Prepare input")
 
-    # Init model and optimizer
-    # if model_type == "gpt":
-    #     model = FlaxGPTForLMModule(BertConfig(
-    #         vocab_size=vocab_size,
-    #         hidden_size=hidden_size,
-    #         num_attention_heads=num_heads,
-    #         intermediate_size=hidden_size * 4,
-    #         num_hidden_layers=num_layers,
-    #         type_vocab_size=0,
-    #     ), dtype=dtype)
-    # elif model_type == "bert":
-    #     model = FlaxBertForMaskedLMModule(BertConfig(
-    #         vocab_size=vocab_size,
-    #         hidden_size=hidden_size,
-    #         num_attention_heads=num_heads,
-    #         intermediate_size=hidden_size * 4,
-    #         num_hidden_layers=num_layers,
-    #         type_vocab_size=0,
-    #     ), dtype=dtype)
     if model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
             vocab_size=vocab_size,
@@ -185,7 +147,6 @@ def benchmark_one_case(benchmark_case):
     train_step = get_train_step(grad_func, num_layers, False, pipeline_mp_size, jnp.float16)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
-
 
     for i in range(args.niter):
         state = train_step(state, batch, rngkey)
@@ -222,91 +183,53 @@ def benchmark_one_case(benchmark_case):
 # w/ pipeliening
 default_benchmark_suite = {
 
-4: [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD, RS
-
-    # # smaller with half seq_len and 3/5 V
-    # (32,  512,  1024, 24, 1024//64,  32000, 2,  2,  1,  1,  True,  False),
-
-    # # GPT-2 355M, DP + PP
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  1,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  2,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  4,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  8,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  16,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  32,  True, False),
-    #
-    # # GPT-3 355M, auto sharding + PP
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  1,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  2,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  4,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  8,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  16,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  2,  32,  False, False),
-
-    # GPT-3 355M, PP
-    (8,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  1,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  2,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  4,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  8,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  16,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  32,  False, False),
-],
-
 8: [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD, RS
-    # GPT-2 355M, DP + PP = 2
-    #
-    # (16,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  2,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  4,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  8,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  16,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  32,  True, False),
-    #
-    # # GPT-3 355M, auto sharding + PP = 2
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  2,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  4,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  8,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  16,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  32,  False, False),
-    #
-    # # GPT-3 355M, DP + PP = 4
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  1,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  2,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  4,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  8,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  16,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  32,  True, False),
-    #
-    # # GPT-3 355M, auto sharding + PP = 4
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  1,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  2,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  4,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  8,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  16,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  32,  False, False),
+    # GPT-2 355M, DP + PP2
+    (16,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  2,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  4,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  8,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  16,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  32,  True, False),
 
-    # GPT-3 355M, PP=8
-    # (16,  1024,  1024, 24, 1024//64,  51200, 2,  2,  2,  8,  False, False),
-    (8,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  1,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 4,  2,  2,  32,  True, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  2,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  4,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  8,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  16,  False, False),
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  32,  False, False),
+    # GPT-3 355M, auto sharding + PP2
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  2,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  4,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  8,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  16,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  32,  False, False),
+
+    # GPT-3 355M, DP + PP4
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  1,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  2,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  4,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  8,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  16,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  32,  True, False),
+
+    # GPT-3 355M, auto sharding + PP4
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  1,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  2,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  4,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  8,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  16,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  32,  False, False),
+
+    # GPT-3 355M, PP8
+    # (16,  1024,  1024, 24, 1024//64,  51200, 2,  2,  2,  8,  False, False),  # sanity check case
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  2,  2,  32,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  2,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  4,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  8,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  16,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  32,  False, False),
 ],
 
 16: [
     # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD, RS
-    (512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  1, False, False),
-    (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  1, False, False),
-    (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  1, False, False),
-    (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  1, False, False),
-    (16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  1, False, False),
 ]
 }
 

@@ -102,7 +102,8 @@ def get_submesh_choices(mesh: VirtualMesh):
     return submesh_choices
 
 
-def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
+def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
+    mesh = virtual_mesh.get_physical_mesh()
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
@@ -118,6 +119,7 @@ def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
             cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(
                 selected_layers, mesh, local_donation_mapping, global_used_list)
             compute_cost[start, end] = np.mean(cost)
+    mesh.shutdown()
     return compute_cost
 
 
@@ -174,11 +176,10 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
             [list(range(num_devices)) for _ in range(num_hosts)])
         mesh = sliced_virtual_mesh.get_physical_mesh()
         tic = time()
-        mesh_compute_cost = distributed_profile_on_mesh(mesh, layers, donation_mapping,
+        mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh, layers, donation_mapping,
                                                         global_outvars)
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
-        mesh.shutdown()
         print(
             f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds'
         )

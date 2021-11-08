@@ -1,12 +1,10 @@
 import argparse
 
-import copy
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 import ray
-from functools import partial
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
@@ -172,13 +170,14 @@ def benchmark_transformer_one_case(benchmark_case):
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
 # #head = num_heads, LD0 = logical mesh dim 0, LD1 = logical mesh_dimension_1
-
+# PD0 = physical mesh dim 0, PD = physical mesh dim 1
+# FD = Force DP, NB = number of microbatches, Remat: rematerialization
 benchmark_suite_2_gpu = [
 ]
 
 
 benchmark_suite_4_gpu = [
-    # B,  S,    H,    L,  #head,     LD0, LD1, PD0, PD1, PP, NB, FD,   CK,
+    # B,  S,    H,    L,  #head,     LD0, LD1, PD0, PD1, PP, NB, FD,    Remat,
     (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  1,  False, False),
     (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
     (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  4,  False, False),

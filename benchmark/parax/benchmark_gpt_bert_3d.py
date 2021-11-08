@@ -1,80 +1,96 @@
 import argparse
-import time
 
-import copy
 import jax
 import jax.numpy as jnp
 import numpy as np
 import ray
-from flax import optim
+import optax
 
+import parax
+from benchmark.parax.benchmark_transformer_layer_3d import report_pipeline_breakdown
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, mark_pipeline, manual_layer_slicing)
-from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
+from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import write_tsv
+from parax.util import write_tsv, print_used_time
+from benchmark.parax.benchmark_gpt_bert import compute_parameter_count, compute_tflops
 
 GB = 1024 ** 3
 
 
-tic = time.time()
-def log_time_stamp(message):
-    global tic
-    if message:
-        print(f" - {message}: {time.time() - tic:.2f} s")
-    tic = time.time()
+def create_train_state(rngkey, model, batch, dtype):
+    params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
+                              batch["token_type_ids"], batch["position_ids"])
+
+    def weight_decay_mask(pytree):
+        # do not use weight decay on layer norm and bias.
+        return jax.tree_map(lambda x: x.ndim > 1, pytree)
+
+    tx = optax.chain(
+        #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
+        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+    )
+    mixed_precision = (dtype == jnp.float16)
+    state = TrainState.create(
+        apply_fn=model.apply,
+        params=params,
+        tx=tx,
+        mixed_precision=mixed_precision,
+        dynamic_scale=None)
+    return state
 
 
-def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
-    """For debugging usage."""
-    shapes = jax.tree_util.tree_map(lambda x : np.prod(x.shape), optimizer.target)
-    sizes = jax.tree_util.tree_leaves(shapes)
-    cost = 0
-    print(logical_mesh.mesh_beta)
-    for size in sizes:
-        cost += logical_mesh.all_reduce_cost(size * 4, 0)
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,4), (1,5), (2,6), (3,7),), size / 4, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,2,4,6,), (1,3,5,7)), size / 2, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,1,2,3,4,5,6,7),), size, "float32")
-    print(cost)
+def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype):
 
+    @parallelize
+    def train_step(state, batch, rng_key):
 
-def compute_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
-                   num_gpus, latency, checkpoint_activations=False):
-    factor = 96 if checkpoint_activations else 72
-    total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
-                 (1 + seq_len / (6 * hidden_size)) \
-                 + 6 * batch_size * seq_len * hidden_size * vocab_size
-    tflops = total_flop / latency / num_gpus / 1e12
-    return tflops
+        # @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
+        def loss_func(params):
+            rngs = {"dropout": rng_key}
+            if pipeline_mp_size > 1:
+                mark_pipeline(name="0", mark_type="start")
+            logits = state.apply_fn(params,
+                                    batch["input_ids"],
+                                    batch["attention_mask"],
+                                    batch["token_type_ids"],
+                                    batch["position_ids"],
+                                    deterministic=True,
+                                    rngs=rngs)[0]
+            label_mask = jnp.where(batch["labels"]  > 0, 1.0, 0.0)
+            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+            loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+            loss = (label_mask * loss).sum() / label_mask.sum()
+            if pipeline_mp_size > 1:
+                mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
+            return loss
 
+        if pipeline_mp_size > 1:
+            loss_func = manual_layer_slicing(loss_func)
+        # params = jax.tree_util.tree_map(lambda x: x, state.params)
+        grads = grad_func(loss_func)(state.params)
+        new_state = state.apply_gradients(grads=grads)
+        return new_state
 
-def compute_parameter_count(num_layers, hidden_size, vocab_size):
-    return num_layers * (
-        # self-attention
-            hidden_size * (3 * hidden_size + 1) +
-            hidden_size * (hidden_size + 1) +
-            # mlp
-            hidden_size * (4 * hidden_size + 1) +
-            hidden_size * 4 * (hidden_size + 1) +
-            # layer norm
-            hidden_size * 4
-    ) + vocab_size * (hidden_size + 1)
+    return train_step
 
-
-def benchmark_transformer_one_case(benchmark_case, use_profiling):
-    log_time_stamp(None)
+def benchmark_one_case(benchmark_case):
+    backup = global_config.backup()
+    print_used_time(None)
 
     # Model configs
     model_type = args.model
-    batch_size, seq_len, hidden_size, num_layers, num_heads, \
-    vocab_size, mesh_dim0, mesh_dim1, pipeline_mp_size, num_micro_batches, \
-    force_data_parallel = benchmark_case
+
+    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
+    mesh_dim0, mesh_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel, \
+    prefer_reduce_scatter = benchmark_case
     dtype = jnp.float16
 
     # Parallel configs
+    grad_func = parax.grad
+
     global_config.force_data_parallel = force_data_parallel
-    global_config.prefer_reduce_scatter = False
+    global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_mesh()
@@ -82,79 +98,25 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
     #                                               mesh_topology="tree",
     #                                               inter_host_bandwidth=1,
     #                                               intra_host_bandwidth=30)
-    set_parallelize_options(devices=virtual_mesh, strategy="3d_parallel")
+    set_parallelize_options(devices=virtual_mesh,
+                            strategy="3d_parallel",
+                            num_micro_batches=num_micro_batches)
+    print_used_time("Setup device mesh")
 
-
-    @parallelize(donate_argnums=())
-    def train_step(optimizer, batch, rng_key, apply_func):
-
-        def loss_func(params):
-            rngs = {"dropout": rng_key}
-            if pipeline_mp_size > 1:
-                mark_pipeline(name="0", mark_type="start")
-
-            logits = apply_func(params,
-                                batch["input_ids"],
-                                batch["attention_mask"],
-                                batch["token_type_ids"],
-                                batch["position_ids"],
-                                deterministic=True,
-                                rngs=rngs)[0]
-            label_mask = jnp.where(batch["labels"]  > 0, 1.0, 0.0)
-            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
-            loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
-            loss = (label_mask * loss).sum() / label_mask.sum()
-            # TODO(lmzheng): add dynamic scale for mixed-precision training
-            if pipeline_mp_size > 1:
-                mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
-
-            return loss
-
-        # # pipeline marker
-        # if pipeline_mp_size > 1:
-        #     mark_pipeline(optimizer.target, name="-2", mark_type="start")
-        # params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), optimizer.target)
-        # grad = jax.grad(loss_func)(params)
-        # new_optimizer = optimizer.apply_gradient(grad)
-        if pipeline_mp_size > 1:
-            loss_func = manual_layer_slicing(loss_func)
-
-        grad = jax.grad(loss_func, argnums=(0))(optimizer.target)
-        # new_optimizer = optimizer.apply_gradient(grad)
-        # return new_optimizer
-        return grad
 
     # Prepare input batch
-    tmp_dtype = jnp.int32
+    # Note: there will be an input conversion.
+    input_dtype = jnp.int32
     batch = {
-        "input_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
-        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
-        "position_ids": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
-        "labels": jnp.ones((batch_size, seq_len), dtype=tmp_dtype),
+        "input_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=input_dtype),
+        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
+        "position_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
+        "labels": jnp.ones((batch_size, seq_len), dtype=input_dtype),
     }
-    log_time_stamp("Prepare input")
+    print_used_time("Prepare input")
 
-    # Init model and optimizer
-    if model_type == "gpt":
-        model = FlaxGPTForLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
-            num_hidden_layers=num_layers,
-            type_vocab_size=0,
-        ), dtype=dtype)
-    elif model_type == "bert":
-        model = FlaxBertForMaskedLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
-            num_hidden_layers=num_layers,
-            type_vocab_size=0,
-        ), dtype=dtype)
-    elif model_type == "bert_pipeline":
+    if model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -164,7 +126,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size
         ), dtype=dtype)
-    elif model_type == "gpt_pipeline":
+    elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -178,111 +140,125 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
-                              batch["token_type_ids"], batch["position_ids"])
-    optimizer = optim.Adam(1e-2).create(params)
-    del params
-    log_time_stamp("Init model and optimizer")
+    state = create_train_state(rngkey, model, batch, dtype)
+    print_used_time("Create train state")
 
-    # Compile executable
-    executable = train_step.get_executable(optimizer, batch, rngkey, model.apply)
-    log_time_stamp("Compile (driver)")
+    # compile executable
+    train_step = get_train_step(grad_func, num_layers, False, pipeline_mp_size, jnp.float16)
+    executable = train_step.get_executable(state, batch, rngkey)
+    print_used_time("Compile (driver)")
 
     for i in range(args.niter):
-        train_step(optimizer, batch, rngkey, model.apply)
-
-    # def run_func():
-    #     nonlocal optimizer
-    #     train_step(optimizer, batch, rngkey, model.apply)
+        state = train_step(state, batch, rngkey)
 
     timer_name = "overall"
-    costs = executable.get_execution_time_costs(timer_name=timer_name)
-    real_mem = -1
-    objective = -1
+    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+    print_used_time("Benchmark")
 
-    # Log benchmark results
-    # tflops = compute_tflops(batch_size, seq_len, num_layers,
-    #                         hidden_size, vocab_size,
-    #                         physical_mesh.total_devices,
-    #                         np.mean(costs))
-    # parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
-    heads = ["Type", "Case", "Mesh Shape", "Peak Mem", "Objective", "Mean Time", "Std Time"]
-    values = ["transformer-layer", str(benchmark_case[:-5]), str(benchmark_case[-5:]),
-              f"{real_mem/GB:.3f}", f"{objective:.2f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+    # Compute statistics
+    tflops = compute_tflops(batch_size, seq_len, num_layers,
+                            hidden_size, vocab_size,
+                            virtual_mesh.total_devices,
+                            np.mean(overall_costs[2:]))
+    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
+
+
+    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
+    heads = ["Type", "Model Config", "Parallel Config",  "# Microbatch", "Mean Time",
+             "Std Time", "#Params", "TFLOPs"]
+    values = [model_type, str(benchmark_case[:-6]), str(benchmark_case[-6:-1]), f"{benchmark_case[-3]:.3f}",
+              f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}", str(parameter_count),
+              str(tflops)]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 
-    # physical_mesh.shutdown()
+    executable.shutdown()
 
 
 # B = global_batch_size, S = seq_len,
 # H = hidden_size, L = num_layers, V = vocab_size, #head = num_heads,
 # DP = data_parallel, TP = tensor_model_parallel, PP = pipeline_model_parallel,
-# NB = num_micro_batches
-# DI = ddp_implementation, CK = checkpoint_activations
-# FD = force data-parallel
+# NB = num_micro_batches, FD = force data-parallel
+# RS = prefer_reduce_scatter
 
 # w/ pipeliening
-benchmark_suite_1_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  1,  1,  False),
-    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  1,  1,  False),
+default_benchmark_suite = {
+
+8: [
+    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD, RS
+    # GPT-2 355M, DP + PP2
+    (16,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  2,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  4,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  8,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  16,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  32,  True, False),
+
+    # GPT-3 355M, auto sharding + PP2
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  1,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  2,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  4,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  8,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  16,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  1,  2,  32,  False, False),
+
+    # GPT-3 355M, DP + PP4
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  1,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  2,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  4,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  8,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  16,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  32,  True, False),
+
+    # GPT-3 355M, auto sharding + PP4
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  1,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  2,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  4,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  8,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  16,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 2,  1,  4,  32,  False, False),
+
+    # GPT-3 355M, PP8
+    # (16,  1024,  1024, 24, 1024//64,  51200, 2,  2,  2,  8,  False, False),  # sanity check case
+    (32,  1024,  1024, 24, 1024//64,  51200, 4,  2,  2,  32,  True, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  2,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  4,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  8,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  16,  False, False),
+    (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  32,  False, False),
+],
+
+16: [
+    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD, RS
 ]
+}
 
-benchmark_suite_4_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-
-    (8,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
-    # (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  2,  1,  False),
-    # (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  2,  1,  False),
-]
-
-benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-    (128, 512,  1024, 24, 1024//64,  32000, 8,  1,  1,  1,  False),
-    (256, 512,  1024, 24, 1024//64,  32000, 8,  1,  1,  2,  False),
-    (8,   1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  1,  False),
-    (16,  1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  2,  False),
-    (256, 1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  32, False),
-]
-
-benchmark_suite_16_gpu = [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, FD
-    (256, 512,  1024, 24, 1024//64,  32000, 16, 1,  1,  1,  False),
-    (512, 512,  1024, 24, 1024//64,  32000, 16, 1,  1,  2,  False),
-    (16,  1024, 4096, 20, 4096//128, 32000, 2,  8,  1,  1,  False),
-    (256, 1024, 4096, 20, 4096//128, 32000, 2,  8,  1,  16, False),
-]
-
-def benchmark_all(use_profiling):
-    num_gpus = ray.cluster_resources()["GPU"]
-    benchmark_suites = {
-        # 1: benchmark_suite_1_gpu,
-        4: benchmark_suite_4_gpu,
-        # 8: benchmark_suite_8_gpu,
-        # 16: benchmark_suite_16_gpu,
-    }
-
-    for case in benchmark_suites[int(num_gpus)]:
-        # Backup global config
-        old_global_config = copy.deepcopy(global_config.__dict__)
-
-        benchmark_transformer_one_case(case, use_profiling)
-
-        # Restore global config
-        global_config.__dict__ = old_global_config
+benchmark_suites = {
+    "default": default_benchmark_suite
+}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=10)
+    parser.add_argument("--suite", choices=["default"], default="default")
     args = parser.parse_args()
 
     ray.init(address="auto")
     jax.config.update('jax_platform_name', 'cpu')
+    num_gpus = int(ray.cluster_resources()["GPU"])
 
     global_config.use_dummy_value_for_benchmarking = True
 
-    benchmark_all(args.use_profiling)
+    try:
+        suite = benchmark_suites[args.suite][num_gpus]
+    except KeyError:
+        suite = None
+
+    if not suite:
+        print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
+        exit()
+
+    for case in suite:
+        benchmark_one_case(case)

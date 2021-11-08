@@ -18,11 +18,11 @@ MB = 1024 ** 2
 GB = 1024 ** 3
 
 
-def report_pipeline_breakdown(executable, timer_names):
+def report_pipeline_breakdown(executable, timer_names, niter):
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
 
     print(">>> overall: {}...".format(overall_costs))
-    other_percentage = [100.0] * args.niter
+    other_percentage = [100.0] * niter
     other = overall_costs
     for timer_name in timer_names:
         costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
@@ -158,7 +158,8 @@ def benchmark_transformer_one_case(benchmark_case):
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")
 
-    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"])
+
+    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
     # Log benchmark results
     heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch", "Force DP", "Remat", "Mean Time", "Std Time"]
     paralell_config = (benchmark_case[5], benchmark_case[6], benchmark_case[9])
@@ -196,12 +197,12 @@ benchmark_suite_4_gpu = [
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  8,  True, False),
     # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, True, False), # OOM on Gpipe, but not 1F1B
 
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  1,  False, False), # might OOM
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  4,  False, False),
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  8,  False, False),
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, False, False), # Gpipe OOM
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  32, False, False), # might OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  1,  False, False), # might OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  4,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  8,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, False, False), # Gpipe OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  32, False, False), # might OOM
 
     # (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  1,  False, False), # might OOM
     (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  2,  False, False),

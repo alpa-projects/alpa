@@ -8,6 +8,7 @@ import time
 import numpy as np
 from megatron.utils import average_losses_across_data_parallel_group
 from megatron.model import BertModel, GPTModel
+from megatron.model import ModelType
 from megatron import mpu, initialize_megatron, get_args, get_timers
 from megatron.training import train_step, setup_model_and_optimizer
 import torch
@@ -163,7 +164,8 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     elif model_type == "bert":
         model_provider, loss_func, forward_step = get_bert_functions()
 
-    model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider)
+    model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider,
+                                                               model_type=ModelType.encoder_or_decoder)
 
     if rank == 0:
         parameter_count = compute_gpt_parameter_count(

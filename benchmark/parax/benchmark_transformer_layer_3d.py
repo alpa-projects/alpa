@@ -18,11 +18,11 @@ MB = 1024 ** 2
 GB = 1024 ** 3
 
 
-def report_pipeline_breakdown(executable, timer_names):
+def report_pipeline_breakdown(executable, timer_names, niter):
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
 
     print(">>> overall: {}...".format(overall_costs))
-    other_percentage = [100.0] * args.niter
+    other_percentage = [100.0] * niter
     other = overall_costs
     for timer_name in timer_names:
         costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
@@ -152,7 +152,7 @@ def benchmark_transformer_one_case(benchmark_case):
     print_used_time("Benchmark")
 
 
-    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"])
+    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
     # Log benchmark results
     heads = ["Type", "Model Config", "Parallel Config", "# Microbatch", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:5]), str(benchmark_case[5:]),

@@ -174,7 +174,6 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         sliced_virtual_mesh = virtual_mesh.slice_2d(
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
-        mesh = sliced_virtual_mesh.get_physical_mesh()
         tic = time()
         mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh, layers, donation_mapping,
                                                         global_outvars)

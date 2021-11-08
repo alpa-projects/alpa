@@ -92,9 +92,8 @@ def is_nontrivial(eqn):
                 return True
     return False
 
-def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False):
-    layer_num = int(layer_num)
-    length = len(jaxpr.eqns)
+
+def get_stat(jaxpr):
     length = len(jaxpr.eqns)
     non_trivial = [is_nontrivial(eqn) for eqn in jaxpr.eqns]
     non_trivial = np.array(non_trivial, dtype=np.int32)
@@ -114,6 +113,17 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False):
                     invars.add(invar)
                     tot += invar.aval.size
             Cost[k, r] = tot
+    return non_trivial, Cost
+
+
+def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False, stat=None):
+    layer_num = int(layer_num)
+    length = len(jaxpr.eqns)
+    if stat:
+        non_trivial, Cost = stat
+    else:
+        non_trivial, Cost = get_stat(jaxpr)
+    
 
     LAYER_HEAVY_OP_AVG = non_trivial.sum() / layer_num
     LAYER_HEAVY_OP_BOUND = max(LAYER_HEAVY_OP_AVG + 5,
@@ -164,11 +174,27 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False):
     return solution
 
 
+def search_layer_num(jaxpr, eps, layer_eps=0):
+    stat = non_trivial, Cost = get_stat(jaxpr)
+    l = 2
+    r = int(non_trivial.sum() / 3) + 1
+    _, l_val = slice_jaxpr(jaxpr, l, eps, True, stat)
+    while r - l > 1:
+        mid = int((l + r) / 2)
+        _, mid_val = slice_jaxpr(jaxpr, mid, eps, True, stat)
+        if mid_val > l_val * (1 + layer_eps):
+            r = mid
+        else:
+            l = mid
+    return l
+
+
 def automatic_layer_slicing(fn: Callable,
                             layer_num: int,
                             eps: float = 0,
                             use_pipeline: bool = False,
-                            use_remat: bool = False):
+                            use_remat: bool = False,
+                            layer_eps: float = 0):
     """
     Automatically slice the jaxpr into layers.
     Pipeline markers and rematerialization can be added at the boundary of layers.
@@ -188,6 +214,9 @@ def automatic_layer_slicing(fn: Callable,
             origin_jaxpr, out_shape_tree = make_jaxpr(fn,
                                                       static_argnums=(),
                                                       return_shape=True)(*args)
+            nonlocal layer_num
+            if layer_num == "auto":
+                layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)
             flatten_args, _ = tree_flatten(args)
 
             slices = slice_jaxpr(origin_jaxpr, layer_num, eps)

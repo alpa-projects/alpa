@@ -8,8 +8,9 @@ from jax._src.util import safe_map
 from jax.core import Var, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
 
-from parax.pipeline_parallel.stage import (
-    PipelineStage, XlaPipelineStage, slice_closed_jaxpr_by_full_pipeline_marks,
+from parax.pipeline_parallel.computation import (
+    PipelineComputation, XlaPipelineComputation,
+    slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks)
 from parax.pipeline_parallel.base_runtime import BaseRuntime
 
@@ -34,12 +35,12 @@ class LocalPipelineRunner:
         self.env = {}
         self.global_invals = global_invals
 
-    def run_stage(self, stage: PipelineStage, invals: Dict[Var, Any]):
+    def run_stage(self, stage: PipelineComputation, invals: Dict[Var, Any]):
         """
         Run a pipeline stage.
 
         Args:
-            stage (PipelineStage): The pipeline stage to run.
+            stage (PipelineComputation): The pipeline stage to run.
             invals (Set[Var], optional): Input value dict.
 
         Returns:
@@ -64,7 +65,7 @@ class LocalRuntime(BaseRuntime):
 
     def __init__(self,
                  *,
-                 pipeline_stages: Sequence[PipelineStage],
+                 pipeline_stages: Sequence[PipelineComputation],
                  global_invars: Sequence[Var],
                  global_outvars: Sequence[Var],
                  physical_meshes: Sequence[PhysicalDeviceMesh] = None):
@@ -72,7 +73,7 @@ class LocalRuntime(BaseRuntime):
         Return a runtime that runs all pipeline stages on a single local device.
 
         Args:
-            pipeline_stages (Sequence[PipelineStage]): the pipeline stages to be
+            pipeline_stages (Sequence[PipelineComputation]): the pipeline stages to be
                 executed.
             global_invars (Sequence[Var]): Global input variables.
             global_outvars (Sequence[Var]): Global output variables.
@@ -156,7 +157,7 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
         jax_pipeline_stages, global_invars, global_outvars)
     xla_pipeline_stages = [
-        XlaPipelineStage.from_jax_pipeline_stage(stage)
+        XlaPipelineComputation.from_jax_pipeline_computation(stage)
         for stage in jax_pipeline_stages
     ]
 

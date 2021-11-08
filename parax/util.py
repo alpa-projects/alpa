@@ -2,6 +2,7 @@
 """Common utilities."""
 from collections import OrderedDict
 from functools import partial
+import functools
 import itertools as it
 import os
 import subprocess
@@ -149,6 +150,23 @@ class OrderedSet:
             yield x
 
 
+def cached_property(fn, *args, **kwargs):
+    """
+    Decorator to make a function a "cached property".
+
+    This means that it is a property whose return value is cached after the
+    first time it is called.
+
+    Args:
+        fn: The function to be made a cached property
+        *args: Any args for the function
+        **kwargs: Any kwargs for the function
+    Returns:
+        function
+    """
+    return property(functools.lru_cache()(fn, *args, **kwargs))
+
+
 ########################################
 ##### XLA API Utilities
 ########################################
@@ -284,6 +302,40 @@ def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
     return compiled
 
 
+def compile_memset_zero_buffers(backend, num_devices, shapes, dtypes):
+    """
+    Compile an XLA executable that memset zero buffers with given shape and dtypes.
+    Try to avoid memcpy
+    """
+    c = xc.XlaBuilder("allocate_zero_buffers")
+    args = []
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
+    for shape, dtype in zip(shapes, dtypes):
+        args.append(
+            xc.ops.Parameter(c, len(args),
+                             xc.shape_from_pyval(np.ones(shape, dtype))))
+    sharding_tuple = xc.OpSharding()
+    sharding_tuple.type = sharding.type.TUPLE
+    sharding_tuple.tuple_shardings = [sharding for _ in shapes]
+    c.set_sharding(sharding_tuple)
+    input_params = xc.ops.Tuple(c, args)
+    c.set_sharding(sharding)
+    output_shape = xc.Shape.scalar_shape(np.dtype(np.float32))
+    output_tuple = xc.ops.CustomCall(c, b'__builtin$MemZero', operands=(input_params,), shape=output_shape)
+    c = c.build(output_tuple)
+
+    compile_options = xb.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    compiled = backend.compile(c, compile_options)
+    return compiled
+
+
 def get_shard_shape(aval, sharding_spec):
     """Return the shape of a shard."""
     shape = []
@@ -373,6 +425,13 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                                        list(layer_consts[i].values()))
         result.append(new_closed_jaxpr)
     return result
+
+
+def log_jaxpr(jaxpr, name):
+    """Print jaxpr int a temporary file for debugging purposes."""
+    path = "/tmp/" + name
+    with open(path, "w") as f:
+        f.write(repr(jaxpr))
 
 
 ########################################

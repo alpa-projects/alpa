@@ -7,7 +7,7 @@ import numpy as np
 
 import parax
 from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing
-from parax.pipeline_parallel.stage import (
+from parax.pipeline_parallel.computation import (
     apply_grad_add_marker, compute_grad_to_accumulate_grad, apply_grad_get_mean,
     get_var_mapping, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_pipeline_marks, mark_gradvar_to_mesh, slice_apply_gradient,
@@ -227,7 +227,7 @@ def test_compute_and_apply(microbatches):
     sliced_apply_grad, outvar_map = apply_grad_add_marker(sliced_apply_grad,
                                                           mask,
                                                           gensym_func,
-                                                          stage=True)
+                                                          computation=True)
     global_outvars = list(
         map(lambda x: get_var_mapping(outvar_map, x), global_outvars))
     # donate invars

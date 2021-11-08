@@ -22,7 +22,7 @@ import jax.numpy as jnp
 
 from parax.measure_record import StrategyConfig
 from parax.timer import timers
-from parax.util import compile_allocate_zero_buffers, get_shard_shape, profile_xla_executable
+from parax.util import compile_allocate_zero_buffers, compile_memset_zero_buffers, get_shard_shape, profile_xla_executable
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -995,3 +995,33 @@ class AllocZeroBufferWorkerExecutable:
 
     def __del__(self):
         self.allocate_zero_buffers.delete()
+
+
+class MemzeroWorkerExecutable:
+
+    def __init__(self, worker: "MeshHostWorker", uuid: int, buffer_shard_shapes,
+                 buffer_shard_dtypes):
+        num_devices = len(worker.local_devices)
+        self.memzero = compile_memset_zero_buffers(worker.backend, num_devices,
+                                                   buffer_shard_shapes,
+                                                   buffer_shard_dtypes)
+        self.worker = worker
+
+        self.timer_name = get_execution_timer_name(uuid)
+        self.sync_func = get_sync_func_worker(worker)
+
+    def execute_on_worker(self,
+                          input_uuids,
+                          output_uuids,
+                          sync_before=False,
+                          sync_after=False):
+        buffer_dict = self.worker.buffers
+        before_sync_func = self.sync_func if sync_before else None
+        after_sync_func = self.sync_func if sync_after else None
+
+        # Get input
+        input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+        # Execute
+        timers(self.timer_name).start(before_sync_func)
+        _ = self.memzero.execute_sharded_on_local_devices(input_bufs)
+        timers(self.timer_name).stop(after_sync_func)

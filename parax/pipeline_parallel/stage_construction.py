@@ -138,7 +138,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
     # TODO(zhuohan): set the number of workers as a tunable parameter
-    n_workers = min(ray.available_resources()["CPU"] // 2, 1.0)
+    n_workers = int(min(ray.available_resources()["CPU"] // 2, 1))
     compiled_outputs = compile_all(stage_infos,
                                    mesh.get_default_logical_mesh(), n_workers,
                                    1)

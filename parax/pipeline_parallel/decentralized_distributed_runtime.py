@@ -468,8 +468,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_idx = list(mesh_idx)[0]
             compiled = stage.get_compiled(self.physical_meshes[mesh_idx])
             hlo_module = compiled.hlo_modules()[0]
-            name = "stage_idx-" + str(stage_idx)
-            # tmp_hlo_module = xla_client.XlaComputation(executable_config_lists[worker][1]).as_hlo_module()
+
+            name = f"stage_{stage_idx}.hlo"
             hlo_ir = hlo_module.to_string()
             with open(name, "w") as f:
                 f.write(hlo_ir)

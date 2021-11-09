@@ -4,6 +4,7 @@ import logging
 import multiprocessing
 import time
 import traceback
+from warnings import warn
 
 import numpy as np
 from jax.interpreters import xla, pxla
@@ -726,6 +727,10 @@ def _call_solver_serialized_args(
 
     last_objective = objective
     last_s_val = s_val
+
+    if objective > 1e10:
+        warn("Detect unexpected behaviors in the auto-sharding pass.")
+
     return s_val, e_val, objective, status
 
 

@@ -250,7 +250,7 @@ class AccumulateGradTest(unittest.TestCase):
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
-                                submesh_shapes=submesh_shapes)
+                                sub_physical_mesh_shapes=submesh_shapes)
 
         batch_size = 16
         seq_len = 256

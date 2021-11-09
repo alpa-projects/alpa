@@ -127,9 +127,9 @@ stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
 '''----------------profile cost e----------------'''
 src = stages[0]
 dst = stages[1]
-src_mesh = virtual_mesh.slice(1, [[0, 1]])
+src_mesh = virtual_mesh.slice_1d(1, [[0, 1]])
 src_phy_mesh = src_mesh.get_physical_mesh()
-dst_mesh = virtual_mesh.slice(1, [[2, 3]])
+dst_mesh = virtual_mesh.slice_1d(1, [[2, 3]])
 dst_phy_mesh = dst_mesh.get_physical_mesh()
 
 

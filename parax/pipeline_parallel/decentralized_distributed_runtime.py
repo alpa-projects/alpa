@@ -8,6 +8,7 @@ import numpy as np
 from jax.core import Var
 from jax.interpreters import pxla
 import jax.numpy as jnp
+from jaxlib import xla_client
 
 from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -467,6 +468,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_idx = list(mesh_idx)[0]
             compiled = stage.get_compiled(self.physical_meshes[mesh_idx])
             hlo_module = compiled.hlo_modules()[0]
+
+            # For debug purpose
+            if logger.level <= logging.DEBUG:
+                name = f"stage_{stage_idx}.hlo"
+                hlo_ir = hlo_module.to_string()
+                with open(name, "w") as f:
+                    f.write(hlo_ir)
+
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             strategy_config = stage.strategy_config
             grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(

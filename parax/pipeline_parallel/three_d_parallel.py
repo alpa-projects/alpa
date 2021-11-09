@@ -94,7 +94,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             pipeline_stage_mode=global_config.pipeline_stage_mode,
             cache_compute_cost=global_config.cache_compute_cost,
             forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-            submesh_shapes=global_config.submesh_shapes))
+            submesh_shapes=global_config.sub_physical_mesh_shapes))
     num_meshes = len(sliced_meshes)
 
     # Process apply_gradient and donation
@@ -121,13 +121,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                              apply_grad_placement=apply_grad_placement,
                              num_batch=num_micro_batches)
     physical_meshes = []
-    n_meshes = len(schedule.meshes)
     for i, mesh in enumerate(schedule.meshes):
         logger.debug("Launch the {}th mesh...".format(i))
         physical_meshes.append(mesh.get_physical_mesh())
 
-    stage_dict = [[] for _ in range(n_meshes)]
-    stage_id_dict = [[] for _ in range(n_meshes)]
+    stage_dict = [[] for _ in range(num_meshes)]
+    stage_id_dict = [[] for _ in range(num_meshes)]
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
@@ -135,11 +134,24 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         stage_id_dict[mesh_idx].append(i)
         stage_dict[mesh_idx].append(stage)
 
+    # address logical mesh requirement by users
+    slms = global_config.sub_logical_mesh_shapes
+    if slms != None:
+        assert len(slms) == len(global_config.sub_physical_mesh_shapes)
+        assert all(np.prod(slms[i]) == np.prod(global_config.sub_physical_mesh_shapes[i])
+                   for i in range(num_meshes))
+
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
-    for mesh_idx in range(n_meshes):
+    for mesh_idx in range(num_meshes):
         physical_mesh = physical_meshes[mesh_idx]
-        logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+        if global_config.sub_logical_mesh_shapes[mesh_idx]:
+            # set to a user-required logical mesh shape
+            # e.g. [1, 4] physical mesh could produce a [2, 2] logical mesh
+            logical_mesh_choices = [physical_mesh.get_logical_mesh(slms[mesh_idx])]
+        else:
+            # logical mesh shape == physical mesh shape
+            logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
         logical_mesh_search_mode = "cost_model"
         stage_donate_invars = [
             donate_invars_dict[stage_idx]

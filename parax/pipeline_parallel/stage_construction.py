@@ -189,17 +189,19 @@ def get_sliced_virtual_submeshes(virtual_mesh, submeshe_shapes):
     return virtual_submeshes
 
 
-def uniform_slice_mesh(original_mesh, num_meshes):
+def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
     """
     Slice the mesh uniformly.
 
     In this impl, we guarantee the slicing follows:
     - len(sliced_meshes) == num_stages / 2 (place forward/backward in a mesh);
-    - higher priority to slice over the node dimension rather than gpu dimension.
+    - higher priority to slice over the node dimension rather than gpu dimension
+    (so to preserve nvlink usage).
 
     Args:
         original_mesh: a virtual device mesh.
         num_meshes: number of submeshes.
+        submesh_shapes (List[Tuple(int, int)]): a list of desired submesh shapes.
 
     Returns:
         sliced_meshes (List[Mesh]): List of meshes to spawn worker on.
@@ -209,28 +211,61 @@ def uniform_slice_mesh(original_mesh, num_meshes):
         raise RuntimeError("SingleDeviceMesh is not supported.")
     if original_mesh.total_devices < num_meshes:
         raise RuntimeError("#device < #workers.")
-
     num_device_per_mesh = int(original_mesh.total_devices / num_meshes)
     num_device_per_host = original_mesh.num_devices_per_host
     num_host = original_mesh.num_hosts
-    if num_device_per_host >= num_device_per_mesh:
-        num_mesh_per_host = num_device_per_host // num_device_per_mesh
-        for i in range(num_meshes):
-            host_idx = i // num_mesh_per_host
-            mesh_idx = i % num_mesh_per_host
-            ind = list(range(num_device_per_host))
-            mesh = original_mesh.slice(0, [host_idx]).slice(
-                1, [
-                    ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) *
-                        num_device_per_mesh]
-                ])
-            output_meshes.append(mesh)
+
+    if submesh_shapes == None:
+        # uniformly slice the mesh by priority
+        if num_device_per_host >= num_device_per_mesh:
+            num_mesh_per_host = num_device_per_host // num_device_per_mesh
+            for i in range(num_meshes):
+                host_idx = i // num_mesh_per_host
+                mesh_idx = i % num_mesh_per_host
+                ind = list(range(num_device_per_host))
+                mesh = original_mesh.slice_1d(0, [host_idx]).slice_1d(
+                    1, [
+                        ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) *
+                            num_device_per_mesh]
+                    ])
+                output_meshes.append(mesh)
+        else:
+            num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)
+            ind = list(range(num_host))
+            for i in range(num_meshes):
+                output_meshes.append((original_mesh.slice_1d(
+                    0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
     else:
-        num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)
-        ind = list(range(num_host))
-        for i in range(num_meshes):
-            output_meshes.append((original_mesh.slice(
-                0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
+        num_required_host, num_required_device_per_host = submesh_shapes[0]
+        assert num_required_host <= num_host, \
+            "cannot satisfy physical mesh requirement, require {} hosts given {} hosts."\
+                .format(num_required_host, num_host)
+        assert num_required_device_per_host <= num_device_per_host, \
+            "cannot satisfy physical mesh requirement, require {} gpus per host given {} gpus per host."\
+                .format(num_required_device_per_host, num_device_per_host)
+        # doing assignment
+        if num_required_device_per_host == num_device_per_host:
+            # allocate all devices of a host
+            num_host_per_mesh = num_host // num_meshes
+            output_meshes = [original_mesh.slice_1d(0, list(range(i * num_host_per_mesh, (i + 1) * num_host_per_mesh)))
+                             for i in range(num_meshes)]
+        else:
+            assert num_device_per_host % num_required_device_per_host == 0
+            cur_host_index = 0
+            cur_device_index = 0
+            for i in range(num_meshes):
+                host_indices = list(range(cur_host_index, cur_host_index + num_required_host))
+                device_indices = list(range(cur_device_index, cur_device_index + num_required_device_per_host))
+                device_indices = [device_indices] * len(host_indices)
+                output_meshes.append(original_mesh.slice_2d(host_indices, device_indices))
+                # move the device in priority
+                if cur_device_index + num_required_device_per_host == num_device_per_host:
+                    cur_device_index = 0
+                    cur_host_index = cur_host_index + num_required_host
+                else:
+                    cur_device_index = cur_device_index + num_required_device_per_host
+            assert cur_host_index == num_host
+            assert cur_device_index == 0
     return output_meshes
 
 
@@ -250,12 +285,15 @@ def cluster_layers_and_slice_mesh(layers,
     of submeshes and find the optimal solution with DP.
 
     Args:
-        mesh (VirtualMesh): The cluser device mesh.
         layers (Sequence[JaxPipelineComputation]): All the layers.
+        mesh (VirtualMesh): The cluser device mesh.
         donation_mapping: The donation_mapping for the layers.
         global_outvars: Global outvars of the layers.
-        num_micro_batches: Number of microbatches for GPipe
+        num_micro_batches: Number of microbatches for GPipe.
+        pipeline_stage_mode (str): one of "auto_gpipe", "mannual_gpipe", "uniform_layer_gpipe".
         cache_compute_cost (Optional): Override the profiling results.
+        forward_stage_layer_ids: hand-written layer-stage assignments.
+        submesh_shapes (List): a list of allowed 2D mesh shapes.
 
     Returns:
         stage_layer_ids (List[List[int]]): The layer IDs of each stage.
@@ -330,6 +368,7 @@ def cluster_layers_and_slice_mesh(layers,
             merged_stages.append(merged_stage)
         stages = merged_stages
     elif pipeline_stage_mode == "uniform_layer_gpipe":
+        # this mode resembles Megatron in terms of the uniformity of mesh shapes.
         num_acc_grad_stages = len(layers)
         stage_to_mesh = {
             i:
@@ -339,7 +378,9 @@ def cluster_layers_and_slice_mesh(layers,
         assert num_acc_grad_stages % 2 == 0
         num_meshes = num_acc_grad_stages // 2
         stages = layers
-        sliced_meshes = uniform_slice_mesh(mesh, num_meshes)
+        if submesh_shapes != None:
+            assert all(shape == submesh_shapes[0] for shape in submesh_shapes)
+        sliced_meshes = uniform_slice_mesh(mesh, num_meshes, submesh_shapes=submesh_shapes)
     else:
         raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
     return stages, stage_to_mesh, sliced_meshes

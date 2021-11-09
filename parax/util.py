@@ -134,8 +134,10 @@ class FastLookupList:
 
 class OrderedSet:
 
-    def __init__(self):
+    def __init__(self, iterable=()):
         self.dict = OrderedDict()
+        for element in iterable:
+            self.dict[element] = None
 
     def add(self, *args):
         for x in args:
@@ -152,9 +154,12 @@ class OrderedSet:
         return result
 
     def intersection_update(self, other):
+        to_be_removed = []
         for x in self:
             if x not in other:
-                self.discard(x)
+                to_be_removed.append(x)
+        for x in to_be_removed:
+            self.remove(x)
 
     def intersection(self, other):
         result = OrderedSet()
@@ -229,6 +234,11 @@ class OrderedSet:
 
     def __isub__(self, other):
         self.difference_update(other)
+
+    def __eq__(self, other):
+        if isinstance(other, OrderedSet):
+            return self.dict == other.dict
+        return False
 
 
 def cached_property(fn, *args, **kwargs):

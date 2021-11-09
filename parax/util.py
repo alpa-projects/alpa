@@ -141,13 +141,94 @@ class OrderedSet:
         for x in args:
             self.dict[x] = None
 
-    def update(self, container):
-        for x in container:
+    def update(self, other):
+        for x in other:
             self.dict[x] = None
+
+    def union(self, other):
+        result = OrderedSet()
+        result.update(self)
+        result.update(other)
+        return result
+
+    def intersection_update(self, other):
+        for x in self:
+            if x not in other:
+                self.discard(x)
+
+    def intersection(self, other):
+        result = OrderedSet()
+        for x in self:
+            if x in other:
+                result.add(x)
+        return result
+
+    def discard(self, element):
+        if element in self:
+            del self.dict[element]
+
+    def remove(self, element):
+        if element not in self:
+            raise KeyError(element)
+        del self.dict[element]
+
+    def clear(self):
+        self.dict.clear()
+
+    def difference(self, other):
+        result = OrderedSet()
+        for x in self:
+            if x not in other:
+                result.add(x)
+        return result
+
+    def difference_update(self, other):
+        for x in other:
+            self.discard(x)
+
+    def symmetric_difference(self, other):
+        result = OrderedSet()
+        for x in self:
+            if x not in other:
+                result.add(x)
+        for x in other:
+            if x not in self:
+                result.add(x)
+        return result
 
     def __iter__(self):
         for x in self.dict:
             yield x
+
+    def __len__(self):
+        return len(self.dict)
+
+    def __contains__(self, element):
+        return element in self.dict
+
+    def __repr__(self):
+        return "{" + ", ".join(repr(x) for x in self) + "}"
+
+    def __or__(self, other):
+        return self.union(other)
+
+    def __and__(self, other):
+        return self.intersection(other)
+
+    def __sub__(self, other):
+        return self.difference(other)
+
+    def __xor__(self, other):
+        return self.symmetric_difference(other)
+
+    def __ior__(self, other):
+        self.update(other)
+
+    def __iand__(self, other):
+        self.intersection_update(other)
+
+    def __isub__(self, other):
+        self.difference_update(other)
 
 
 def cached_property(fn, *args, **kwargs):

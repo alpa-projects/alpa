@@ -83,8 +83,9 @@ def benchmark_one_case(benchmark_case):
 
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel, \
-    use_remat = benchmark_case
+    use_remat, tie_word_embeddings = benchmark_case
     dtype = jnp.float16
+    # tie_word_embeddings = True
 
     # Parallel configs
     grad_func = parax.grad
@@ -122,7 +123,8 @@ def benchmark_one_case(benchmark_case):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat
+            gradient_checkpointing=use_remat,
+            tie_word_embeddings=tie_word_embeddings
         ), dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
@@ -133,7 +135,8 @@ def benchmark_one_case(benchmark_case):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat
+            gradient_checkpointing=use_remat,
+            tie_word_embeddings=tie_word_embeddings
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
@@ -163,11 +166,12 @@ def benchmark_one_case(benchmark_case):
 
 
     report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
-    heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",  "# Microbatch", "Mean Time",
-             "Std Time", "#Params", "TFLOPs"]
+    heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
+             "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs"]
     paralell_config = (benchmark_case[6], benchmark_case[7], benchmark_case[10])
     values = [model_type, str(benchmark_case[:6]), str(paralell_config), str(benchmark_case[8:10]),
-              f"{benchmark_case[-3]:.3f}", f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}",
+              str(benchmark_case[11]), str(benchmark_case[12]), str(benchmark_case[13]),
+              f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}",
               str(parameter_count), str(tflops)]
     write_tsv(heads, values, f"result_{model_type}.tsv")
 
@@ -181,7 +185,9 @@ def benchmark_one_case(benchmark_case):
 default_benchmark_suite = {
 
 8: [
-    # B,  S,     H,    L,  #head,    V      LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat,
+    # B,  S,     H,    L,  #head,    V      LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie
+
+    # (128,  512,  1024, 10, 1024//64,  25600, 1,  4, 1, 4,  2,  32,  True, True),
 
     # # GPT-2 355M, DP + PP2, single node 8 GPUs, w/o remat
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   True, False),
@@ -193,8 +199,15 @@ default_benchmark_suite = {
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   True, True), # OOM
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  2,   True, True),
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  4,   True, True),
-    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   False, True),
 
+
+    (32,  1024,  1024, 4, 1024//64, 1000, 4,   1,   1,   4,   2,  8,   False, True, True),
+
+    # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False),
 
     # GPT-2 355M, auto sharding (best of [DP, MP]) + PP2, w/o remat
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   False, False),
@@ -205,12 +218,12 @@ default_benchmark_suite = {
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  32,  False, False),
 
     # GPT-2 355M, auto sharding (best of [DP, MP]) + PP2, with remat
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  2,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  4,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  16,  False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  32,  False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  2,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  4,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  16,  False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  32,  False, True),
 
     # GPT-3 355M, DP + PP4, w/o remat
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  1,   True, False),
@@ -220,11 +233,11 @@ default_benchmark_suite = {
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  16,  True, False),
 
     # GPT-3 355M, DP + PP4, w/ remat
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  1,   True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  2,   True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  4,   True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  8,   True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  16,  True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  1,   True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  2,   True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  4,   True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  8,   True, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  16,  True, True),
 
     # GPT-2 355M, auto sharding (best of [DP, MP]) + PP4
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  1,   False, False),
@@ -235,12 +248,12 @@ default_benchmark_suite = {
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  32,  False, False),
 
     # GPT-2 355M, auto sharding (best of [DP, MP]) + PP4, w/ remat
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  1,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  2,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  4,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  8,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  16,  False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  32,  False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  1,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  2,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  4,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  8,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  16,  False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   2,   1,   2,   4,  32,  False, True),
 
     # GPT-3 355M, PP8
     # (16,  1024,  1024, 24, 1024//64,  51200, 2,  2,  2,  8,  False, False),  # sanity check case
@@ -252,12 +265,12 @@ default_benchmark_suite = {
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  32,  False, False),
 
     # GPT-3 355m, PP8, w/ remat
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  1,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  2,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  4,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  8,   False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  16,  False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  32,  False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  1,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  2,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  4,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  8,   False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  16,  False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  32,  False, True),
 
 ],
 

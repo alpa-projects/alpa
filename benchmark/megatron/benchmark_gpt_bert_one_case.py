@@ -6,6 +6,7 @@ import sys
 import time
 
 import numpy as np
+
 from megatron.utils import average_losses_across_data_parallel_group
 from megatron.model import BertModel, GPTModel
 from megatron.model import ModelType
@@ -125,6 +126,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
         vocab_size, dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches,\
         ddp_impl, checkpoint_activations = benchmark_case
 
+    num_gpus = dp_size * tensor_mp_size * pipeline_mp_size
     assert global_batch_size % (dp_size * num_micro_batches) == 0
     micro_batch_size = global_batch_size // dp_size // num_micro_batches
 

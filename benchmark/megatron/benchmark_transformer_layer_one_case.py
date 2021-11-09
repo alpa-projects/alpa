@@ -5,6 +5,8 @@ import timeit
 from functools import partial
 
 import numpy as np
+
+from benchmark.parax.benchmark_gpt_bert import compute_tflops
 from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
 from megatron.model import DistributedDataParallel as LocalDDP
@@ -139,6 +141,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
                            warmup=0, repeat=repeat, number=number)
     timers.log(names, normalizer=repeat * number)
 
+
     # Print results
     # if rank == 0:
     peak_mem = torch.cuda.max_memory_allocated(0)
@@ -146,7 +149,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
              "Peak Mem", "Mean Time", "Std Time"]
     values = ["transformer-layer", str(benchmark_case[:-3]),
               str(benchmark_case[-6:-3]), str(benchmark_case[-3]), str(benchmark_case[-2]),
-              f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}"]
+              f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", ]
     result_tsv = "result_trans-" + str(rank) + ".tsv"
     write_tsv(heads, values, result_tsv)
 

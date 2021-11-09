@@ -469,10 +469,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             compiled = stage.get_compiled(self.physical_meshes[mesh_idx])
             hlo_module = compiled.hlo_modules()[0]
 
-            name = f"stage_{stage_idx}.hlo"
-            hlo_ir = hlo_module.to_string()
-            with open(name, "w") as f:
-                f.write(hlo_ir)
+            # For debug purpose
+            if logger.level <= logging.DEBUG:
+                name = f"stage_{stage_idx}.hlo"
+                hlo_ir = hlo_module.to_string()
+                with open(name, "w") as f:
+                    f.write(hlo_ir)
 
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             strategy_config = stage.strategy_config

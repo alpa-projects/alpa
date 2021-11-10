@@ -169,7 +169,16 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
+    # jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
+    #                                      global_invars=global_invars,
+    #                                      grad_dummy_invars=grad_in_to_out,
+    #                                      global_outvars=global_outvars,
+    #                                      physical_meshes=physical_meshes,
+    #                                      dependency=dependency,
+    #                                      schedule=schedule,
+    #                                      is_batch=batch_invars,
+    #                                      num_batch=num_micro_batches)
+    jp = CentralizedDistributedRuntime(pipeline_stages=xla_stages,
                                          global_invars=global_invars,
                                          grad_dummy_invars=grad_in_to_out,
                                          global_outvars=global_outvars,

@@ -323,7 +323,7 @@ def cluster_layers_and_slice_mesh(layers,
                                                 donation_mapping,
                                                 global_outvars)
                 np.save(
-                    f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.npz",
+                    f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}",
                     compute_cost)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,

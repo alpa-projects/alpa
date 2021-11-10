@@ -81,13 +81,17 @@ class CompileWorker:
         sharding_annotated_computation = xla_client.XlaComputation(
             sharded_proto)
         hlo_module = sharding_annotated_computation.as_hlo_module()
-        hlo_module.infer_spmd_shardings()
-        input_shardings = hlo_module.spmd_parameters_shardings()
-        output_sharding = hlo_module.spmd_output_sharding()
-        input_sharding_protos = [
-            sharding.proto_tuple() for sharding in input_shardings
-        ]
-        output_sharding_proto = output_sharding.proto_tuple()
+        if logical_mesh.total_devices > 1:
+            hlo_module.infer_spmd_shardings()
+            input_shardings = hlo_module.spmd_parameters_shardings()
+            output_sharding = hlo_module.spmd_output_sharding()
+            input_sharding_protos = [
+                sharding.proto_tuple() for sharding in input_shardings
+            ]
+            output_sharding_proto = output_sharding.proto_tuple()
+        else:
+            input_sharding_protos = None
+            output_sharding_proto = None
         compiled = compile_with_given_strategy(
             self.backend,
             sharding_annotated_computation,

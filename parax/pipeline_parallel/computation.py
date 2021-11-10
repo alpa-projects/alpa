@@ -595,8 +595,8 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         new_marker_name (str): name of merged pipeline used in marker
         donation_mapping (Dict[Var, Var]): donation mapping of merged jaxpr, may have redundant items
     """
-    new_invars = dict()
-    new_outvars = dict()
+    new_invars_dict = dict()
+    new_outvars_dict = dict()
     new_eqns = []
     var_map = dict()
 
@@ -614,10 +614,10 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                 if invar in new_constvars:
                     continue
                 # is already set in earlier computations
-                if invar in new_invars:
-                    var_map[outvar] = new_invars[invar]
+                if invar in new_invars_dict:
+                    var_map[outvar] = new_invars_dict[invar]
                     continue
-                new_invars[invar] = outvar
+                new_invars_dict[invar] = outvar
             else:
                 # is local output, the outvar is redirected
                 var_map[outvar] = var_map[invar]
@@ -631,19 +631,13 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         pipe_end = jaxpr.eqns[-1]
         for invar, outvar in zip(pipe_end.invars, pipe_end.outvars):
             if outvar in used:
-                new_outvars[outvar] = get_var_mapping(var_map, invar)
+                new_outvars_dict[outvar] = get_var_mapping(var_map, invar)
             var_map[outvar] = get_var_mapping(var_map, invar)
 
-    new_pipe_start = mark_pipeline_jaxpreqn(list(new_invars.keys()),
-                                            list(new_invars.values()),
-                                            new_marker_name, "start")
-    new_pipe_end = mark_pipeline_jaxpreqn(list(new_outvars.values()),
-                                          list(new_outvars.keys()),
-                                          new_marker_name, "end")
-    new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
     constvars = set(new_constvars.keys())
-    new_invars = [k for k in new_invars.keys() if k not in constvars]
-    new_outvars = list(new_outvars.keys())
+    new_invars = [k for k in new_invars_dict.keys() if k not in constvars]
+    new_outvars = list(new_outvars_dict.keys())
+
     if donation_mapping:
         new_invars_set = set(new_invars)
         new_outvars_set = set(new_outvars)
@@ -654,6 +648,13 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
+    new_pipe_start = mark_pipeline_jaxpreqn(
+        new_invars, [new_invars_dict[v] for v in new_invars], new_marker_name,
+        "start")
+    new_pipe_end = mark_pipeline_jaxpreqn(
+        [new_outvars_dict[v] for v in new_outvars], new_outvars,
+        new_marker_name, "end")
+    new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
     return ClosedJaxpr(
         Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
         list(new_constvars.values()))

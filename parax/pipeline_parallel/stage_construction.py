@@ -7,11 +7,13 @@ import numpy as np
 from datetime import datetime
 from time import time
 from typing import Sequence, Set, Tuple
-from parax.pipeline_parallel.computation import JaxPipelineComputation
+from parax.pipeline_parallel.computation import (JaxPipelineComputation,
+                                                 merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, split_global_use_and_donate)
-from parax.pipeline_parallel.computation import merge_computation_jaxprs
+    compile_and_profile_stage_compute_cost, split_global_use_and_donate,
+    generate_stage_info, compile_all)
+from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
 
 
 @numba.jit(nopython=True)
@@ -102,7 +104,8 @@ def get_submesh_choices(mesh: VirtualMesh):
     return submesh_choices
 
 
-def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
+def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
+    mesh = virtual_mesh.get_physical_mesh()
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
@@ -118,6 +121,49 @@ def profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
             cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(
                 selected_layers, mesh, local_donation_mapping, global_used_list)
             compute_cost[start, end] = np.mean(cost)
+    mesh.shutdown()
+    return compute_cost
+
+
+def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    indices = list(range(2 * num_layers))
+    compute_cost = np.full((num_layers, num_layers), np.inf)
+    stage_infos = []
+    stage_indices = []
+    for start in range(0, num_layers):
+        for end in range(start, num_layers):
+            layer_indices = indices[start:end +
+                                    1] + indices[2 * num_layers - end -
+                                                 1:2 * num_layers - start]
+            stage_name = "stage_{}_{}".format(start, end)
+            stage_info = generate_stage_info(layers, layer_indices,
+                                             donation_mapping, global_outvars,
+                                             stage_name)
+            stage_infos.append(stage_info)
+            stage_indices.append((start, end))
+    # TODO(zhuohan): set the number of workers as a tunable parameter
+    n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
+    compiled_outputs = compile_all(stage_infos, mesh.get_default_logical_mesh(),
+                                   n_workers, 1)
+    physical_mesh = mesh.get_physical_mesh()
+    for (start,
+         end), compiled_output, stage_info in zip(stage_indices,
+                                                  compiled_outputs,
+                                                  stage_infos):
+        _, avals, out_avals, tot_donation = stage_info
+        proto, config, in_shardings, out_shardings = compiled_output
+        compiled = ProtoAndSharding(proto=proto,
+                                    input_shardings=in_shardings,
+                                    output_shardings=out_shardings)
+        donated_invars = (True,) * len(tot_donation) + (False,) * (
+            len(avals) - len(tot_donation))
+        executable = NormalMeshDriverExecutable(physical_mesh, compiled, config,
+                                                avals, out_avals,
+                                                donated_invars)
+        cost = executable.profile_with_dummy_inputs()
+        compute_cost[start, end] = np.mean(cost)
     return compute_cost
 
 
@@ -134,13 +180,13 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         sliced_virtual_mesh = virtual_mesh.slice_2d(
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
-        mesh = sliced_virtual_mesh.get_physical_mesh()
         tic = time()
-        mesh_compute_cost = profile_on_mesh(mesh, layers, donation_mapping,
-                                            global_outvars)
+        mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh,
+                                                        layers,
+                                                        donation_mapping,
+                                                        global_outvars)
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
-        mesh.shutdown()
         print(
             f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds'
         )
@@ -315,7 +361,7 @@ def cluster_layers_and_slice_mesh(layers,
                                                 donation_mapping,
                                                 global_outvars)
                 np.save(
-                    f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.npz",
+                    f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}",
                     compute_cost)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,

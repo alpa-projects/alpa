@@ -1,23 +1,18 @@
 import argparse
-import os
-import time
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
 import ray
 
 import parax
-from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
-from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.model.model_util import optax_adafactor
-from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
-                        count_communication_primitives, print_used_time,
-                        compute_param_number)
-
 from benchmark_gpt_bert_3d import get_train_step
-
+from parax import (global_config, set_parallelize_options, DeviceCluster)
+from parax.model.model_util import optax_adafactor
+from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
+from parax.util import (write_tsv, print_used_time,
+                        compute_param_number)
 
 GB = 1024 ** 3
 
@@ -44,6 +39,12 @@ def create_train_state(rngkey, model, dtype, batch):
     tx = optax_adafactor(
         learning_rate=1e-2, weight_decay_mask=weight_decay_mask
     )
+
+    # tx = optax.chain(
+    #     #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
+    #     optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+    # )
+    # tx = optax.adafactor(learning_rate=1e-2)
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
@@ -157,6 +158,11 @@ def benchmark_one_case(benchmark_case):
 
 
 sanity_check_suite = {
+
+4: [
+    # B,  S,     H,    L,  #head,    V,     S_,   E,  LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, (Tie)
+    (8, 1024,    512,  2,  128,      1000,  1024, 4,  2,   1,   1,   2,   2,  2,   True, True),
+],
 
 8: [
     # B,  S,     H,    L,  #head,    V,     S_,   E,  LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, (Tie)

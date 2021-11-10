@@ -52,9 +52,9 @@ class OrderedSetTest(unittest.TestCase):
     def test_intersection(self):
         """Test OrderedSet.intersection."""
         oset = OrderedSet([1, 2, 3])
-        oset.intersection([2, 3, 4])
-        self.assertEqual(len(oset), 2)
-        self.assertEqual(oset, OrderedSet([2, 3]))
+        result = oset.intersection([2, 3, 4])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result, OrderedSet([2, 3]))
 
     def test_remove(self):
         """Test OrderedSet.remove."""

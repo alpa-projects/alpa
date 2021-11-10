@@ -151,6 +151,9 @@ def benchmark_one_case(benchmark_case):
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
+    executable.sync()
+    print_used_time("Compile (worker)")
+
     for i in range(args.niter):
         state = train_step(state, batch, rngkey)
 
@@ -185,6 +188,12 @@ def benchmark_one_case(benchmark_case):
 # FD = Force DP, NB = number of microbatches, Remat: rematerialization
 
 sanity_check_suite = {
+
+4: [
+
+    (16, 1024, 1024, 24, 1024 // 64, 51200, 2, 1, 1, 2, 2, 8, True, True),
+
+],
 
 8: [
     # the performance below on p3.16
@@ -296,7 +305,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=10)
-    parser.add_argument("--suite", choices=["default", "sanity_check"], default="default")
+    parser.add_argument("--suite", choices=["default", "sanity_check"], default="sanity_check")
     args = parser.parse_args()
 
     ray.init(address="auto")

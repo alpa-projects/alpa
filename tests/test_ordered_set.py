@@ -80,6 +80,32 @@ class OrderedSetTest(unittest.TestCase):
         oset.clear()
         self.assertEqual(len(oset), 0)
 
+    def test_difference(self):
+        """Test OrderedSet.difference."""
+        oset = OrderedSet([1, 2, 3])
+        result = oset.difference([2, 3, 4])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result, OrderedSet([1]))
+
+    def test_difference_update(self):
+        """Test OrderedSet.difference_update."""
+        oset = OrderedSet([1, 2, 3])
+        oset.difference_update([2, 3, 4])
+        self.assertEqual(len(oset), 1)
+        self.assertEqual(oset, OrderedSet([1]))
+
+    def test_symmetric_difference(self):
+        """Test OrderedSet.symmetric_difference."""
+        oset = OrderedSet([1, 2, 3])
+        result = oset.symmetric_difference([2, 3, 4])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result, OrderedSet([1, 4]))
+
+    def test_repr(self):
+        """Test OrderedSet.__repr__."""
+        oset = OrderedSet([1, 2, 3])
+        self.assertEqual(repr(oset), 'OrderedSet([1, 2, 3])')
+
 
 def suite():
     suite = unittest.TestSuite()

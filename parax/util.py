@@ -212,7 +212,7 @@ class OrderedSet:
         return element in self.dict
 
     def __repr__(self):
-        return "{" + ", ".join(repr(x) for x in self) + "}"
+        return "OrderedSet([" + ", ".join(repr(x) for x in self) + "])"
 
     def __or__(self, other):
         return self.union(other)

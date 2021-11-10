@@ -643,12 +643,12 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
-    new_pipe_start = mark_pipeline_jaxpreqn(new_invars,
-                                            [new_invars_dict[v] for v in new_invars],
-                                            new_marker_name, "start")
-    new_pipe_end = mark_pipeline_jaxpreqn([new_outvars_dict[v] for v in new_outvars],
-                                          new_outvars,
-                                          new_marker_name, "end")
+    new_pipe_start = mark_pipeline_jaxpreqn(
+        new_invars, [new_invars_dict[v] for v in new_invars], new_marker_name,
+        "start")
+    new_pipe_end = mark_pipeline_jaxpreqn(
+        [new_outvars_dict[v] for v in new_outvars], new_outvars,
+        new_marker_name, "end")
     new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
     return ClosedJaxpr(
         Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),

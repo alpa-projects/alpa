@@ -7,10 +7,12 @@ import numpy as np
 from datetime import datetime
 from time import time
 from typing import Sequence, Set, Tuple
-from parax.pipeline_parallel.computation import (JaxPipelineComputation, merge_computation_jaxprs)
+from parax.pipeline_parallel.computation import (JaxPipelineComputation,
+                                                 merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, split_global_use_and_donate, generate_stage_info, compile_all)
+    compile_and_profile_stage_compute_cost, split_global_use_and_donate,
+    generate_stage_info, compile_all)
 from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
 
 
@@ -136,23 +138,27 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
                                     1] + indices[2 * num_layers - end -
                                                  1:2 * num_layers - start]
             stage_name = "stage_{}_{}".format(start, end)
-            stage_info = generate_stage_info(layers, layer_indices, donation_mapping, global_outvars, stage_name)
+            stage_info = generate_stage_info(layers, layer_indices,
+                                             donation_mapping, global_outvars,
+                                             stage_name)
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    compiled_outputs = compile_all(stage_infos,
-                                   mesh.get_default_logical_mesh(), n_workers,
-                                   1)
+    compiled_outputs = compile_all(stage_infos, mesh.get_default_logical_mesh(),
+                                   n_workers, 1)
     physical_mesh = mesh.get_physical_mesh()
-    for (start, end), compiled_output, stage_info in zip(stage_indices, compiled_outputs, stage_infos):
+    for (start,
+         end), compiled_output, stage_info in zip(stage_indices,
+                                                  compiled_outputs,
+                                                  stage_infos):
         _, avals, out_avals, tot_donation = stage_info
         proto, config, in_shardings, out_shardings = compiled_output
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)
         donated_invars = (True,) * len(tot_donation) + (False,) * (
-                len(avals) - len(tot_donation))
+            len(avals) - len(tot_donation))
         executable = NormalMeshDriverExecutable(physical_mesh, compiled, config,
                                                 avals, out_avals,
                                                 donated_invars)
@@ -175,7 +181,9 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
         tic = time()
-        mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh, layers, donation_mapping,
+        mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh,
+                                                        layers,
+                                                        donation_mapping,
                                                         global_outvars)
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()

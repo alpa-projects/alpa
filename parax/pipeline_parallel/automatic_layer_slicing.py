@@ -81,6 +81,7 @@ def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
 
 non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 
+
 def is_nontrivial(eqn):
     if eqn.primitive in non_trivial_primitive:
         return True
@@ -116,7 +117,11 @@ def get_stat(jaxpr):
     return non_trivial, Cost
 
 
-def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False, stat=None):
+def slice_jaxpr(jaxpr: Jaxpr,
+                layer_num: int,
+                eps: float,
+                return_value=False,
+                stat=None):
     layer_num = int(layer_num)
     length = len(jaxpr.eqns)
     if stat:
@@ -136,11 +141,15 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False, st
     @numba.jit(nopython=True)
     def DP(Cost):
         MaxCost = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
+        SumCostUnderMax = np.full((length + 1, layer_num + 1),
+                                  np.inf,
+                                  dtype=np.float32)
         MaxCost_argmin = np.full((length + 1, layer_num + 1),
                                  -1,
                                  dtype=np.int32)
         Blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
         MaxCost[0, 0] = 0
+        SumCostUnderMax[0, 0] = 0
         for l in range(1, length + 1):
             cnt = 0
             flops_cnt = 0
@@ -161,8 +170,13 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False, st
                 for k in range(0, r):
                     new_value = max(MaxCost[k, q - 1],
                                     Blocked[k + 1, r] + Cost[k, r])
-                    if new_value < MaxCost[r, q]:
+                    new_sum = (SumCostUnderMax[k, q - 1] + Blocked[k + 1, r] +
+                               Cost[k, r])
+                    if (new_value < MaxCost[r, q] or
+                        (new_value <= MaxCost[r, q] *
+                         (1 + 1e-4) and new_sum < SumCostUnderMax[r, q])):
                         MaxCost[r, q] = new_value
+                        SumCostUnderMax[r, q] = new_sum
                         MaxCost_argmin[r, q] = k
         return MaxCost_argmin, MaxCost[length, layer_num], Blocked
 

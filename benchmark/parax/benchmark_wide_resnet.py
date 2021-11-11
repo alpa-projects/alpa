@@ -125,11 +125,11 @@ def get_train_step(learning_rate_fn, use_grad_acc):
             # state and params should be restored (= skip this step).
             new_state = new_state.replace(
                 opt_state=jax.tree_multimap(
-                    functools.partial(jnp.where, is_fin),
+                    partial(jnp.where, is_fin),
                     new_state.opt_state,
                     state.opt_state),
                 params=jax.tree_multimap(
-                    functools.partial(jnp.where, is_fin),
+                    partial(jnp.where, is_fin),
                     new_state.params,
                     state.params))
             metrics["scale"] = dynamic_scale.scale

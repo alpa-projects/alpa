@@ -123,42 +123,50 @@ def slice_jaxpr(jaxpr: Jaxpr, layer_num: int, eps: float, return_value=False, st
         non_trivial, Cost = stat
     else:
         non_trivial, Cost = get_stat(jaxpr)
-    
 
-    LAYER_HEAVY_OP_AVG = non_trivial.sum() / layer_num
-    LAYER_HEAVY_OP_BOUND = max(LAYER_HEAVY_OP_AVG + 5,
-                               LAYER_HEAVY_OP_AVG * (1 + eps))
+    flops = [
+        eqn_flops(eqn) if is_nontrivial else 0
+        for is_nontrivial, eqn in zip(non_trivial, jaxpr.eqns)
+    ]
+    flops = np.array(flops, dtype=np.float64)
+    flops_avg = flops.sum() / layer_num
+    flops_bound = flops_avg * (1 + eps)
     LAYER_HEAVY_OP_LOW_BOUND = 3
-    if LAYER_HEAVY_OP_AVG < LAYER_HEAVY_OP_LOW_BOUND:
-        layer_num = int(non_trivial.sum() / LAYER_HEAVY_OP_LOW_BOUND)
 
     @numba.jit(nopython=True)
     def DP(Cost):
         MaxCost = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
-        MaxCost_argmin = np.full((length + 1, layer_num + 1), -1, dtype=np.int32)
-        Available = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
+        MaxCost_argmin = np.full((length + 1, layer_num + 1),
+                                 -1,
+                                 dtype=np.int32)
+        Blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
         MaxCost[0, 0] = 0
         for l in range(1, length + 1):
             cnt = 0
+            flops_cnt = 0
             for r in range(l, length + 1):
                 if non_trivial[r - 1]:
                     cnt += 1
+                    flops_cnt += flops[r - 1]
                 if cnt < LAYER_HEAVY_OP_LOW_BOUND:
+                    if flops_cnt >= flops_bound:
+                        Blocked[l, r] = 0
                     continue
-                elif cnt <= LAYER_HEAVY_OP_BOUND:
-                    Available[l, r] = 0
-                else:
+                if (flops_cnt >= flops_bound and non_trivial[r - 1] and
+                        cnt > LAYER_HEAVY_OP_LOW_BOUND):
                     break
+                Blocked[l, r] = 0
         for q in range(1, layer_num + 1):
             for r in range(1, length + 1):
                 for k in range(0, r):
-                    new_value = max(MaxCost[k, q - 1], Available[k + 1, r] + Cost[k, r])
+                    new_value = max(MaxCost[k, q - 1],
+                                    Blocked[k + 1, r] + Cost[k, r])
                     if new_value < MaxCost[r, q]:
                         MaxCost[r, q] = new_value
                         MaxCost_argmin[r, q] = k
-        return MaxCost_argmin, MaxCost[length, layer_num]
+        return MaxCost_argmin, MaxCost[length, layer_num], Blocked
 
-    A_argmin, value = DP(Cost)
+    A_argmin, value, Blocked = DP(Cost)
 
     reversed_sliced_eqns = []
 
@@ -191,7 +199,7 @@ def search_layer_num(jaxpr, eps, layer_eps=0):
 
 def automatic_layer_slicing(fn: Callable,
                             layer_num: int,
-                            eps: float = 0,
+                            eps: float = 0.6,
                             use_pipeline: bool = False,
                             use_remat: bool = False,
                             layer_eps: float = 0):

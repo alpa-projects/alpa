@@ -104,8 +104,9 @@ class CompileWorker:
         return (optimized_proto, strategy_config, input_sharding_protos,
                 output_sharding_proto)
 
-    def compile_stage_with_config(self, proto, jaxpr_config, mesh_config, multiple_stage_config):
-        computation_protos, strategy_config = compile_with_search(self.backend, proto, *jaxpr_config, *mesh_config, *multiple_stage_config)
+    def compile_with_config(self, proto, jaxpr_config, mesh_config, multiple_stage_config):
+        built = xla_client.XlaComputation(proto)
+        computation_protos, strategy_config = compile_with_search(self.backend, built, *jaxpr_config, *mesh_config, **multiple_stage_config)
         return computation_protos, strategy_config
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
@@ -113,7 +114,8 @@ class CompileWorkerPool:
     def __init__(self, num_cpus, num_gpus):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
-        self.pool = ActorPool([worker_cls.remote() for _ in range(num_cpus)])
+        self.actors = [worker_cls.remote() for _ in range(num_cpus)]
+        self.pool = ActorPool(self.actors)
 
     def submit(self, fn, value):
         self.pool.submit(fn, value)
@@ -121,10 +123,12 @@ class CompileWorkerPool:
     def get_next(self):
         return self.pool.get_next()
 
-    def shutdown(self):
-        while self.pool.has_next():
-            w = self.pool.pop_idle()
-            ray.kill(w)
+    def shutdown(self, force=True):
+        for w in self.actors:
+            if force:
+                ray.kill(w)
+            else:
+                w.__ray_terminate__.remote()
         gc.collect()
 
 

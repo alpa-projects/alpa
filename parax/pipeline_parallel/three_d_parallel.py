@@ -146,7 +146,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                 global_config.sub_physical_mesh_shapes[i])
             for i in range(num_meshes))
     else:
-        slms = [None for _ in range(num_meshes)]
+        slms = [None] * num_meshes
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages

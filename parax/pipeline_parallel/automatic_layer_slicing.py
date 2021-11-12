@@ -271,7 +271,7 @@ def automatic_layer_slicing(fn: Callable,
             print("-- Number of Jaxpr eqns in each stage:")
             for i, slice in enumerate(slices):
                 print(f"Stage {i}: {len(slice)}")
-            print("-- Number of Jaxpr eqns in each stage:")
+            print("-- Invars of each stage:")
             get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
             print("-" * 60)
             return origin_jaxpr, slices, out_shape_tree

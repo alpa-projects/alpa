@@ -14,6 +14,7 @@ from jax.interpreters import xla
 import numba
 import numpy as np
 
+from parax.util import get_cross_slice_vars
 from parax.pipeline_parallel.manual_layer_slicing import insert_marker, manual_layer_slicing, remat_jaxpr
 
 gpu_backend = xc.get_local_backend("gpu")
@@ -265,6 +266,14 @@ def automatic_layer_slicing(fn: Callable,
                                  layer_num,
                                  eps,
                                  cost_criteria=cost_criteria)
+            print("-" * 20, "Automatic layer slicing stats", "-" * 20)
+            print(f"layer_num: {layer_num}")
+            print(" - Number of Jaxpr eqns in each stage:")
+            for i, slice in enumerate(slices):
+                print(f"Layer {i}: {len(slice)}")
+            print(" - Invars of each stage:")
+            get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
+            print("-" * 70)
             return origin_jaxpr, slices, out_shape_tree
 
         @wraps(fn)

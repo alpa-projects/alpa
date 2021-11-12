@@ -69,7 +69,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, us
 
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
-        elif automatic_layer_slicing:
+        elif use_automatic_layer_slicing:
             loss_func = automatic_layer_slicing(loss_func)
         # params = jax.tree_util.tree_map(lambda x: x, state.params)
         grads = grad_func(loss_func)(state.params)
@@ -155,7 +155,7 @@ def benchmark_one_case(benchmark_case):
     print_used_time("Create train state")
 
     # compile executable
-    train_step = get_train_step(grad_func, num_layers, False, pipeline_mp_size, jnp.float16)
+    train_step = get_train_step(grad_func, num_layers, False, pipeline_mp_size, jnp.float16, use_automatic_layer_slicing)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

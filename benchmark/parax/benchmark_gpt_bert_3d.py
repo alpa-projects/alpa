@@ -70,7 +70,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, us
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
         elif use_automatic_layer_slicing:
-            loss_func = automatic_layer_slicing(loss_func, num_layers + 2, use_pipeline=True)
+            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True)
         # params = jax.tree_util.tree_map(lambda x: x, state.params)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
@@ -290,12 +290,12 @@ default_benchmark_suite = {
     # (32,  1024,  1024, 24, 1024//64, 51200, 1,   1,   1,   1,   8,  32,  False, True, False),
 
     # GPT-2 355M, auto sharding (best of [DP, MP]) + PP2, w/o remat, auto layer
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   False, False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  2,   False, False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  4,   False, False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   False, False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  16,  False, False, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  32,  False, False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  1,   False, False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  2,   False, False, True),
+    (32,  1024,  1024, 8, 1024//64, 51200, 1,   4,   1,   4,   2,  4,   False, False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   False, False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  16,  False, False, True),
+    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  32,  False, False, True),
 ],
 
 16: [

@@ -70,7 +70,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, us
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
         elif use_automatic_layer_slicing:
-            loss_func = automatic_layer_slicing(loss_func)
+            loss_func = automatic_layer_slicing(loss_func, num_layers + 2)
         # params = jax.tree_util.tree_map(lambda x: x, state.params)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)

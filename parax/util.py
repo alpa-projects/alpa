@@ -738,3 +738,28 @@ def compute_param_number(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
+
+
+def get_cross_slice_vars(jaxpr, slices):
+    defined = dict()
+    stage_invars = [set() for _ in slices]
+    for invar in jaxpr.invars:
+        defined[invar] = -1
+    for i, sliced in enumerate(slices):
+        for eqn in sliced:
+            for outvar in eqn.outvars:
+                if isinstance(outvar, DropVar):
+                    continue
+                defined[outvar] = i
+    for i, sliced in enumerate(slices):
+        for eqn in sliced:
+            for invar in eqn.invars:
+                if not isinstance(invar, Var):
+                    continue
+                if defined[invar] >= 0 and defined[invar] != i:
+                    stage_invars[i].add(invar)
+    for i, invars in enumerate(stage_invars):
+        print(f'stage {i} has inputs:')
+        for invar in invars:
+            print(invar, invar.aval.shape, 'from stage', defined[invar])
+    return

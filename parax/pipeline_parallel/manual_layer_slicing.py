@@ -41,18 +41,24 @@ def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
 
 def transform_pipeline_forward(fn: Callable, transform_fn, static_argnums=()):
 
+    def get_sliced(*args):
+        origin_jaxpr = make_jaxpr(fn, static_argnums=static_argnums)(*args)
+        sliced_eqns = slice_eqns_by_pipeline_marks(origin_jaxpr)
+        return origin_jaxpr, sliced_eqns
+
     @wraps(fn)
     def wrapped(*args):
-        origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                                  static_argnums=static_argnums,
-                                                  return_shape=True)(*args)
-        sliced_eqns = slice_eqns_by_pipeline_marks(origin_jaxpr)
-        flatten_args, _ = tree_flatten(args)
+        _, out_shape_tree = make_jaxpr(fn,
+                                       static_argnums=static_argnums,
+                                       return_shape=True)(*args)
+        origin_jaxpr, sliced_eqns = get_sliced(*args)
         new_jaxpr = transform_fn(origin_jaxpr, sliced_eqns)
+        flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
         _, out_tree = tree_flatten(out_shape_tree)
         return tree_unflatten(out_tree, ans)
 
+    wrapped.get_sliced = get_sliced
     return wrapped
 
 

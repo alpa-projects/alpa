@@ -4,7 +4,7 @@
 1. Install dependencies
 ```
 pip3 install torch==1.8.2+cu111 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
-pip3 install nltk pandas sentencepiece boto3
+pip3 install nltk pandas sentencepiece boto3 pybind11 python-config
 sudo apt-get update
 sudo apt-get install pdsh
 ```

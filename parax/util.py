@@ -761,7 +761,7 @@ def get_cross_slice_vars(jaxpr, slices):
                 if defined[invar] >= 0 and defined[invar] != i:
                     stage_invars[i].add(invar)
     for i, invars in enumerate(stage_invars):
-        print(f'stage {i} has inputs:')
+        print(f'Layer {i} has inputs:')
         for invar in invars:
-            print(invar, invar.aval.shape, 'from stage', defined[invar])
+            print(invar, invar.aval.shape, 'from layer', defined[invar])
     return

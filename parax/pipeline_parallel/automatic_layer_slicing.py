@@ -268,12 +268,12 @@ def automatic_layer_slicing(fn: Callable,
                                  cost_criteria=cost_criteria)
             print("-" * 20, "Automatic layer slicing stats", "-" * 20)
             print(f"layer_num: {layer_num}")
-            print("-- Number of Jaxpr eqns in each stage:")
+            print(" - Number of Jaxpr eqns in each stage:")
             for i, slice in enumerate(slices):
-                print(f"Stage {i}: {len(slice)}")
-            print("-- Invars of each stage:")
+                print(f"Layer {i}: {len(slice)}")
+            print(" - Invars of each stage:")
             get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
-            print("-" * 60)
+            print("-" * 70)
             return origin_jaxpr, slices, out_shape_tree
 
         @wraps(fn)

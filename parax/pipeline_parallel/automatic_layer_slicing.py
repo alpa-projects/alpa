@@ -153,17 +153,8 @@ def slice_jaxpr(jaxpr: Jaxpr,
     LAYER_HEAVY_OP_LOW_BOUND = 3
 
     @numba.jit(nopython=True)
-    def DP(Cost):
-        MaxCost = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
-        SumCostUnderMax = np.full((length + 1, layer_num + 1),
-                                  np.inf,
-                                  dtype=np.float32)
-        MaxCost_argmin = np.full((length + 1, layer_num + 1),
-                                 -1,
-                                 dtype=np.int32)
+    def Init():
         Blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
-        MaxCost[0, 0] = 0
-        SumCostUnderMax[0, 0] = 0
         for l in range(1, length + 1):
             cnt = 0
             flops_cnt = 0
@@ -179,6 +170,19 @@ def slice_jaxpr(jaxpr: Jaxpr,
                         cnt > LAYER_HEAVY_OP_LOW_BOUND):
                     break
                 Blocked[l, r] = 0
+        return Blocked
+
+    @numba.jit(nopython=True)
+    def DP(Cost, Blocked):
+        MaxCost = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
+        SumCostUnderMax = np.full((length + 1, layer_num + 1),
+                                  np.inf,
+                                  dtype=np.float32)
+        MaxCost_argmin = np.full((length + 1, layer_num + 1),
+                                 -1,
+                                 dtype=np.int32)
+        MaxCost[0, 0] = 0
+        SumCostUnderMax[0, 0] = 0
         for q in range(1, layer_num + 1):
             for r in range(1, length + 1):
                 for k in range(0, r):
@@ -194,7 +198,8 @@ def slice_jaxpr(jaxpr: Jaxpr,
                         MaxCost_argmin[r, q] = k
         return MaxCost_argmin, MaxCost[length, layer_num]
 
-    A_argmin, value = DP(Cost)
+    Blocked = Init()
+    A_argmin, value = DP(Cost, Blocked)
 
     reversed_sliced_eqns = []
 
@@ -248,29 +253,37 @@ def automatic_layer_slicing(fn: Callable,
     """
     if use_remat or use_pipeline:
 
-        @wraps(fn)
-        @manual_layer_slicing
-        def wrapped(*args):
-            origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                                      static_argnums=(),
-                                                      return_shape=True)(*args)
+        def get_sliced(*args):
+            origin_jaxpr = make_jaxpr(fn, static_argnums=())(*args)
             nonlocal layer_num
             if layer_num == "auto":
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)
-            flatten_args, _ = tree_flatten(args)
 
             slices = slice_jaxpr(origin_jaxpr,
                                  layer_num,
                                  eps,
                                  cost_criteria=cost_criteria)
+            return origin_jaxpr, slices
+
+        @wraps(fn)
+        @manual_layer_slicing
+        def wrapped(*args):
+            _, out_shape_tree = make_jaxpr(fn,
+                                           static_argnums=(),
+                                           return_shape=True)(*args)
+            origin_jaxpr, slices = get_sliced(*args)
             transformation = partial(
                 remat_jaxpr,
                 use_pipeline=use_pipeline) if use_remat else insert_marker
             new_jaxpr = transformation(origin_jaxpr, slices)
+
+            flatten_args, _ = tree_flatten(args)
+
             ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
             _, out_tree = tree_flatten(out_shape_tree)
             return tree_unflatten(out_tree, ans)
 
+        wrapped.get_sliced = get_sliced
         return wrapped
     else:
         return fn

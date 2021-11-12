@@ -82,16 +82,21 @@ def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
 non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 
 
-def is_nontrivial(eqn):
+def heavy_count(eqn):
     if eqn.primitive in non_trivial_primitive:
-        return True
+        return 1
     if isinstance(eqn.primitive, CallPrimitive):
         assert "call_jaxpr" in eqn.params
         called = eqn.params["call_jaxpr"]
+        cnt = 0
         for subjaxpr_eqn in called.eqns:
-            if is_nontrivial(subjaxpr_eqn):
-                return True
-    return False
+            cnt += heavy_count(subjaxpr_eqn)
+        return cnt
+    return 0
+
+
+def is_nontrivial(eqn):
+    return heavy_count(eqn) > 0
 
 
 def get_stat(jaxpr):
@@ -122,7 +127,7 @@ def slice_jaxpr(jaxpr: Jaxpr,
                 eps: float,
                 return_value=False,
                 stat=None,
-                use_flops=True):
+                cost_criteria="flops"):
     layer_num = int(layer_num)
     length = len(jaxpr.eqns)
     if stat:
@@ -130,14 +135,20 @@ def slice_jaxpr(jaxpr: Jaxpr,
     else:
         non_trivial, Cost = get_stat(jaxpr)
 
+    if cost_criteria == "flops":
+        cost_fn = eqn_flops
+    elif cost_criteria == "count":
+        cost_fn = heavy_count
+    else:
+        raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
     flops = [
-        (eqn_flops(eqn) if use_flops else 1) if is_nontrivial else 0
+        cost_fn(eqn) if is_nontrivial else 0
         for is_nontrivial, eqn in zip(non_trivial, jaxpr.eqns)
     ]
     flops = np.array(flops, dtype=np.float64)
     flops_avg = flops.sum() / layer_num
     flops_bound = flops_avg * (1 + eps)
-    if not use_flops:
+    if cost_criteria == "count":
         flops_bound = max(flops_bound, flops_avg + 5)
     LAYER_HEAVY_OP_LOW_BOUND = 3
 
@@ -181,9 +192,9 @@ def slice_jaxpr(jaxpr: Jaxpr,
                         MaxCost[r, q] = new_value
                         SumCostUnderMax[r, q] = new_sum
                         MaxCost_argmin[r, q] = k
-        return MaxCost_argmin, MaxCost[length, layer_num], Blocked
+        return MaxCost_argmin, MaxCost[length, layer_num]
 
-    A_argmin, value, Blocked = DP(Cost)
+    A_argmin, value = DP(Cost)
 
     reversed_sliced_eqns = []
 
@@ -217,7 +228,7 @@ def search_layer_num(jaxpr, eps, layer_eps=0):
 def automatic_layer_slicing(fn: Callable,
                             layer_num: int,
                             eps: float = 0.6,
-                            use_flops: bool = True,
+                            cost_criteria: str = "flops",
                             use_pipeline: bool = False,
                             use_remat: bool = False,
                             layer_eps: float = 0):
@@ -229,8 +240,8 @@ def automatic_layer_slicing(fn: Callable,
         fun: The forward function
         layer_num: The number of output layers. Use binary search if value is "auto"
         eps: The imbalance tolerance among layers.
-        use_flops: If true, use FLOPs of each eqn for rough computation balance;
-            Otherwise, simply count number of dot/conv.
+        cost_criteria: If "flops", use FLOPs of each eqn for rough computation balance;
+            If "count", simply count number of dot/conv.
         use_pipeline: Whether to insert pipeline markers at the boundary of layers.
         use_remat: Whether to use rematerialization at the boundary of layers.
         layer_eps: The imbalance tolerance for binary search of layer_num
@@ -248,7 +259,10 @@ def automatic_layer_slicing(fn: Callable,
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)
             flatten_args, _ = tree_flatten(args)
 
-            slices = slice_jaxpr(origin_jaxpr, layer_num, eps, use_flops)
+            slices = slice_jaxpr(origin_jaxpr,
+                                 layer_num,
+                                 eps,
+                                 cost_criteria=cost_criteria)
             transformation = partial(
                 remat_jaxpr,
                 use_pipeline=use_pipeline) if use_remat else insert_marker

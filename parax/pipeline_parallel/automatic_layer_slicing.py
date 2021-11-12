@@ -254,7 +254,9 @@ def automatic_layer_slicing(fn: Callable,
     if use_remat or use_pipeline:
 
         def get_sliced(*args):
-            origin_jaxpr = make_jaxpr(fn, static_argnums=())(*args)
+            origin_jaxpr, out_shape_tree = make_jaxpr(fn,
+                                           static_argnums=(),
+                                           return_shape=True)(*args)
             nonlocal layer_num
             if layer_num == "auto":
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)
@@ -263,15 +265,12 @@ def automatic_layer_slicing(fn: Callable,
                                  layer_num,
                                  eps,
                                  cost_criteria=cost_criteria)
-            return origin_jaxpr, slices
+            return origin_jaxpr, slices, out_shape_tree
 
         @wraps(fn)
         @manual_layer_slicing
         def wrapped(*args):
-            _, out_shape_tree = make_jaxpr(fn,
-                                           static_argnums=(),
-                                           return_shape=True)(*args)
-            origin_jaxpr, slices = get_sliced(*args)
+            origin_jaxpr, slices, out_shape_tree = get_sliced(*args)
             transformation = partial(
                 remat_jaxpr,
                 use_pipeline=use_pipeline) if use_remat else insert_marker

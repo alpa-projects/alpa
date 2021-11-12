@@ -448,6 +448,7 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                     local_used.update([
                         invar for invar in eqn.invars if isinstance(invar, Var)
                     ])
+                    break
         # handle pipe start
         pipe_start = computation.eqns[0]
         assert (pipe_start.primitive is pipeline_p and

@@ -745,6 +745,8 @@ def get_cross_slice_vars(jaxpr, slices):
     stage_invars = [set() for _ in slices]
     for invar in jaxpr.invars:
         defined[invar] = -1
+    for invar in jaxpr.constvars:
+        defined[invar] = -1
     for i, sliced in enumerate(slices):
         for eqn in sliced:
             for outvar in eqn.outvars:

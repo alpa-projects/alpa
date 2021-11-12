@@ -145,7 +145,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     xla_stages = [None] * n_stages
     for mesh_idx in range(num_meshes):
         physical_mesh = physical_meshes[mesh_idx]
-        if global_config.sub_logical_mesh_shapes[mesh_idx]:
+        if slms and slms[mesh_idx]:
             # set to a user-required logical mesh shape
             # e.g. [1, 4] physical mesh could produce a [2, 2] logical mesh
             logical_mesh_choices = [physical_mesh.get_logical_mesh(slms[mesh_idx])]

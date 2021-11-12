@@ -104,7 +104,9 @@ class CompileWorker:
         return (optimized_proto, strategy_config, input_sharding_protos,
                 output_sharding_proto)
 
-
+    def compile_stage_with_config(self, proto, jaxpr_config, mesh_config, multiple_stage_config):
+        computation_protos, strategy_config = compile_with_search(self.backend, proto, *jaxpr_config, *mesh_config, *multiple_stage_config)
+        return computation_protos, strategy_config
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 

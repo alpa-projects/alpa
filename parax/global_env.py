@@ -27,6 +27,9 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
+        self.sub_physical_mesh_shapes = None
+        self.sub_logical_mesh_shapes = None
+
         ########## Options for pipeline stage ##########
         self.pipeline_stage_mode = "uniform_layer_gpipe"
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile

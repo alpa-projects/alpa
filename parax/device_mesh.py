@@ -412,7 +412,8 @@ class PhysicalDeviceMesh:
                  host_info=None,
                  head_ip=None,
                  num_devices_per_host=1,
-                 use_ray=False):
+                 use_ray=False,
+                 skip_launch=False):
         # actually we can infer use_ray by checking ip addresses.
         self.use_ray = use_ray
         self.host_ids = host_ids
@@ -461,7 +462,8 @@ class PhysicalDeviceMesh:
                     for devices_this_host in self.devices
                     for i in devices_this_host
                 ])
-            self._launch_xla_servers()
+            if not skip_launch:
+                self._launch_xla_servers()
 
     @property
     def host_ips(self):

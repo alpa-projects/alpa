@@ -315,7 +315,7 @@ class MeshHostWorker:
             elif primitive_name == "all-to-all":
                 communication_size = array_size * (
                     num_devices - 1) / num_devices / num_devices
-                penalty_factor = num_devices // 2
+                penalty_factor = num_devices / 2.0
                 communication_size *= penalty_factor
             else:
                 raise ValueError("Invalid primitive: " + primitive_name)
@@ -846,7 +846,7 @@ class LogicalDeviceMesh:
 
     def all_to_all_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
-        penalty_factor = num_devices / 2
+        penalty_factor = num_devices / 2.0
         return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
                 (num_devices - 1) / num_devices / num_devices * num_bytes *
                 penalty_factor + 0.001)

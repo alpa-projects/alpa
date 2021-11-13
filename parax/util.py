@@ -564,7 +564,10 @@ def profile_xla_executable(compiled, backend, local_devices):
 
         local_devices[0].synchronize_all_activity()
 
-    costs = benchmark_func(run_func, repeat=3, number=3)
+    try:
+        costs = benchmark_func(run_func, repeat=3, number=3)
+    except:
+        costs = [np.inf] * 3
     return costs
 
 

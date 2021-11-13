@@ -22,7 +22,9 @@ import jax.numpy as jnp
 
 from parax.measure_record import StrategyConfig
 from parax.timer import timers
-from parax.util import compile_allocate_zero_buffers, compile_memset_zero_buffers, get_shard_shape, profile_xla_executable
+from parax.util import (compile_allocate_zero_buffers,
+                        compile_memset_zero_buffers, get_shard_shape,
+                        profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -288,7 +290,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                 tasks.append(
                     worker.profile_executable_with_dummy_inputs.remote(
                         self.exec_uuid))
-            costs = ray.get(tasks)[0]
+            costs = ray.get(tasks)
+            for cost_vec in costs:
+                if np.inf in cost_vec:
+                    return [np.inf] * len(cost_vec)
+            costs = costs[0]
         else:
             costs = profile_xla_executable(self.compiled,
                                            xla_bridge.get_backend("gpu"),

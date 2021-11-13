@@ -82,4 +82,30 @@ def compute_gpt_parameter_count(num_layers, hidden_size, vocab_size):
            ) + vocab_size * (hidden_size + 1)
 
 
+def compute_moe_parameter_count(num_layers,
+                                hidden_size,
+                                vocab_size,
+                                num_expert,
+                                mlp_factor=8,
+                                tie_embedding=True):
+    pure_transformer = \
+        hidden_size * (3 * hidden_size + 1) + hidden_size * (hidden_size + 1) + \
+        hidden_size * (mlp_factor * hidden_size + 1) + hidden_size * mlp_factor * (hidden_size + 1) + \
+        hidden_size * 4
+    moe_transformer = \
+        hidden_size * (3 * hidden_size + 1) + hidden_size * (hidden_size + 1) + \
+        num_expert * (hidden_size * (mlp_factor * hidden_size + 1) + hidden_size * mlp_factor * (hidden_size + 1)) + \
+        hidden_size * 4
+
+    # embedding
+    embedding_factor = 1 if tie_embedding else 2
+    embedding = embedding_factor * vocab_size * (hidden_size + 1)
+
+    if num_expert == 1:
+        return pure_transformer * num_layers + embedding
+    else:
+        half = num_layers / 2
+        return half * pure_transformer + half * moe_transformer + embedding
+
+
 GB = 1 << 30

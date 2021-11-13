@@ -8,6 +8,7 @@ import ray
 
 import parax
 from benchmark_gpt_bert_3d import get_train_step
+from benchmark.util import compute_moe_parameter_count
 from parax import (global_config, set_parallelize_options, DeviceCluster)
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
@@ -40,11 +41,6 @@ def create_train_state(rngkey, model, dtype, batch):
         learning_rate=1e-2, weight_decay_mask=weight_decay_mask
     )
 
-    # tx = optax.chain(
-    #     #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-    #     optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
-    # )
-    # tx = optax.adafactor(learning_rate=1e-2)
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
@@ -109,7 +105,6 @@ def benchmark_one_case(benchmark_case):
 
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, dtype, batch)
-    param_count = compute_param_number(state.params)
     print_used_time("Create train state")
 
     # Compile executable
@@ -121,7 +116,9 @@ def benchmark_one_case(benchmark_case):
     for i in range(args.niter):
         state = train_step(state, batch, rngkey)
 
-    param_count = compute_param_number(state.params)
+    param_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, expert_number,
+                                              tie_embedding=tie_word_embeddings)
+
     timer_name = "overall"
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
     print_used_time("Benchmark")

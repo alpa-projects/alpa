@@ -4,9 +4,12 @@ import random
 
 from util import run_cmd
 
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size,
-# #head = num_heads, DP = dp_size, TMP = tensor_mp_size, NB = num_micro_batches,
-# CK = checkpoint_activations, DS = use_deepspeed
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
+# #head = num_heads, S_ = expert_group_size, E = expert_number,
+# D0 = mesh_dimension_0, D1 = mesh_dimension_1,
+# NB = num_micro_batches, FD = force_data_parallel,
+# CK = use_checkpoint,
+# DS = use_deepspeed
 
 benchmark_suite_1_gpu = [
     #B,    S,    H,    L,  #head,     V,     DP, TMP, NB, CK, DS
@@ -18,8 +21,8 @@ benchmark_suite_4_gpu = [
 
     # B,  S,    H,    L,  #head,     V,   S_,  E,  DP, TP, PP, NB, CK, DS
 
-    (32,  1024, 1024, 4, 1024//64, 51200,  1024, 8 , 4,  1,  1,   1, True, True),
-
+    (32,  1024, 1024, 4, 1024//64, 51200,  1024, 16 , 4,  1,  1,   1, True, True),
+    # (32,  1024, 1024, 24, 1024//64, 51200,  1024, 16 , 4,  1,  1,   1, True, True),
     # (16,  1024, 1024, 24, 1024//64, 51200, 1024, 4 , 4,   1,   2,   8, True, True),
 
 ]
@@ -33,7 +36,7 @@ benchmark_suite_8_gpu = [
     # (256, 1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  32, 1,  0),
     # (8,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  1,  True, False),
     # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   2,   8,  True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 1024, 4 , 4,   1,   2,   8, True, True),
+    (32,  1024,  1024, 24, 1024//64, 51200, 1024, 8, 4,   1,   2,   8, True, True),
 ]
 
 benchmark_suite_16_gpu = [
@@ -71,7 +74,9 @@ def benchmark_all(args):
 
     warmup_iter = 2
     bench_iter = 3
-    config_file = "ds_zero_stage_2_config.json"
+
+    # MOE does not support stage 3
+    config_file = "ds_zero_stage_2_moe_config.json"
 
     for case in benchmark_suites[num_gpus]:
         batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
@@ -85,7 +90,6 @@ def benchmark_all(args):
 
         gpt_options = (
             f"--model-parallel-size {tensor_mp_size} "
-            # f"--DDP-impl torch "
             f"--num-layers {num_layers} "
             f"--hidden-size {hidden_size} "
             f"--num-attention-heads {num_heads} "

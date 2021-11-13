@@ -8,26 +8,14 @@ import ray
 
 import parax
 from benchmark_gpt_bert_3d import get_train_step
-from benchmark.util import compute_moe_parameter_count
+from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
 from parax import (global_config, set_parallelize_options, DeviceCluster)
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.util import (write_tsv, print_used_time,
-                        compute_param_number)
+from parax.util import (write_tsv, print_used_time, compute_param_number)
 
 GB = 1024 ** 3
 
-def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
-                       num_gpus, latency, checkpoint_activations=False):
-    factor = 96 if checkpoint_activations else 72
-    total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
-                 (1 + seq_len / (6 * hidden_size)) \
-                 + 6 * batch_size * seq_len * hidden_size * vocab_size
-    # Note: if we use dot to compute forward embedding
-    # then the last term in total_flops should be
-    # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
-    tflops = total_flop / latency / num_gpus / 1e12
-    return tflops
 
 def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
@@ -124,11 +112,9 @@ def benchmark_one_case(benchmark_case):
     print_used_time("Benchmark")
 
     # Compute statistics
-    # TODO(Hao): this tflops isn't right.
     tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
-                            hidden_size, vocab_size,
-                            virtual_mesh.total_devices,
-                            np.mean(overall_costs[2:]))
+                                hidden_size, vocab_size, expert_number,
+                                virtual_mesh.total_devices, np.mean(overall_costs[2:]))
 
     # Restore global config
     global_config.restore(backup)

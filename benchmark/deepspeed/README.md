@@ -4,7 +4,9 @@
 1. Install dependencies
 ```
 pip3 install torch==1.8.2+cu111 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
-pip3 install nltk pandas sentencepiece boto3
+pip3 install nltk pandas sentencepiece boto3 pybind11 python-config
+# for adafactor
+pip3 install torch-optimizer
 sudo apt-get update
 sudo apt-get install pdsh
 ```
@@ -23,8 +25,10 @@ git clone --recursive https://github.com/microsoft/DeepSpeed.git
 echo 'export DEEPSPEED_PATH=~/efs/DeepSpeed' >> ~/.bashrc   # use your own path
 source ~/.bashrc
 
-# Replace one source file
-cp ~/efs/parax/benchmark/deepspeed/training.py ~/efs/DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/training.py
+# Replace source files (use your own path)
+cp parax/benchmark/deepspeed/patch/training.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/training.py
+cp parax/benchmark/deepspeed/patch/gpt2_model.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/model/gpt2_model.py
+cp parax/benchmark/deepspeed/patch/transformer.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/model/transformer.py
 ```
 
 3. Download dataset
@@ -38,7 +42,10 @@ ln -s $(pwd) ~/efs/parax/benchmark/deepspeed/data   # use your own path
 ## Run
 ### Single Node
 ```
+# GPT
 python3 benchmark_gpt2.py --nproc_per_node 8
+# MOE
+python3 benchmark_gpt2_moe.py --nproc_per_node 8
 ```
 
 ### Multiple Node

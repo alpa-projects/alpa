@@ -33,27 +33,44 @@ class AutoShardingMixedTest(unittest.TestCase):
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def test_dot_all_to_all(self):
-        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
+        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
         set_parallelize_options(devices=device_mesh)
+
+        global_config.allow_mixed_mesh_shape = True
 
         use_bias = False
 
-        batch_size = 128
-        in_dim = 8
-        out_dim = in_dim * 32
-
-        global_config.allow_all_gather = False
+        B = 256
+        E = 4
+        M = 16
+        M_ = M // E
+        H = M * 8
 
         class Model(nn.Module):
 
             @nn.compact
             def __call__(self, x):
-                x = nn.Dense(features=in_dim, use_bias=use_bias)(x)       # R
-                x = nn.Dense(features=in_dim * 2, use_bias=use_bias)(x)   # R
-                x = nn.Dense(features=in_dim * 4, use_bias=use_bias)(x)   # R
-                x = nn.Dense(features=in_dim * 8, use_bias=use_bias)(x)   # S1
-                x = nn.Dense(features=in_dim * 16, use_bias=use_bias)(x)  # S0
-                x = nn.Dense(features=in_dim * 32, use_bias=use_bias)(x)  # S1
+                wi = self.param("wi", jax.nn.initializers.zeros, (
+                    E,
+                    M_,
+                    H,
+                ))
+                wo = self.param("wo", jax.nn.initializers.zeros, (
+                    E,
+                    H,
+                    M_,
+                ))
+
+                x = nn.Dense(features=M, use_bias=use_bias)(x)
+                x = nn.Dense(features=M, use_bias=use_bias)(x)
+                x = x.reshape((B, E, M_))
+
+                x = jnp.einsum("BEM,EMH->EBH", x, wi)
+                x = jnp.einsum("EBH,EHM->BEM", x, wo)
+
+                x = x.reshape((B, M))
+                x = nn.Dense(features=M, use_bias=use_bias)(x)
+                x = nn.Dense(features=M, use_bias=use_bias)(x)
                 return x
 
         @parallelize
@@ -67,8 +84,8 @@ class AutoShardingMixedTest(unittest.TestCase):
             new_state = state.apply_gradients(grads=grads)
             return new_state
 
-        x = jnp.ones((batch_size, in_dim))
-        y = jnp.ones((batch_size, out_dim))
+        x = jnp.ones((B, M))
+        y = jnp.ones((B, M))
 
         # Init train state
         model = Model()
@@ -78,11 +95,12 @@ class AutoShardingMixedTest(unittest.TestCase):
         state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         # JIT compile
-        state = train_step(state, {"x": x, "y": y})
+        executable = train_step.get_executable(state, {"x": x, "y": y})
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+        hlo_ir = executable.get_hlo_text()
+
+        print(hlo_ir)
 
 
 def suite():

@@ -390,6 +390,60 @@ def test_reshard_all_to_all():
     print(compiled_computation.hlo_modules()[0].to_string())
 
 
+def test_reshard_change_mesh_shape():
+    c = xla_client.XlaBuilder("shard")
+
+    # Set input sharding
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.OTHER
+    sharding.tile_assignment_dimensions.extend([1, 2, 2])
+    sharding.tile_assignment_devices.extend([0, 1, 2, 3])
+    sharding.replicate_on_last_tile_dim = True
+    c.set_sharding(sharding)
+    x = parameter(c, 0, (32, 32), np.float32)
+    c.clear_sharding()
+
+    # Build computational graph
+    z = x
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.OTHER
+    sharding.tile_assignment_dimensions.extend([4, 1])
+    sharding.tile_assignment_devices.extend([0, 1, 2, 3])
+
+    sharding2 = xla_client.OpSharding()
+    sharding2.type = sharding.type.TUPLE
+    sharding2.tuple_shardings = [sharding]
+    c.set_sharding(sharding2)
+    out = ops.Tuple(c, [z])
+    c.clear_sharding()
+
+    # Build HLO
+    c = c.build(out)
+    print(c.as_hlo_text())
+    print("=" * 20)
+
+    # Compile
+    num_replicas = 1
+    num_partitions = 4
+    use_spmd_partitioning = False
+    device_assignment = xla_client.DeviceAssignment.create([list(range(num_partitions))])
+    compile_options = xla_client.CompileOptions()
+    build_options = compile_options.executable_build_options
+    build_options.num_replicas = num_replicas
+    build_options.num_partitions = num_partitions
+    build_options.use_spmd_partitioning = True
+    build_options.device_assignment = device_assignment
+
+    backend = xla_client.get_local_backend("gpu")
+    import parax
+    with parax.XlaPassContext({
+        "build_option::bypass_device_assignment_check": True,
+    }):
+        compiled_computation = backend.compile(c, compile_options)
+
+    # Print spmd partitioned HLO
+    print(compiled_computation.hlo_modules()[0].to_string())
+
 
 def test_skip_hlo_passes():
     from parax import XlaPassContext
@@ -501,7 +555,8 @@ if __name__ == "__main__":
     #test_manual_construct_spmd_one_device()
 
     #test_reshard_multi_allgather()
-    test_reshard_all_to_all()
+    #test_reshard_all_to_all()
+    test_reshard_change_mesh_shape()
 
     #test_skip_hlo_passes()
 

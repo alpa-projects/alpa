@@ -128,9 +128,11 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::all_to_all_cost": 1e10,
                 "auto_sharding::prefer_reduce_scatter":
                     global_config.prefer_reduce_scatter,
-                "auto_sharding::batch_matmul_always_split_batch": False,
+                "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
                     global_config.allow_recompute_heavy_op,
+                "auto_sharding::allow_mixed_mesh_shape":
+                    global_config.allow_mixed_mesh_shape,
                 "auto_sharding::grad_acc_num_micro_batches":
                     grad_acc_num_micro_batches or 1,
                 "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
@@ -155,8 +157,23 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::simplify_graph": True,
                 "auto_sharding::print_strategy": False,
                 "auto_sharding::force_strategy": False,
-                "auto_sharding::force_strategy_inst_indices": [],
-                "auto_sharding::force_strategy_stra_names": [],
+                "auto_sharding::force_strategy_inst_indices":
+                    [0, 1, 2, 4,
+                     7, 8, 9, 10,
+
+                     26,
+
+                     30, 35, 38, 42],
+                "auto_sharding::force_strategy_stra_names":
+                    ["R", "S0 @ 0 1d", "Si = Si x R @ 0", "Si = Si x R @ 0",
+                     "S0 @ 1", "SbSi = SbSi x SbR @ {1,0}", "S0 @ 1", "SbSj = SbR x SbSj @ {1,0}",
+
+                     "SbSi = SbSi x SbR @ {1,0}",
+                     
+                     "R = Sk x Sk @ 0 (allreduce @ 0)",
+                     "R = Sk x Sk @ 0 (allreduce @ 0)",
+                     "R = Sk x Sk @ 0 (allreduce @ 0)",
+                     "R = Sk x Sk @ 0 (allreduce @ 0)"]
         }):
             compiled = xla.backend_compile(backend, xla_computation,
                                            compile_options)

@@ -406,7 +406,8 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
     #hlo_ir = hlo_module.to_string()
     #import re
     #ids = []
-    #for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups", hlo_ir):
+    #for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=\{\{0,4", hlo_ir):
+    ##for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=", hlo_ir):
     #    ids.append(item)
 
     #ids = "." + ".".join(ids) + "."
@@ -483,7 +484,7 @@ class GradAccMeshDriverExecutable:
         # Get the channel ids of gradient sync all-reduce
         grad_sync_channel_ids =\
             get_grad_sync_channel_ids(accumulate_grad.hlo_modules()[0])
-        # print(grad_sync_channel_ids)
+        print(grad_sync_channel_ids)
 
         # Cache results for input and output sharding
         global_arg_shard_indices = [

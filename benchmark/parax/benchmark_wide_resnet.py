@@ -276,12 +276,20 @@ benchmark_suite_32gb = {  # key = number of gpus, value = a list of cases
     (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, True,  False),
 ],
 
+4: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    #(32,   224, 50,  512, 2, "fp32", 1,  4,  1,  False, False, False),
+],
+
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (256,  224, 50,  256, 4, "fp32", 8,  1,  1,  False, True,  False),
-    (64,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, True,  False),
-    (128,  224, 50,  512, 4, "fp32", 2,  4,  2,  False, True,  False),
-    (32,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, True,  False),
+    #(256,  224, 50,  256, 4, "fp32", 8,  1,  1,  False, True,  False),
+    #(64,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, True,  False),
+    #(128,  224, 50,  512, 4, "fp32", 2,  4,  2,  False, True,  False),
+    #(32,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, True,  False),
+
+    #(64,    224, 50,  512, 2, "fp32", 2,  4,  1,  False, False, False),
+    (128,   224, 50,  512, 2, "fp32", 2,  4,  2,  False, False, False),
 ],
 
 16: [
@@ -365,7 +373,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
-    parser.add_argument("--suite", choices=["32gb", "16gb"], default="16gb",
+    parser.add_argument("--suite", choices=["32gb", "16gb"], default="32gb",
         help="The benchmark suite")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")

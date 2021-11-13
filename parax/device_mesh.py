@@ -465,6 +465,8 @@ class PhysicalDeviceMesh:
             if not skip_launch:
                 self._launch_xla_servers()
 
+        self.launched = not skip_launch
+
     @property
     def host_ips(self):
         """Return the a list containing all host IPs."""
@@ -510,6 +512,10 @@ class PhysicalDeviceMesh:
             }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
+
+    def launch_xla_servers(self):
+        assert not self.launched
+        self._launch_xla_servers()
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU model."""
@@ -795,6 +801,7 @@ class PhysicalDeviceMesh:
             self.service_server = None
         else:
             self.sync_workers()
+        self.launched = False
 
 
 class LogicalDeviceMesh:

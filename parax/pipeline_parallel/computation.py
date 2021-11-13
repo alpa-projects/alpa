@@ -448,6 +448,7 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                     local_used.update([
                         invar for invar in eqn.invars if isinstance(invar, Var)
                     ])
+                    break
         # handle pipe start
         pipe_start = computation.eqns[0]
         assert (pipe_start.primitive is pipeline_p and
@@ -510,11 +511,9 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_sharded_xla_computations(
+def generate_sharded_xla_computations_compile_config(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars, physical_mesh, logical_mesh_choices,
-        logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
-        search_task, record_file):
+        computation_donate_invars):
     """
     Generate sharded XLA computations by running the auto-sharding pass
     on the given JaxPipelineComputations.
@@ -554,12 +553,47 @@ def generate_sharded_xla_computations(
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
+    in_avals = [var.aval for var in invars]
+    out_avals = [var.aval for var in outvars]
+    jaxpr_config = in_avals, out_avals, dummy_donated_invars
+    proto = built.as_serialized_hlo_module_proto()
+    return proto, jaxpr_config
+
+
+def generate_computations_from_protos(jax_computations, acc_grad_outvars,
+                                      donate_invars, computation_protos,
+                                      strategy_config):
+    computations = [
+        XlaShardedPipelineComputation.from_auto_sharded_computation(
+            auto_sharded_hlo_proto=proto,
+            jax_pipeline_computation=computation,
+            strategy_config=strategy_config,
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars)
+        for computation, proto, donate_invars in zip(
+            jax_computations, computation_protos, donate_invars)
+    ]
+    return computations
+
+
+def generate_sharded_xla_computations(
+        name: str, jax_computations: Sequence[JaxPipelineComputation],
+        computation_donate_invars, physical_mesh, logical_mesh_choices,
+        logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
+        search_task, record_file):
+    proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
+        name, jax_computations, computation_donate_invars)
+    built = xc.XlaComputation(proto)
+    in_avals, out_avals, donated_invars = jaxpr_config
+
+    backend_name = "gpu"
+    backend = xb.get_backend(backend_name)
     computation_protos, strategy_config = compile_with_search(
         backend,
         built,
-        invars,
-        outvars,
-        dummy_donated_invars,
+        in_avals,
+        out_avals,
+        donated_invars,
         physical_mesh,
         logical_mesh_choices,
         logical_mesh_search_mode,
@@ -569,17 +603,10 @@ def generate_sharded_xla_computations(
         multiple_stages=True,
         grad_acc_num_micro_batches=None,
         bypass_device_assignment_check=physical_mesh.is_distributed)
-    computations = [
-        XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto,
-            jax_pipeline_computation=computation,
-            strategy_config=strategy_config,
-            donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars)
-        for computation, proto, donate_invars in zip(
-            jax_computations, computation_protos, computation_donate_invars)
-    ]
-    return computations
+    return generate_computations_from_protos(jax_computations, acc_grad_outvars,
+                                             computation_donate_invars,
+                                             computation_protos,
+                                             strategy_config)
 
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],

@@ -31,7 +31,8 @@ class GlobalConfig:
         self.pipeline_stage_mode = "uniform_layer_gpipe"
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile
         self.forward_stage_layer_ids = None
-        self.submesh_shapes = None
+        self.sub_physical_mesh_shapes = None
+        self.sub_logical_mesh_shapes = None
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.

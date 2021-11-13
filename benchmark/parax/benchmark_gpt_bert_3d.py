@@ -164,6 +164,9 @@ def benchmark_one_case(benchmark_case):
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
+    executable.sync()
+    print_used_time("Compile (worker)")
+
     for i in range(args.niter):
         state = train_step(state, batch, rngkey)
 

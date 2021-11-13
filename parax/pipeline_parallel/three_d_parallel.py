@@ -16,13 +16,16 @@ from parax.pipeline_parallel.centralized_distributerd_runtime import (
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages)
 from parax.pipeline_parallel.computation import (
-    create_donation_mapping, generate_sharded_xla_computations,
+    create_donation_mapping, generate_computations_from_protos,
+    generate_sharded_xla_computations,
+    generate_sharded_xla_computations_compile_config,
     mark_missing_vars_in_pipeline_marks, pipeline_dce,
     slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars)
 from parax.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
 from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
+from parax.pipeline_parallel.stage_profiling import CompileWorkerPool
 from parax.util import get_micro_batch
 
 logger = logging.getLogger(__name__)
@@ -123,7 +126,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     physical_meshes = []
     for i, mesh in enumerate(schedule.meshes):
         logger.debug("Launch the {}th mesh...".format(i))
-        physical_meshes.append(mesh.get_physical_mesh())
+        physical_meshes.append(mesh.get_physical_mesh(skip_launch=True))
 
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
@@ -138,19 +141,26 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     slms = global_config.sub_logical_mesh_shapes
     if slms != None:
         assert len(slms) == len(global_config.sub_physical_mesh_shapes)
-        assert all(np.prod(slms[i]) == np.prod(global_config.sub_physical_mesh_shapes[i])
-                   for i in range(num_meshes))
+        assert all(
+            np.prod(slms[i]) == np.prod(
+                global_config.sub_physical_mesh_shapes[i])
+            for i in range(num_meshes))
     else:
         slms = [None] * num_meshes
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
+    compile_workers = CompileWorkerPool(num_meshes, 1)
+    compile_fn = lambda w, v: w.compile_with_config.remote(*v)
+    compile_intermediate = [None] * num_meshes
     for mesh_idx in range(num_meshes):
         physical_mesh = physical_meshes[mesh_idx]
         if slms[mesh_idx]:
             # set to a user-required logical mesh shape
             # e.g. [1, 4] physical mesh could produce a [2, 2] logical mesh
-            logical_mesh_choices = [physical_mesh.get_logical_mesh(slms[mesh_idx])]
+            logical_mesh_choices = [
+                physical_mesh.get_logical_mesh(slms[mesh_idx])
+            ]
         else:
             # logical mesh shape == physical mesh shape
             logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
@@ -161,13 +171,35 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         ]
         search_task = None
         record_file = None
-        sharded_xla_stages = generate_sharded_xla_computations(
-            str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
-            physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
-            memory_budget_per_device, acc_grad_outvars, search_task,
-            record_file)
+        proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
+            str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
+        mesh_config = (None, logical_mesh_choices, logical_mesh_search_mode,
+                       memory_budget_per_device, search_task, record_file)
+        multiple_stage_config = {
+            "multiple_stages": True,
+            "grad_acc_num_micro_batches": None,
+            "bypass_device_assignment_check": True
+        }
+
+        compile_workers.submit(
+            compile_fn,
+            (proto, jaxpr_config, mesh_config, multiple_stage_config))
+        compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
+                                          stage_donate_invars)
+    for mesh_idx in range(num_meshes):
+        computation_protos, strategy_config = compile_workers.get_next()
+        jax_computations, computation_donate_invars = compile_intermediate[
+            mesh_idx]
+        sharded_xla_stages = generate_computations_from_protos(
+            jax_computations, acc_grad_outvars, computation_donate_invars,
+            computation_protos, strategy_config)
         for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
             xla_stages[i] = xla_stage
+            xla_stage.get_compiled(physical_meshes[mesh_idx])
+    compile_workers.shutdown()
+
+    for physical_mesh in physical_meshes:
+        physical_mesh.launch_xla_servers()
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}

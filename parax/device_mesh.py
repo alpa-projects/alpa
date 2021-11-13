@@ -790,6 +790,8 @@ class PhysicalDeviceMesh:
 
     def shutdown(self):
         """Shut down the mesh."""
+        if not self.launched:
+            return
         if self.is_distributed:
             ray.get([w.shutdown.remote() for w in self.workers])
             for worker in self.workers:

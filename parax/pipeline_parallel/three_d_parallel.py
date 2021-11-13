@@ -199,7 +199,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     compile_workers.shutdown()
 
     for physical_mesh in physical_meshes:
-        physical_mesh._launch_xla_servers()
+        physical_mesh.launch_xla_servers()
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}

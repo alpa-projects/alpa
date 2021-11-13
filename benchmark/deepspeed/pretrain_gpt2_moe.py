@@ -260,7 +260,7 @@ if __name__ == "__main__":
         alloc_mem = torch.cuda.max_memory_allocated(0)
         latencies = np.array(step_latencies[warmup_iter * num_micro_batches:])\
                     .reshape((-1, num_micro_batches)).sum(axis=-1)
-\
+
         # TODO(Hao): the param count and tflops are for GPT, not GPT-MoE
         param_count = compute_gpt_parameter_count(
             num_layers, hidden_size, vocab_size)

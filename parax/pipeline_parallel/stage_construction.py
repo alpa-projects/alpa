@@ -310,8 +310,8 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
                     cur_host_index = cur_host_index + num_required_host
                 else:
                     cur_device_index = cur_device_index + num_required_device_per_host
-            assert cur_host_index == num_host
-            assert cur_device_index == 0
+            assert cur_host_index == num_host, "unable to satisfy the mesh requirement."
+            assert cur_device_index == 0, "unable to satisfy the mesh requirement."
     return output_meshes
 
 

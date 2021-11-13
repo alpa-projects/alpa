@@ -19,7 +19,8 @@ logger.setLevel(logging.INFO)
 timer_names = {
     "overall": "average",
     "compute": "sum",
-    "resharding": "sum",
+    "resharding_send": "sum",
+    "resharding_recv": "sum"
 }
 
 

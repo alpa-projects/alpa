@@ -8,12 +8,12 @@ import optax
 
 import parax
 from benchmark.parax.benchmark_transformer_layer_3d import report_pipeline_breakdown
+from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, mark_pipeline, manual_layer_slicing, automatic_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import write_tsv, print_used_time
-from benchmark.parax.benchmark_gpt_bert import compute_parameter_count, compute_tflops
 
 GB = 1024 ** 3
 
@@ -175,12 +175,11 @@ def benchmark_one_case(benchmark_case):
     print_used_time("Benchmark")
 
     # Compute statistics
-    tflops = compute_tflops(batch_size, seq_len, num_layers,
-                            hidden_size, vocab_size,
-                            virtual_mesh.total_devices,
-                            np.mean(overall_costs[2:]))
-    parameter_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
-
+    tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
+                                hidden_size, vocab_size,
+                                virtual_mesh.total_devices,
+                                np.mean(overall_costs[2:]))
+    parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
     report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
     heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
@@ -203,6 +202,12 @@ def benchmark_one_case(benchmark_case):
 # yapf: disable
 
 sanity_check_suite = {
+
+4: [
+
+    (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 8, True, True),
+
+],
 
 8: [
     # the performance below on p3.16
@@ -328,7 +333,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=10)
-    parser.add_argument("--suite", choices=["default", "sanity_check"], default="default")
+    parser.add_argument("--suite", choices=["default", "sanity_check"], default="sanity_check")
     args = parser.parse_args()
 
     ray.init(address="auto")

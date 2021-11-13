@@ -93,7 +93,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         max_position_embeddings=seq_len,
         vocab_size=vocab_size,
         expert_group_size=expert_group_size,
-        expert_number=expert_number,
+        expert_number=expert_number
     ), dtype=dtype)
 
     rngkey = jax.random.PRNGKey(0)

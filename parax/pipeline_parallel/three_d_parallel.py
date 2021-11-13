@@ -1,6 +1,5 @@
 """Generate callables for 3d parallel that combines pipelining and 2d sharding."""
 import logging
-from typing import Sequence
 
 import jax
 from jax import linear_util as lu
@@ -11,8 +10,6 @@ import numpy as np
 from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
-from parax.pipeline_parallel.centralized_distributerd_runtime import (
-    CentralizedDistributedRuntime)
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages)
 from parax.pipeline_parallel.computation import (

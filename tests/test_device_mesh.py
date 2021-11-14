@@ -104,11 +104,23 @@ class DeviceMeshTest(unittest.TestCase):
 
         physical_mesh.shutdown()
 
+    def test_distributed_array(self):
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
+        logical_mesh = physical_mesh.get_default_logical_mesh()
+
+        array = jnp.ones((16, 16))
+        sharding_spec = logical_mesh.make_tile_spec(array, [0, 1], [0, 1])
+        indices = sharding_spec.indices(array.shape).flatten()
+        remote_a = physical_mesh.shard_args([indices], (False,), (array,))
+        physical_mesh.shutdown()
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(DeviceMeshTest("test_add_one"))
     suite.addTest(DeviceMeshTest("test_mlp"))
+    suite.addTest(DeviceMeshTest("test_distributed_array"))
 
     return suite
 

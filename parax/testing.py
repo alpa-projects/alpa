@@ -1,10 +1,11 @@
 """Utility for testing."""
 from collections.abc import Iterable
 
-import numpy as np
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from jax.experimental.maps import FrozenDict as FrozenDictJax
+import numpy as np
 
+# Store last compiled executables for unit tests.
 last_compiled_executable = None
 last_compiled_auto_sharding_objective = -1
 
@@ -25,7 +26,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         assert hasattr(y, '__array__') or np.isscalar(y)
         x = np.asarray(x)
         y = np.asarray(y)
-        assert np.allclose(x, y, rtol, atol)
+        np.testing.assert_allclose(x, y, rtol, atol)
     elif x == y:
         return
     else:

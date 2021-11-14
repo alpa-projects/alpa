@@ -1,22 +1,23 @@
 import gc
+from typing import Dict, Sequence, Set, Tuple
+
 import numpy as np
 import ray
 from ray.util import ActorPool
-from typing import Dict, Sequence, Set, Tuple
 
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client
 
-from parax.api import parallelize
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
-from parax.pipeline_parallel.stage import JaxPipelineStage, merge_stages
-from parax.pipeline_parallel.three_d_parallel import get_donation_mapping_and_modify
+from parax.pipeline_parallel.computation import (
+    JaxPipelineComputation, get_donation_mapping_and_modify,
+    merge_computation_jaxprs)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
@@ -36,9 +37,8 @@ class CompileWorker:
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
 
-    def compile_stage_with_search(self, new_global_config, logical_mesh,
-                                         proto, avals, out_avals,
-                                         donate_invars):
+    def compile_stage_with_search(self, new_global_config, logical_mesh, proto,
+                                  avals, out_avals, donate_invars):
         """
         Compile a single stage with auto sharding.
         Args:
@@ -81,13 +81,17 @@ class CompileWorker:
         sharding_annotated_computation = xla_client.XlaComputation(
             sharded_proto)
         hlo_module = sharding_annotated_computation.as_hlo_module()
-        hlo_module.infer_spmd_shardings()
-        input_shardings = hlo_module.spmd_parameters_shardings()
-        output_sharding = hlo_module.spmd_output_sharding()
-        input_sharding_protos = [
-            sharding.proto_tuple() for sharding in input_shardings
-        ]
-        output_sharding_proto = output_sharding.proto_tuple()
+        if logical_mesh.total_devices > 1:
+            hlo_module.infer_spmd_shardings()
+            input_shardings = hlo_module.spmd_parameters_shardings()
+            output_sharding = hlo_module.spmd_output_sharding()
+            input_sharding_protos = [
+                sharding.proto_tuple() for sharding in input_shardings
+            ]
+            output_sharding_proto = output_sharding.proto_tuple()
+        else:
+            input_sharding_protos = None
+            output_sharding_proto = None
         compiled = compile_with_given_strategy(
             self.backend,
             sharding_annotated_computation,
@@ -125,10 +129,10 @@ class CompileWorkerPool:
 def split_global_use_and_donate(layers, layer_indices, donation_mapping,
                                 global_outvars):
     '''
-    Pick some layers(no need to be consecutive) and assume they are on a mesh, 
+    Pick some layers(no need to be consecutive) and assume they are on a mesh,
     this function then returns donation_mapping and global_use of each selected layer.
     Args:
-        layers (Sequence[JaxPipelineStage]): all layers
+        layers (Sequence[JaxPipelineComputation]): all layers
         layer_indices (Set[int]): indices of selected layers, they are
         assumed to be in the same mesh
         donation_mapping (Dict[Var, Var]): known global donation mapping
@@ -167,13 +171,13 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
     return out_donation_mapping, out_global_used, new_layers
 
 
-def split_sharding_specs(layers: Sequence[JaxPipelineStage],
+def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
                          mixed_jaxpr: ClosedJaxpr, in_sharding_specs,
                          out_sharding_specs):
-    '''
+    """
     Split sharding specs of layers. Some intermediate sharding specs are missed,
     but they do not cross mesh so this does not matter.
-    '''
+    """
 
     in_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.invars, in_sharding_specs))
     out_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.outvars, out_sharding_specs))
@@ -187,13 +191,12 @@ def split_sharding_specs(layers: Sequence[JaxPipelineStage],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
-                                     mesh: PhysicalDeviceMesh,
-                                     donation_mapping: Dict[Var, Var],
-                                     global_used: Set[Var]):
+def compile_and_profile_stage_compute_cost(
+        layers: Sequence[JaxPipelineComputation], mesh: PhysicalDeviceMesh,
+        donation_mapping: Dict[Var, Var], global_used: Set[Var]):
     """
     Args:
-        layers (Sequence[JaxPipelineStage]): forward and corresponding backward
+        layers (Sequence[JaxPipelineComputation]): forward and corresponding backward
         mesh (PhysicalDeviceMesh): the assigned mesh
         donation_mapping (Dict[Var, Var]): donation mapping of all selected layers
         global_used_list (Set[Var]): for each layer, record if each
@@ -208,8 +211,8 @@ def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    mixed_jaxpr = merge_stages(jaxprs, global_used, 'profile_tmp',
-                               donation_mapping)
+    mixed_jaxpr = merge_computation_jaxprs(jaxprs, global_used, "profile_tmp",
+                                           donation_mapping)
     donate_argnums = [
         idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
         if var in donation_mapping
@@ -219,6 +222,7 @@ def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
     args = [
         jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
     ]
+    from parax.api import parallelize
     executable = parallelize(
         fn, donate_argnums=donate_argnums).get_executable(*args)
     ret = executable.profile_with_dummy_inputs()
@@ -232,14 +236,15 @@ def compile_and_profile_stage_compute_cost(layers: Sequence[JaxPipelineStage],
 
 def generate_stage_info(stages, selected_indices, donation_mapping,
                         global_outvars, name):
-    backend = xla_bridge.get_backend('gpu')
+    backend = xla_bridge.get_backend("gpu")
 
     selected_donation_mapping, used_outside, stages = split_global_use_and_donate(
         stages, selected_indices, donation_mapping, global_outvars)
 
     jaxprs = [stage.closed_jaxpr() for stage in stages]
 
-    merged = merge_stages(jaxprs, used_outside, '0', selected_donation_mapping)
+    merged = merge_computation_jaxprs(jaxprs, used_outside, "0",
+                                      selected_donation_mapping)
     outvars = set(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
@@ -315,10 +320,11 @@ def dummy_resharding_strategy(spec: ReshardingTaskSpec):
     return strategy
 
 
-def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStage,
-                         src_outvar_sharding_spec, dst_invar_sharding_spec,
-                         src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
-                         collective_group: CollectiveGroup):
+def profile_layer_communication_cost(
+        src: JaxPipelineComputation, dst: JaxPipelineComputation,
+        src_outvar_sharding_spec, dst_invar_sharding_spec,
+        src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
+        collective_group: CollectiveGroup):
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
     tot_cost = 0
     backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
@@ -346,11 +352,12 @@ def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStag
             val = DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                                    remote_buffers, input_indices)
             task = ReshardingTask(task_spec, collective_group,
-                                  collective_group.src_mesh, collective_group.dst_mesh)
+                                  collective_group.src_mesh,
+                                  collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:
-        task.prepare_send_recv_tasks()
+        task.put_send_recv_tasks()
     src_phy_mesh.sync_workers()
     collective_group.dst_mesh.sync_workers()
     results = []
@@ -361,81 +368,3 @@ def profile_layer_communication_cost(src: JaxPipelineStage, dst: JaxPipelineStag
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
-
-
-########################################
-##### Algorithm
-########################################
-def get_mesh_slicing_configs(
-        grid: VirtualMesh, layers,
-        B) -> Tuple[Sequence[np.ndarray], np.ndarray, Sequence[Sequence[int]]]:
-    '''
-    TODO(yonghao, zhuohan): mesh slicing and layer allocation algorithm
-    Args:
-        grid (VirtualMesh): the whole grid
-        layers (Sequence[JaxPipelineStage]): clustered layers
-        B (number of microbatches)
-    Returns:
-        configs (Sequence[np.ndarray]): mesh slicing configs of each solution
-        costs (np.ndarray): cost of each solution
-        solutions (Sequence[Sequence[int]]): solutions of layer assignment
-            in form of a list recording the number of layers in each stage.
-    '''
-    pass
-
-
-def config_to_logical_meshes(raw_mesh: VirtualMesh, config: np.ndarray):
-    """
-    Translate a config array into logical meshes
-    Args:
-        raw_mesh (VirtualMesh): the total mesh
-        config (np.ndarray): how meshes are sliced. config[i][j] is the mesh for device(i, j)
-    """
-    mesh_info = []
-    M = config.shape[0]
-    N = config.shape[1]
-
-    visited = set()
-    max_num = -1
-    for i in range(M):
-        for j in range(N):
-            if config[i][j] not in visited:
-                mesh_num = config[i][j]
-                visited.add(mesh_num)
-                start = (i, j)
-                for p in range(j, N):
-                    if config[i][p] != mesh_num:
-                        p -= 1
-                        break
-                for q in range(i, M):
-                    if config[q][j] != mesh_num:
-                        q -= 1
-                        break
-                end = (q, p)
-                mesh_info.append((mesh_num, start, end))
-                max_num = max(max_num, mesh_num)
-    assert max_num >= 0
-    meshes = (None for _ in range(max_num))
-    for info in mesh_info:
-        id, start, end = info
-        meshes[id] = raw_mesh.slice(0, range(start[0], end[0] + 1)).slice(
-            1, range(start[1], end[1] + 1))
-    return meshes
-
-
-def slice_mesh(layers, **kwargs):
-    '''
-    Args:
-        layers (Sequence[JaxPipelineStage]): clustered layers
-    Returns:
-        layer_assignment: the assignment of layers
-        sliced_meshes (Sequence[PhysicalDeviceMesh]): sliced physical meshes
-    '''
-    raw_mesh = global_config.devices
-    B = global_config.num_micro_batches
-    configs, costs, solutions = get_mesh_slicing_configs(raw_mesh, layers, B)
-    best_idx = costs.argmax()[0]
-    best_config = configs[best_idx]
-    layer_assignment = solutions[best_idx]
-    sliced_meshes = config_to_logical_meshes(raw_mesh, best_config)
-    return layer_assignment, sliced_meshes

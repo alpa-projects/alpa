@@ -5,21 +5,19 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
-from jax.experimental.maps import FrozenDict
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
 from parax.testing import assert_allclose
 
-MB = 1024**2
-
 
 class PipelineTiedEmbeddingTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         assert len(jax.local_devices()) >= 4
+
         ray.init(address='auto')
         device_cluster = DeviceCluster()
         mesh = device_cluster.get_virtual_mesh()
@@ -74,6 +72,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         optimizer = optim.Adam(1e-2).create(params)
+
+        # Run and check results
         gradients = train_step(optimizer, x, y, model.apply)
         pipelined_train_step = parallelize(
             donate_argnums=())(lambda optimizer, x, y, apply_fn: train_step(
@@ -81,7 +81,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         gradients_with_pipeline = pipelined_train_step(optimizer, x, y,
                                                        model.apply)
         assert_allclose(gradients, gradients_with_pipeline)
-        pipelined_train_step.get_executable(optimizer, x, y, model.apply).shutdown()
+        pipelined_train_step.get_executable(optimizer, x, y,
+                                            model.apply).shutdown()
 
     def test_tied_embedding_local_pipeline_parallel(self):
         self.train_tied_embedding(self.devices, "local_pipeline_parallel")

@@ -21,10 +21,7 @@ from parax.model.bert_model import (FlaxBaseModelOutput,
                                     FlaxBertAttention, FlaxBertEmbeddings,
                                     FlaxBertIntermediate, FlaxBertLayer,
                                     FlaxBertOutput, FlaxMaskedLMOutput)
-
-
-class TrainState(train_state.TrainState):
-    dynamic_scale: optim.DynamicScale
+from parax.model.model_util import TrainState
 
 
 class MoEConfig:

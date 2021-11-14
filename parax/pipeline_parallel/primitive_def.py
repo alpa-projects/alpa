@@ -1,7 +1,6 @@
-"""Pipeline primitive definitions."""
+"""Define a new Jax primitive pipeline_maker to mark the boundary of pipeline computations"""
 import numpy as np
 
-from jax import lax
 from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
@@ -13,6 +12,50 @@ xc.register_custom_call_target(b'xla_pipeline_marker',
                                xla_pipeline_marker(),
                                platform='gpu')
 xc.register_custom_call_target(b'identity', identity(), platform='gpu')
+
+########## Public APIs ##########
+
+# Define a Jax primitive to mark start/end of a pipeline computation.
+pipeline_p = Primitive('pipeline')
+
+
+def mark_pipeline(*args, name: str, mark_type: str):
+    """
+    Mark the start/end of a pipeline computation.
+
+    Args:
+        *args: represents the pipeline input/output of a pipeline computation.
+        name (str): Name of the pipeline computation.
+        mark_type (str): start or end of a pipeline computation, can be "start",
+            "end", "jvp_start", or "jvp_end". The latter two are used for
+            backward pass.
+    """
+    if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
+        raise ValueError('Unknown mark type: %s' % mark_type)
+    return pipeline_p.bind(*args, name=name, mark_type=mark_type)
+
+
+def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
+    """Make a new jaxpr equation."""
+    if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
+        raise ValueError('Unknown mark type: %s' % mark_type)
+    if len(outvars) == 0:
+        outvars = [dropvar]
+    return new_jaxpr_eqn(invars, outvars, pipeline_p, {
+        'name': name,
+        'mark_type': mark_type
+    })
+
+
+def mark_gradient(grad):
+    """Mark variables as gradients with the pipeline marker."""
+    grad_flat, tree = tree_flatten(grad)
+    grad_flat = pipeline_p.bind(*grad_flat, name='grad', mark_type='grad')
+    grad = tree_unflatten(tree, grad_flat)
+    return grad
+
+
+########## Internal Registration ##########
 
 
 def flatten_shape_byte_sizes(shape):
@@ -42,38 +85,6 @@ def mark_pipeline_xla(c, *args):
         operand_shapes_with_layout=(input_shape,),
         opaque=flattened_byte_sizes.tobytes())
     return output_tuple
-
-
-# Define a Jax primitive to mark start/end of a pipeline stage.
-pipeline_p = Primitive('pipeline')
-pipeline_p.multiple_results = True
-
-
-def mark_pipeline(*args, name: str, mark_type: str):
-    """
-    Mark the start/end of a pipeline stage.
-
-    Args:
-        *args: represents the pipeline input/output of a pipeline stage.
-        name (str): Name of the pipeline stage.
-        mark_type (str): start or end of a pipeline stage, can be "start",
-            "end", "jvp_start", or "jvp_end". The latter two are used for
-            backward pass.
-    """
-    if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
-        raise ValueError('Unknown mark type: %s' % mark_type)
-    return pipeline_p.bind(*args, name=name, mark_type=mark_type)
-
-
-def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
-    if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
-        raise ValueError('Unknown mark type: %s' % mark_type)
-    if len(outvars) == 0:
-        outvars = [dropvar]
-    return new_jaxpr_eqn(invars, outvars, pipeline_p, {
-        'name': name,
-        'mark_type': mark_type
-    })
 
 
 def _pipeline_impl(*args, **kwargs):
@@ -148,13 +159,7 @@ def _pipeline_transpose(ct, *args, name, mark_type):
 
 pipeline_p.def_impl(_pipeline_impl)
 pipeline_p.def_abstract_eval(_pipeline_abstract_eval)
+pipeline_p.multiple_results = True
 xla.translations[pipeline_p] = _pipeline_xla_translation
 ad.primitive_jvps[pipeline_p] = _pipeline_value_and_jvp
 ad.primitive_transposes[pipeline_p] = _pipeline_transpose
-
-
-def mark_gradient(grad):
-    grad_flat, tree = tree_flatten(grad)
-    grad_flat = pipeline_p.bind(*grad_flat, name='grad', mark_type='grad')
-    grad = tree_unflatten(tree, grad_flat)
-    return grad

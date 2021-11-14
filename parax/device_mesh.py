@@ -10,7 +10,6 @@ from operator import attrgetter
 import numpy as np
 import ray
 import ray.util.collective as col
-from ray.util import ActorPool
 
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
@@ -20,18 +19,20 @@ from jax.interpreters import pxla
 from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
                                    Replicated, ShardedAxis, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client
 import jax.numpy as jnp
 
 from parax.global_env import global_config
-from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable, MeshWorkerExecutable
+from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
-from parax.util import (benchmark_func, get_dim_last_value,
-                        list_gpu_info, GB, to_cupy,
-                        to_jax_tensor, jax_buffer_set, xla_buffer_to_jax_buffer,
-                        jax_buffer_to_xla_buffer)
+from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
+                        jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
+                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
+                        xla_buffer_to_cupy, cupy_to_xla_buffer,
+                        is_continuous_subset, infer_offset_and_n_elements,
+                        jax_tensor_index)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -55,13 +56,15 @@ class MeshHostWorker:
         self.host_id = host_id
         self.distributed_client = \
             xla_client._xla.get_distributed_runtime_client(server_address, host_id)
-        self.distributed_client.connect()
+        logger.debug("Trying to connect to xla runtime at {}...".format(server_address))
+        status = self.distributed_client.connect()
+        logger.debug("Success to connect to xla runtime at {}...".format(server_address))
         self.backend = xla_client.make_gpu_client(self.distributed_client,
                                                   node_id=host_id)
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
         self.buffers = {}  # Dict[uuid -> DeviceArray]
-        self.executables = {}  # Dict[uuid -> MeshWorkerExecutable]
+        self.executables = {}
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         set_override_backend(self.backend)
@@ -71,20 +74,6 @@ class MeshHostWorker:
         assert uuid not in self.buffers
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
-
-    def put_empty_buffer(self,
-                         uuid: int,
-                         device_id: int,
-                         shape: Tuple[int, ...],
-                         dtype=np.float32):
-        """Put an all-zero empty buffer on the given device.
-
-        Note: This function is blocking (synchronous).
-        """
-        assert uuid not in self.buffers
-        self.buffers[uuid] = \
-            self.backend.buffer_from_pyval(np.empty(shape, dtype),
-                                           self.local_devices[device_id])
 
     def put_non_zero_buffer(self,
                             uuid: int,
@@ -114,8 +103,7 @@ class MeshHostWorker:
             self.buffers[uuids].block_until_ready()
 
     ##### Executable Related Functions #####
-    def put_executable(self, uuid: int, executable_class: MeshWorkerExecutable,
-                       *args):
+    def put_executable(self, uuid: int, executable_class, *args):
         self.executables[uuid] = executable_class(self, uuid, *args)
 
     def delete_executable(self, uuid: int):
@@ -133,43 +121,93 @@ class MeshHostWorker:
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
     def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
-        """Send a slice of a source buffer to a target GPU."""
-        src_buffer = xla_buffer_to_jax_buffer(self.buffers[uuid])
-        to_send = to_cupy(src_buffer[tuple(offset)])
-        logger.debug(
-            ">>> Send tensor {} to: rank {}, gpu_idx {}, shape: {}, dtype: {}, "
-            "Sample value: {}.".format(uuid, dst_rank, dst_gpu_idx,
-                                       to_send.shape, to_send.dtype,
-                                       to_send[0]))
-        col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
+        """
+        Send a slice of a source buffer to a target GPU.
+
+        Args:
+            uuid (int64): the uuid of the xla buffers.
+            offset (List[slice]): the slice to be sent in the buffer.
+            dst_rank (int): destination rank to send.
+            dst_gpu_idx (int): the gpu index on the destination rank.
+            group_name (str): collective group name
+        """
+        tensor_shape = self.buffers[uuid].shape
+        if is_continuous_subset(offset, tensor_shape):
+            # fast path, two cases: (1) same shape, (2) continuous subset.
+            slice_shape = tuple(ind.stop - ind.start for ind in offset)
+            to_send = xla_buffer_to_cupy(self.buffers[uuid])
+            if slice_shape == tensor_shape:
+                col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
+            else:
+                ind, n_elements = infer_offset_and_n_elements(offset)
+                col.send_multigpu(to_send[ind],
+                                  dst_rank,
+                                  dst_gpu_idx,
+                                  group_name,
+                                  n_elements=n_elements)
+        else:
+            # slower path, because of indexing.
+            start_indices = tuple(o.start for o in offset)
+            slice_sizes = tuple(o.stop - o.start for o in offset)
+            src_buffer = jax_tensor_index(
+                xla_buffer_to_jax_tensor(self.buffers[uuid]), start_indices,
+                slice_sizes)
+            to_send = jax_tensor_to_cupy(src_buffer)
+            col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         return True
 
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
                   src_gpu_idx, group_name):
-        """Recv a slice from a source GPU and in-place write it on the target buffer."""
+        """
+        Recv a slice from a source GPU and in-place write it on the target buffer.
+
+        Args:
+            uuid (int64): the uuid of the xla buffers.
+            device_id (int): the device where the buffer is received, used to allocate tmp buffer.
+            indices_in_dst_tile (List[slice]): the slice index to be written on destination buffer.
+            src_rank (int): source rank to receive from.
+            src_gpu_idx (int): the sender gpu index on the source rank.
+            group_name (str): collective group name.
+        """
         if uuid not in self.buffers:
-            raise RuntimeError()
-        tileslice_shape = [ind.stop - ind.start for ind in indices_in_dst_tile]
-        tmp_buffer = device_put(
-            jnp.zeros(tileslice_shape, dtype=self.buffers[uuid].dtype),
-            self.local_devices[device_id])
-        to_recv = to_cupy(tmp_buffer)
-        col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            raise RuntimeError("Buffer has not been created.")
+        tensor_shape = self.buffers[uuid].shape
+        slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
+        if is_continuous_subset(indices_in_dst_tile, tensor_shape):
+            to_recv = xla_buffer_to_cupy(self.buffers[uuid],
+                                         take_ownership=True)
+            if slice_shape == tensor_shape:
+                col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            else:
+                ind, n_elements = infer_offset_and_n_elements(
+                    indices_in_dst_tile)
+                col.recv_multigpu(to_recv[ind],
+                                  src_rank,
+                                  src_gpu_idx,
+                                  group_name,
+                                  n_elements=n_elements)
+            self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
+        else:
+            # The following call will allocate memory and cause a few H2D and D2D kernels.
+            # See:https://github.com/parax-project/parax/issues/145
+            tmp_buffer = device_put(
+                jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
+                self.local_devices[device_id])
+            to_recv = jax_tensor_to_cupy(tmp_buffer, take_ownership=True)
+            col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+            recv_tensor = cupy_to_jax_tensor(to_recv)
+            start_indices = tuple(
+                ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
 
-        # Hao: if the following line cannot print, meaning NCCL hangs...
-        logger.debug(
-            ">>> Recv from: rank {}, gpu_idx {}, shape: {}, dtype: {}, sample value: {}."
-            .format(src_rank, src_gpu_idx, to_recv.shape, to_recv.dtype,
-                    to_recv[0]))
-        recv_tensor = to_jax_tensor(to_recv)
-
-        # 0-copy version
-        start_indices = tuple(
-            ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
-        new_buffer = jax_buffer_set(
-            xla_buffer_to_jax_buffer(self.buffers[uuid]), recv_tensor,
-            start_indices)
-        self.buffers[uuid] = jax_buffer_to_xla_buffer(new_buffer)
+            # The following in-place write will cause a D2D copy kernel
+            # See: https://github.com/parax-project/parax/issues/144
+            # It is unavoidable, but it is better than:
+            # new_buffer = dynamic_update_slice(src_buf, update, start_indices)
+            # which is not in-place and will cause extra allocation-related kernels.
+            new_buffer = jax_tensor_set(
+                xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
+                start_indices)
+            self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
         return True
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
@@ -190,7 +228,7 @@ class MeshHostWorker:
         task = self.recv_tasks[uuid]
         for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             if set_empty_buffer:
-                self.put_empty_buffer(buf_uuid, *(recv_detail[0:-1]))
+                self.put_non_zero_buffer(buf_uuid, *(recv_detail[0:-1]))
             for recv_subtask in recv_detail[-1]:
                 self.recv_tile(buf_uuid,
                                recv_detail[0],
@@ -306,8 +344,7 @@ class MeshHostWorker:
         return self.executables[uuid].profile_with_dummy_inputs(
             self.backend, self.local_devices)
 
-        # TODO(yonghao): the sync function should be carefully reconsidered
-
+    # TODO(yonghao): the sync function should be carefully reconsidered
     def profile_resharding_send_task(self,
                                      uuid,
                                      buf_uuids,
@@ -340,6 +377,10 @@ class MeshHostWorker:
 
     def get_timer(self, name: str):
         return timers(name)
+
+    def reset_timer(self, name: str):
+        timers(name).reset()
+        return True
 
     ##### Other Functions #####
     def sync(self):
@@ -433,11 +474,13 @@ class PhysicalDeviceMesh:
 
     def _launch_xla_servers(self):
         # Launch distributed xla runtime
-        port = np.random.randint(10000, 11000)
+        port = np.random.randint(20000, 23000)
         self.server_address = f"{self.head_ip}:{port}"
         self.service_server = None
+        logger.debug("Trying to start XLA gRPC server on port: {}...".format(port))
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
+        logger.debug("Success to start XLA gRPC server on port: {}...".format(port))
         time.sleep(0.5)
 
         # Launch workers
@@ -632,6 +675,10 @@ class PhysicalDeviceMesh:
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     input_bufs.append(arg.remote_buffers)
+                elif isinstance(arg, ReplicatedDistributedArray):
+                    replica = arg.get_replica_on_mesh(self)
+                    assert replica.indices == indices
+                    input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
@@ -717,6 +764,13 @@ class PhysicalDeviceMesh:
         else:
             return timers(timer_name)
 
+    def reset_remote_timer(self, timer_name: str):
+        if self.is_distributed:
+            for worker in self.workers:
+                ray.get(worker.reset_timer.remote(timer_name))
+        else:
+            timers(timer_name).reset()
+
     ##### Other Functions #####
     def sync_workers(self):
         """Sync all device activities on workers."""
@@ -733,6 +787,10 @@ class PhysicalDeviceMesh:
             for worker in self.workers:
                 ray.kill(worker)
             self.workers = None
+
+            # shutdown grpc server
+            self.service_server.shutdown()
+            self.service_server = None
         else:
             self.sync_workers()
 
@@ -922,8 +980,7 @@ class ReplicatedDistributedArray:
     Warning: do not use this class unless you know exactly how.
     """
 
-    def __init__(self,
-                 device_meshes: List[PhysicalDeviceMesh],
+    def __init__(self, device_meshes: List[PhysicalDeviceMesh],
                  arrays: List[DistributedArray]):
         self._mesh_array_map = dict()
         self._array_mesh_map = dict()
@@ -1012,7 +1069,7 @@ class VirtualMesh:
                 for i in devices_this_host
             ])
 
-    def slice(self, dim, indices):
+    def slice_1d(self, dim, indices):
         """
         Slice a mesh given the slicing config.
 
@@ -1038,6 +1095,15 @@ class VirtualMesh:
                                head_ip=self.head_ip,
                                num_devices_per_host=len(indices[0]),
                                devices=indices)
+
+    def slice_2d(self, host_indices, device_indices):
+        host_ids = [self.host_ids[x] for x in host_indices]
+        host_info = [self.host_info[x] for x in host_indices]
+        return VirtualMesh(host_ids=host_ids,
+                           host_info=host_info,
+                           head_ip=self.head_ip,
+                           num_devices_per_host=len(device_indices[0]),
+                           devices=device_indices)
 
     @property
     def total_devices(self):

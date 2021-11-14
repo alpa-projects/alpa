@@ -11,7 +11,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
+from parax import parallelize, set_parallelize_options, testing
 
 from test_auto_sharding_mlp import assert_close
 
@@ -41,10 +41,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         # Assert b is sharded
         assert b.sharding_spec == pxla.ShardingSpec(
             sharding=(NoSharding(), Chunked([4])),
-            mesh_mapping=(Replicated(1), ShardedAxis(0))) or\
+            mesh_mapping=(ShardedAxis(0),)) or\
                b.sharding_spec == pxla.ShardingSpec(
             sharding=(Chunked([4]), NoSharding()),
-            mesh_mapping=(Replicated(1), ShardedAxis(0)))
+            mesh_mapping=(ShardedAxis(0),))
 
     def test_dot_reshape_transpose(self):
         set_parallelize_options(memory_budget_per_device=1 * MB)
@@ -123,6 +123,22 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         np.testing.assert_allclose(b, a + 1)
 
+    def test_reshape_uneven_partition(self):
+        # TODO(lmzheng): Support the uneven partition of reshape.
+        # But this seems too complicated.
+
+        set_parallelize_options(devices=jax.devices()[0:4])
+
+        @parallelize
+        def split(a):
+            b = a.reshape((8, 18))
+            #b = a.reshape((9, 16))
+            return b
+
+        split(jnp.ones((144)))
+
+        assert_close(testing.last_compiled_auto_sharding_objective, 0)
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -130,6 +146,7 @@ def suite():
     suite.addTest(AutoShardingBasicTest("test_dot_reshape_transpose"))
     suite.addTest(AutoShardingBasicTest("test_dropout"))
     suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
+    suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
     return suite
 
 

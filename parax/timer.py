@@ -91,6 +91,9 @@ class Timers:
             self.timers[name] = _Timer(name)
         return self.timers[name]
 
+    def __contains__(self, name):
+        return name in self.timers
+
     def log(self, names, normalizer=1.0):
         """Log a group of timers."""
         assert normalizer > 0.0

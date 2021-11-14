@@ -1,12 +1,10 @@
 import argparse
 
-import copy
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 import ray
-from functools import partial
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
@@ -18,11 +16,11 @@ MB = 1024 ** 2
 GB = 1024 ** 3
 
 
-def report_pipeline_breakdown(executable, timer_names):
+def report_pipeline_breakdown(executable, timer_names, niter):
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
 
     print(">>> overall: {}...".format(overall_costs))
-    other_percentage = [100.0] * args.niter
+    other_percentage = [100.0] * niter
     other = overall_costs
     for timer_name in timer_names:
         costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
@@ -93,15 +91,20 @@ def benchmark_transformer_one_case(benchmark_case):
 
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, \
-    mesh_dim0, mesh_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel, \
+    l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel, \
     use_remat = benchmark_case
+
+
+    # do some sanity check
+    if l_dim0 > 1 and l_dim1 > 1 and force_data_parallel:
+        raise RuntimeError("Force data parallel can only be enabled in 1D logical mesh.")
+    if l_dim0 * l_dim1 != p_dim0 * p_dim1:
+        raise RuntimeError("logical mesh shape and physical mesh shape are not compatible.")
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = False
 
     # Control whether we want to do sync more aggressively
-    global_config.pipeline_aggressively_sync = False
-    global_config.precompile_resharding_tasks = True
     if args.skip_apply_grad and num_micro_batches == 1:
         grad_func = jax.grad
     else:
@@ -113,13 +116,17 @@ def benchmark_transformer_one_case(benchmark_case):
     virtual_mesh = device_cluster.get_virtual_mesh()
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
-                            num_micro_batches=num_micro_batches)
+                            num_micro_batches=num_micro_batches,
+                            sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
+                            sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size)
 
+
+    rngkey = jax.random.PRNGKey(0)
     # Prepare input batch
     batch = {
-        "hidden_states": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=np.int32),
-        "label": jnp.ones((batch_size, seq_len, hidden_size), dtype=np.float32),
+        "hidden_states": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=jnp.float32),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.float32),
+        "label": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size), dtype=jnp.float32)
     }
     print_used_time("Prepare input")
 
@@ -131,7 +138,6 @@ def benchmark_transformer_one_case(benchmark_case):
         num_attention_heads=num_heads,
         pipeline_mp_size=pipeline_mp_size))
 
-    rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch)
     print_used_time("Create train state")
 
@@ -151,50 +157,62 @@ def benchmark_transformer_one_case(benchmark_case):
     print_used_time("Benchmark")
 
 
-    report_pipeline_breakdown(executable, ["resharding", "compute"])
+    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
     # Log benchmark results
-    heads = ["Type", "Model Config", "Parallel Config", "# Microbatch", "Mean Time", "Std Time"]
-    values = ["transformer-layer", str(benchmark_case[:5]), str(benchmark_case[5:]),
-             f"{benchmark_case[8]:.3f}", f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}"]
+    heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch", "Force DP", "Remat", "Mean Time", "Std Time"]
+    paralell_config = (benchmark_case[5], benchmark_case[6], benchmark_case[9])
+    values = ["transformer-layer", str(benchmark_case[:5]), str(paralell_config),
+              str(benchmark_case[7:9]), f"{benchmark_case[10]}", str(benchmark_case[11]), str(benchmark_case[12]),
+              f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.5f}"]
     write_tsv(heads, values, "result_trans.tsv")
 
     executable.shutdown()
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
-# #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1
-
+# #head = num_heads, LD0 = logical mesh dim 0, LD1 = logical mesh_dimension_1
+# PD0 = physical mesh dim 0, PD = physical mesh dim 1
+# FD = Force DP, NB = number of microbatches, Remat: rematerialization
 benchmark_suite_2_gpu = [
-    # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-    # sanity check case
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 1, False, False),
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 2, False, False),
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 4, False, False),
-    (8,  128, 384, 2,  1536//96,  1,  1, 2, 8, False, False),
 ]
 
 
 benchmark_suite_4_gpu = [
-    # # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (4,  512, 1536, 2,  1536//96,  4,  1, 1, 1, False, False),
-    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    (4,  512, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 2, False, False),
-    (4,  1024, 1536, 2,  1536//96,  2,  1, 2, 4, False, False),
-    (32,  1024, 1536, 2,  1536//96,  2,  1, 2, 1, False, False),
-    (32,  1024, 1536, 2,  1536//96,  1,  2, 2, 2, False, False),
-    (32,  128,  5120, 2,  5120//128, 1,  2, 2, 4, False, False),
-    (32,  128,  5120, 2,  5120//128, 2,  1, 2, 8, False, False),
+    # B,  S,    H,    L,  #head,     LD0, LD1, PD0, PD1, PP, NB, FD,    Remat,
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  1,  False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  4,  False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  8,  False, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  16, False, False),
+
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  1,  True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  2,  True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  4,  True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  8,  True, False),
+    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  16, True, False),
+
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  1,  True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  2,  True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  4,  True, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  8,  True, False),
+    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, True, False), # OOM on Gpipe, but not 1F1B
+
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  1,  False, False), # might OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  4,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  8,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, False, False), # Gpipe OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  32, False, False), # might OOM
+
+    # (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  1,  False, False), # might OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  2,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  4,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  8,  False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  16, False, False),
+    (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  32, False, False),
 ]
 
 benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     D0, D1, PP, NB, FD, CK
-    # (32,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, False),
-    (16,  1024, 1536, 2,  1536//96,  4,  1, 2, 1, True, False),
-    #
-    # (32,  128,  5120, 2,  5120//128, 1,  4, 2, 1, False),
-    # (32,  128,  5120, 2,  5120//128, 4,  1, 2, 1, False),
+
 ]
 
 

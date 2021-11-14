@@ -27,6 +27,12 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
+        ########## Options for pipeline stage ##########
+        self.pipeline_stage_mode = "uniform_layer_gpipe"
+        self.cache_compute_cost = None  # The path to the file containing the compute cost profile
+        self.forward_stage_layer_ids = None
+        self.submesh_shapes = None
+
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
@@ -34,7 +40,7 @@ class GlobalConfig:
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
-        ########## Options for pipeline runtime ##########
+        ########## Options for eager pipeline runtime ##########
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
 
@@ -50,7 +56,7 @@ class GlobalConfig:
 
     def backup(self):
         """Backup the configs."""
-        return copy.deepcopy(self.__dict__)
+        return copy.copy(self.__dict__)
 
     def restore(self, saved_dict):
         """Restore the configs from a backup."""
@@ -69,30 +75,48 @@ def set_parallelize_options(devices=None,
                             num_micro_batches=None,
                             profile_communication=False,
                             cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False):
+                            cache_auto_sharding_ilp_solution=False,
+                            pipeline_stage_mode="uniform_layer_gpipe",
+                            cache_compute_cost=None,
+                            forward_stage_layer_ids=None,
+                            sub_physical_mesh_shapes=None,
+                            sub_logical_mesh_shapes=None):
     """
     Set the global options for all @parallelize decorator.
 
     Args:
       devices: The device cluster.
       strategy (str): The parallelization strategy.
-        Possible choices: {"shard_parallel",
-        "pmap_data_parallel", "shard_data_parallel",
-        "local_pipeline_parallel", "3d_parallel"}.
-      memory_budget_per_device (Optional[float]): The memory budget of one device in bytes.
-      search_logical_mesh_shape (bool): Whether to include the choices of logical mesh shape
-        into the search space.
-      mesh_shape_search_mode (str): Whether to use cost model or real measurement to pick
-        the logical mesh shape. Possible choices: {"cost_model", "measurement"}.
-      mesh_shape_search_log_file (Optional[str]): The file to store measurement records of
-        logical mesh shape search.
-      num_micro_batches (int): The number of micro batches in pipeline parallel and gradient
-        accumulation.
-      profile_communication (bool): Whether to use the profiled communication cost
-        for the auto-sharding pass.
-      cache_folder (str): The folder to store cached profiling results and strategies.
-      cache_auto_sharding_ilp_solution (bool): Whether to cache the ilp solution
-        generated during auto-sharding pass.
+        Possible choices: {"shard_parallel", "pmap_data_parallel",
+        "shard_data_parallel", "local_pipeline_parallel", "3d_parallel"}.
+      memory_budget_per_device (Optional[float]): The memory budget of one
+        device in bytes.
+      search_logical_mesh_shape (bool): Whether to include the choices of
+        logical mesh shape into the search space.
+      mesh_shape_search_mode (str): Whether to use cost model or real
+        measurement to pick the logical mesh shape. Possible choices: {
+        "cost_model", "measurement"}.
+      mesh_shape_search_log_file (Optional[str]): The file to store measurement
+        records of logical mesh shape search.
+      num_micro_batches (int): The number of micro batches in pipeline parallel
+        and gradient accumulation.
+      profile_communication (bool): Whether to use the profiled communication
+        cost for the auto-sharding pass.
+      cache_folder (str): The folder to store cached profiling results and
+        strategies.
+      cache_auto_sharding_ilp_solution (bool): Whether to cache the ilp
+        solution generated during auto-sharding pass.
+      pipeline_stage_mode (str): The algorithm used to construct pipeline
+        stages. Possible choice: {"uniform_layer_gpipe", "auto_gpipe",
+        "manual_gpipe"}
+      cache_compute_cost (Optional[str]): The file name of the cached compute
+        cost. Used for "auto_gpipe".
+      forward_stage_layer_ids (Optional[List[List[int]]]): Layer IDs of each
+        forward stage. Used for "manual_gpipe".
+      sub_physical_mesh_shapes (Optional[List[Tuple[int, int]]]): The shapes of submeshes
+        for each forward stage. Used for "manual_gpipe".
+      sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
+        submeshes for each forward stage. Used for manual layer slicing.
     """
     global global_config
 
@@ -106,6 +130,12 @@ def set_parallelize_options(devices=None,
     global_config.profile_communication = profile_communication
     global_config.cache_folder = cache_folder
     global_config.cache_auto_sharding_ilp_solution = cache_auto_sharding_ilp_solution
+    global_config.pipeline_stage_mode = pipeline_stage_mode
+    global_config.cache_compute_cost = cache_compute_cost
+    global_config.forward_stage_layer_ids = forward_stage_layer_ids
+    global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
+    # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
+    global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
 
 
 # Don't let the compilation on the driver node use GPUs.

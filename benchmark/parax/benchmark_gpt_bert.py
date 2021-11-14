@@ -76,7 +76,7 @@ def load_profiling_result(physical_mesh):
         physical_mesh.save_profiling_result(filename)
 
 
-def create_train_state(rngkey, model, batch):
+def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
 
@@ -89,19 +89,21 @@ def create_train_state(rngkey, model, batch):
         optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
     )
 
+    mixed_precision = (dtype == jnp.float16)
+
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
         tx=tx,
+        mixed_precision=mixed_precision,
         dynamic_scale=None)
     return state
  
 
-def get_train_step(grad_func, num_layers, use_remat, dtype):
+def get_train_step(grad_func, num_layers, dtype):
 
     @parallelize
     def train_step(state, batch, rng_key):
-        @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             logits = state.apply_fn(params,
@@ -117,8 +119,7 @@ def get_train_step(grad_func, num_layers, use_remat, dtype):
             loss = (label_mask * loss).sum() / label_mask.sum()
             return loss
 
-        params = jax.tree_util.tree_map(lambda x : jnp.asarray(x, dtype), state.params)
-        grads = grad_func(loss_func)(params)
+        grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scale for mixed-precision training
         return new_state
@@ -140,7 +141,6 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     # Parallel configs
     if num_micro_batches > 1:
         grad_func = parax.grad
-        prefer_reduce_scatter = False
     else:
         num_micro_batches = None
         grad_func = jax.grad
@@ -176,6 +176,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
             vocab_size=vocab_size,
             max_position_embeddings=seq_len,
             type_vocab_size=0,
+            gradient_checkpointing=use_remat,
         ), dtype=dtype)
     elif model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
@@ -186,16 +187,17 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
             vocab_size=vocab_size,
             max_position_embeddings=seq_len,
             type_vocab_size=0,
+            gradient_checkpointing=use_remat,
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    state = create_train_state(rngkey, model, batch)
+    state = create_train_state(rngkey, model, dtype, batch)
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, dtype)
+    train_step = get_train_step(grad_func, num_layers, dtype)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -280,12 +282,12 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 
 8: [
     # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (256, 512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False,  True,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,   True,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False,  True,  False),
-    (8,   1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False,  True,  False),
-    #(8,   1024, 5760, 10, 5760//128, 25600, 1,  8,  1,  False,  True,  False),
-    #(8,   1024, 6144, 10, 6144//128, 25600, 1,  8,  1,  False,  True,  False),
+    (256,  512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False, True,  False),
+    (512,  512,  1024, 10, 1024//64,  25600, 8,  1,  2,  False, True,  False),
+    (8,    1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  True,  False),
+    (8,    1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, True,  False),
+    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  False),
+    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  True),
 ],
 
 16: [
@@ -294,6 +296,8 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
     (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
     (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
+    (16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  False, True,  False),
+    #(64,   1024, 4096, 10, 4096//128, 25600, 16, 1,  4,  False, True,  False),
 ]
 }
 

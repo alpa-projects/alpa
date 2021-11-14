@@ -6,12 +6,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import linen as nn
-from flax import optim
 from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
+from parax import parallelize, set_parallelize_options, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
@@ -37,6 +36,7 @@ class AutoShardingMixedTest(unittest.TestCase):
         set_parallelize_options(devices=device_mesh)
 
         global_config.allow_mixed_mesh_shape = True
+        global_config.allow_all_gather = False
 
         use_bias = False
 
@@ -96,11 +96,13 @@ class AutoShardingMixedTest(unittest.TestCase):
 
         # JIT compile
         executable = train_step.get_executable(state, {"x": x, "y": y})
-
-        # Get optimized HLO IR
         hlo_ir = executable.get_hlo_text()
 
-        print(hlo_ir)
+        # Check sharding specs
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_ir)
+        assert n_all_to_all == 4
+        assert n_total == n_all_reduce + n_all_to_all
 
 
 def suite():

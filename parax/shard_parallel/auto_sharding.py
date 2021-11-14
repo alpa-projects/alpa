@@ -157,23 +157,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::simplify_graph": True,
                 "auto_sharding::print_strategy": False,
                 "auto_sharding::force_strategy": False,
-                "auto_sharding::force_strategy_inst_indices":
-                    [0, 1, 2, 4,
-                     7, 8, 9, 10,
-
-                     26,
-
-                     30, 35, 38, 42],
-                "auto_sharding::force_strategy_stra_names":
-                    ["R", "S0 @ 0 1d", "Si = Si x R @ 0", "Si = Si x R @ 0",
-                     "S0 @ 1", "SbSi = SbSi x SbR @ {1,0}", "S0 @ 1", "SbSj = SbR x SbSj @ {1,0}",
-
-                     "SbSi = SbSi x SbR @ {1,0}",
-                     
-                     "R = Sk x Sk @ 0 (allreduce @ 0)",
-                     "R = Sk x Sk @ 0 (allreduce @ 0)",
-                     "R = Sk x Sk @ 0 (allreduce @ 0)",
-                     "R = Sk x Sk @ 0 (allreduce @ 0)"]
         }):
             compiled = xla.backend_compile(backend, xla_computation,
                                            compile_options)

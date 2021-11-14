@@ -135,9 +135,9 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
     stage_indices = []
     for start in range(0, num_layers):
         for end in range(start, num_layers):
-            layer_indices = indices[start:end +
-                                    1] + indices[2 * num_layers - end -
-                                                 1:2 * num_layers - start]
+            layer_indices = (
+                indices[start:end + 1] +
+                indices[2 * num_layers - end - 1:2 * num_layers - start])
             stage_name = "stage_{}_{}".format(start, end)
             stage_info = generate_stage_info(layers, layer_indices,
                                              donation_mapping, global_outvars,

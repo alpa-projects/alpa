@@ -245,14 +245,15 @@ def compile_and_profile_stage_compute_cost(
     return ret, split_in_specs, split_out_specs
 
 
-def generate_stage_info(stages, selected_indices, donation_mapping,
+def generate_stage_info(all_layers, selected_indices, donation_mapping,
                         global_outvars, name):
+    """Combine selected layers together for profiling"""
     backend = xla_bridge.get_backend("gpu")
 
-    selected_donation_mapping, used_outside, stages = split_global_use_and_donate(
-        stages, selected_indices, donation_mapping, global_outvars)
+    selected_donation_mapping, used_outside, layers = split_global_use_and_donate(
+        all_layers, selected_indices, donation_mapping, global_outvars)
 
-    jaxprs = [stage.closed_jaxpr() for stage in stages]
+    jaxprs = [layer.closed_jaxpr() for layer in layers]
 
     merged = merge_computation_jaxprs(jaxprs, used_outside, "0",
                                       selected_donation_mapping)

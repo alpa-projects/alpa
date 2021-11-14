@@ -536,12 +536,31 @@ def log_jaxpr(jaxpr, name):
 ########################################
 
 
+def get_memory_status(local_devices):
+    min_free, min_total = np.Inf, np.Inf
+    for device in local_devices:
+        free, total = device.device_memory_usage()
+        min_free = min(min_free, free)
+        min_total = min(min_total, total)
+    return min_free, min_total
+
+
 def profile_xla_executable(compiled, backend, local_devices):
     """Measure the time costs of a xla executable with dummy inputs."""
     hlo_module = compiled.hlo_modules()[0]
+    cost_failed = [np.inf] * 3
 
     # Allocate dummy buffers
     input_shapes = hlo_module.parameter_shapes()
+
+    free_mem, _ = get_memory_status(local_devices)
+    input_bytes = 0
+    for shape in input_shapes:
+        input_bytes += (np.prod(shape.dimensions) *
+                                   shape.numpy_dtype().itemsize)
+    if free_mem < input_bytes:
+        return cost_failed
+
     device_inputs = []
     for shape in input_shapes:
         device_inputs.append([
@@ -549,6 +568,11 @@ def profile_xla_executable(compiled, backend, local_devices):
                 np.empty(shape.dimensions(), shape.numpy_dtype()),
                 local_devices[i]) for i in range(len(local_devices))
         ])
+
+    # prune OOM cases, not exact because third party lib not considered:
+    free_mem, _ = get_memory_status(local_devices)
+    if free_mem < compiled.total_allocation_size():
+        return cost_failed
 
     # Run benchmark
     def run_func():
@@ -567,8 +591,27 @@ def profile_xla_executable(compiled, backend, local_devices):
     try:
         costs = benchmark_func(run_func, repeat=3, number=3)
     except:
-        costs = [np.inf] * 3
+        costs = cost_failed
     return costs
+
+
+def profile_pipeline_xla_executable(compiled, backend, local_devices,
+                                    other_microbatch_mem):
+    """wrap profile xla executable with intermediates of other microbatches"""
+    # TODO(yonghao): count memory for other microbatch in pipeline-parallelism
+    cost_failed = [np.inf] * 3
+
+    free_mem, _ = get_memory_status(local_devices)
+    if free_mem < other_microbatch_mem:
+        return cost_failed
+
+    dummy_buffer = []
+    dummy_buffer.append(
+        backend.buffer_from_pyval(np.empty((
+            other_microbatch_mem,), np.int8), local_devices[i])
+        for i in range(len(local_devices)))
+
+    return profile_xla_executable(compiled, backend, local_devices)
 
 
 def benchmark_func(run_func,

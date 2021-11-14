@@ -186,8 +186,15 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
         apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
         global_outvars)
+
+    donation_mapping = dict()
+    for idx, invar in enumerate(global_invars):
+        if donated_invars[idx]:
+            donation_mapping[invar] = global_outvars[idx]
+
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
-                                                   gradvar_to_mesh, num_meshes)
+                                                   gradvar_to_mesh, num_meshes,
+                                                   donation_mapping)
     apply_deps, apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        mask,
@@ -271,7 +278,7 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
-                         mesh_num):
+                         mesh_num, donation_mapping):
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
@@ -280,6 +287,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         If not in the dict, the variable should be a global parameter.
         mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
+        donation_mapping (Dict[Var, Var]): donation mapping for global invars
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
         info: A tuple of:
@@ -288,12 +296,6 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
             infered_global_invars (Dict[Var, List[int]]): From invar index to meshes need
             this invar.
     """
-
-    def add_allocation(cur: Set, add: Set):
-        if cur is None:
-            return add
-        else:
-            return cur.union(add)
 
     global_invars = closed_jaxpr.jaxpr.invars
     eqn_mesh = dict()
@@ -306,50 +308,71 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     outvars = [list() for _ in range(mesh_num)]
     # propagate mesh assignments from input
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
-        at_mesh = None
+        at_mesh = set()
         for invar in eqn.invars:
-            if isinstance(invar, Var) and invar in var_mesh:
-                at_mesh = add_allocation(at_mesh, var_mesh[invar])
-        if at_mesh is not None:
+            if isinstance(invar, Var):
+                at_mesh.update(var_mesh.setdefault(invar, set()))
+        if at_mesh:
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    cur_mesh = var_mesh[invar] if invar in var_mesh else None
-                    var_mesh[invar] = add_allocation(cur_mesh, at_mesh)
+                    cur_mesh = var_mesh.setdefault(invar, set())
+                    cur_mesh.update(at_mesh)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
-                    var_mesh[outvar] = at_mesh
-            eqn_mesh[eqn_idx] = at_mesh
-    # propagate back
-    for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
-        eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
-        if eqn_idx not in eqn_mesh:
-            at_mesh = None
+                    var_mesh[outvar] = set(at_mesh)
+            eqn_mesh[eqn_idx] = set(at_mesh)
+    # TODO(yonghao): do in rounds, consider donation
+    changed = True
+    while (changed):
+        changed = False
+        # propagate back
+        for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
+            eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
+            origin_at_mesh: Set = eqn_mesh.setdefault(eqn_idx, set())
+            at_mesh = set()
             for outvar in eqn.outvars:
-                if not isinstance(outvar, DropVar) and outvar in var_mesh:
-                    at_mesh = add_allocation(at_mesh, var_mesh[outvar])
-            if at_mesh is not None:
-                eqn_mesh[eqn_idx] = at_mesh
+                if not isinstance(outvar, DropVar):
+                    at_mesh.update(var_mesh.setdefault(outvar, set()))
+            if not at_mesh:
+                continue
+            if (not origin_at_mesh or
+                    at_mesh.difference(origin_at_mesh)):
+                changed = True
+                origin_at_mesh.update(at_mesh)
                 for invar in eqn.invars:
                     if isinstance(invar, Var):
-                        cur_mesh = var_mesh[invar] if invar in var_mesh else None
-                        var_mesh[invar] = add_allocation(cur_mesh, at_mesh)
+                        var_mesh.setdefault(invar, set()).update(at_mesh)
+        for invar in closed_jaxpr.jaxpr.invars:
+            if invar in donation_mapping:
+                outvar = donation_mapping[invar]
+                outvar_at = var_mesh.setdefault(outvar, set())
+                invar_at = var_mesh.setdefault(invar, set())
+                if invar_at.difference(outvar_at):
+                    outvar_at.update(invar_at)
+                    changed = True
+                if outvar_at.difference(invar_at):
+                    invar_at.update(outvar_at)
+
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
-        if eqn_idx in eqn_mesh:
+        if eqn_mesh[eqn_idx]:
+            assert len(eqn_mesh[eqn_idx])
             for mesh in eqn_mesh[eqn_idx]:
                 sliced_eqns[mesh].append(eqn)
         else:
             # all inputs are infered, all outputs are not assigned
             sliced_eqns[0].append(eqn)
+            logger.debug(f'{eqn} are arbitrarily assigned')
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    if invar not in var_mesh:
-                        var_mesh[invar] = [0]
+                    if not var_mesh.setdefault(invar, set()):
+                        var_mesh[invar].add(0)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
-                    assert (outvar not in var_mesh or
+                    assert (not var_mesh.setdefault(outvar, set()) or
                             (len(var_mesh[outvar]) == 1 and
                              var_mesh[outvar][0] == 0))
-                    var_mesh[outvar] = [0]
+                    var_mesh[outvar].add(0)
+
     # grouping invars and outvars
     for invar in global_invars:
         assert invar in var_mesh

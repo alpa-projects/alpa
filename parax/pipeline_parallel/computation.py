@@ -20,6 +20,7 @@ from parax.pipeline_parallel.manual_layer_slicing import get_var_mapping
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 get_input_output_sharding_specs,
+                                                hlo_sharding_to_sharding_spec,
                                                 HloProtoStatus)
 from parax.util import get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias, log_jaxpr
 
@@ -183,6 +184,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     input_sharding_specs: Any = None
     output_sharding_specs: Any = None
     output_acc_grad_indices: Sequence[int] = None
+    donatables: Set[Var] = None
 
     @classmethod
     def from_auto_sharded_computation(
@@ -192,7 +194,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         auto_sharded_hlo_proto: xc.XlaComputation,
         strategy_config: StrategyConfig,
         donated_invars=None,
-        acc_grad_outvars=set()):
+        acc_grad_outvars=set(),
+        donatables=set()):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline computation."""
         if not donated_invars:
@@ -210,7 +213,54 @@ class XlaShardedPipelineComputation(PipelineComputation):
                    donated_invars=donated_invars,
                    invars=jax_pipeline_computation.invars,
                    outvars=jax_pipeline_computation.outvars,
-                   output_acc_grad_indices=acc_grad_indices)
+                   output_acc_grad_indices=acc_grad_indices,
+                   donatables=donatables)
+
+    def donate_intermediates(self, computation):
+        # get sharding annotated hlo module
+        hlo_module = computation.as_hlo_module()
+        donatable = set(self.donatables)
+        # get sharding specs
+        hlo_module.infer_spmd_shardings()
+        avals = [var.aval for var in self.invars]
+        out_avals = [var.aval for var in self.outvars]
+        logical_mesh_shape = self.strategy_config.logical_mesh_shape
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        input_sharding_specs = [
+            hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
+            for (proto_tuple, aval) in zip(input_shardings, avals)
+        ]
+        output_shardings = hlo_module.spmd_output_sharding()
+        output_sharding_specs = hlo_sharding_to_sharding_spec(
+            output_shardings, out_avals, logical_mesh_shape)
+
+        num_donated = np.count_nonzero(self.donated_invars)
+        donatable_outvars = set(self.outvars[num_donated:])
+        donated_invars = list()
+        donated_outvars = list()
+        var_indices = dict(zip(self.outvars, range(len(self.outvars))))
+        var_indices.update(dict(zip(self.invars, range(len(self.invars)))))
+        for idx, invar in enumerate(self.invars):
+            if invar not in donatable:
+                # not donatable
+                continue
+            elif self.donated_invars[idx]:
+                # already donated
+                continue
+            for outvar in donatable_outvars:
+                if (invar.aval.shape == outvar.aval.shape and
+                        input_sharding_specs[var_indices[invar]]
+                        == output_sharding_specs[var_indices[outvar]]):
+                    donated_invars.append(invar)
+                    donated_outvars.append(outvar)
+                    donatable_outvars.discard(outvar)
+                    break
+        # set alias
+        for invar, outvar in zip(donated_invars, donated_outvars):
+            invar_idx, outvar_idx = var_indices[invar], var_indices[outvar]
+            computation.setup_alias((outvar_idx,), invar_idx, ())
+        for invar in donated_invars:
+            self.donated_invars[var_indices[invar]] = True
 
     def get_compiled(self, mesh=None):
 
@@ -561,17 +611,19 @@ def generate_sharded_xla_computations_compile_config(
 
 
 def generate_computations_from_protos(jax_computations, acc_grad_outvars,
-                                      donate_invars, computation_protos,
-                                      strategy_config):
+                                      donate_invars, donatable_lists,
+                                      computation_protos, strategy_config):
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars)
-        for computation, proto, donate_invars in zip(
-            jax_computations, computation_protos, donate_invars)
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables)
+        for computation, proto, donate_invars, donatables in zip(
+            jax_computations, computation_protos, donate_invars,
+            donatable_lists)
     ]
     return computations
 
@@ -580,7 +632,7 @@ def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, physical_mesh, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
-        search_task, record_file):
+        donatable_lists, search_task, record_file):
     proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
         name, jax_computations, computation_donate_invars)
     built = xc.XlaComputation(proto)
@@ -603,10 +655,19 @@ def generate_sharded_xla_computations(
         multiple_stages=True,
         grad_acc_num_micro_batches=None,
         bypass_device_assignment_check=physical_mesh.is_distributed)
-    return generate_computations_from_protos(jax_computations, acc_grad_outvars,
-                                             computation_donate_invars,
-                                             computation_protos,
-                                             strategy_config)
+    computations = [
+        XlaShardedPipelineComputation.from_auto_sharded_computation(
+            auto_sharded_hlo_proto=proto,
+            jax_pipeline_computation=computation,
+            strategy_config=strategy_config,
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables)
+        for computation, proto, donate_invars, donatables in zip(
+            jax_computations, computation_protos, computation_donate_invars,
+            donatable_lists)
+    ]
+    return computations
 
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
@@ -785,3 +846,44 @@ def split_donate_invars(donation_mapping,
         new_stages.append(new_stage)
 
     return ans, new_stages
+
+
+def get_donatable_intermediate(stages: Sequence[JaxPipelineComputation],
+                               worker_stage_mapping, global_invars):
+    """
+    Get donatable invars of each stage. A donatable invar is:
+    1. An intermediate;
+    2. Either a main copy never used, or not a main copy.
+    Args:
+        stages (Sequence[JaxPipelineStage]): all stages
+        worker_stage_mapping (Dict[int, Set[int]]): indices of stages in each mesh
+        global_invars (Sequence[Var] | Set[Var]): global input variables
+    Returns:
+        donatable_list (Sequence[Set[Var]]): donatable invars of each stage
+    """
+    global_invars = set(global_invars)
+    main_copy_at = dict()
+    stage_at = dict()
+    for mesh_idx, stage_indices in worker_stage_mapping.items():
+        for stage_idx in stage_indices:
+            stage = stages[stage_idx]
+            for outvar in stage.outvars:
+                main_copy_at[outvar] = mesh_idx
+            stage_at[stage_idx] = mesh_idx
+
+    donatable_list = []
+    used = set()
+    for stage_idx in reversed(range(len(stages))):
+        stage = stages[stage_idx]
+        donatable = set()
+        for invar in stage.invars:
+            if invar in global_invars:
+                continue  # do not consider global inputs
+            if main_copy_at[invar] != stage_at[stage_idx]:
+                donatable.add(invar)  # not a main copy
+            if invar not in used:
+                donatable.add(invar)  # is a main copy never used
+        used.update(stage.invars)
+        donatable_list.append(donatable)
+    donatable_list = list(reversed(donatable_list))
+    return donatable_list

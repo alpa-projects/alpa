@@ -6,7 +6,7 @@ import numba
 import numpy as np
 from datetime import datetime
 from time import time
-from typing import Sequence, Set, Tuple
+from typing import Sequence
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
@@ -14,7 +14,7 @@ from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, split_global_use_and_donate,
     generate_stage_info, compile_all)
 from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
-
+from parax.util import OrderedSet
 
 @numba.jit(nopython=True)
 def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
@@ -446,8 +446,8 @@ def get_stage_outvars(layers: Sequence[JaxPipelineComputation],
         A list of outvars for each stage
     """
     n_stages = len(layer_assignment)
-    used = set(global_outvars)
-    stage_outvars = [set() for _ in range(n_stages)]
+    used = OrderedSet(global_outvars)
+    stage_outvars = [OrderedSet() for _ in range(n_stages)]
     for stage_id, layer_ids in reversed(list(enumerate(layer_assignment))):
         for layer_id in layer_ids:
             for var in layers[layer_id].outvars:

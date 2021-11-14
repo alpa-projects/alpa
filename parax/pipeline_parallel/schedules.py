@@ -5,7 +5,7 @@ from typing import List
 import numpy as np
 
 from parax.pipeline_parallel.computation import PipelineComputation
-from parax.util import cached_property
+from parax.util import cached_property, OrderedSet
 
 
 def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
@@ -133,7 +133,7 @@ class GpipeSchedule:
                 if task:
                     _, stage_idx = task
                     if stage_idx not in placements:
-                        placements[stage_idx] = set()
+                        placements[stage_idx] = OrderedSet()
                     if worker_idx not in placements[stage_idx]:
                         placements[stage_idx].add(worker_idx)
         return placements
@@ -147,7 +147,7 @@ class GpipeSchedule:
                 if task:
                     _, stage_idx = task
                     if worker_idx not in ownership:
-                        ownership[worker_idx] = set()
+                        ownership[worker_idx] = OrderedSet()
                     if stage_idx not in ownership[worker_idx]:
                         ownership[worker_idx].add(stage_idx)
         return ownership

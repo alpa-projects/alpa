@@ -481,13 +481,13 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                     sliced_eqns) -> Sequence[ClosedJaxpr]:
     """Wrap sliced equations to a list of ClosedJaxpr."""
     N = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_invars = OrderedSet(closed_jaxpr.jaxpr.invars)
     global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    global_outvars = set(
+    global_outvars = OrderedSet(
         var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
     result = []
-    layer_invars = [set() for _ in range(N)]
-    layer_outvars = [set() for _ in range(N)]
+    layer_invars = [OrderedSet() for _ in range(N)]
+    layer_outvars = [OrderedSet() for _ in range(N)]
     layer_consts = [dict() for _ in range(N)]
     var_layer_dict = {}
     for i, eqns in enumerate(sliced_eqns):
@@ -833,7 +833,7 @@ def compute_param_number(pytree):
 
 def get_cross_slice_vars(jaxpr, slices):
     defined = dict()
-    stage_invars = [set() for _ in slices]
+    stage_invars = [OrderedSet() for _ in slices]
     for invar in jaxpr.invars:
         defined[invar] = -1
     for invar in jaxpr.constvars:

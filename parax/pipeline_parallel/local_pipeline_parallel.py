@@ -41,7 +41,7 @@ class LocalPipelineRunner:
 
         Args:
             stage (PipelineComputation): The pipeline stage to run.
-            invals (Set[Var], optional): Input value dict.
+            invals (Dict[Var, Any], optional): Input value dict.
 
         Returns:
             Two dictionaries with values of pipeline & global output variables.

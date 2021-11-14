@@ -184,6 +184,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     input_sharding_specs: Any = None
     output_sharding_specs: Any = None
     output_acc_grad_indices: Sequence[int] = None
+    donatables: Set[Var] = None
 
     @classmethod
     def from_auto_sharded_computation(
@@ -610,17 +611,19 @@ def generate_sharded_xla_computations_compile_config(
 
 
 def generate_computations_from_protos(jax_computations, acc_grad_outvars,
-                                      donate_invars, computation_protos,
-                                      strategy_config):
+                                      donate_invars, donatable_lists,
+                                      computation_protos, strategy_config):
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars)
-        for computation, proto, donate_invars in zip(
-            jax_computations, computation_protos, donate_invars)
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables)
+        for computation, proto, donate_invars, donatables in zip(
+            jax_computations, computation_protos, donate_invars,
+            donatable_lists)
     ]
     return computations
 
@@ -629,7 +632,7 @@ def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, physical_mesh, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
-        donatables_list, search_task, record_file):
+        donatable_lists, search_task, record_file):
     proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
         name, jax_computations, computation_donate_invars)
     built = xc.XlaComputation(proto)
@@ -662,7 +665,7 @@ def generate_sharded_xla_computations(
             donatables=donatables)
         for computation, proto, donate_invars, donatables in zip(
             jax_computations, computation_protos, computation_donate_invars,
-            donatables_list)
+            donatable_lists)
     ]
     return computations
 

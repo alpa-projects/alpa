@@ -157,6 +157,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::simplify_graph": True,
                 "auto_sharding::print_strategy": False,
                 "auto_sharding::force_strategy": False,
+                "auto_sharding::force_strategy_inst_indices": [],
+                "auto_sharding::force_strategy_stra_names": [],
         }):
             compiled = xla.backend_compile(backend, xla_computation,
                                            compile_options)

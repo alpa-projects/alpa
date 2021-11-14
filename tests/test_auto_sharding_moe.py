@@ -214,6 +214,31 @@ class AutoShardingMoETest(unittest.TestCase):
             assert_expert_partitioned(optimizer.target["params"]["moe"]["wo"],
                                       num_devices, i)
 
+    def test_moe_layer_2d(self):
+        batch_size = 64
+        seq_len = 16
+        hidden_size = 64
+        num_heads = 16
+        S = 32
+        E = 16
+        deterministic = True
+        global_config.allow_mixed_mesh_shape = True
+        global_config.allow_all_gather = False
+
+        # Test on different logical mesh shapes
+        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
+        optimizer, hlo_ir, objective = self.run_moe_layer(
+            batch_size, seq_len, hidden_size, num_heads, S, E,
+            deterministic, device_mesh)
+
+        # Check communication cost
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_ir)
+        assert n_all_to_all >= 0
+        assert n_all_reduce == 2  # one data-parallel for experts weights,
+                                  # one data-parallel for normal weights
+        assert n_total == n_all_to_all + n_all_reduce
+
     def test_moe_lm(self):
         num_layers = 2
         batch_size = 64
@@ -265,6 +290,7 @@ class AutoShardingMoETest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMoETest("test_moe_layer"))
+    suite.addTest(AutoShardingMoETest("test_moe_layer_2d"))
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
     suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
     suite.addTest(

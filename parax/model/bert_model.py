@@ -39,6 +39,7 @@ class BertConfig:
                  position_embedding_type="absolute",
                  use_cache=True,
                  tie_word_embeddings=True,
+                 add_manual_pipeline_markers=False,
                  pipeline_mp_size=0,
                  **kwargs):
         self.vocab_size = vocab_size
@@ -57,6 +58,7 @@ class BertConfig:
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.tie_word_embeddings = tie_word_embeddings
+        self.add_manual_pipeline_markers = add_manual_pipeline_markers
         self.pipeline_mp_size = pipeline_mp_size
 
 
@@ -363,9 +365,10 @@ class FlaxBertLayerCollection(nn.Module):
         ]
 
         num_layers = self.config.num_hidden_layers
+        self.add_manual_pipeline_markers = self.config.add_manual_pipeline_markers
         self.pipeline_mp_size = self.config.pipeline_mp_size
         self.pipeline_marker_positions = []
-        if self.pipeline_mp_size > 1:
+        if self.add_manual_pipeline_markers:
             num_layer_per_stage, remained = divmod(num_layers,
                                                    self.pipeline_mp_size)
             assert remained == 0
@@ -387,7 +390,7 @@ class FlaxBertLayerCollection(nn.Module):
 
         id = 0
         for i, layer in enumerate(self.layers):
-            if self.pipeline_mp_size > 1:
+            if self.add_manual_pipeline_markers:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
                     mark_pipeline(name=str(id), mark_type="end")

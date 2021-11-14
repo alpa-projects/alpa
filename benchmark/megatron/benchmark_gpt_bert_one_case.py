@@ -125,7 +125,6 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,\
         vocab_size, dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches,\
         ddp_impl, checkpoint_activations = benchmark_case
-
     num_gpus = dp_size * tensor_mp_size * pipeline_mp_size
     assert global_batch_size % (dp_size * num_micro_batches) == 0
     micro_batch_size = global_batch_size // dp_size // num_micro_batches
@@ -169,11 +168,8 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider,
                                                                model_type=ModelType.encoder_or_decoder)
 
-    if rank == 0:
-        parameter_count = compute_gpt_parameter_count(
-            num_layers, hidden_size, vocab_size)
-        #print(model[0])
-        print(f"Parameter count {parameter_count/1e9:.2f} B")
+    parameter_count = compute_gpt_parameter_count(
+        num_layers, hidden_size, vocab_size)
 
     def run_func():
         train_step(forward_step, None, model, optimizer, lr_scheduler)
@@ -193,21 +189,19 @@ def benchmark_gpt_bert_one_case(benchmark_case):
     timers.log(names, normalizer=repeat * number)
 
     # Print results
-    if rank == 0:
-        peak_mem = torch.cuda.max_memory_allocated(0)
-        tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
-                                    hidden_size, vocab_size,
-                                    torch.distributed.get_world_size(),
-                                    np.mean(costs))
-        heads = ["Type", "Case", "Mesh Shape", "DDP Impl", "Checkpointing",
-                 "Parameter Count", "Peak Mem", "Mean Time", "Std Time", "TFLOPS"]
-        values = [model_type, str(benchmark_case[1:-6]),
-                  str((dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches)),
-                  "local" if ddp_impl else "torch",
-                  str(checkpoint_activations),
-                  f"{parameter_count/1e9:.3f}", f"{peak_mem/GB:5.3f}",
-                  f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
-        write_tsv(heads, values, f"result_{model_type}.tsv")
+    peak_mem = torch.cuda.max_memory_allocated(0)
+    tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
+                                hidden_size, vocab_size,
+                                torch.distributed.get_world_size(),
+                                np.mean(costs))
+    heads = ["Type", "Case", "Mesh Shape", "#MB", "Remat", "Tie-Embed",
+             "#Params", "Peak Mem", "Mean Time", "Std Time", "TFLOPs"]
+    values = [model_type, str(benchmark_case[1:6]),
+              str((dp_size, tensor_mp_size, pipeline_mp_size)), str(num_micro_batches),
+              str(checkpoint_activations), "No",
+              f"{parameter_count/1e9:.3f}", f"{peak_mem/GB:5.3f}",
+              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
+    write_tsv(heads, values, f"result_{model_type}.tsv")
 
 
 if __name__ == "__main__":

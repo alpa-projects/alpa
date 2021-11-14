@@ -4,7 +4,7 @@ from jax._src.api import make_jaxpr
 from jax.core import gensym
 import jax.numpy as jnp
 from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
-from parax.pipeline_parallel.computation import compute_grad_to_accumulate_grad
+from parax.pipeline_parallel.apply_grad import compute_grad_to_accumulate_grad
 import ray
 
 from parax import DeviceCluster, manual_layer_slicing, mark_pipeline

@@ -412,7 +412,8 @@ class PhysicalDeviceMesh:
                  host_info=None,
                  head_ip=None,
                  num_devices_per_host=1,
-                 use_ray=False):
+                 use_ray=False,
+                 skip_launch=False):
         # actually we can infer use_ray by checking ip addresses.
         self.use_ray = use_ray
         self.host_ids = host_ids
@@ -461,7 +462,10 @@ class PhysicalDeviceMesh:
                     for devices_this_host in self.devices
                     for i in devices_this_host
                 ])
-            self._launch_xla_servers()
+            if not skip_launch:
+                self._launch_xla_servers()
+
+        self.launched = not skip_launch
 
     @property
     def host_ips(self):
@@ -508,6 +512,10 @@ class PhysicalDeviceMesh:
             }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
+
+    def launch_xla_servers(self):
+        assert not self.launched
+        self._launch_xla_servers()
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU model."""
@@ -782,6 +790,8 @@ class PhysicalDeviceMesh:
 
     def shutdown(self):
         """Shut down the mesh."""
+        if not self.launched:
+            return
         if self.is_distributed:
             ray.get([w.shutdown.remote() for w in self.workers])
             for worker in self.workers:
@@ -793,6 +803,7 @@ class PhysicalDeviceMesh:
             self.service_server = None
         else:
             self.sync_workers()
+        self.launched = False
 
 
 class LogicalDeviceMesh:
@@ -1134,7 +1145,7 @@ class VirtualMesh:
         """Whether this mesh should be considered as a distributed mesh."""
         return True
 
-    def get_physical_mesh(self):
+    def get_physical_mesh(self, skip_launch=False):
         """Convert to a physical mesh (which will request resources from Ray)."""
         return PhysicalDeviceMesh(
             host_ids=self.host_ids,
@@ -1142,7 +1153,8 @@ class VirtualMesh:
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             devices=self.device_ids,
-            use_ray=True)
+            use_ray=True,
+            skip_launch=skip_launch)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Generate a logical mesh."""

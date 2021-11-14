@@ -12,6 +12,7 @@ import optax
 import ray
 
 import parax
+from benchmark.util import compute_gpt_parameter_count
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
@@ -48,19 +49,6 @@ def compute_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
     # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
     tflops = total_flop / latency / num_gpus / 1e12
     return tflops
-
-
-def compute_parameter_count(num_layers, hidden_size, vocab_size):
-    return num_layers * (
-            # self-attention
-            hidden_size * (3 * hidden_size + 1) + 
-            hidden_size * (hidden_size + 1) + 
-            # mlp
-            hidden_size * (4 * hidden_size + 1) +
-            hidden_size * 4 * (hidden_size + 1) +
-            # layer norm
-            hidden_size * 4
-           ) + vocab_size * (hidden_size + 1)
 
 
 def load_profiling_result(physical_mesh):
@@ -233,7 +221,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
                             hidden_size, vocab_size,
                             physical_mesh.total_devices,
                             np.mean(latencies))
-    param_count = compute_parameter_count(num_layers, hidden_size, vocab_size)
+    param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
     # Restore global config
     global_config.restore(backup)

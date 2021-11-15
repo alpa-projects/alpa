@@ -1,11 +1,14 @@
 """Generate pipeline schedules."""
-
+import logging
 from typing import List, Tuple
 
 import numpy as np
 
 from parax.pipeline_parallel.computation import PipelineComputation
 from parax.util import cached_property
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
@@ -60,6 +63,7 @@ class PipelineSchedule:
         self._schedules : List[List[Tuple]] = self._generate_schedule()
 
     def _generate_schedule(self):
+        """Implementation of the schedule."""
         raise NotImplementedError()
 
     def pprint_schedule(self):
@@ -74,7 +78,7 @@ class PipelineSchedule:
             sched_str = " ".join(
                 ["{:<8}".format(str(sched)) for sched in scheds])
             printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
-        print(printout)
+        logger.info(printout)
         return printout
 
     @property
@@ -205,7 +209,6 @@ class PipeDreamFlush(PipelineSchedule):
         num_warmup_microbatches = [min(n - i - 1, m) for i in range(n)]
         num_microbatches_remaining = [m - i for i in num_warmup_microbatches]
 
-
         # warm-up clocks
         M = max(num_warmup_microbatches)
         for k in range(M):
@@ -262,4 +265,10 @@ class PipeDreamFlush(PipelineSchedule):
             if i > 0:
                 finished_bwd_batch_indices[next_available_clock[i]:num_clock, i] = m
 
+        # append apply_grad schedules
+        scheds = [None] * n
+        for stage_idx, worker in self.apply_grad_placement.items():
+            scheds[worker] = (0, stage_idx)
+        schedules.append(scheds)
         return schedules
+

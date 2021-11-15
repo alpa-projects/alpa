@@ -1,6 +1,6 @@
 """Generate pipeline schedules."""
 
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
@@ -31,14 +31,16 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
     return d
 
 
-class GpipeSchedule:
+class PipelineSchedule:
     """
-    Construct a Gpipe-like schedule.
+    A pipeline schedule used by the distributed runtime.
+
+    The core interface of this schedule is .schedule object
 
     Args:
         dependency (np.array): dependency adjacency matrix.
         sliced_mesh (List[VirtualMesh]): a list of pre-sliced virtual meshes
-            to assign workers on.
+            to assign stages on.
         apply_grad_placement (Dict[int, int]): A map from apply grad's stage idx
             to the worker it is assigned.
         num_batch (int): number of microbatches.
@@ -47,17 +49,91 @@ class GpipeSchedule:
     def __init__(self,
                  *,
                  dependency,
-                 sliced_meshes,
+                 meshes,
                  apply_grad_placement,
                  num_batch=1):
         self.dependency = dependency
-        self.meshes = sliced_meshes
+        self.meshes = meshes
         self.apply_grad_placement = apply_grad_placement
         self.num_batch = num_batch
-        self.num_stage = dependency.shape[0]
-        self.num_worker = len(sliced_meshes)
-        self.num_mesh = len(sliced_meshes)
-        self._schedules = self._generate_schedule()
+
+        self._schedules : List[List[Tuple]] = self._generate_schedule()
+
+    def _generate_schedule(self):
+        raise NotImplementedError()
+
+    def pprint_schedule(self):
+        """Pretty print the schedule."""
+        printout = "\n"
+        device_str = " ".join([
+            "{:<8}".format("d" + str(d))
+            for d in range(self.num_pipeline_worker)
+        ])
+        printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
+        for clock, scheds in enumerate(self.schedules):
+            sched_str = " ".join(
+                ["{:<8}".format(str(sched)) for sched in scheds])
+            printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
+        return printout
+
+    @property
+    def schedules(self):
+        """Return the schedules."""
+        return self._schedules
+
+    @property
+    def num_stage(self):
+        """Return the number of stage, including apply_grad stages."""
+        return self.dependency.shape[0]
+
+    @property
+    def num_mesh(self):
+        return len(self.meshes)
+
+    @property
+    def num_clock(self):
+        """Return the number of clocks in the schedule."""
+        return len(self._schedules)
+
+    @cached_property
+    def stage_mesh_mapping(self):
+        """Generate a stage-worker mapping according to the schedule."""
+        placements = dict()
+        for tasks in self._schedules:
+            for mesh_idx, task in enumerate(tasks):
+                if task:
+                    _, stage_idx = task
+                    if stage_idx not in placements:
+                        placements[stage_idx] = set()
+                    if mesh_idx not in placements[stage_idx]:
+                        placements[stage_idx].add(mesh_idx)
+        return placements
+
+    @cached_property
+    def mesh_stage_mapping(self):
+        """Generate a worker-stage mapping according to the schedule."""
+        ownership = dict()
+        for tasks in self._schedules:
+            for mesh_idx, task in enumerate(tasks):
+                if task:
+                    _, stage_idx = task
+                    if mesh_idx not in ownership:
+                        ownership[mesh_idx] = set()
+                    if stage_idx not in ownership[mesh_idx]:
+                        ownership[mesh_idx].add(stage_idx)
+        return ownership
+
+    def stage_placement(self, stage_idx):
+        """Query the placement of a stage given its stage index."""
+        return self.stage_mesh_mapping[stage_idx]
+
+    def mesh_placement(self, worker_idx):
+        """Query the responsible stages of a worker given a worker index."""
+        return self.mesh_stage_mapping[worker_idx]
+
+
+class GpipeSchedule(PipelineSchedule):
+    """Construct a Gpipe-like schedule."""
 
     def _generate_schedule(self):
         """
@@ -80,7 +156,7 @@ class GpipeSchedule:
         5 reverse...
         """
         m = self.num_batch
-        n = self.num_worker
+        n = self.num_mesh
         num_clock = m + n - 1
         schedules = []
         for k in range(num_clock):
@@ -110,62 +186,76 @@ class GpipeSchedule:
         schedules.append(scheds)
         return schedules
 
-    def pprint_schedule(self):
-        """Pretty print the schedule."""
-        printout = "\n"
-        device_str = " ".join([
-            "{:<8}".format("d" + str(d))
-            for d in range(self.num_pipeline_worker)
-        ])
-        printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
-        for clock, scheds in enumerate(self.schedules):
-            sched_str = " ".join(
-                ["{:<8}".format(str(sched)) for sched in scheds])
-            printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
-        return printout
 
-    @cached_property
-    def stage_worker_mapping(self):
-        """Generate a stage-worker mapping according to the schedule."""
-        placements = dict()
-        for tasks in self._schedules:
-            for worker_idx, task in enumerate(tasks):
-                if task:
-                    _, stage_idx = task
-                    if stage_idx not in placements:
-                        placements[stage_idx] = set()
-                    if worker_idx not in placements[stage_idx]:
-                        placements[stage_idx].add(worker_idx)
-        return placements
+class PipeDreamFlush(PipelineSchedule):
+    """
+    Generate a PipeDream-Flush schedule (a.k.a. 1F1B).
 
-    @cached_property
-    def worker_stage_mapping(self):
-        """Generate a worker-stage mapping according to the schedule."""
-        ownership = dict()
-        for tasks in self._schedules:
-            for worker_idx, task in enumerate(tasks):
-                if task:
-                    _, stage_idx = task
-                    if worker_idx not in ownership:
-                        ownership[worker_idx] = set()
-                    if stage_idx not in ownership[worker_idx]:
-                        ownership[worker_idx].add(stage_idx)
-        return ownership
+    It has similar latency to GPipe but is more memory-efficient.
+    """
+    def _generate_schedule(self):
+        m = self.num_batch
+        n = self.num_mesh
 
-    def stage_placement(self, stage_idx):
-        """Query the placement of a stage given its stage index."""
-        return self.stage_worker_mapping[stage_idx]
+        # equal to gpipe
+        num_clock = (m + n - 1) * 2
+        schedules = [[None] * n for k in range(num_clock)]
 
-    def worker_placement(self, worker_idx):
-        """Query the responsible stages of a worker given a worker index."""
-        return self.worker_stage_mapping[worker_idx]
+        num_warmup_microbatches = [min(m - i - 1, m) for i in range(n)]
+        num_microbatches_remaining = [m - i for i in num_warmup_microbatches]
 
-    @property
-    def schedules(self):
-        """Return the schedules as a matrix."""
-        return self._schedules
 
-    @property
-    def num_clock(self):
-        """Return the number of clocks in the schedule."""
-        return len(self._schedules)
+        # warm-up clocks
+        M = max(num_warmup_microbatches)
+        for k in range(M):
+            for d in range(max(1 + k - M, 0), min(1 + k, n)):
+                schedules[k][d] = (k - d, d)
+
+        next_fwd_mb_idx = num_warmup_microbatches
+        next_bwd_mb_idx = [0 for _ in range(n)]
+        next_available_clock = [M for _ in range(n)]
+
+
+        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n], dtype=int)
+
+        # run 1F1B
+        for i in reversed(range(n)):
+            # from the last device to the first
+            for j in range(num_microbatches_remaining[i]):
+                # running through all the remaining microbatches
+                # forward
+                next_clock = next_available_clock[i]
+                schedules[next_clock][i] = (next_fwd_mb_idx[i], i)
+                next_fwd_mb_idx[i] = next_fwd_mb_idx[i] + 1
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                next_clock = next_clock + 1
+
+                # backward
+                # first, offset the next available clock to the clock
+                # when the previous stage has just finished backward of the target mb.
+                if i + 1 < n:  # not the last device
+                    # find the next possible backward clock
+                    while finished_bwd_batch_indices[next_clock][i + 1] <= next_bwd_mb_idx[i]:
+                        assert finished_bwd_batch_indices[next_clock - 1][i] == next_bwd_mb_idx[i]
+                        finished_bwd_batch_indices[next_clock][i] = finished_bwd_batch_indices[next_clock - 1][i]
+                        next_clock = next_clock + 1
+
+                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
+                next_available_clock[i] = next_clock + 1
+
+
+        # run cooldown passes
+        for i in reversed(range(n)):
+            for j in range(num_warmup_microbatches[i]):
+                assert i + 1 < n
+                next_clock = next_available_clock[i]
+                while finished_bwd_batch_indices[next_clock][i + 1] <= next_bwd_mb_idx[i]:
+                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                    next_clock = next_clock + 1
+                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n- 1 - i)
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx
+                next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
+                next_available_clock = next_clock + 1
+        return schedules

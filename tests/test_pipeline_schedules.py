@@ -94,7 +94,7 @@ class PipelineScheduleTest(unittest.TestCase):
         type = "1f1b"
         num_stage = 6
         num_mesh = 3
-        num_batch = 1
+        num_batch = 3
         self.test_schedule_basics(type, num_stage, num_mesh, num_batch)
 
 

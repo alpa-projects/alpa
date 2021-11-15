@@ -2,7 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, Sequence, List, Callable
+from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
 import numpy as np
 from jax.core import Var
@@ -19,7 +19,7 @@ from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    next_remote_buffer_uuid, RemoteBufferRef)
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
-from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
+from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
@@ -45,10 +45,10 @@ class PipelineInstType(enum.IntEnum):
 @dataclass
 class PipelineInstruction:
     opcode: PipelineInstType
-    task_uuid: int
-    input_uuids: np.ndarray
-    output_uuids: np.ndarray
-    opaques: Dict[str, Any]
+    task_uuid: Optional[int]
+    input_uuids: Optional[np.ndarray]
+    output_uuids: Optional[np.ndarray]
+    opaques: Optional[Dict[str, Any]]
 
     @classmethod
     def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs):
@@ -139,7 +139,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  global_outvars: List[Var],
                  physical_meshes: List[PhysicalDeviceMesh],
                  dependency: np.ndarray,
-                 schedule: GpipeSchedule,
+                 schedule: PipelineSchedule,
                  is_batch: List[bool],
                  num_batch=1):
         super(DecentralizedDistributedRuntime,
@@ -209,11 +209,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             if invar in not_batch_invars:
                 var_key = repr(invar)
                 key = (repr(invar), 0)
-            # TODO(yonghao): only works for GPipeSchedule, move this fn there?
             elif (invar in self.grad_dummy_invars and
-                  batch_idx < self.num_batch - 1):
+                  batch_idx > self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
-                key = (var_key, batch_idx + 1)
+                key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
             else:
                 var_key = repr(invar)
                 key = (repr(invar), batch_idx)
@@ -322,11 +321,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                 zip(list(input_uuids[idx]),
                                     list(output_uuids[idx])))
 
-                    # TODO(yonghao): only works for GPipeSchedule.
                     kwargs = {
-                        "skip_grad_sync": not (stage_idx >= num_mesh and
-                                               stage_idx < num_mesh * 2 and
-                                               batch_idx == 0),
+                        "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
                         "sync_before": False,
                         "sync_after": False,
                     }
@@ -452,8 +448,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 grad_var_spec_dict = mesh_grad_vars[mesh_idx]
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
-                # TODO(yonghao): only works for GPipeSchedule
-                keys = [(repr(var), self.num_batch - 1) for var in grad_vars]
+
+                # TODO(yonghao): for each var, record its first mb index that starts grad accum.
+                keys = [(repr(var), self.schedule.first_backward_batch_index)
+                        for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx, var_at,
                     executable_config_lists, keys, True)

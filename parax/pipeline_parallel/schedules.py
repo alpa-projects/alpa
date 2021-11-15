@@ -1,5 +1,6 @@
 """Generate pipeline schedules."""
 import logging
+from abc import abstractmethod, ABCMeta
 from typing import List, Tuple
 
 import numpy as np
@@ -50,7 +51,7 @@ def gen_linear_pipeline_dependency(num_stage):
     return d
 
 
-class PipelineSchedule:
+class PipelineSchedule(metaclass=ABCMeta):
     """
     A pipeline schedule used by the distributed runtime.
 
@@ -78,11 +79,12 @@ class PipelineSchedule:
 
         self._schedules : List[List[Tuple]] = self._generate_schedule()
 
+    @abstractmethod
     def _generate_schedule(self):
         """Implementation of the schedule."""
         raise NotImplementedError()
 
-    def pprint_schedule(self):
+    def pprint_schedule(self, print=False):
         """Pretty print the schedule."""
         printout = "\n"
         device_str = " ".join([
@@ -94,7 +96,8 @@ class PipelineSchedule:
             sched_str = " ".join(
                 ["{:<8}".format(str(sched)) for sched in scheds])
             printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
-        logger.info(printout)
+        if print:
+            logger.info(printout)
         return printout
 
     @property
@@ -152,6 +155,21 @@ class PipelineSchedule:
         """Query the responsible stages of a worker given a worker index."""
         return self.mesh_stage_mapping[mesh_idx]
 
+    @abstractmethod
+    def should_skip_grad_sync(self, task):
+        """
+        Query if grad sync (w/ other date replicas) should be skipped on a task.
+
+        Args:
+            task (Tuple[int]): (batch index, stage index).
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def previous_backward_batch_index(self, batch_idx):
+        """Return microbatch index during backward prior to batch_idx."""
+        raise NotImplementedError()
+
 
 class GpipeSchedule(PipelineSchedule):
     """Construct a Gpipe-like schedule."""
@@ -192,10 +210,11 @@ class GpipeSchedule(PipelineSchedule):
                 if not task:
                     rev.append(None)
                 else:
-                    rev.append((task[0], 2 * n - 1 - task[1]))
+                    rev.append((m - 1 - task[0], 2 * n - 1 - task[1]))
             return rev
 
         # backward schedules
+        # Note: large microbatch index is executed earlier.
         for k in range(num_clock):
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
@@ -206,6 +225,28 @@ class GpipeSchedule(PipelineSchedule):
             scheds[worker] = (0, stage_idx)
         schedules.append(scheds)
         return schedules
+
+    def should_skip_grad_sync(self, task):
+        batch_idx, stage_idx = task
+        do_grad_sync = False
+        if self.num_mesh <= stage_idx < self.num_mesh * 2 \
+                and batch_idx == self.last_backward_batch_index:
+            do_grad_sync = True
+        return not do_grad_sync
+
+    @property
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        return 0
+
+    @property
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
+        return self.num_batch - 1
+
+    def previous_backward_batch_index(self, batch_idx):
+        assert batch_idx > 0
+        return batch_idx - 1
 
 
 class PipeDreamFlush(PipelineSchedule):
@@ -286,3 +327,25 @@ class PipeDreamFlush(PipelineSchedule):
             scheds[worker] = (0, stage_idx)
         schedules.append(scheds)
         return schedules
+
+    def should_skip_grad_sync(self, task):
+        batch_idx, stage_idx = task
+        do_grad_sync = False
+        if self.num_mesh <= stage_idx < self.num_mesh * 2 \
+                and batch_idx == self.last_backward_batch_index:
+            do_grad_sync = True
+        return not do_grad_sync
+
+    @property
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        return 0
+
+    @property
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
+        return self.num_batch - 1
+
+    def previous_backward_microbatch_index(self, batch_idx):
+        assert batch_idx > 0
+        return batch_idx - 1

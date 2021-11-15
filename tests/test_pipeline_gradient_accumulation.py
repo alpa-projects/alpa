@@ -1,93 +1,18 @@
-import copy
 import unittest
-
-from flax import linen as nn
 import time
-import optax
+
 import jax
 import jax.numpy as jnp
-import numpy as np
-from parax.pipeline_parallel.manual_layer_slicing import remat
 import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, manual_layer_slicing, automatic_layer_slicing)
-from parax.model.bert_model import BertConfig, FlaxBertLayer, TrainState
+                   DeviceCluster)
+from parax.model.bert_model import BertConfig
 from parax.pipeline_parallel.primitive_def import mark_pipeline
-from parax.testing import assert_allclose
-
-
-def create_train_state(rngkey, model, params):
-    params = model.init(rngkey, *params)
-    tx = optax.adam(learning_rate=1e-2)
-    state = TrainState.create(apply_fn=model.apply,
-                              params=params,
-                              tx=tx,
-                              dynamic_scale=None)
-    return state
-
-
-class MLPModel(nn.Module):
-    hidden_dim: int
-    output_dim: int
-    manual_pipeline_layer: bool = True
-
-    @nn.compact
-    def __call__(self, x):
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        x = nn.relu(x)
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='end')
-            mark_pipeline(name='2', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        x = nn.Dense(features=self.output_dim, use_bias=True)(x)
-        return x
-
-
-class TwoLayerBertLayerModel(nn.Module):
-    config: BertConfig
-    dtype: jnp.dtype = jnp.float32
-    manual_pipeline_layer: bool = True
-
-    def setup(self):
-        self.layer0 = FlaxBertLayer(config=self.config, dtype=self.dtype)
-        self.layer1 = FlaxBertLayer(config=self.config, dtype=self.dtype)
-
-    def __call__(self, x, attention_mask):
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='start')
-        x = self.layer0(x, attention_mask)[0]
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='end')
-            mark_pipeline(name='2', mark_type='start')
-        x = self.layer1(x, attention_mask)[0]
-        return x
-
-
-class BertLayerModel(nn.Module):
-    config: BertConfig
-    dtype: jnp.dtype = jnp.float32
-    manual_pipeline_layer: bool = True
-
-    def setup(self):
-        self.layers = [
-            FlaxBertLayer(config=self.config, dtype=self.dtype)
-            for _ in range(self.config.num_hidden_layers)
-        ]
-
-    def __call__(self, x, attention_mask):
-        for i, layer in enumerate(self.layers):
-            if self.manual_pipeline_layer:
-                mark_pipeline(name=str(i), mark_type='start')
-            layer_outputs = layer(x, attention_mask)
-            x = layer_outputs[0]
-            if self.manual_pipeline_layer and i != len(self.layers) - 1:
-                mark_pipeline(name=str(i), mark_type='end')
-        return x
+from parax.testing import (MLPModel, TwoLayerBertLayerModel, BertLayerModel,
+                           assert_allclose, create_train_state,
+                           decorate_loss_fn)
 
 
 class AccumulateGradTest(unittest.TestCase):
@@ -98,7 +23,7 @@ class AccumulateGradTest(unittest.TestCase):
 
     def tearDown(self):
         ray.shutdown()
-        time.sleep(5)
+        time.sleep(1)
 
     def run_mlp(self,
                 manual_pipeline_layer=True,
@@ -130,15 +55,8 @@ class AccumulateGradTest(unittest.TestCase):
                     mark_pipeline(name='2', mark_type='end')
                 return loss
 
-            if manual_pipeline_layer:
-                if test_remat:
-                    loss_func = remat(loss_func)
-                loss_func = manual_layer_slicing(loss_func)
-            else:
-                loss_func = automatic_layer_slicing(loss_func,
-                                                    layer_num=2,
-                                                    use_pipeline=True,
-                                                    use_remat=test_remat)
+            loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                         test_remat, 2)
 
             param_grad = parax.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=param_grad)
@@ -187,15 +105,8 @@ class AccumulateGradTest(unittest.TestCase):
                     mark_pipeline(name='2', mark_type='end')
                 return loss
 
-            if manual_pipeline_layer:
-                if test_remat:
-                    loss_func = remat(loss_func)
-                loss_func = manual_layer_slicing(loss_func)
-            else:
-                loss_func = automatic_layer_slicing(loss_func,
-                                                    layer_num=2,
-                                                    use_pipeline=True,
-                                                    use_remat=test_remat)
+            loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                         test_remat, 2)
 
             grad_param = parax.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grad_param)
@@ -257,7 +168,7 @@ class AccumulateGradTest(unittest.TestCase):
         hidden_size = 512
         num_heads = 512 // 64
 
-        def train_step(state, batch, apply_fn):
+        def train_step(state, batch):
 
             def loss_func(params):
                 out = state.apply_fn(params, batch["x"],
@@ -267,15 +178,8 @@ class AccumulateGradTest(unittest.TestCase):
                     mark_pipeline(name=str(n_layers - 1), mark_type='end')
                 return loss
 
-            if manual_pipeline_layer:
-                if test_remat:
-                    loss_func = remat(loss_func)
-                loss_func = manual_layer_slicing(loss_func)
-            else:
-                loss_func = automatic_layer_slicing(loss_func,
-                                                    layer_num=n_layers,
-                                                    use_pipeline=True,
-                                                    use_remat=test_remat)
+            loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                         test_remat, n_layers)
 
             grad_param = parax.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grad_param)
@@ -300,18 +204,17 @@ class AccumulateGradTest(unittest.TestCase):
 
         global_config.num_micro_batches = 2
         parallel_train_step = parallelize(train_step)
-        executable = parallel_train_step.get_executable(state, batch,
-                                                        model.apply)
+        executable = parallel_train_step.get_executable(state, batch)
         expected_new_state = None
         actual_new_state = None
 
         for i in range(3):
             if i > 0:
                 state = expected_new_state
-            expected_new_state = train_step(state, batch, model.apply)
+            expected_new_state = train_step(state, batch)
             if i > 0:
                 state = actual_new_state
-            actual_new_state = parallel_train_step(state, batch, model.apply)
+            actual_new_state = parallel_train_step(state, batch)
             assert_allclose(expected_new_state.params, actual_new_state.params,
                             1e-3, 1e-3)
 

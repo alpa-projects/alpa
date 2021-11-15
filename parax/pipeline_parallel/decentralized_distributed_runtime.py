@@ -8,7 +8,6 @@ import numpy as np
 from jax.core import Var
 from jax.interpreters import pxla
 import jax.numpy as jnp
-from jaxlib import xla_client
 
 from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,

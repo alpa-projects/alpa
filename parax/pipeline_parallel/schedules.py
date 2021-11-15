@@ -67,13 +67,14 @@ class PipelineSchedule:
         printout = "\n"
         device_str = " ".join([
             "{:<8}".format("d" + str(d))
-            for d in range(self.num_pipeline_worker)
+            for d in range(self.num_mesh)
         ])
         printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
         for clock, scheds in enumerate(self.schedules):
             sched_str = " ".join(
                 ["{:<8}".format(str(sched)) for sched in scheds])
             printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
+        print(printout)
         return printout
 
     @property
@@ -201,7 +202,7 @@ class PipeDreamFlush(PipelineSchedule):
         num_clock = (m + n - 1) * 2
         schedules = [[None] * n for k in range(num_clock)]
 
-        num_warmup_microbatches = [min(m - i - 1, m) for i in range(n)]
+        num_warmup_microbatches = [min(n - i - 1, m) for i in range(n)]
         num_microbatches_remaining = [m - i for i in num_warmup_microbatches]
 
 
@@ -211,12 +212,12 @@ class PipeDreamFlush(PipelineSchedule):
             for d in range(max(1 + k - M, 0), min(1 + k, n)):
                 schedules[k][d] = (k - d, d)
 
-        next_fwd_mb_idx = num_warmup_microbatches
+        next_fwd_mb_idx = [min(n - i - 1, m) for i in range(n)]
         next_bwd_mb_idx = [0 for _ in range(n)]
         next_available_clock = [M for _ in range(n)]
 
 
-        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n], dtype=int)
+        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n], dtype=np.int32)
 
         # run 1F1B
         for i in reversed(range(n)):
@@ -245,7 +246,6 @@ class PipeDreamFlush(PipelineSchedule):
                 next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
                 next_available_clock[i] = next_clock + 1
 
-
         # run cooldown passes
         for i in reversed(range(n)):
             for j in range(num_warmup_microbatches[i]):
@@ -255,7 +255,11 @@ class PipeDreamFlush(PipelineSchedule):
                     finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
                     next_clock = next_clock + 1
                 schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n- 1 - i)
-                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
                 next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
-                next_available_clock = next_clock + 1
+                next_available_clock[i] = next_clock + 1
+            # update status matrix for the last worker
+            if i > 0:
+                finished_bwd_batch_indices[next_available_clock[i]:num_clock, i] = m
+
         return schedules

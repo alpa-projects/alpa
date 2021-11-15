@@ -536,7 +536,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = dict()
-            for stage_idx in self.schedule.worker_stage_mapping[mesh_idx]:
+            for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
                 stage = self.stages[stage_idx]
                 for spec, invar in zip(stage.input_sharding_specs,
                                        stage.invars):
@@ -602,7 +602,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         global_outvar_set = set(self.global_outvars)
         for mesh_idx in range(num_mesh):
             var_to_spec = dict()
-            for stage_idx in self.schedule.worker_stage_mapping[mesh_idx]:
+            for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
                 stage = self.stages[stage_idx]
                 for spec, outvar in zip(stage.output_sharding_specs,
                                         stage.outvars):

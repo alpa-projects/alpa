@@ -116,9 +116,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         donation_mapping, jax_all_stages)
 
     # Generate pipeline schedule and placement
-    schedule = GpipeSchedule(dependency=dependency,
-                             sliced_meshes=sliced_meshes,
-                             apply_grad_placement=apply_grad_placement,
+    schedule = GpipeSchedule(dependency=dependency, meshes=sliced_meshes, apply_grad_placement=apply_grad_placement,
                              num_batch=num_micro_batches)
     physical_meshes = []
     for i, mesh in enumerate(schedule.meshes):
@@ -128,9 +126,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
     donatable_dict = [[] for _ in range(num_meshes)]
-    worker_stage_mapping = schedule.worker_stage_mapping
+    mesh_stage_mapping = schedule.mesh_stage_mapping
     donatable_list = get_donatable_intermediate(
-        jax_all_stages, worker_stage_mapping,
+        jax_all_stages, mesh_stage_mapping,
         set(global_invars).union(grad_in_to_out.keys()))
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))

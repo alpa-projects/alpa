@@ -34,6 +34,22 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
     return d
 
 
+def gen_linear_pipeline_dependency(num_stage):
+    """
+    Generate a dependency matrix that marks the neighbors and forward/backward
+    stage pairs as neighbors.
+
+    For test only.
+    """
+    assert num_stage % 2 == 0
+    d = np.zeros([num_stage, num_stage], dtype=int)
+    for i in range(num_stage - 1):
+        d[i + 1][i] = 1
+    for i in range(num_stage // 2):
+        d[num_stage - 1 - i][i] = 1
+    return d
+
+
 class PipelineSchedule:
     """
     A pipeline schedule used by the distributed runtime.
@@ -132,9 +148,9 @@ class PipelineSchedule:
         """Query the placement of a stage given its stage index."""
         return self.stage_mesh_mapping[stage_idx]
 
-    def mesh_placement(self, worker_idx):
+    def mesh_placement(self, mesh_idx):
         """Query the responsible stages of a worker given a worker index."""
-        return self.mesh_stage_mapping[worker_idx]
+        return self.mesh_stage_mapping[mesh_idx]
 
 
 class GpipeSchedule(PipelineSchedule):
@@ -209,18 +225,17 @@ class PipeDreamFlush(PipelineSchedule):
         num_warmup_microbatches = [min(n - i - 1, m) for i in range(n)]
         num_microbatches_remaining = [m - i for i in num_warmup_microbatches]
 
-        # warm-up clocks
-        M = max(num_warmup_microbatches)
-        for k in range(M):
-            for d in range(max(1 + k - M, 0), min(1 + k, n)):
-                schedules[k][d] = (k - d, d)
-
-        next_fwd_mb_idx = [min(n - i - 1, m) for i in range(n)]
+        next_fwd_mb_idx = [0 for _ in range(n)]
         next_bwd_mb_idx = [0 for _ in range(n)]
-        next_available_clock = [M for _ in range(n)]
-
-
+        next_available_clock = [i for i in range(n)]
         finished_bwd_batch_indices = np.zeros(shape=[num_clock, n], dtype=np.int32)
+
+        # warm-up clocks
+        for i in range(n):
+            for j in range(num_warmup_microbatches[i]):
+                schedules[next_available_clock[i]][i] = (next_fwd_mb_idx[i], i)
+                next_available_clock[i] = next_available_clock[i] + 1
+                next_fwd_mb_idx[i] = next_fwd_mb_idx[i] + 1
 
         # run 1F1B
         for i in reversed(range(n)):
@@ -271,4 +286,3 @@ class PipeDreamFlush(PipelineSchedule):
             scheds[worker] = (0, stage_idx)
         schedules.append(scheds)
         return schedules
-

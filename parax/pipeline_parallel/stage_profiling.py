@@ -24,9 +24,6 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
 from parax.util import jaxpr_to_hlo_computation, OrderedSet
 
 
-########################################
-##### Profile tools
-########################################
 class CompileWorker:
     """
     A ray actor to distributedly compile Jaxpr to HLO Proto.
@@ -381,3 +378,48 @@ def profile_layer_communication_cost(
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
+
+
+def pipeline_all_intermediate_size(layers_a, layers_b, stored_microbatch_size):
+    """
+    Compute intermediates' size in batch. Intermediates are outputs of layers_a that
+    used outside or inputs of layers_b
+    To accelerate, we do this in batch: layers_a and layers_b are both
+    Sequence[Sequence[JaxPipelineComputation]]. At iteration i forward layers are
+    combination of layers_a[:i]. The same applies for layers_b
+    layers_a can be from any layer, but should end with the last forward layer
+    Args:
+        layers_a, layers_b (Sequence[Sequence[JaxPipelineComputation]]): indicated above
+        stored_microbatch_size: number of microbatches of intermediates kept simultaneously.
+            For 1F1B it's #stages, but for GPipe it's #microbatch
+    """
+    # FIXME(yonghao): the output is overestimated now because we do not consider sharding.
+    # But how?
+    assert len(layers_a) == len(layers_b)
+    outvars = set()
+    invars = set()
+
+    for layers in layers_a:
+        for layer in layers:
+            outvars.update(layer.outvars)
+    for layers in layers_b:
+        for layer in layers:
+            invars.update(layer.invars)
+
+    intermediate_size = []
+    for i in range(len(layers_a)):
+        # TODO(yonghao): intersect the incremental set instead
+        intermediates = set(outvars).intersection(invars)
+        intermediate_size.append(
+            sum([
+                np.prod(var.aval.shape) * var.aval.dtype.itemsize
+                for var in intermediates
+            ]) * stored_microbatch_size)
+        drop_idx = len(layers_a) - i - 1
+        droped_a = layers_a[drop_idx]
+        dropped_outputs = set()
+        for layer in droped_a:
+            dropped_outputs.update(layer.outvars)
+        # remove dropped
+        outvars.difference_update(dropped_outputs)
+    return list(reversed(intermediate_size))

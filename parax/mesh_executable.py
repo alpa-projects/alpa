@@ -24,8 +24,7 @@ from parax.measure_record import StrategyConfig
 from parax.timer import timers
 from parax.util import (compile_allocate_zero_buffers,
                         compile_memset_zero_buffers, get_shard_shape,
-                        profile_xla_executable,
-                        profile_pipeline_xla_executable)
+                        profile_xla_executable, profile_pipeline_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -283,14 +282,14 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.avals, self.input_sharding_specs)
         return outs_handler(input_bufs)
 
-    def profile_with_dummy_inputs(self):
+    def profile_with_dummy_inputs(self, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
         if self.physical_mesh.is_distributed:
             tasks = []
             for worker in self.physical_mesh.workers:
                 tasks.append(
                     worker.profile_executable_with_dummy_inputs.remote(
-                        self.exec_uuid))
+                        self.exec_uuid, **kwargs))
             costs = ray.get(tasks)
             for cost_vec in costs:
                 if np.inf in cost_vec:
@@ -401,8 +400,10 @@ class NormalMeshWorkerExecutable:
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids)
 
-    def profile_with_dummy_inputs(self, backend, local_devices):
+    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
+        if len(kwargs):
+            logger.warning(f"kwargs {(list(kwargs.keys()))} are ignored")
         return profile_xla_executable(self.compiled, backend, local_devices)
 
     def get_total_allocation_size(self):
@@ -691,7 +692,7 @@ class GradAccMeshDriverExecutable:
         """Pre-shard the input arguments."""
         raise NotImplementedError
 
-    def profile_with_dummy_inputs(self):
+    def profile_with_dummy_inputs(self, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
         raise NotImplementedError
 
@@ -813,7 +814,7 @@ class GradAccMeshWorkerExecutable:
             for j in range(len(next_batch_uuids[i])):
                 del buffer_dict[next_batch_uuids[i][j]]
 
-    def profile_with_dummy_inputs(self, backend, local_devices):
+    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
         raise NotImplementedError
 
@@ -837,12 +838,16 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     only compute and accumulate grads, but not apply it.
     """
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 compiled: XlaExecutable, strategy_config: StrategyConfig,
-                 avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
+    def __init__(self, physical_mesh: "PhysicalDeviceMesh", compiled,
+                 strategy_config: StrategyConfig, avals: Sequence[ShapedArray],
+                 out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  out_acc_grad_indices: Sequence[int]):
-        hlo_module = compiled.hlo_modules()[0]
+        if isinstance(compiled, ProtoAndSharding):
+            hlo_module = hlo_module = xla_client.XlaComputation(
+                compiled.proto).as_hlo_module()
+        else:
+            hlo_module = compiled.hlo_modules()[0]
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             hlo_module, out_acc_grad_indices)
         self.skip_allreduce_env_name =\
@@ -852,7 +857,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                              out_avals, donated_invars)
 
     def set_executable(self, physical_mesh, compiled, strategy_config):
-        hlo_module = compiled.hlo_modules()[0]
+        hlo_module = self.hlo_module
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
@@ -902,9 +907,17 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                      self).execute_on_worker(input_uuids, output_uuids,
                                              **kwargs)
 
-    def profile_with_dummy_inputs(self, backend, local_devices):
+    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
-        return profile_pipeline_xla_executable(self.compiled, backend, local_devices)
+        key = "intermediates"
+        passed_kwargs = dict()
+        if key in kwargs:
+            value = kwargs.pop(key)
+            passed_kwargs[key] = value
+        if len(kwargs):
+            logger.warning(f"kwargs {list(kwargs.keys())} are ignored")
+        return profile_pipeline_xla_executable(self.compiled, backend,
+                                               local_devices, **passed_kwargs)
 
 
 class AllocZeroBufferDriverExecutable:

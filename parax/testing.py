@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+from parax.api import grad
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.model.model_util import TrainState
 from parax.pipeline_parallel.automatic_layer_slicing import automatic_layer_slicing
@@ -62,26 +63,6 @@ class MLPModel(nn.Module):
         return x
 
 
-class TwoLayerBertLayerModel(nn.Module):
-    config: BertConfig
-    dtype: jnp.dtype = jnp.float32
-    manual_pipeline_layer: bool = True
-
-    def setup(self):
-        self.layer0 = FlaxBertLayer(config=self.config, dtype=self.dtype)
-        self.layer1 = FlaxBertLayer(config=self.config, dtype=self.dtype)
-
-    def __call__(self, x, attention_mask):
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='start')
-        x = self.layer0(x, attention_mask)[0]
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='end')
-            mark_pipeline(name='2', mark_type='start')
-        x = self.layer1(x, attention_mask)[0]
-        return x
-
-
 class BertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
@@ -123,3 +104,46 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
                                    layer_num=layer_num,
                                    use_pipeline=True,
                                    use_remat=use_remat)
+
+
+def get_mlp_train_step(manual_pipeline_layer, test_remat):
+
+    def train_step(state, batch):
+
+        def loss_func(params):
+            out = state.apply_fn(params, batch["x"])
+            loss = jnp.mean((out - batch["y"])**2)
+            if manual_pipeline_layer:
+                mark_pipeline(name='2', mark_type='end')
+            return loss
+
+        loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                     test_remat, 2)
+
+        param_grad = grad(loss_func)(state.params)
+        new_state = state.apply_gradients(grads=param_grad)
+        return new_state
+
+    return train_step
+
+
+def get_bert_layer_train_step(manual_pipeline_layer, test_remat,
+                              num_layers):
+
+    def train_step(state, batch):
+
+        def loss_func(params):
+            out = state.apply_fn(params, batch["x"], batch["attention_mask"])
+            loss = jnp.mean((out - batch["y"])**2)
+            if manual_pipeline_layer:
+                mark_pipeline(name=str(num_layers - 1), mark_type='end')
+            return loss
+
+        loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                     test_remat, num_layers)
+
+        grad_param = grad(loss_func)(state.params)
+        new_state = state.apply_gradients(grads=grad_param)
+        return new_state
+
+    return train_step

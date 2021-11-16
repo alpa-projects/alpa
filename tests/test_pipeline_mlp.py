@@ -38,11 +38,8 @@ class PipelineMLPTest(unittest.TestCase):
                 return loss
 
             loss_func = manual_layer_slicing(loss_func)
-
             grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
                                              batch['y'])
-
-            # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
 
         batch_size = 128

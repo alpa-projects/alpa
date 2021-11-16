@@ -436,8 +436,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_heads = 4
         vocab_size = 4096
         deterministic = False
-        global_config.allow_all_gather = False  # Temporary hack
+        # To generate the desired strategy, we have to turn off mixed mesh shape and all-gather
+        # and enable recomputing heavy ops.
         global_config.allow_recompute_heavy_op = True
+        global_config.allow_all_gather = False
+        global_config.allow_mixed_mesh_shape = False
 
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])

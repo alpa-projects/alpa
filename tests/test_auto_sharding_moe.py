@@ -320,7 +320,6 @@ class AutoShardingMoETest(unittest.TestCase):
         E = 16
         deterministic = True
         global_config.allow_mixed_mesh_shape = True
-        global_config.allow_all_gather = False
 
         mesh_shape = (2, 2)
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])

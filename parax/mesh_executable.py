@@ -403,6 +403,15 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
     (e.g., ".0.12." means channel id 0 and 12)
     """
     return xla_extension.get_grad_sync_channel_ids(hlo_module)
+    #hlo_ir = hlo_module.to_string()
+    #import re
+    #ids = []
+    #for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=\{\{0,4", hlo_ir):
+    ##for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=", hlo_ir):
+    #    ids.append(item)
+
+    #ids = "." + ".".join(ids) + "."
+    #return ids
 
 
 class GradAccMeshDriverExecutable:

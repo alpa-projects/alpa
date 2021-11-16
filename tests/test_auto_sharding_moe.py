@@ -51,7 +51,7 @@ class AutoShardingMoETest(unittest.TestCase):
                                batch["attention_mask"],
                                deterministic,
                                rngs=rngs)[0]
-                return jnp.mean((out - batch["labels"])**2) * 0.12345
+                return jnp.mean((out - batch["labels"])**2)
 
             grad = jax.grad(loss_func)(optimizer.target)
             new_optimizer = optimizer.apply_gradient(grad)
@@ -122,6 +122,7 @@ class AutoShardingMoETest(unittest.TestCase):
         token_type_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         position_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         labels = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+        dtype = jnp.float32
 
         model = FlaxMoEForLMModule(
             MoEConfig(
@@ -133,7 +134,7 @@ class AutoShardingMoETest(unittest.TestCase):
                 vocab_size=vocab_size,
                 expert_group_size=S,
                 expert_number=E,
-            ))
+            ), dtype=dtype)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, input_ids, attention_mask, token_type_ids,
                             position_ids)
@@ -151,7 +152,8 @@ class AutoShardingMoETest(unittest.TestCase):
         state = TrainState.create(apply_fn=model.apply,
                                   params=params,
                                   tx=tx,
-                                  dynamic_scale=None)
+                                  dynamic_scale=None,
+                                  mixed_precision=(dtype == jnp.float16))
 
         # JIT compile
         state = train_step(
@@ -214,6 +216,57 @@ class AutoShardingMoETest(unittest.TestCase):
             assert_expert_partitioned(optimizer.target["params"]["moe"]["wo"],
                                       num_devices, i)
 
+    def test_moe_layer_2d(self):
+        batch_size = 64
+        seq_len = 16
+        hidden_size = 64
+        num_heads = 16
+        S = 32
+        E = 16
+        deterministic = True
+        global_config.allow_mixed_mesh_shape = True
+        global_config.allow_all_gather = False
+
+        # Test on different logical mesh shapes
+        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
+        optimizer, hlo_ir, objective = self.run_moe_layer(
+            batch_size, seq_len, hidden_size, num_heads, S, E,
+            deterministic, device_mesh)
+
+        # Check communication cost
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_ir)
+        assert n_all_reduce == 2  # one data-parallel for experts weights,
+                                  # one data-parallel for normal weights
+        assert n_all_to_all > 0
+        assert n_total == n_all_reduce + n_all_to_all
+
+    def test_moe_layer_2d_reduce_scatter(self):
+        batch_size = 64
+        seq_len = 16
+        hidden_size = 64
+        num_heads = 16
+        S = 32
+        E = 16
+        deterministic = True
+        global_config.allow_mixed_mesh_shape = True
+        global_config.allow_all_gather = False
+        global_config.prefer_reduce_scatter = True
+
+        # Test on different logical mesh shapes
+        device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
+        optimizer, hlo_ir, objective = self.run_moe_layer(
+            batch_size, seq_len, hidden_size, num_heads, S, E,
+            deterministic, device_mesh)
+
+        # Check communication cost
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_ir)
+        assert n_all_to_all > 0
+        assert n_reduce_scatter > 0
+        assert n_all_reduce == 0
+        assert n_total == n_all_reduce + n_reduce_scatter + n_all_to_all + n_all_gather
+
     def test_moe_lm(self):
         num_layers = 2
         batch_size = 64
@@ -241,20 +294,62 @@ class AutoShardingMoETest(unittest.TestCase):
 
             if global_config.prefer_reduce_scatter:
                 if global_config.force_data_parallel:
-                    assert n_reduce_scatter <= 2
+                    assert 0 < n_reduce_scatter <= 2
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
                 else:
                     assert n_reduce_scatter == 1
                     assert n_all_to_all == 4
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
             else:
-                assert n_all_reduce <= 4
-                assert n_all_to_all == 4
-                assert n_total == n_all_reduce + n_all_to_all
+                if global_config.force_data_parallel:
+                    assert n_all_reduce <= 2  # one for loss, one for weight
+                    assert n_total == n_all_reduce
+                else:
+                    assert n_all_reduce <= 4
+                    assert n_all_to_all == 4
+                    assert n_total == n_all_reduce + n_all_to_all
+
+    def test_moe_lm_2d(self):
+        num_layers = 2
+        batch_size = 64
+        seq_len = 16
+        hidden_size = 64
+        num_heads = 16
+        vocab_size = 32
+        S = 32
+        E = 16
+        deterministic = True
+        global_config.allow_mixed_mesh_shape = True
+
+        mesh_shape = (2, 2)
+        device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+        state, hlo_ir, objective = self.run_moe_lm(batch_size, seq_len,
+                                                   num_layers, hidden_size,
+                                                   num_heads, vocab_size, S,
+                                                   E, deterministic,
+                                                   device_mesh)
+
+        # Check communication cost
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_ir)
+        if global_config.prefer_reduce_scatter:
+            assert n_reduce_scatter > 0
+            assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
+        else:
+            assert n_all_to_all == 4
+            assert n_total == n_all_reduce + n_all_to_all
+
+    def test_moe_lm_data_parallel(self):
+        global_config.force_data_parallel = True
+        self.test_moe_lm()
 
     def test_moe_lm_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_moe_lm()
+
+    def test_moe_lm_2d_reduce_scatter(self):
+        global_config.prefer_reduce_scatter = True
+        self.test_moe_lm_2d()
 
     def test_moe_lm_data_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
@@ -265,8 +360,16 @@ class AutoShardingMoETest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingMoETest("test_moe_layer"))
+    suite.addTest(AutoShardingMoETest("test_moe_layer_2d"))
+    suite.addTest(AutoShardingMoETest("test_moe_layer_2d_reduce_scatter"))
+
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_2d"))
+    suite.addTest(
+        AutoShardingMoETest("test_moe_lm_data_parallel"))
+
     suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_2d_reduce_scatter"))
     suite.addTest(
         AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
 

@@ -326,12 +326,26 @@ def test_embedding():
         actual = func(embedding, inputs)
 
 
+def test_all_to_all():
+    @partial(pjit,
+             in_axis_resources=P('x', 'y', None),
+             out_axis_resources=P('x', None, 'y'))
+    def f(x):
+        return x
+
+    x = np.random.randn(2, 2, 4).astype(np.float32)
+
+    mesh_devices = np.array(jax.devices()[:4]).reshape(2, 2)
+    with mesh(mesh_devices, ('x', 'y')):
+        out = f(x)
+
+
 if __name__ == "__main__":
     #test_basic1d()
     #test_matmul()
     #test_failed_matmul_case_1()
     #test_failed_matmul_case_2()
-    test_reduce_scatter()
+    #test_reduce_scatter()
     #test_matmul_speed()
     #test_dict_arg()
 
@@ -342,4 +356,6 @@ if __name__ == "__main__":
     #test_dropout()
 
     #test_embedding()
+
+    test_all_to_all()
 

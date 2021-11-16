@@ -34,8 +34,6 @@ def create_train_state(rngkey, model, dtype, batch):
         learning_rate=1e-2, weight_decay_mask=weight_decay_mask
     )
 
-    mixed_precision = (dtype == jnp.float16)
-
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
@@ -67,6 +65,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
+    global_config.allow_mixed_mesh_shape = True
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -102,19 +101,29 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, dtype)
+    train_step = get_train_step(grad_func, num_layers, dtype)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
     physical_mesh.sync_workers()
     print_used_time("Compile (workers)")
-    alloc_mem = executable.get_total_allocation_size()
 
-    print(alloc_mem / GB)
+    # Check sharding strategy
+    alloc_mem = executable.get_total_allocation_size()
+    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
+    hlo_text = executable.get_hlo_text()
+    with open("last.hlo", "w") as fout:
+        fout.write(hlo_text)
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+        count_communication_primitives(hlo_text)
+
+    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+          f"#all-to-all: {n_all_to_all}")
+    print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 26 * GB:
-        # out of memory
+    if alloc_mem > 26 * GB: # out of memory
         latencies = [-1]
     else:
         for i in range(niter):
@@ -122,18 +131,6 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 
         latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
-
-    # Check sharding strategy
-    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
-    hlo_text = executable.get_hlo_text()
-
-    with open("last.hlo", "w") as fout:
-        fout.write(hlo_text)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-        count_communication_primitives(hlo_text)
-    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
-          f"#all-to-all: {n_all_to_all}")
 
     # Compute statistics
     num_gpus = mesh_dim0 * mesh_dim1
@@ -185,14 +182,23 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (16,  1024, 1280, 12, 1280//128, 25600, 1024, 16, 1,  2,  1,  True,  True,  False),
 ],
 
+4: [
+    #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
+    (16,  1024, 1024, 6,  1024//128, 25600, 1024, 8,  1,  4,  1,  False, False, False),
+],
+
+
 8: [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  False, False, False),
-    (16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  True,  False),
+    (32,  1024, 1024, 6,  1024//128, 25600, 1024, 8,  2,  4,  1,  False, False, False),
 ],
 
 16: [
+    #(32,  1024, 2560, 12, 2560//64, 25600, 1024, 16, 2,  8,  1,  False, False, False),
+    (128,  1024, 2560, 12, 2560//64, 25600, 1024, 16, 2,  8,  4,  False, False, False),
+    (256,  1024, 2560, 12, 2560//64, 25600, 1024, 16, 2,  8,  8,  False, False, False),
 ]
+
 }
 
 

@@ -40,6 +40,7 @@ class GlobalConfig:
         self.force_data_parallel = False  # Whether force to generate data-parallel
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape
 
         ########## Options for eager pipeline runtime ##########
         self.pipeline_aggressively_sync = False

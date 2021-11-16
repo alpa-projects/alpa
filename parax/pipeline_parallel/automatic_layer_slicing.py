@@ -2,6 +2,7 @@
 Do rematerialization at the boundary of layer."""
 
 from functools import partial, wraps
+import logging
 from typing import List, Callable
 
 from jax._src.tree_util import tree_unflatten
@@ -16,6 +17,9 @@ import numpy as np
 
 from parax.util import get_cross_slice_vars
 from parax.pipeline_parallel.manual_layer_slicing import insert_marker, manual_layer_slicing, remat_jaxpr
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 gpu_backend = xc.get_local_backend("gpu")
 
@@ -152,6 +156,11 @@ def slice_jaxpr(jaxpr: Jaxpr,
     if cost_criteria == "count":
         flops_bound = max(flops_bound, flops_avg + 5)
     LAYER_HEAVY_OP_LOW_BOUND = 3
+    if sum(non_trivial) / layer_num < LAYER_HEAVY_OP_LOW_BOUND:
+        LAYER_HEAVY_OP_LOW_BOUND = int(sum(non_trivial) / layer_num)
+        logger.warning(
+            "Too few non-trivial ops (dot, conv), which may influence auto-sharding performance"
+        )
 
     @numba.jit(nopython=True)
     def Init():
@@ -256,8 +265,8 @@ def automatic_layer_slicing(fn: Callable,
 
         def get_sliced(*args):
             origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                           static_argnums=(),
-                                           return_shape=True)(*args)
+                                                      static_argnums=(),
+                                                      return_shape=True)(*args)
             nonlocal layer_num
             if layer_num == "auto":
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)

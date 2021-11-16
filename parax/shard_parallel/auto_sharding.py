@@ -10,7 +10,6 @@ import numpy as np
 from jax.interpreters import xla, pxla
 from jaxlib.xla_client import OpSharding
 
-from parax import testing
 from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
@@ -66,6 +65,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
     """
+    from parax import testing
+
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1

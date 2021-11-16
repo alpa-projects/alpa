@@ -212,7 +212,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 # FIXME(yonghao)
             elif (invar in self.grad_dummy_invars and
                   # batch_idx < self.schedule.first_backward_batch_index):
-                  batch_idx > self.schedule.first_backward_batch_index):
+                  batch_idx != self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
                 key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
             else:
@@ -614,7 +614,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # assign indices and get specs
         for outvar in self.global_outvars:
             # the apply gradient only writes to microbatch 0
-            key = (repr(outvar), 0)
+            key = (repr(outvar), self.schedule.last_backward_batch_index)
             var_meshes = var_at[key]
             mesh_out_indices = dict()
             for mesh_idx in var_meshes:

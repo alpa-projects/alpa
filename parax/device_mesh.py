@@ -422,6 +422,7 @@ class PhysicalDeviceMesh:
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
         self.prof_result = ProfilingResult()
+        self.launched = False
 
         # Do some argument check
         if not use_ray and not devices:
@@ -464,8 +465,6 @@ class PhysicalDeviceMesh:
                 ])
             if not skip_launch:
                 self._launch_xla_servers()
-
-        self.launched = not skip_launch
 
     @property
     def host_ips(self):
@@ -512,6 +511,7 @@ class PhysicalDeviceMesh:
             }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
+        self.launched = True
 
     def launch_xla_servers(self):
         assert not self.launched

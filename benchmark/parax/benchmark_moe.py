@@ -34,8 +34,6 @@ def create_train_state(rngkey, model, dtype, batch):
         learning_rate=1e-2, weight_decay_mask=weight_decay_mask
     )
 
-    mixed_precision = (dtype == jnp.float16)
-
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
@@ -67,6 +65,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
+    global_config.allow_mixed_mesh_shape = True
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -102,7 +101,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, dtype)
+    train_step = get_train_step(grad_func, num_layers, dtype)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -183,12 +182,15 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
     (16,  1024, 1280, 12, 1280//128, 25600, 1024, 16, 1,  2,  1,  True,  True,  False),
 ],
 
+4: [
+    #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
+    (16,  1024, 1024, 6,  1024//128, 25600, 1024, 8,  1,  4,  1,  False, False, False),
+],
+
+
 8: [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    #(16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  False, False, False),
-    #(16,  1024, 2560, 12, 2560//128, 25600, 1024, 16, 1,  8,  1,  True,  True,  False),
-
-    (32,  1024, 2560, 4,  2560//128, 25600, 1024, 16, 2,  4,  2,  False, False, False),
+    (32,  1024, 1024, 6,  1024//128, 25600, 1024, 8,  2,  4,  1,  False, False, False),
 ],
 
 16: [

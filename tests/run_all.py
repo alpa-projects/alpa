@@ -41,6 +41,10 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Run test cases whose names contain the filter string")
+    arg_parser.add_argument(
+        "--enable_profile",
+        action="store_true",
+        help="Run test cases including profiling, which takes a long time")
     args = arg_parser.parse_args()
 
     files = glob.glob("*.py")

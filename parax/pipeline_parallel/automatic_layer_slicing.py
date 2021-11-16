@@ -158,7 +158,9 @@ def slice_jaxpr(jaxpr: Jaxpr,
     LAYER_HEAVY_OP_LOW_BOUND = 3
     if sum(non_trivial) / layer_num < LAYER_HEAVY_OP_LOW_BOUND:
         LAYER_HEAVY_OP_LOW_BOUND = int(sum(non_trivial) / layer_num)
-        logger.warning("Heavy op(dot, conv) too few, may influence auto-sharding performance")
+        logger.warning(
+            "Too few non-trivial ops (dot, conv), which may influence auto-sharding performance"
+        )
 
     @numba.jit(nopython=True)
     def Init():
@@ -263,8 +265,8 @@ def automatic_layer_slicing(fn: Callable,
 
         def get_sliced(*args):
             origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                           static_argnums=(),
-                                           return_shape=True)(*args)
+                                                      static_argnums=(),
+                                                      return_shape=True)(*args)
             nonlocal layer_num
             if layer_num == "auto":
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)

@@ -57,8 +57,7 @@ class PipelineMLPTest(unittest.TestCase):
 
         # Train step
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        pipelined_train_step = parallelize(
-            donate_argnums=())(train_step)
+        pipelined_train_step = parallelize(donate_argnums=())(train_step)
         args = (optimizer, {"x": x, "y": y}, model.apply)
         gradients_with_pipeline = pipelined_train_step(*args)
 

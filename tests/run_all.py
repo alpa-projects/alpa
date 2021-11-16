@@ -22,6 +22,9 @@ def run_unittest_files(files, args):
             continue
         if args.filter is not None and args.filter not in filename:
             continue
+        # TODO(yonghao): this looks ugly
+        if not args.enable_profile and "auto_stage" in filename:
+            continue
 
         def func():
             ret = unittest.main(module=None, argv=["", "-vb"] + [filename])

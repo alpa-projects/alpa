@@ -18,7 +18,8 @@ class AutoStageClusteringTest(PipelineBasicTest):
         self.run_n_layer_bert(n_layers=2, pipeline_stage_mode="auto_gpipe")
 
     def test_2_layer_bert_auto_layer_and_stage(self):
-        self.run_n_layer_bert(n_layers=2, manual_pipeline_layer=False,
+        self.run_n_layer_bert(n_layers=2,
+                              manual_pipeline_layer=False,
                               pipeline_stage_mode="auto_gpipe")
 
     def test_8_layer_bert_auto_stage_clustering(self):
@@ -37,10 +38,14 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoStageClusteringTest('test_mlp_auto_stage_clustering'))
     suite.addTest(AutoStageClusteringTest('test_mlp_auto_layer_and_stage'))
-    suite.addTest(AutoStageClusteringTest('test_2_layer_bert_auto_stage_clustering'))
-    suite.addTest(AutoStageClusteringTest('test_2_layer_bert_auto_layer_and_stage'))
-    suite.addTest(AutoStageClusteringTest('test_8_layer_bert_auto_stage_clustering'))
-    suite.addTest(AutoStageClusteringTest('test_8_layer_bert_auto_layer_and_stage'))
+    suite.addTest(
+        AutoStageClusteringTest('test_2_layer_bert_auto_stage_clustering'))
+    suite.addTest(
+        AutoStageClusteringTest('test_2_layer_bert_auto_layer_and_stage'))
+    suite.addTest(
+        AutoStageClusteringTest('test_8_layer_bert_auto_stage_clustering'))
+    suite.addTest(
+        AutoStageClusteringTest('test_8_layer_bert_auto_layer_and_stage'))
     return suite
 
 

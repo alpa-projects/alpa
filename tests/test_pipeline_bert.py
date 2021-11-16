@@ -9,7 +9,7 @@ import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
-from parax.testing import TwoLayerBertLayerModel, assert_allclose
+from parax.testing import BertLayerModel, assert_allclose
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 
 
@@ -61,10 +61,11 @@ class PipelineBERTTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=dtype)
 
         # Init model and optimizer
-        model = TwoLayerBertLayerModel(
-            config=BertConfig(hidden_size=hidden_size,
-                              intermediate_size=hidden_size * 4,
-                              num_attention_heads=num_heads))
+        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
+                                                 intermediate_size=hidden_size *
+                                                 4,
+                                                 num_attention_heads=num_heads,
+                                                 num_hidden_layers=2))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)

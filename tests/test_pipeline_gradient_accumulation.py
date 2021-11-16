@@ -26,6 +26,7 @@ class AccumulateGradTest(PipelineBasicTest):
                                                        [4, 5, 6, 7]],
                               submesh_shapes=[(1, 4), (1, 4)])
 
+
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))

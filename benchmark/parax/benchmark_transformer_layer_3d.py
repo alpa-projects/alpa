@@ -116,6 +116,7 @@ def benchmark_transformer_one_case(benchmark_case):
     virtual_mesh = device_cluster.get_virtual_mesh()
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
+                            pipeline_parallel_schedule="gpipe",
                             num_micro_batches=num_micro_batches,
                             sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                             sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size)
@@ -136,7 +137,8 @@ def benchmark_transformer_one_case(benchmark_case):
         hidden_size=hidden_size,
         intermediate_size=hidden_size * 4,
         num_attention_heads=num_heads,
-        pipeline_mp_size=pipeline_mp_size))
+        pipeline_mp_size=pipeline_mp_size,
+        add_manual_pipeline_markers=True))
 
     state = create_train_state(rngkey, model, batch)
     print_used_time("Create train state")
@@ -151,7 +153,6 @@ def benchmark_transformer_one_case(benchmark_case):
             train_step(state, batch, rngkey)
         else:
             state = train_step(state, batch, rngkey)
-            # train_step(state, batch, rngkey)
 
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")
@@ -178,7 +179,7 @@ benchmark_suite_2_gpu = [
 
 benchmark_suite_4_gpu = [
     # B,  S,    H,    L,  #head,     LD0, LD1, PD0, PD1, PP, NB, FD,    Remat,
-    (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  1,  False, False),
+    # (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  1,  False, False),
     (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
     (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  4,  False, False),
     (32,  1024, 1536, 2,  1536//96,  1,   2,   1,   2,   2,  8,  False, False),

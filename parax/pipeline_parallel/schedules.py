@@ -17,7 +17,7 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
                                apply_grad_deps=()):
     """Generate the dependency matrix for a list of pipeline stages."""
     n_stages = len(compute_stages) + n_apply_grad_stages
-    d = np.zeros([n_stages, n_stages], dtype=np.int)
+    d = np.zeros([n_stages, n_stages], dtype=int)
     var_stage_id = {}
     for i, stage in enumerate(compute_stages):
         for var in stage.invars:
@@ -211,6 +211,7 @@ class GpipeSchedule(PipelineSchedule):
                     rev.append(None)
                 else:
                     rev.append((m - 1 - task[0], 2 * n - 1 - task[1]))
+                    # rev.append((task[0], 2 * n - 1 - task[1]))
             return rev
 
         # backward schedules
@@ -238,15 +239,18 @@ class GpipeSchedule(PipelineSchedule):
     def first_backward_batch_index(self):
         """Return the index of the first microbatch at backward pass."""
         return 0
+        # return self.num_batch - 1
 
     @property
     def last_backward_batch_index(self):
         """Return the index of the last microbatch at backward pass."""
         return self.num_batch - 1
+        # return 0
 
     def previous_backward_batch_index(self, batch_idx):
         assert batch_idx > 0
         return batch_idx - 1
+        # return batch_idx + 1
 
 
 class PipeDreamFlush(PipelineSchedule):
@@ -346,6 +350,6 @@ class PipeDreamFlush(PipelineSchedule):
         """Return the index of the last microbatch at backward pass."""
         return self.num_batch - 1
 
-    def previous_backward_microbatch_index(self, batch_idx):
+    def previous_backward_batch_index(self, batch_idx):
         assert batch_idx > 0
         return batch_idx - 1

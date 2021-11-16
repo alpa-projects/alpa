@@ -108,6 +108,8 @@ class CompileWorker:
         built = xla_client.XlaComputation(proto)
         computation_protos, strategy_config = compile_with_search(self.backend, built, *jaxpr_config, *mesh_config, **multiple_stage_config)
         return computation_protos, strategy_config
+
+
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 

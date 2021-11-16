@@ -512,6 +512,7 @@ class PhysicalDeviceMesh:
             }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
+        self.launched = True
 
     def launch_xla_servers(self):
         assert not self.launched

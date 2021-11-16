@@ -26,7 +26,7 @@ from parax.pipeline_parallel.stage_profiling import CompileWorkerPool
 from parax.util import get_micro_batch
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 @lu.cache
@@ -117,10 +117,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":
+        logger.debug("Using `gpipe` schedule...")
         schedule = GpipeSchedule(dependency=dependency, meshes=sliced_meshes,
                                  apply_grad_placement=apply_grad_placement,
                                  num_batch=num_micro_batches)
     elif global_config.pipeline_parallel_schedule == "1f1b":
+        logger.debug("Using `1f1b` schedule...")
         schedule = PipeDreamFlush(dependency=dependency, meshes=sliced_meshes,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_micro_batches)

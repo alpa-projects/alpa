@@ -101,7 +101,7 @@ class AutoShardingMixedTest(unittest.TestCase):
         # Check sharding specs
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
             count_communication_primitives(hlo_ir)
-        assert n_all_to_all == 4
+        assert n_all_to_all > 0
         assert n_total == n_all_reduce + n_all_to_all
 
 

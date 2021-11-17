@@ -602,7 +602,7 @@ def generate_sharded_xla_computations_compile_config(
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
-    built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
+    built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars, backend)
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
     jaxpr_config = in_avals, out_avals, dummy_donated_invars

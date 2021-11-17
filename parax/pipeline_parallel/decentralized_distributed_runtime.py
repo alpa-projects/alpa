@@ -748,9 +748,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
-                        self._worker_executable_uuid_mapping[worker],
-                        input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
-                        **kwargs)
+                    self._worker_executable_uuid_mapping[worker],
+                    input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
+                    **kwargs)
 
         # Handle donation
         for mesh_idx in range(len(self.physical_meshes)):

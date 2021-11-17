@@ -20,10 +20,10 @@ sanity_check_suite = {
 
 4: [
     # B,  S,     H,    L,  #head,    V   LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie, Auto-layer-slicing
-    # (64, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 1, True, True, False, False),
-    # (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 2, True, True, False, False),
-    # (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 8, True, True, False, False),
-    # (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 4, True, True, False, False),
+    (64, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 1, True, True, False, False),
+    (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 2, True, True, False, False),
+    (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 8, True, True, False, False),
+    (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 4, True, True, False, False),
 ],
 
 8: [

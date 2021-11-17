@@ -14,6 +14,7 @@ from parax import parallelize, set_parallelize_options, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
+
 class AutoShardingMixedTest(unittest.TestCase):
 
     def setUp(self):

@@ -124,17 +124,17 @@ class AutoShardingMoETest(unittest.TestCase):
         labels = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
         dtype = jnp.float32
 
-        model = FlaxMoEForLMModule(
-            MoEConfig(
-                num_hidden_layers=num_layers,
-                hidden_size=hidden_size,
-                intermediate_size=hidden_size * 4,
-                num_attention_heads=num_heads,
-                max_position_embeddings=seq_len,
-                vocab_size=vocab_size,
-                expert_group_size=S,
-                expert_number=E,
-            ), dtype=dtype)
+        model = FlaxMoEForLMModule(MoEConfig(
+            num_hidden_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=hidden_size * 4,
+            num_attention_heads=num_heads,
+            max_position_embeddings=seq_len,
+            vocab_size=vocab_size,
+            expert_group_size=S,
+            expert_number=E,
+        ),
+                                   dtype=dtype)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, input_ids, attention_mask, token_type_ids,
                             position_ids)
@@ -230,14 +230,14 @@ class AutoShardingMoETest(unittest.TestCase):
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
         optimizer, hlo_ir, objective = self.run_moe_layer(
-            batch_size, seq_len, hidden_size, num_heads, S, E,
-            deterministic, device_mesh)
+            batch_size, seq_len, hidden_size, num_heads, S, E, deterministic,
+            device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
             count_communication_primitives(hlo_ir)
         assert n_all_reduce == 2  # one data-parallel for experts weights,
-                                  # one data-parallel for normal weights
+        # one data-parallel for normal weights
         assert n_all_to_all > 0
         assert n_total == n_all_reduce + n_all_to_all
 
@@ -256,8 +256,8 @@ class AutoShardingMoETest(unittest.TestCase):
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
         optimizer, hlo_ir, objective = self.run_moe_layer(
-            batch_size, seq_len, hidden_size, num_heads, S, E,
-            deterministic, device_mesh)
+            batch_size, seq_len, hidden_size, num_heads, S, E, deterministic,
+            device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
@@ -325,9 +325,8 @@ class AutoShardingMoETest(unittest.TestCase):
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
         state, hlo_ir, objective = self.run_moe_lm(batch_size, seq_len,
                                                    num_layers, hidden_size,
-                                                   num_heads, vocab_size, S,
-                                                   E, deterministic,
-                                                   device_mesh)
+                                                   num_heads, vocab_size, S, E,
+                                                   deterministic, device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
@@ -365,8 +364,7 @@ def suite():
 
     suite.addTest(AutoShardingMoETest("test_moe_lm"))
     suite.addTest(AutoShardingMoETest("test_moe_lm_2d"))
-    suite.addTest(
-        AutoShardingMoETest("test_moe_lm_data_parallel"))
+    suite.addTest(AutoShardingMoETest("test_moe_lm_data_parallel"))
 
     suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
     suite.addTest(AutoShardingMoETest("test_moe_lm_2d_reduce_scatter"))

@@ -323,7 +323,10 @@ def compile_memset_zero_buffers(backend, num_devices, shapes, dtypes):
     input_params = xc.ops.Tuple(c, args)
     c.set_sharding(sharding)
     output_shape = xc.Shape.scalar_shape(np.dtype(np.float32))
-    output_tuple = xc.ops.CustomCall(c, b'__builtin$MemZero', operands=(input_params,), shape=output_shape)
+    output_tuple = xc.ops.CustomCall(c,
+                                     b'__builtin$MemZero',
+                                     operands=(input_params,),
+                                     shape=output_shape)
     c = c.build(output_tuple)
 
     compile_options = xb.get_compile_options(

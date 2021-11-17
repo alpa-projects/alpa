@@ -912,7 +912,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     for worker in mesh.workers]
             ray.get(rets)
         except ray.exceptions.RayActorError:
-            self.exception_shutdown()
+            self._exception_shutdown()
 
     def shutdown(self):
         self._destroy_collective_groups()
@@ -923,7 +923,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh in self.physical_meshes:
             mesh.shutdown()
 
-    def exception_shutdown(self):
+    def _exception_shutdown(self):
         """In this shutdown, some actors might have died."""
         # recycle collective group info
         for i in range(self.num_mesh):

@@ -100,7 +100,7 @@ def flatten_uuid_set(container):
     output = set()
     for e in container:
         if isinstance(e, np.ndarray) or isinstance(e, list):
-            output.union(flatten_uuid_set(e))
+            output.update(flatten_uuid_set(e))
             continue
         output.add(e)
     return output
@@ -308,9 +308,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     # Get input and output uuids. They should be at the mesh
                     input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host))
+                        (len(stage.invars), num_devices_per_host), dtype=np.int64)
                     output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host))
+                        (len(stage.outvars), num_devices_per_host), dtype=np.int64)
                     for idx, invar in enumerate(stage.invars):
                         _, key = get_invar_key(invar, batch_idx)
                         input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
@@ -361,10 +361,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for uuid in list(uuids)
             ]
                                  for uuids in list(accumulated_uuids)]
+            donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(accumulated_uuids))
             accumulated_uuid_lists[worker] = accumulated_uuids
             self.instruction_lists[worker] = self._compile_free(
-                worker, used_outside)
+                worker, used_outside, donated)
 
         return (executable_config_lists, input_local_uuid_list, grad_uuids,
                 accumulated_uuid_lists)
@@ -681,23 +682,26 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.instruction_lists[w].append(
                 PipelineInstruction.RECV(task_uuid, output_uuids, False))
 
-    def _compile_free(self, worker, used_outside):
+    def _compile_free(self, worker, used_outside, donated):
         """Add FREE PipelineInstruction to recycle memory
         """
         instruction_list: Sequence[
             PipelineInstruction] = self.instruction_lists[worker]
         new_list = []
-        used_later_uuids = set(used_outside)
+        cannot_free_uuids = set(used_outside)
+        cannot_free_uuids.update(donated)
         for instruction in reversed(instruction_list):
             # for free instruction, do not free again
-            if not (instruction.opcode == PipelineInstType.FREE or
-                    instruction.input_uuids is None):
-                input_uuids = flatten_uuid_set(list(instruction.input_uuids))
-                unused_uuids = list(input_uuids.difference(used_later_uuids))
+            if instruction.input_uuids is None:
+                new_list.append(instruction)
+                continue
+            input_uuids = flatten_uuid_set(list(instruction.input_uuids))
+            if not (instruction.opcode == PipelineInstType.FREE):
+                unused_uuids = list(input_uuids.difference(cannot_free_uuids))
                 if len(unused_uuids):
                     new_list.append(
                         PipelineInstruction.FREE(np.array(unused_uuids)))
-                used_later_uuids.update(input_uuids)
+            cannot_free_uuids.update(input_uuids)
             new_list.append(instruction)
         return list(reversed(new_list))
 

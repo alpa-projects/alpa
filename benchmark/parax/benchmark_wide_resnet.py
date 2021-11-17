@@ -167,6 +167,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
+    global_config.allow_mixed_mesh_shape = True
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -312,6 +313,11 @@ benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
     (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False),
 ],
 
+4 : [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
+    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False),
+],
+
 8: [
     #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
     # data-parallel
@@ -327,7 +333,7 @@ benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
     #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  False,  True,  False),
 
     # 2d mesh
-    #(64,   224, 50,  320, 2, "fp32", 2,  4,  4,  False, False, False),
+    (64,   224, 50,  320, 2, "fp32", 2,  4,  1,  False, False, False),
 ],
 
 16: [
@@ -373,7 +379,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--niter", type=int, default=4,
         help="Number of benchmark iteration")
-    parser.add_argument("--suite", choices=["32gb", "16gb"], default="32gb",
+    parser.add_argument("--suite", choices=["32gb", "16gb"], default="16gb",
         help="The benchmark suite")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")

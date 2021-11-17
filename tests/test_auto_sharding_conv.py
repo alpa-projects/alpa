@@ -217,34 +217,39 @@ class AutoShardingConvTest(unittest.TestCase):
 
     def test_n_layer_conv_2d_mesh(self):
         batch_size = 16
-        image_size = 64
+        image_size = 32
         num_layers = 4
         channel = 8
+        global_config.allow_mixed_mesh_shape = False
 
         # Test on different device meshes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
         state, hlo_ir, objective = self.run_n_layer_conv(
             num_layers, batch_size, image_size, channel, device_mesh)
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
             count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+        #print(hlo_ir)
+        #print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+        #      f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+        #      f"#all-to-all: {n_all_to_all}")
+        if global_config.prefer_reduce_scatter:
+            assert n_reduce_scatter > 0
+        if global_config.allow_mixed_mesh_shape:
+            assert n_all_to_all > 0
+
+    def test_n_layer_conv_2d_mesh_mixed_shape(self):
+        global_config.allow_mixed_mesh_shape = True
+        self.test_n_layer_conv_2d_mesh()
 
     def test_n_layer_conv_data_parallel_reduce_scatter(self):
-        batch_size = 16
-        image_size = 64
-        num_layers = 3
-        channel = 4
-
         global_config.prefer_reduce_scatter = True
+        self.test_n_layer_conv_data_parallel()
 
-        # Test on different device meshes
-        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
-            device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            state, hlo_ir, objective = self.run_n_layer_conv(
-                num_layers, batch_size, image_size, channel, device_mesh)
-
-            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
-            return
+    def test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter(self):
+        global_config.allow_mixed_mesh_shape = True
+        global_config.prefer_reduce_scatter = True
+        self.test_n_layer_conv_2d_mesh()
 
     def test_n_layer_depthwise_conv_model_parallel(self):
         batch_size = 4
@@ -273,8 +278,14 @@ def suite():
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
     suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
+    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh_mixed_shape"))
+
     suite.addTest(
         AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
+    suite.addTest(
+        AutoShardingConvTest(
+            "test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter"))
+
     suite.addTest(
         AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
 

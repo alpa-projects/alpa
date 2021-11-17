@@ -235,9 +235,9 @@ class FlaxMoELayerCollection(nn.Module):
 
         self.pipeline_mp_size = self.config.pipeline_mp_size
         self.pipeline_marker_positions = []
-        if self.pipeline_mp_size > 1 :
-            num_layer_per_stage, remained = divmod(self.config.num_hidden_layers,
-                                                   self.pipeline_mp_size)
+        if self.pipeline_mp_size > 1:
+            num_layer_per_stage, remained = divmod(
+                self.config.num_hidden_layers, self.pipeline_mp_size)
             assert remained == 0
             self.pipeline_marker_positions = [
                 num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)

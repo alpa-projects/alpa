@@ -4,6 +4,7 @@ import ray
 
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case, setup_benchmark
 from benchmark.util import run_cmd
+from datetime import datetime
 
 GB = 1024 ** 3
 
@@ -18,7 +19,11 @@ GB = 1024 ** 3
 sanity_check_suite = {
 
 4: [
-    (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 8, True, True),
+    # B,  S,     H,    L,  #head,    V   LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie, Auto-layer-slicing
+    # (64, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 1, True, True, False, False),
+    # (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 2, True, True, False, False),
+    # (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 8, True, True, False, False),
+    # (16, 1024, 1024, 4, 1024//64, 51200, 2, 1, 1, 2, 2, 4, True, True, False, False),
 ],
 
 8: [
@@ -147,8 +152,10 @@ if __name__ == "__main__":
     parser.add_argument("--niter", type=int, default=10)
     parser.add_argument("--suite", choices=["default", "sanity_check"], default="sanity_check")
     parser.add_argument("--mode", choices=["normal", "nonstop"], default="normal")
+    parser.add_argument("--output", type=str, default="result")
     args = parser.parse_args()
 
+    print("- Benchmarking in {} mode.".format(args.mode))
     if args.mode == "normal":
         ray.init(address="auto")
         setup_benchmark()
@@ -161,7 +168,7 @@ if __name__ == "__main__":
             print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
             exit()
         for case in suite:
-            benchmark_one_case(case)
+            benchmark_one_case(case, args)
         ray.shutdown()
     elif args.mode == "nonstop":
         ray.init(address="auto")
@@ -169,12 +176,14 @@ if __name__ == "__main__":
         ray.shutdown()
 
         # construct case str
+        output_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         for case in benchmark_suites[args.suite][num_gpus]:
-            case_str = str((args.model,) + case)
-
-            run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
-                   f"--model {args.model} "
-                   f"--niter {args.niter} "
-                   f"--case {case_str}")
+            case_str = str(case)
+            ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
+                         f"--model {args.model} "
+                         f"--niter {args.niter} "
+                         f'--case "{case_str}" '
+                         f"--output {output_name}")
+            # print("Exit code: {}".format(ret))
     else:
         raise RuntimeError()

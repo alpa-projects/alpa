@@ -78,12 +78,12 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
 
     return train_step
 
-def benchmark_one_case(benchmark_case):
+def benchmark_one_case(benchmark_case, external_args):
     backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
-    model_type = args.model
+    model_type = external_args.model
 
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel,
@@ -167,7 +167,7 @@ def benchmark_one_case(benchmark_case):
     executable.sync()
     print_used_time("Compile (worker)")
 
-    for i in range(args.niter):
+    for i in range(external_args.niter):
         state = train_step(state, batch, rngkey)
 
     timer_name = "overall"
@@ -181,7 +181,7 @@ def benchmark_one_case(benchmark_case):
                                 np.mean(overall_costs[2:]))
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
-    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], args.niter)
+    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], external_args.niter)
     heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
              "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs"]
     paralell_config = (benchmark_case[6], benchmark_case[7], benchmark_case[10])
@@ -189,7 +189,7 @@ def benchmark_one_case(benchmark_case):
               str(benchmark_case[11]), str(benchmark_case[12]), str(benchmark_case[13]),
               f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}",
               str(parameter_count), str(tflops)]
-    write_tsv(heads, values, f"result_{model_type}.tsv")
+    write_tsv(heads, values, f"{external_args.output}_{model_type}.tsv")
 
     executable.shutdown()
 
@@ -204,7 +204,10 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=10)
     parser.add_argument("--case", type=str, required=True)
+    parser.add_argument("--output", type=str, default="result")
     args = parser.parse_args()
     case = eval(args.case)
     setup_benchmark()
-    benchmark_one_case(case)
+    ray.init(address="auto")
+    benchmark_one_case(case, args)
+    ray.shutdown()

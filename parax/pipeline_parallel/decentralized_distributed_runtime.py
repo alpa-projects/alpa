@@ -96,9 +96,9 @@ PartialGradWorkerExecutableConfig = namedtuple(
 
 
 def flatten_uuid_set(container):
-    # From Sequence[np.ndarray] to set of elements in the array
+    # From Sequence[np.ndarray] to OrderedSet of elements in the array
     container = list(container)
-    output = set()
+    output = OrderedSet()
     for e in container:
         if isinstance(e, np.ndarray) or isinstance(e, list):
             output.union(flatten_uuid_set(e))
@@ -173,8 +173,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],
-                        executable_config_lists[worker],
-                        acc_grad_local_uuids,
+                        executable_config_lists[worker], acc_grad_local_uuids,
                         accumulated_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
@@ -201,7 +200,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         creates instruction lists for all intermediates.
         """
         num_mesh = self.num_mesh
-        not_batch_invars = set([
+        not_batch_invars = OrderedSet([
             var for var, batch in zip(self.global_invars, self.is_batch)
             if not batch
         ])
@@ -509,8 +508,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 to shard_args instead of indices in input list
             input_local_uuid_list (Dict[MeshHostWorker, np.ndarray]):
         """
-        donated_invar_set = set()
-        global_invar_set = set(self.global_invars)
+        donated_invar_set = OrderedSet()
+        global_invar_set = OrderedSet(self.global_invars)
         for stage in self.stages:
             for invar, donate in zip(stage.invars, stage.donated_invars):
                 if donate and invar in global_invar_set:
@@ -600,7 +599,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.output_spec_list = [[] for _ in range(num_mesh)]
         # collect outvar specs
         var_to_spec_all_meshes = []
-        global_outvar_set = set(self.global_outvars)
+        global_outvar_set = OrderedSet(self.global_outvars)
         for mesh_idx in range(num_mesh):
             var_to_spec = dict()
             for stage_idx in self.schedule.worker_stage_mapping[mesh_idx]:
@@ -686,7 +685,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         instruction_list: Sequence[
             PipelineInstruction] = self.instruction_lists[worker]
         new_list = []
-        used_later_uuids = set(used_outside)
+        used_later_uuids = OrderedSet(used_outside)
         for instruction in reversed(instruction_list):
             # for free instruction, do not free again
             if not (instruction.opcode == PipelineInstType.FREE or
@@ -906,9 +905,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _check_alive(self):
         try:
-            rets = [worker.check_alive.remote()
-                    for mesh in self.physical_meshes
-                    for worker in mesh.workers]
+            rets = [
+                worker.check_alive.remote()
+                for mesh in self.physical_meshes
+                for worker in mesh.workers
+            ]
             ray.get(rets)
         except ray.exceptions.RayActorError:
             self._exception_shutdown()

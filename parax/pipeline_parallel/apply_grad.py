@@ -1,7 +1,7 @@
 """Transformations and utilities to process gradient accumulation and apply_gradient."""
 from abc import ABC, abstractmethod
 import logging
-from typing import Sequence, Set, Dict
+from typing import Sequence, Dict
 
 from jax._src.util import safe_map
 from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
@@ -13,7 +13,7 @@ from parax.pipeline_parallel.manual_layer_slicing import get_var_mapping
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.pipeline_parallel.schedules import gen_dependency_with_stages
-from parax.util import slices_to_jaxpr
+from parax.util import slices_to_jaxpr, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -56,7 +56,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
         update_outs (Dict[Var, Var]): From original output(grad) to new output(acc grad)
         grad_in_to_out (Dict[Var, Var]): From accumulated gradient inputs to outputs
     """
-    raw_gradients = set([
+    raw_gradients = OrderedSet([
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
     ])
@@ -104,7 +104,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                 gradients[outvar]]
         else:
             raise NotImplemented("gradients cannot be Literal")
-    gradients = set(grad_values)
+    gradients = OrderedSet(grad_values)
     # rewrite eqns
     new_eqns = []
     pipe_start = None
@@ -207,8 +207,8 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                                             len(sliced_apply_grad), apply_deps)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad
 
-    used_simultaneously = set()
-    used = set()
+    used_simultaneously = OrderedSet()
+    used = OrderedSet()
     for stage in sliced_apply_grad:
         used_simultaneously.update(used.intersection(stage.invars))
         used.update(stage.invars)
@@ -251,8 +251,8 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
     from jax.lax import div_p
     mapping = dict()
     new_eqns = []
-    invar_set = set(closed_jaxpr.jaxpr.invars)
-    outvar_set = set(closed_jaxpr.jaxpr.outvars)
+    invar_set = OrderedSet(closed_jaxpr.jaxpr.invars)
+    outvar_set = OrderedSet(closed_jaxpr.jaxpr.outvars)
     for invar in gradients:
         div_out = gensym_fn(invar.aval)
         new_eqns.append(
@@ -299,7 +299,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
 
     global_invars = closed_jaxpr.jaxpr.invars
     eqn_mesh = dict()
-    var_mesh = {var: set([mesh]) for var, mesh in grad_mesh.items()}
+    var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
     infered_global_invars = dict()
     constvars = [list() for _ in range(mesh_num)]
     consts = [list() for _ in range(mesh_num)]
@@ -308,19 +308,19 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     outvars = [list() for _ in range(mesh_num)]
     # propagate mesh assignments from input
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
-        at_mesh = set()
+        at_mesh = OrderedSet()
         for invar in eqn.invars:
             if isinstance(invar, Var):
-                at_mesh.update(var_mesh.setdefault(invar, set()))
+                at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
         if at_mesh:
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    cur_mesh = var_mesh.setdefault(invar, set())
+                    cur_mesh = var_mesh.setdefault(invar, OrderedSet())
                     cur_mesh.update(at_mesh)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
-                    var_mesh[outvar] = set(at_mesh)
-            eqn_mesh[eqn_idx] = set(at_mesh)
+                    var_mesh[outvar] = OrderedSet(at_mesh)
+            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
     # TODO(yonghao): do in rounds, consider donation
     changed = True
     while (changed):
@@ -328,25 +328,25 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         # propagate back
         for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
             eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
-            origin_at_mesh: Set = eqn_mesh.setdefault(eqn_idx, set())
-            at_mesh = set()
+            origin_at_mesh: OrderedSet = eqn_mesh.setdefault(
+                eqn_idx, OrderedSet())
+            at_mesh = OrderedSet()
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
-                    at_mesh.update(var_mesh.setdefault(outvar, set()))
+                    at_mesh.update(var_mesh.setdefault(outvar, OrderedSet()))
             if not at_mesh:
                 continue
-            if (not origin_at_mesh or
-                    at_mesh.difference(origin_at_mesh)):
+            if (not origin_at_mesh or at_mesh.difference(origin_at_mesh)):
                 changed = True
                 origin_at_mesh.update(at_mesh)
                 for invar in eqn.invars:
                     if isinstance(invar, Var):
-                        var_mesh.setdefault(invar, set()).update(at_mesh)
+                        var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
         for invar in closed_jaxpr.jaxpr.invars:
             if invar in donation_mapping:
                 outvar = donation_mapping[invar]
-                outvar_at = var_mesh.setdefault(outvar, set())
-                invar_at = var_mesh.setdefault(invar, set())
+                outvar_at = var_mesh.setdefault(outvar, OrderedSet())
+                invar_at = var_mesh.setdefault(invar, OrderedSet())
                 if invar_at.difference(outvar_at):
                     outvar_at.update(invar_at)
                     changed = True
@@ -364,11 +364,11 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
             logger.debug(f'{eqn} are arbitrarily assigned')
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    if not var_mesh.setdefault(invar, set()):
+                    if not var_mesh.setdefault(invar, OrderedSet()):
                         var_mesh[invar].add(0)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
-                    assert (not var_mesh.setdefault(outvar, set()) or
+                    assert (not var_mesh.setdefault(outvar, OrderedSet()) or
                             (len(var_mesh[outvar]) == 1 and
                              var_mesh[outvar][0] == 0))
                     var_mesh[outvar].add(0)

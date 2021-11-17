@@ -10,7 +10,7 @@ from jax.interpreters.partial_eval import remat_call_p
 
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
-from parax.util import slices_to_jaxpr
+from parax.util import slices_to_jaxpr, OrderedSet
 
 
 def get_var_mapping(mapping, var):
@@ -43,8 +43,8 @@ def transform_pipeline_forward(fn: Callable, transform_fn, static_argnums=()):
 
     def get_sliced(*args):
         origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                       static_argnums=static_argnums,
-                                       return_shape=True)(*args)
+                                                  static_argnums=static_argnums,
+                                                  return_shape=True)(*args)
         sliced_eqns = slice_eqns_by_pipeline_marks(origin_jaxpr)
         return origin_jaxpr, sliced_eqns, out_shape_tree
 
@@ -63,8 +63,8 @@ def transform_pipeline_forward(fn: Callable, transform_fn, static_argnums=()):
 
 def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     n_layers = len(sliced_eqns)
-    layer_pipeline_invars = [set() for _ in range(n_layers)]
-    layer_pipeline_outvars = [set() for _ in range(n_layers)]
+    layer_pipeline_invars = [OrderedSet() for _ in range(n_layers)]
+    layer_pipeline_outvars = [OrderedSet() for _ in range(n_layers)]
     var_layer_dict = {}
 
     for var in closed_jaxpr.jaxpr.invars:

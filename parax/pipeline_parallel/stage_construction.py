@@ -6,7 +6,7 @@ import numba
 import numpy as np
 from datetime import datetime
 from time import time
-from typing import Sequence, Set, Tuple
+from typing import Sequence
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
@@ -14,6 +14,7 @@ from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, split_global_use_and_donate,
     generate_stage_info, compile_all)
 from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
+from parax.util import OrderedSet
 
 
 @numba.jit(nopython=True)
@@ -276,7 +277,8 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
                     ])
                 output_meshes.append(mesh)
         else:
-            num_host_per_mesh = math.ceil(num_device_per_mesh / num_device_per_host)
+            num_host_per_mesh = math.ceil(num_device_per_mesh /
+                                          num_device_per_host)
             ind = list(range(num_host))
             for i in range(num_meshes):
                 output_meshes.append((original_mesh.slice_1d(
@@ -293,17 +295,27 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
         if num_required_device_per_host == num_device_per_host:
             # allocate all devices of a host
             num_host_per_mesh = num_host // num_meshes
-            output_meshes = [original_mesh.slice_1d(0, list(range(i * num_host_per_mesh, (i + 1) * num_host_per_mesh)))
-                             for i in range(num_meshes)]
+            output_meshes = [
+                original_mesh.slice_1d(
+                    0,
+                    list(
+                        range(i * num_host_per_mesh,
+                              (i + 1) * num_host_per_mesh)))
+                for i in range(num_meshes)
+            ]
         else:
             assert num_device_per_host % num_required_device_per_host == 0
             cur_host_index = 0
             cur_device_index = 0
             for i in range(num_meshes):
-                host_indices = list(range(cur_host_index, cur_host_index + num_required_host))
-                device_indices = list(range(cur_device_index, cur_device_index + num_required_device_per_host))
+                host_indices = list(
+                    range(cur_host_index, cur_host_index + num_required_host))
+                device_indices = list(
+                    range(cur_device_index,
+                          cur_device_index + num_required_device_per_host))
                 device_indices = [device_indices] * len(host_indices)
-                output_meshes.append(original_mesh.slice_2d(host_indices, device_indices))
+                output_meshes.append(
+                    original_mesh.slice_2d(host_indices, device_indices))
                 # move the device in priority
                 if cur_device_index + num_required_device_per_host == num_device_per_host:
                     cur_device_index = 0
@@ -426,7 +438,9 @@ def cluster_layers_and_slice_mesh(layers,
         stages = layers
         if submesh_shapes != None:
             assert all(shape == submesh_shapes[0] for shape in submesh_shapes)
-        sliced_meshes = uniform_slice_mesh(mesh, num_meshes, submesh_shapes=submesh_shapes)
+        sliced_meshes = uniform_slice_mesh(mesh,
+                                           num_meshes,
+                                           submesh_shapes=submesh_shapes)
     else:
         raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
     return stages, stage_to_mesh, sliced_meshes
@@ -446,8 +460,8 @@ def get_stage_outvars(layers: Sequence[JaxPipelineComputation],
         A list of outvars for each stage
     """
     n_stages = len(layer_assignment)
-    used = set(global_outvars)
-    stage_outvars = [set() for _ in range(n_stages)]
+    used = OrderedSet(global_outvars)
+    stage_outvars = [OrderedSet() for _ in range(n_stages)]
     for stage_id, layer_ids in reversed(list(enumerate(layer_assignment))):
         for layer_id in layer_ids:
             for var in layers[layer_id].outvars:

@@ -14,6 +14,7 @@ from jax.interpreters.pxla import Replicated
 from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.global_env import global_config
+from parax.util import OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -804,13 +805,14 @@ class ReshardingTaskSpec:
         """Identify all participant device strs (for NCCL setup) in this task spec."""
         if not self._strategy:
             raise RuntimeError("Generate and set strategy first.")
-        device_strs = set()
+        device_strs = OrderedSet()
         # senders
         for tile_strategy in self.strategy:
-            device_strs = device_strs | set(tile_strategy.flatten().tolist())
+            device_strs = device_strs | OrderedSet(
+                tile_strategy.flatten().tolist())
         # receivers
         for tile in self.dst.tiles.flatten():
-            device_strs = device_strs | set(tile.replica_device_strs)
+            device_strs = device_strs | OrderedSet(tile.replica_device_strs)
         return device_strs
 
 

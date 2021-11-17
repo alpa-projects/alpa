@@ -379,7 +379,8 @@ class NormalMeshWorkerExecutable:
         # TODO(Hao): try has an overhead. Is there better ways?
         # output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
         try:
-            output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
+            output_bufs = self.compiled.execute_sharded_on_local_devices(
+                input_bufs)
         except RuntimeError as re:
             # logger.info("Executing in actor encounters an exception: {}".format(re))
             ray.actor.exit_actor()

@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
-from typing import Sequence, Set, Any, Dict
+from typing import Sequence, Any, Dict
 
 from jax import jit
 from jax._src.util import partial, safe_map
@@ -11,6 +11,7 @@ from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 import numpy as np
 
+from parax.util import OrderedSet
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable
@@ -184,20 +185,24 @@ class XlaShardedPipelineComputation(PipelineComputation):
     input_sharding_specs: Any = None
     output_sharding_specs: Any = None
     output_acc_grad_indices: Sequence[int] = None
-    donatables: Set[Var] = None
+    donatables: OrderedSet[Var] = None
 
     @classmethod
     def from_auto_sharded_computation(
-        cls,
-        *,
-        jax_pipeline_computation: JaxPipelineComputation,
-        auto_sharded_hlo_proto: xc.XlaComputation,
-        strategy_config: StrategyConfig,
-        donated_invars=None,
-        acc_grad_outvars=set(),
-        donatables=set()):
+            cls,
+            *,
+            jax_pipeline_computation: JaxPipelineComputation,
+            auto_sharded_hlo_proto: xc.XlaComputation,
+            strategy_config: StrategyConfig,
+            donated_invars=None,
+            acc_grad_outvars=(),
+            donatables=None):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline computation."""
+
+        if donatables is None:
+            donatables = OrderedSet()
+
         if not donated_invars:
             donated_invars = (False,) * len(jax_pipeline_computation.invars)
 
@@ -219,7 +224,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     def donate_intermediates(self, computation):
         # get sharding annotated hlo module
         hlo_module = computation.as_hlo_module()
-        donatable = set(self.donatables)
+        donatable = OrderedSet(self.donatables)
         # get sharding specs
         hlo_module.infer_spmd_shardings()
         avals = [var.aval for var in self.invars]
@@ -235,7 +240,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             output_shardings, out_avals, logical_mesh_shape)
 
         num_donated = np.count_nonzero(self.donated_invars)
-        donatable_outvars = set(self.outvars[num_donated:])
+        donatable_outvars = OrderedSet(self.outvars[num_donated:])
         donated_invars = list()
         donated_outvars = list()
         var_indices = dict(zip(self.outvars, range(len(self.outvars))))
@@ -366,8 +371,8 @@ def mark_missing_vars_in_pipeline_marks(
         if not isinstance(var, Literal):
             var_computation_id[var] = -1
 
-    computation_additional_invars = [set() for _ in computations]
-    computation_additional_outvars = [set() for _ in computations]
+    computation_additional_invars = [OrderedSet() for _ in computations]
+    computation_additional_outvars = [OrderedSet() for _ in computations]
     for i, computation in enumerate(computations):
         for eqn in computation.eqns:
             for var in eqn.invars:
@@ -478,7 +483,7 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
             marker.params["mark_type"])
         return new_marker
 
-    global_used = set(global_outvars)
+    global_used = OrderedSet(global_outvars)
     new_computations = []
     for computation in reversed(jax_pipeline_computations):
         new_eqns = []
@@ -490,7 +495,7 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         new_pipe_end = dce_pipe_marker(pipe_end, global_used)
         new_eqns.append(new_pipe_end)
         # handle normal instructions
-        local_used = set(new_pipe_end.invars)
+        local_used = OrderedSet(new_pipe_end.invars)
         for eqn in reversed(computation.eqns[1:-1]):
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar) and outvar in local_used:
@@ -535,7 +540,7 @@ def rearrange_vars(vars,
         is_input (bool): the var is input of pipe_marker, if False, it is output
     """
     new_vars = list(selected)
-    selected = set(selected)
+    selected = OrderedSet(selected)
     for var in vars:
         if var not in selected:
             new_vars.append(var)
@@ -571,8 +576,8 @@ def generate_sharded_xla_computations_compile_config(
     Note: we merge the colocated forward and backward computation and compile
     them together to get a sharding strategy config.
     """
-    invars = set()
-    outvars = set()
+    invars = OrderedSet()
+    outvars = OrderedSet()
     donation_mapping = dict()
     eqns = []
     consts_dir = {}
@@ -671,7 +676,7 @@ def generate_sharded_xla_computations(
 
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
-                             used: Set[Var],
+                             used: OrderedSet[Var],
                              new_marker_name,
                              donation_mapping=None) -> ClosedJaxpr:
     """
@@ -679,7 +684,7 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
 
     Args:
         jaxprs (Sequence[ClosedJaxpr]): jaxprs to be merged
-        used (Set[Var]): out variables used later
+        used (OrderedSet[Var]): out variables used later
         new_marker_name (str): name of merged pipeline used in marker
         donation_mapping (Dict[Var, Var]): donation mapping of merged jaxpr, may have redundant items
     """
@@ -722,13 +727,13 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                 new_outvars_dict[outvar] = get_var_mapping(var_map, invar)
             var_map[outvar] = get_var_mapping(var_map, invar)
 
-    constvars = set(new_constvars.keys())
+    constvars = OrderedSet(new_constvars.keys())
     new_invars = [k for k in new_invars_dict.keys() if k not in constvars]
     new_outvars = list(new_outvars_dict.keys())
 
     if donation_mapping:
-        new_invars_set = set(new_invars)
-        new_outvars_set = set(new_outvars)
+        new_invars_set = OrderedSet(new_invars)
+        new_outvars_set = OrderedSet(new_outvars)
         donation_mapping = {
             k: v
             for k, v in donation_mapping.items()
@@ -751,7 +756,7 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
 def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
     """Infer donation of global invar-outvars."""
     donation_mapping = initial_mapping
-    donated_outvars = set()
+    donated_outvars = OrderedSet()
 
     for donate, invar in zip(donated_invars, invars):
         if not donate:
@@ -772,9 +777,9 @@ def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
 
 def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
                                     gensym_fn):
-    invars = set(computation.invars)
+    invars = OrderedSet(computation.invars)
     donation_mapping = dict()
-    appended_invars = set()
+    appended_invars = OrderedSet()
     for var in computation.outvars:
         if var not in reversed_donation_mapping:
             continue
@@ -856,12 +861,12 @@ def get_donatable_intermediate(stages: Sequence[JaxPipelineComputation],
     2. Either a main copy never used, or not a main copy.
     Args:
         stages (Sequence[JaxPipelineStage]): all stages
-        worker_stage_mapping (Dict[int, Set[int]]): indices of stages in each mesh
-        global_invars (Sequence[Var] | Set[Var]): global input variables
+        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in each mesh
+        global_invars (Sequence[Var] | OrderedSet[Var]): global input variables
     Returns:
-        donatable_list (Sequence[Set[Var]]): donatable invars of each stage
+        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each stage
     """
-    global_invars = set(global_invars)
+    global_invars = OrderedSet(global_invars)
     main_copy_at = dict()
     stage_at = dict()
     for mesh_idx, stage_indices in worker_stage_mapping.items():
@@ -872,10 +877,10 @@ def get_donatable_intermediate(stages: Sequence[JaxPipelineComputation],
             stage_at[stage_idx] = mesh_idx
 
     donatable_list = []
-    used = set()
+    used = OrderedSet()
     for stage_idx in reversed(range(len(stages))):
         stage = stages[stage_idx]
-        donatable = set()
+        donatable = OrderedSet()
         for invar in stage.invars:
             if invar in global_invars:
                 continue  # do not consider global inputs

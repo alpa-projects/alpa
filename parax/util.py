@@ -134,20 +134,114 @@ class FastLookupList:
 
 class OrderedSet:
 
-    def __init__(self):
+    def __init__(self, iterable=()):
         self.dict = OrderedDict()
+        for element in iterable:
+            self.dict[element] = None
 
     def add(self, *args):
         for x in args:
             self.dict[x] = None
 
-    def update(self, container):
-        for x in container:
+    def update(self, other):
+        for x in other:
             self.dict[x] = None
+
+    def union(self, other):
+        result = OrderedSet()
+        result.update(self)
+        result.update(other)
+        return result
+
+    def intersection_update(self, other):
+        to_be_removed = []
+        for x in self:
+            if x not in other:
+                to_be_removed.append(x)
+        for x in to_be_removed:
+            self.remove(x)
+
+    def intersection(self, other):
+        result = OrderedSet()
+        for x in self:
+            if x in other:
+                result.add(x)
+        return result
+
+    def discard(self, element):
+        if element in self:
+            del self.dict[element]
+
+    def remove(self, element):
+        if element not in self:
+            raise KeyError(element)
+        del self.dict[element]
+
+    def clear(self):
+        self.dict.clear()
+
+    def difference(self, other):
+        result = OrderedSet()
+        for x in self:
+            if x not in other:
+                result.add(x)
+        return result
+
+    def difference_update(self, other):
+        for x in other:
+            self.discard(x)
+
+    def symmetric_difference(self, other):
+        result = OrderedSet()
+        for x in self:
+            if x not in other:
+                result.add(x)
+        for x in other:
+            if x not in self:
+                result.add(x)
+        return result
 
     def __iter__(self):
         for x in self.dict:
             yield x
+
+    def __len__(self):
+        return len(self.dict)
+
+    def __contains__(self, element):
+        return element in self.dict
+
+    def __repr__(self):
+        return "OrderedSet([" + ", ".join(repr(x) for x in self) + "])"
+
+    def __or__(self, other):
+        return self.union(other)
+
+    def __and__(self, other):
+        return self.intersection(other)
+
+    def __sub__(self, other):
+        return self.difference(other)
+
+    def __xor__(self, other):
+        return self.symmetric_difference(other)
+
+    def __ior__(self, other):
+        self.update(other)
+
+    def __iand__(self, other):
+        self.intersection_update(other)
+
+    def __isub__(self, other):
+        self.difference_update(other)
+
+    def __eq__(self, other):
+        if isinstance(other, OrderedSet):
+            return self.dict == other.dict
+        return False
+
+    def __class_getitem__(cls, item):
+        return f"{cls.__name__}[{item.__name__}]"
 
 
 def cached_property(fn, *args, **kwargs):
@@ -393,13 +487,13 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                     sliced_eqns) -> Sequence[ClosedJaxpr]:
     """Wrap sliced equations to a list of ClosedJaxpr."""
     N = len(sliced_eqns)
-    global_invars = set(closed_jaxpr.jaxpr.invars)
+    global_invars = OrderedSet(closed_jaxpr.jaxpr.invars)
     global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
-    global_outvars = set(
+    global_outvars = OrderedSet(
         var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
     result = []
-    layer_invars = [set() for _ in range(N)]
-    layer_outvars = [set() for _ in range(N)]
+    layer_invars = [OrderedSet() for _ in range(N)]
+    layer_outvars = [OrderedSet() for _ in range(N)]
     layer_consts = [dict() for _ in range(N)]
     var_layer_dict = {}
     for i, eqns in enumerate(sliced_eqns):
@@ -745,7 +839,7 @@ def compute_param_number(pytree):
 
 def get_cross_slice_vars(jaxpr, slices):
     defined = dict()
-    stage_invars = [set() for _ in slices]
+    stage_invars = [OrderedSet() for _ in slices]
     for invar in jaxpr.invars:
         defined[invar] = -1
     for invar in jaxpr.constvars:

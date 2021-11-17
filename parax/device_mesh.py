@@ -32,7 +32,7 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
-                        jax_tensor_index)
+                        jax_tensor_index, OrderedSet)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -255,7 +255,7 @@ class MeshHostWorker:
             if total_devices % i == 0:
                 logical_mesh_shapes.append((total_devices // i, i))
 
-        all_keys = set()
+        all_keys = OrderedSet()
         if replica_groups is None:
             for logical_mesh_shape in logical_mesh_shapes:
                 # dim 0
@@ -958,7 +958,7 @@ class DistributedArray:
         """Indices of buffers containing one complete copy of the array data."""
         if self._one_replica_buffer_indices is None:
             one_replica_indices = []
-            seen_index_hashes = set()
+            seen_index_hashes = OrderedSet()
             for i, index in enumerate(self.indices):
                 hashed_index = _hashable_index(index)
                 if hashed_index not in seen_index_hashes:

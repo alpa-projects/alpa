@@ -1,5 +1,5 @@
 import gc
-from typing import Dict, Sequence, Set, Tuple
+from typing import Dict, Sequence, Tuple
 
 import numpy as np
 import ray
@@ -21,7 +21,7 @@ from parax.pipeline_parallel.computation import (
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
-from parax.util import jaxpr_to_hlo_computation
+from parax.util import jaxpr_to_hlo_computation, OrderedSet
 
 
 ########################################
@@ -104,10 +104,15 @@ class CompileWorker:
         return (optimized_proto, strategy_config, input_sharding_protos,
                 output_sharding_proto)
 
-    def compile_with_config(self, proto, jaxpr_config, mesh_config, multiple_stage_config):
+    def compile_with_config(self, proto, jaxpr_config, mesh_config,
+                            multiple_stage_config):
         built = xla_client.XlaComputation(proto)
-        computation_protos, strategy_config = compile_with_search(self.backend, built, *jaxpr_config, *mesh_config, **multiple_stage_config)
+        computation_protos, strategy_config = compile_with_search(
+            self.backend, built, *jaxpr_config, *mesh_config,
+            **multiple_stage_config)
         return computation_protos, strategy_config
+
+
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 
@@ -139,28 +144,28 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
     this function then returns donation_mapping and global_use of each selected layer.
     Args:
         layers (Sequence[JaxPipelineComputation]): all layers
-        layer_indices (Set[int]): indices of selected layers, they are
+        layer_indices (OrderedSet[int]): indices of selected layers, they are
         assumed to be in the same mesh
         donation_mapping (Dict[Var, Var]): known global donation mapping
         global_outvars (Sequence[Var]): global outvars
     Returns:
         donation_mapping: donation mapping of all picked layers
-        global_used: a set of outvars used not only in selected layers
+        global_used: an OrderedSet of outvars used not only in selected layers
         layers: layers rearranged for donate invar
     '''
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
-    layer_indices = set(layer_indices)
+    layer_indices = OrderedSet(layer_indices)
     gensym_fn = gensym([layer.closed_jaxpr().jaxpr for layer in layers])
     num_layers = len(layers)
     out_donation_mapping = dict()
-    out_global_used = set()
-    used = set(global_outvars)
-    local_used = set()  # limit donation
+    out_global_used = OrderedSet()
+    used = OrderedSet(global_outvars)
+    local_used = OrderedSet()  # limit donation
     new_layers = []
     for idx in reversed(range(num_layers)):
         layer = layers[idx]
         if idx in layer_indices:
-            global_used = set()
+            global_used = OrderedSet()
             local_donation, new_layer = get_donation_mapping_and_modify(
                 layer, reversed_donation_mapping, gensym_fn)
             for invar in local_donation.keys():
@@ -199,13 +204,13 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
 
 def compile_and_profile_stage_compute_cost(
         layers: Sequence[JaxPipelineComputation], mesh: PhysicalDeviceMesh,
-        donation_mapping: Dict[Var, Var], global_used: Set[Var]):
+        donation_mapping: Dict[Var, Var], global_used: OrderedSet[Var]):
     """
     Args:
         layers (Sequence[JaxPipelineComputation]): forward and corresponding backward
         mesh (PhysicalDeviceMesh): the assigned mesh
         donation_mapping (Dict[Var, Var]): donation mapping of all selected layers
-        global_used_list (Set[Var]): for each layer, record if each
+        global_used_list (OrderedSet[Var]): for each layer, record if each
             outvar is used outside the compiled layers
     """
     backup_config = global_config.backup()
@@ -251,7 +256,7 @@ def generate_stage_info(stages, selected_indices, donation_mapping,
 
     merged = merge_computation_jaxprs(jaxprs, used_outside, "0",
                                       selected_donation_mapping)
-    outvars = set(merged.jaxpr.outvars)
+    outvars = OrderedSet(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
     tot_donation = [
@@ -297,8 +302,9 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,
                             dst_mesh: PhysicalDeviceMesh) -> CollectiveGroup:
-    cg = CollectiveGroup(set(src_mesh.device_strs + dst_mesh.device_strs),
-                         src_mesh, dst_mesh)
+    cg = CollectiveGroup(
+        OrderedSet(src_mesh.device_strs + dst_mesh.device_strs), src_mesh,
+        dst_mesh)
     cg.instantiate()
     return cg
 

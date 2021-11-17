@@ -15,8 +15,10 @@ from jax.interpreters import xla
 import numba
 import numpy as np
 
-from parax.util import get_cross_slice_vars
-from parax.pipeline_parallel.manual_layer_slicing import insert_marker, manual_layer_slicing, remat_jaxpr
+from parax.util import get_cross_slice_vars, OrderedSet
+from parax.pipeline_parallel.manual_layer_slicing import (insert_marker,
+                                                          manual_layer_slicing,
+                                                          remat_jaxpr)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -70,10 +72,10 @@ def eqn_flops(eqn: JaxprEqn) -> float:
 
 
 def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
-    out_tensors = set()
+    out_tensors = OrderedSet()
     for eqn in start:
-        out_tensors = out_tensors.union(set(eqn.outvars))
-    in_tensors = set()
+        out_tensors = out_tensors.union(OrderedSet(eqn.outvars))
+    in_tensors = OrderedSet()
     for eqn in end:
         for invar in eqn.invars:
             if isinstance(invar, Var) and invar in out_tensors:
@@ -111,11 +113,11 @@ def get_stat(jaxpr):
     Cost = np.full((length + 1, length + 1), 0, dtype=np.float32)
     # init
 
-    outvars = set()
+    outvars = OrderedSet()
     for k in range(0, length + 1):
         if k > 0:
             outvars = outvars.union(jaxpr.eqns[k - 1].outvars)
-        invars = set()
+        invars = OrderedSet()
         tot = 0
         for r in range(k + 1, length + 1):
             for invar in jaxpr.eqns[r - 1].invars:

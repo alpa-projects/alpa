@@ -24,7 +24,7 @@ from parax.pipeline_parallel.apply_grad import (
     split_compute_grad_and_apply_grad)
 from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
 from parax.pipeline_parallel.stage_profiling import CompileWorkerPool
-from parax.util import get_micro_batch
+from parax.util import get_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -132,7 +132,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     worker_stage_mapping = schedule.worker_stage_mapping
     donatable_list = get_donatable_intermediate(
         jax_all_stages, worker_stage_mapping,
-        set(global_invars).union(grad_in_to_out.keys()))
+        OrderedSet(global_invars).union(grad_in_to_out.keys()))
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
@@ -208,7 +208,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             sharded_xla_stages = generate_computations_from_protos(
                 jax_computations, acc_grad_outvars, computation_donate_invars,
                 donatable_dict[mesh_idx], computation_protos, strategy_config)
-            for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
+            for i, xla_stage in zip(stage_id_dict[mesh_idx],
+                                    sharded_xla_stages):
                 xla_stages[i] = xla_stage
     compile_workers.shutdown()
 

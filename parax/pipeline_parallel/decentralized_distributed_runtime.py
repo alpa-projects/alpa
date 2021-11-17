@@ -209,9 +209,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             if invar in not_batch_invars:
                 var_key = repr(invar)
                 key = (repr(invar), 0)
-                # FIXME(yonghao)
             elif (invar in self.grad_dummy_invars and
-                  # batch_idx < self.schedule.first_backward_batch_index):
                   batch_idx != self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
                 key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
@@ -324,7 +322,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                     list(output_uuids[idx])))
 
                     kwargs = {
-                        #FIXME(yonghao)
                         "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
                         "sync_before": False,
                         "sync_after": False,
@@ -453,8 +450,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
 
-                # TODO(yonghao): for each var, record its first mb index that starts grad accum.
-                # FIXME(yonghao)
+                # TODO(yonghao): below, we start accumulation according to hints provided by schedule;
+                #    this is a case that only works for pipeline-parallel training and gradients.
+                #    In some model, some var has non-gradient intermediate states that need accumulation.
+                #    for these vars, we need to record its first mb index when accum will take place.
                 keys = [(repr(var), self.schedule.first_backward_batch_index)
                         for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(

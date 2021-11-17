@@ -16,7 +16,9 @@ import numba
 import numpy as np
 
 from parax.util import get_cross_slice_vars, OrderedSet
-from parax.pipeline_parallel.manual_layer_slicing import (insert_marker, manual_layer_slicing, remat_jaxpr)
+from parax.pipeline_parallel.manual_layer_slicing import (insert_marker,
+                                                          manual_layer_slicing,
+                                                          remat_jaxpr)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

@@ -808,7 +808,8 @@ class ReshardingTaskSpec:
         device_strs = OrderedSet()
         # senders
         for tile_strategy in self.strategy:
-            device_strs = device_strs | OrderedSet(tile_strategy.flatten().tolist())
+            device_strs = device_strs | OrderedSet(
+                tile_strategy.flatten().tolist())
         # receivers
         for tile in self.dst.tiles.flatten():
             device_strs = device_strs | OrderedSet(tile.replica_device_strs)

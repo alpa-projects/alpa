@@ -173,8 +173,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],
-                        executable_config_lists[worker],
-                        acc_grad_local_uuids,
+                        executable_config_lists[worker], acc_grad_local_uuids,
                         accumulated_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
@@ -906,9 +905,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _check_alive(self):
         try:
-            rets = [worker.check_alive.remote()
-                    for mesh in self.physical_meshes
-                    for worker in mesh.workers]
+            rets = [
+                worker.check_alive.remote()
+                for mesh in self.physical_meshes
+                for worker in mesh.workers
+            ]
             ray.get(rets)
         except ray.exceptions.RayActorError:
             self._exception_shutdown()

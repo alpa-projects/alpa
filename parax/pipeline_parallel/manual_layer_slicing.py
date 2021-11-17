@@ -43,8 +43,8 @@ def transform_pipeline_forward(fn: Callable, transform_fn, static_argnums=()):
 
     def get_sliced(*args):
         origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                       static_argnums=static_argnums,
-                                       return_shape=True)(*args)
+                                                  static_argnums=static_argnums,
+                                                  return_shape=True)(*args)
         sliced_eqns = slice_eqns_by_pipeline_marks(origin_jaxpr)
         return origin_jaxpr, sliced_eqns, out_shape_tree
 

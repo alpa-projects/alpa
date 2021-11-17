@@ -5,6 +5,7 @@ import unittest
 
 from parax.util import OrderedSet
 
+
 class OrderedSetTest(unittest.TestCase):
     """Test OrderedSet."""
 

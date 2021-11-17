@@ -328,15 +328,15 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         # propagate back
         for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
             eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
-            origin_at_mesh: OrderedSet = eqn_mesh.setdefault(eqn_idx, OrderedSet())
+            origin_at_mesh: OrderedSet = eqn_mesh.setdefault(
+                eqn_idx, OrderedSet())
             at_mesh = OrderedSet()
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
                     at_mesh.update(var_mesh.setdefault(outvar, OrderedSet()))
             if not at_mesh:
                 continue
-            if (not origin_at_mesh or
-                    at_mesh.difference(origin_at_mesh)):
+            if (not origin_at_mesh or at_mesh.difference(origin_at_mesh)):
                 changed = True
                 origin_at_mesh.update(at_mesh)
                 for invar in eqn.invars:

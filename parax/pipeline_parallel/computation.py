@@ -189,14 +189,14 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     @classmethod
     def from_auto_sharded_computation(
-        cls,
-        *,
-        jax_pipeline_computation: JaxPipelineComputation,
-        auto_sharded_hlo_proto: xc.XlaComputation,
-        strategy_config: StrategyConfig,
-        donated_invars=None,
-        acc_grad_outvars=(),
-        donatables=None):
+            cls,
+            *,
+            jax_pipeline_computation: JaxPipelineComputation,
+            auto_sharded_hlo_proto: xc.XlaComputation,
+            strategy_config: StrategyConfig,
+            donated_invars=None,
+            acc_grad_outvars=(),
+            donatables=None):
         # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline computation."""
 

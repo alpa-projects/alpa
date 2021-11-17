@@ -208,7 +208,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             sharded_xla_stages = generate_computations_from_protos(
                 jax_computations, acc_grad_outvars, computation_donate_invars,
                 donatable_dict[mesh_idx], computation_protos, strategy_config)
-            for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
+            for i, xla_stage in zip(stage_id_dict[mesh_idx],
+                                    sharded_xla_stages):
                 xla_stages[i] = xla_stage
     compile_workers.shutdown()
 

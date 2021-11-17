@@ -58,7 +58,6 @@ class GlobalConfig:
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
 
-
     def backup(self):
         """Backup the configs."""
         return copy.copy(self.__dict__)

@@ -7,8 +7,10 @@ import ray
 
 from parax.util import OrderedSet
 from parax.device_mesh import PhysicalDeviceMesh
-from parax.pipeline_parallel.cross_mesh_resharding import (CrossMeshCommunicator, CollectiveGroup, ReshardingTask)
-from parax.pipeline_parallel.computation import (PipelineComputation, XlaShardedPipelineComputation)
+from parax.pipeline_parallel.cross_mesh_resharding import (
+    CrossMeshCommunicator, CollectiveGroup, ReshardingTask)
+from parax.pipeline_parallel.computation import (PipelineComputation,
+                                                 XlaShardedPipelineComputation)
 
 
 class BaseRuntime(metaclass=ABCMeta):
@@ -142,9 +144,9 @@ class BaseDistributedRuntime(BaseRuntime):
                 device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
                 (spec[i][j], spec[j][i]) will share collective groups.
         """
-        device_str_groups = [
-            [OrderedSet() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
-        ]
+        device_str_groups = [[OrderedSet()
+                              for _ in range(self.num_mesh)]
+                             for _ in range(self.num_mesh)]
         # Merge (i, j) and (j, i)
         for i, j, var_spec_map in self._communicator.task_spec_iter():
             participants = OrderedSet()

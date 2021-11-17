@@ -104,10 +104,15 @@ class CompileWorker:
         return (optimized_proto, strategy_config, input_sharding_protos,
                 output_sharding_proto)
 
-    def compile_with_config(self, proto, jaxpr_config, mesh_config, multiple_stage_config):
+    def compile_with_config(self, proto, jaxpr_config, mesh_config,
+                            multiple_stage_config):
         built = xla_client.XlaComputation(proto)
-        computation_protos, strategy_config = compile_with_search(self.backend, built, *jaxpr_config, *mesh_config, **multiple_stage_config)
+        computation_protos, strategy_config = compile_with_search(
+            self.backend, built, *jaxpr_config, *mesh_config,
+            **multiple_stage_config)
         return computation_protos, strategy_config
+
+
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 
@@ -297,8 +302,9 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,
                             dst_mesh: PhysicalDeviceMesh) -> CollectiveGroup:
-    cg = CollectiveGroup(OrderedSet(src_mesh.device_strs + dst_mesh.device_strs),
-                         src_mesh, dst_mesh)
+    cg = CollectiveGroup(
+        OrderedSet(src_mesh.device_strs + dst_mesh.device_strs), src_mesh,
+        dst_mesh)
     cg.instantiate()
     return cg
 

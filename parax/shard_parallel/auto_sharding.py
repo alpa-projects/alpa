@@ -10,7 +10,6 @@ import numpy as np
 from jax.interpreters import xla, pxla
 from jaxlib.xla_client import OpSharding
 
-from parax import testing
 from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
@@ -66,6 +65,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
     """
+    from parax import testing
+
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
@@ -112,6 +113,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             else:
                 force_batch_dim_to_mesh_dim = -1
 
+        grad_acc_num_micro_batches = None
+
         with XlaPassContext({
                 # Build options
                 "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
@@ -126,9 +129,11 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::all_to_all_cost": 1e10,
                 "auto_sharding::prefer_reduce_scatter":
                     global_config.prefer_reduce_scatter,
-                "auto_sharding::batch_matmul_always_split_batch": False,
+                "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
                     global_config.allow_recompute_heavy_op,
+                "auto_sharding::allow_mixed_mesh_shape":
+                    global_config.allow_mixed_mesh_shape,
                 "auto_sharding::grad_acc_num_micro_batches":
                     grad_acc_num_micro_batches or 1,
                 "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,

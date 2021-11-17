@@ -6,9 +6,7 @@ from typing import Callable
 
 import numpy as np
 
-import flax
 from flax import linen as nn, optim
-from flax.training import train_state
 import jax
 from jax import lax
 import jax.numpy as jnp
@@ -16,7 +14,7 @@ import jax.numpy as jnp
 from parax.model.model_util import (FlaxBaseModelOutput,
                                     FlaxBaseModelOutputWithPooling,
                                     FlaxBertForPreTrainingOutput,
-                                    FlaxMaskedLMOutput, TrainState)
+                                    FlaxMaskedLMOutput)
 from parax import mark_pipeline
 
 

@@ -5,10 +5,10 @@ import logging
 from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
 import numpy as np
+import ray.exceptions
 from jax.core import Var
 from jax.interpreters import pxla
 import jax.numpy as jnp
-from jaxlib import xla_client
 
 from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -23,6 +23,7 @@ from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
+from parax.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -95,9 +96,9 @@ PartialGradWorkerExecutableConfig = namedtuple(
 
 
 def flatten_uuid_set(container):
-    # From Sequence[np.ndarray] to set of elements in the array
+    # From Sequence[np.ndarray] to OrderedSet of elements in the array
     container = list(container)
-    output = set()
+    output = OrderedSet()
     for e in container:
         if isinstance(e, np.ndarray) or isinstance(e, list):
             output.update(flatten_uuid_set(e))
@@ -172,8 +173,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],
-                        executable_config_lists[worker],
-                        acc_grad_local_uuids,
+                        executable_config_lists[worker], acc_grad_local_uuids,
                         accumulated_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
@@ -200,7 +200,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         creates instruction lists for all intermediates.
         """
         num_mesh = self.num_mesh
-        not_batch_invars = set([
+        not_batch_invars = OrderedSet([
             var for var, batch in zip(self.global_invars, self.is_batch)
             if not batch
         ])
@@ -510,8 +510,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 to shard_args instead of indices in input list
             input_local_uuid_list (Dict[MeshHostWorker, np.ndarray]):
         """
-        donated_invar_set = set()
-        global_invar_set = set(self.global_invars)
+        donated_invar_set = OrderedSet()
+        global_invar_set = OrderedSet(self.global_invars)
         for stage in self.stages:
             for invar, donate in zip(stage.invars, stage.donated_invars):
                 if donate and invar in global_invar_set:
@@ -601,7 +601,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.output_spec_list = [[] for _ in range(num_mesh)]
         # collect outvar specs
         var_to_spec_all_meshes = []
-        global_outvar_set = set(self.global_outvars)
+        global_outvar_set = OrderedSet(self.global_outvars)
         for mesh_idx in range(num_mesh):
             var_to_spec = dict()
             for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
@@ -687,7 +687,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         instruction_list: Sequence[
             PipelineInstruction] = self.instruction_lists[worker]
         new_list = []
-        cannot_free_uuids = set(used_outside)
+        cannot_free_uuids = OrderedSet(used_outside)
         cannot_free_uuids.update(donated)
         for instruction in reversed(instruction_list):
             # for free instruction, do not free again
@@ -725,7 +725,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             len(self.output_local_uuid_list[mesh.workers[0]])
             for mesh in self.physical_meshes
         ]
-        self._debug_check()
+
+        # check if there is OOM
+        if global_config.pipeline_runtime_mode == "paper":
+            self._check_alive()
 
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -759,7 +762,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if donate:
                     for buf in bufs:
                         buf.set_deleted_on_workers()
-
         # construct output_bufs first.
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             num_devices_per_host = physical_mesh.num_devices_per_host
@@ -779,7 +781,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         device_id,
                         output_uuid_transposed[i][host_id][device_id],
                         dtype=dtype)
-
         return self.outs_handler(output_bufs)
 
     def _setup_outs_handler(self):
@@ -907,6 +908,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for mesh in self.physical_meshes:
                 mesh.reset_remote_timer(name)
 
+    def _check_alive(self):
+        try:
+            rets = [
+                worker.check_alive.remote()
+                for mesh in self.physical_meshes
+                for worker in mesh.workers
+            ]
+            ray.get(rets)
+        except ray.exceptions.RayActorError:
+            self._exception_shutdown()
+
     def shutdown(self):
         self._destroy_collective_groups()
         if not self.physical_meshes:
@@ -915,6 +927,26 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.reset_benchmark_timers()
         for mesh in self.physical_meshes:
             mesh.shutdown()
+
+    def _exception_shutdown(self):
+        """In this shutdown, some actors might have died."""
+        # recycle collective group info
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i < j and self._collective_groups[i][j]:
+                    group_name = self._collective_groups[i][j].group_name
+                    # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+                    name = "info_" + group_name
+                    try:
+                        store = ray.get_actor(name)
+                        ray.kill(store)
+                    except ValueError:
+                        pass
+        # TODO(Hao): recycle the NCCLUniqueID named actor. Their name is MD5 hashed.
+        #            each of them will takes 1 CPU.
+        # recycle info actors
+        for mesh in self.physical_meshes:
+            mesh.shutdown(forced=True)
 
 
 class PipelineMeshWorkerExecutable:

@@ -6,7 +6,7 @@ from typing import List, Tuple
 import numpy as np
 
 from parax.pipeline_parallel.computation import PipelineComputation
-from parax.util import cached_property
+from parax.util import cached_property, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -55,7 +55,7 @@ class PipelineSchedule(metaclass=ABCMeta):
     """
     A pipeline schedule used by the distributed runtime.
 
-    The core interface of this schedule is .schedule object
+    The core interface of this schedule is .schedule object.
 
     Args:
         dependency (np.array): dependency adjacency matrix.
@@ -128,7 +128,7 @@ class PipelineSchedule(metaclass=ABCMeta):
                 if task:
                     _, stage_idx = task
                     if stage_idx not in placements:
-                        placements[stage_idx] = set()
+                        placements[stage_idx] = OrderedSet()
                     if mesh_idx not in placements[stage_idx]:
                         placements[stage_idx].add(mesh_idx)
         return placements
@@ -142,7 +142,7 @@ class PipelineSchedule(metaclass=ABCMeta):
                 if task:
                     _, stage_idx = task
                     if mesh_idx not in ownership:
-                        ownership[mesh_idx] = set()
+                        ownership[mesh_idx] = OrderedSet()
                     if stage_idx not in ownership[mesh_idx]:
                         ownership[mesh_idx].add(stage_idx)
         return ownership

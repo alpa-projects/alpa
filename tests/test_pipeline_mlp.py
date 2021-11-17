@@ -9,7 +9,7 @@ import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
-from parax.testing import assert_allclose
+from parax.testing import MLPModel, assert_allclose
 
 
 class PipelineMLPTest(unittest.TestCase):
@@ -29,21 +29,7 @@ class PipelineMLPTest(unittest.TestCase):
     def train_2_layer_mlp(self, devices, strategy):
         set_parallelize_options(devices=devices, strategy=strategy)
 
-        class Model(nn.Module):
-            hidden_dim: int
-            output_dim: int
-
-            @nn.compact
-            def __call__(self, x):
-                mark_pipeline(name='1', mark_type='start')
-                x = nn.Dense(features=self.hidden_dim, use_bias=False)(x)
-                x = nn.relu(x)
-                mark_pipeline(name='1', mark_type='end')
-                mark_pipeline(name='2', mark_type='start')
-                x = nn.Dense(features=self.output_dim, use_bias=False)(x)
-                return x
-
-        def train_step(optimizer, batch, apply_fn, use_manual_pipeline=False):
+        def train_step(optimizer, batch, apply_fn):
 
             def loss_func(params, x, y):
                 out = apply_fn(params, x)
@@ -51,13 +37,9 @@ class PipelineMLPTest(unittest.TestCase):
                 mark_pipeline(name='2', mark_type='end')
                 return loss
 
-            if use_manual_pipeline:
-                loss_func = manual_layer_slicing(loss_func)
-
+            loss_func = manual_layer_slicing(loss_func)
             grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
                                              batch['y'])
-
-            # new_optimizer = optimizer.apply_gradient(grad_param)
             return grad_param
 
         batch_size = 128
@@ -68,16 +50,14 @@ class PipelineMLPTest(unittest.TestCase):
         y = jnp.ones((batch_size, output_dim))
 
         # Init model and optimizer
-        model = Model(hidden_dim=hidden_dim, output_dim=output_dim)
+        model = MLPModel(hidden_dim=hidden_dim, output_dim=output_dim)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
         # Train step
         gradients = train_step(optimizer, {"x": x, "y": y}, model.apply)
-        pipelined_train_step = parallelize(
-            donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
-                optimizer, batch, apply_fn, use_manual_pipeline=True))
+        pipelined_train_step = parallelize(donate_argnums=())(train_step)
         args = (optimizer, {"x": x, "y": y}, model.apply)
         gradients_with_pipeline = pipelined_train_step(*args)
 

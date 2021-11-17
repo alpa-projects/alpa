@@ -11,6 +11,7 @@ from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
 
+from parax.util import OrderedSet
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record
@@ -299,7 +300,7 @@ def filter_used_vars(all_vars, eqns):
 
     The returned vars preserve their original order in all_vars.
     """
-    used_vars = set()
+    used_vars = OrderedSet()
     for eqn in eqns:
         used_vars.update(x for x in eqn.invars if not isinstance(x, Literal))
     return [var for var in all_vars if var in used_vars]
@@ -336,7 +337,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     # pylint: disable=import-outside-toplevel
     from parax.pipeline_parallel.primitive_def import pipeline_p
 
-    global_invars = set(raw_jaxpr.jaxpr.invars)
+    global_invars = OrderedSet(raw_jaxpr.jaxpr.invars)
     gensym_func = gensym([raw_jaxpr.jaxpr])
 
     # Find the gradient separator marker.

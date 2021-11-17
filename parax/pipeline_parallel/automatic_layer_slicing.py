@@ -2,6 +2,7 @@
 Do rematerialization at the boundary of layer."""
 
 from functools import partial, wraps
+import logging
 from typing import List, Callable
 
 from jax._src.tree_util import tree_unflatten
@@ -14,8 +15,13 @@ from jax.interpreters import xla
 import numba
 import numpy as np
 
-from parax.util import get_cross_slice_vars
-from parax.pipeline_parallel.manual_layer_slicing import insert_marker, manual_layer_slicing, remat_jaxpr
+from parax.util import get_cross_slice_vars, OrderedSet
+from parax.pipeline_parallel.manual_layer_slicing import (insert_marker,
+                                                          manual_layer_slicing,
+                                                          remat_jaxpr)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 gpu_backend = xc.get_local_backend("gpu")
 
@@ -66,10 +72,10 @@ def eqn_flops(eqn: JaxprEqn) -> float:
 
 
 def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
-    out_tensors = set()
+    out_tensors = OrderedSet()
     for eqn in start:
-        out_tensors = out_tensors.union(set(eqn.outvars))
-    in_tensors = set()
+        out_tensors = out_tensors.union(OrderedSet(eqn.outvars))
+    in_tensors = OrderedSet()
     for eqn in end:
         for invar in eqn.invars:
             if isinstance(invar, Var) and invar in out_tensors:
@@ -107,11 +113,11 @@ def get_stat(jaxpr):
     Cost = np.full((length + 1, length + 1), 0, dtype=np.float32)
     # init
 
-    outvars = set()
+    outvars = OrderedSet()
     for k in range(0, length + 1):
         if k > 0:
             outvars = outvars.union(jaxpr.eqns[k - 1].outvars)
-        invars = set()
+        invars = OrderedSet()
         tot = 0
         for r in range(k + 1, length + 1):
             for invar in jaxpr.eqns[r - 1].invars:
@@ -152,6 +158,11 @@ def slice_jaxpr(jaxpr: Jaxpr,
     if cost_criteria == "count":
         flops_bound = max(flops_bound, flops_avg + 5)
     LAYER_HEAVY_OP_LOW_BOUND = 3
+    if sum(non_trivial) / layer_num < LAYER_HEAVY_OP_LOW_BOUND:
+        LAYER_HEAVY_OP_LOW_BOUND = int(sum(non_trivial) / layer_num)
+        logger.warning(
+            "Too few non-trivial ops (dot, conv), which may influence auto-sharding performance"
+        )
 
     @numba.jit(nopython=True)
     def Init():
@@ -256,8 +267,8 @@ def automatic_layer_slicing(fn: Callable,
 
         def get_sliced(*args):
             origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                           static_argnums=(),
-                                           return_shape=True)(*args)
+                                                      static_argnums=(),
+                                                      return_shape=True)(*args)
             nonlocal layer_num
             if layer_num == "auto":
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)

@@ -32,7 +32,7 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
-                        jax_tensor_index)
+                        jax_tensor_index, OrderedSet)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -56,9 +56,11 @@ class MeshHostWorker:
         self.host_id = host_id
         self.distributed_client = \
             xla_client._xla.get_distributed_runtime_client(server_address, host_id)
-        logger.debug("Trying to connect to xla runtime at {}...".format(server_address))
+        logger.debug(
+            "Trying to connect to xla runtime at {}...".format(server_address))
         status = self.distributed_client.connect()
-        logger.debug("Success to connect to xla runtime at {}...".format(server_address))
+        logger.debug(
+            "Success to connect to xla runtime at {}...".format(server_address))
         self.backend = xla_client.make_gpu_client(self.distributed_client,
                                                   node_id=host_id)
         # Monkey patch the backend
@@ -253,7 +255,7 @@ class MeshHostWorker:
             if total_devices % i == 0:
                 logical_mesh_shapes.append((total_devices // i, i))
 
-        all_keys = set()
+        all_keys = OrderedSet()
         if replica_groups is None:
             for logical_mesh_shape in logical_mesh_shapes:
                 # dim 0
@@ -315,7 +317,7 @@ class MeshHostWorker:
             elif primitive_name == "all-to-all":
                 communication_size = array_size * (
                     num_devices - 1) / num_devices / num_devices
-                penalty_factor = num_devices // 2
+                penalty_factor = num_devices / 2.0
                 communication_size *= penalty_factor
             else:
                 raise ValueError("Invalid primitive: " + primitive_name)
@@ -387,6 +389,10 @@ class MeshHostWorker:
         for device in self.local_devices:
             device.synchronize_all_activity()
 
+    @staticmethod
+    def check_alive():
+        return 0
+
     def shutdown(self):
         self.sync()
         del self.buffers
@@ -422,6 +428,7 @@ class PhysicalDeviceMesh:
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
         self.prof_result = ProfilingResult()
+        self.launched = False
 
         # Do some argument check
         if not use_ray and not devices:
@@ -465,8 +472,6 @@ class PhysicalDeviceMesh:
             if not skip_launch:
                 self._launch_xla_servers()
 
-        self.launched = not skip_launch
-
     @property
     def host_ips(self):
         """Return the a list containing all host IPs."""
@@ -481,10 +486,12 @@ class PhysicalDeviceMesh:
         port = np.random.randint(20000, 23000)
         self.server_address = f"{self.head_ip}:{port}"
         self.service_server = None
-        logger.debug("Trying to start XLA gRPC server on port: {}...".format(port))
+        logger.debug(
+            "Trying to start XLA gRPC server on port: {}...".format(port))
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
-        logger.debug("Success to start XLA gRPC server on port: {}...".format(port))
+        logger.debug(
+            "Success to start XLA gRPC server on port: {}...".format(port))
         time.sleep(0.5)
 
         # Launch workers
@@ -501,6 +508,7 @@ class PhysicalDeviceMesh:
                 # "NCCL_DEBUG": "INFO",
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
+                # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
 
             # Launch a ray actor
@@ -689,6 +697,8 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
+                    # TODO(yonghao): the following assertion will fail, which does not make sense
+                    # assert not isinstance(arg, DistributedArray)
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -789,16 +799,16 @@ class PhysicalDeviceMesh:
             for device in self.devices:
                 device.synchronize_all_activity()
 
-    def shutdown(self):
+    def shutdown(self, forced=False):
         """Shut down the mesh."""
         if not self.launched:
             return
         if self.is_distributed:
-            ray.get([w.shutdown.remote() for w in self.workers])
+            if not forced:
+                ray.get([w.shutdown.remote() for w in self.workers])
             for worker in self.workers:
                 ray.kill(worker)
             self.workers = None
-
             # shutdown grpc server
             self.service_server.shutdown()
             self.service_server = None
@@ -847,7 +857,7 @@ class LogicalDeviceMesh:
 
     def all_to_all_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
-        penalty_factor = num_devices / 2
+        penalty_factor = num_devices / 2.0
         return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
                 (num_devices - 1) / num_devices / num_devices * num_bytes *
                 penalty_factor + 0.001)
@@ -948,7 +958,7 @@ class DistributedArray:
         """Indices of buffers containing one complete copy of the array data."""
         if self._one_replica_buffer_indices is None:
             one_replica_indices = []
-            seen_index_hashes = set()
+            seen_index_hashes = OrderedSet()
             for i, index in enumerate(self.indices):
                 hashed_index = _hashable_index(index)
                 if hashed_index not in seen_index_hashes:

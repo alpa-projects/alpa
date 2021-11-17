@@ -191,11 +191,23 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     physical_mesh.sync_workers()
     print_used_time("Compile (workers)")
+
+    # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
+    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
+    hlo_text = executable.get_hlo_text()
+    with open("last.hlo", "w") as fout:
+        fout.write(hlo_text)
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+        count_communication_primitives(hlo_text)
+
+    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+          f"#all-to-all: {n_all_to_all}")
+    print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 30 * GB:
-        # out of memory
+    if alloc_mem > 28 * GB: # out of memory
         latencies = [-1]
     else:
         for i in range(niter):
@@ -203,18 +215,6 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
         latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
-
-    # Check sharding strategy
-    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
-    hlo_text = executable.get_hlo_text()
-
-    with open("last.hlo", "w") as fout:
-        fout.write(hlo_text)
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-        count_communication_primitives(hlo_text)
-    print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-          f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
-          f"#all-to-all: {n_all_to_all}")
 
     # Compute statistics
     tflops = compute_tflops(batch_size, seq_len, num_layers,
@@ -280,12 +280,19 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 
 16: [
     # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, True,  False),
-    (2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
-    (16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
-    (64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
-    (16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  False, True,  False),
+    #(512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, True,  False),
+    #(2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
+    #(16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
+    #(64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
+    #(16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  False, True,  False),
     #(64,   1024, 4096, 10, 4096//128, 25600, 16, 1,  4,  False, True,  False),
+
+    (16,    1024, 6144, 10, 6144//128, 25600, 2,  8,  1,  False, False, False),
+    (64,    1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, False, False),
+    (128,   1024, 6144, 10, 6144//128, 25600, 2,  8,  8,  False, False, False),
+    (16,    1024, 6144, 10, 6144//128, 25600, 2,  8,  1,  False, True,  False),
+    (64,    1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, True,  False),
+    (128,   1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, True,  False),
 ]
 }
 

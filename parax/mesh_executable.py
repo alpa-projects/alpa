@@ -375,7 +375,15 @@ class NormalMeshWorkerExecutable:
         after_sync_func = self.sync_func if sync_after else None
         # Execute the executable
         timers(self.timer_name).start(before_sync_func)
-        output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
+
+        # TODO(Hao): try has an overhead. Is there better ways?
+        # output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
+        try:
+            output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
+        except RuntimeError as re:
+            # logger.info("Executing in actor encounters an exception: {}".format(re))
+            ray.actor.exit_actor()
+
         timers(self.timer_name).stop(after_sync_func)
 
         # Store output buffers
@@ -403,6 +411,15 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
     (e.g., ".0.12." means channel id 0 and 12)
     """
     return xla_extension.get_grad_sync_channel_ids(hlo_module)
+    #hlo_ir = hlo_module.to_string()
+    #import re
+    #ids = []
+    #for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=\{\{0,4", hlo_ir):
+    ##for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=", hlo_ir):
+    #    ids.append(item)
+
+    #ids = "." + ".".join(ids) + "."
+    #return ids
 
 
 class GradAccMeshDriverExecutable:

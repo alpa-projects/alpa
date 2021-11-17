@@ -9,7 +9,7 @@ import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
-from parax.testing import assert_allclose
+from parax.testing import BertLayerModel, assert_allclose
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 
 
@@ -30,26 +30,7 @@ class PipelineBERTTest(unittest.TestCase):
     def train_2_layer_bert(self, devices, strategy):
         set_parallelize_options(devices=devices, strategy=strategy)
 
-        class Model(nn.Module):
-            config: BertConfig
-            dtype: jnp.dtype = jnp.float32
-
-            def setup(self):
-                self.layer0 = FlaxBertLayer(config=self.config,
-                                            dtype=self.dtype)
-                self.layer1 = FlaxBertLayer(config=self.config,
-                                            dtype=self.dtype)
-
-            def __call__(self, x, attention_mask):
-                mark_pipeline(name='1', mark_type='start')
-                out = x
-                out = self.layer0(out, attention_mask)[0]
-                mark_pipeline(name='1', mark_type='end')
-                mark_pipeline(name='2', mark_type='start')
-                out = self.layer1(out, attention_mask)[0]
-                return out
-
-        def train_step(optimizer, batch, apply_fn, use_manual_pipeline=False):
+        def train_step(optimizer, batch, apply_fn):
 
             def loss_func(params, x, y, attention_mask):
                 out = apply_fn(params, x, attention_mask)
@@ -57,8 +38,7 @@ class PipelineBERTTest(unittest.TestCase):
                 mark_pipeline(name='2', mark_type='end')
                 return loss
 
-            if use_manual_pipeline:
-                loss_func = manual_layer_slicing(loss_func)
+            loss_func = manual_layer_slicing(loss_func)
 
             grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
                                              batch['y'],
@@ -81,9 +61,11 @@ class PipelineBERTTest(unittest.TestCase):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=dtype)
 
         # Init model and optimizer
-        model = Model(config=BertConfig(hidden_size=hidden_size,
-                                        intermediate_size=hidden_size * 4,
-                                        num_attention_heads=num_heads))
+        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
+                                                 intermediate_size=hidden_size *
+                                                 4,
+                                                 num_attention_heads=num_heads,
+                                                 num_hidden_layers=2))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, attention_mask)
         optimizer = optim.GradientDescent(1e-2).create(params)
@@ -96,7 +78,7 @@ class PipelineBERTTest(unittest.TestCase):
         }, model.apply)
         pipelined_train_step = parallelize(
             donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
-                optimizer, batch, apply_fn, use_manual_pipeline=True))
+                optimizer, batch, apply_fn))
         args = (optimizer, {
             "x": x,
             "y": y,

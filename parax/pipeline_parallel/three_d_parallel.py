@@ -3,7 +3,7 @@ import logging
 
 import jax
 from jax import linear_util as lu
-from jax.core import ClosedJaxpr, DropVar, Jaxpr, gensym
+from jax.core import ClosedJaxpr, gensym
 from jax.interpreters import partial_eval as pe
 import numpy as np
 
@@ -14,6 +14,7 @@ from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages)
 from parax.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
+    generate_sharded_xla_computations,
     generate_sharded_xla_computations_compile_config,
     get_donatable_intermediate, mark_missing_vars_in_pipeline_marks,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
@@ -174,31 +175,41 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         ]
         search_task = None
         record_file = None
-        proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
-            str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
-        mesh_config = (None, logical_mesh_choices, logical_mesh_search_mode,
-                       memory_budget_per_device, search_task, record_file)
-        multiple_stage_config = {
-            "multiple_stages": True,
-            "grad_acc_num_micro_batches": None,
-            "bypass_device_assignment_check": True
-        }
+        if global_config.pipeline_distributed_compile:
+            proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
+                str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
+            mesh_config = (None, logical_mesh_choices, logical_mesh_search_mode,
+                           memory_budget_per_device, search_task, record_file)
+            multiple_stage_config = {
+                "multiple_stages": True,
+                "grad_acc_num_micro_batches": None,
+                "bypass_device_assignment_check": True
+            }
 
-        compile_workers.submit(
-            compile_fn,
-            (proto, jaxpr_config, mesh_config, multiple_stage_config))
-        compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
-                                          stage_donate_invars)
-    for mesh_idx in range(num_meshes):
-        computation_protos, strategy_config = compile_workers.get_next()
-        jax_computations, computation_donate_invars = compile_intermediate[
-            mesh_idx]
-        sharded_xla_stages = generate_computations_from_protos(
-            jax_computations, acc_grad_outvars, computation_donate_invars,
-            donatable_dict[mesh_idx], computation_protos, strategy_config)
-        for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
-            xla_stages[i] = xla_stage
-            xla_stage.get_compiled(physical_meshes[mesh_idx])
+            compile_workers.submit(
+                compile_fn,
+                (proto, jaxpr_config, mesh_config, multiple_stage_config))
+            compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
+                                              stage_donate_invars)
+        else:
+            sharded_xla_stages = generate_sharded_xla_computations(
+                str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
+                physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
+                memory_budget_per_device, acc_grad_outvars,
+                donatable_dict[mesh_idx], search_task, record_file)
+            for i, xla_stage in zip(stage_id_dict[mesh_idx],
+                                    sharded_xla_stages):
+                xla_stages[i] = xla_stage
+    if global_config.pipeline_distributed_compile:
+        for mesh_idx in range(num_meshes):
+            computation_protos, strategy_config = compile_workers.get_next()
+            jax_computations, computation_donate_invars = compile_intermediate[
+                mesh_idx]
+            sharded_xla_stages = generate_computations_from_protos(
+                jax_computations, acc_grad_outvars, computation_donate_invars,
+                donatable_dict[mesh_idx], computation_protos, strategy_config)
+            for i, xla_stage in zip(stage_id_dict[mesh_idx], sharded_xla_stages):
+                xla_stages[i] = xla_stage
     compile_workers.shutdown()
 
     for physical_mesh in physical_meshes:

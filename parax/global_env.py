@@ -33,6 +33,7 @@ class GlobalConfig:
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
+        self.pipeline_runtime_mode = "paper"  # or "production"
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
@@ -40,10 +41,12 @@ class GlobalConfig:
         self.force_data_parallel = False  # Whether force to generate data-parallel
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape
 
         ########## Options for eager pipeline runtime ##########
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
+        self.pipeline_distributed_compile = True
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
@@ -54,6 +57,7 @@ class GlobalConfig:
 
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
+
 
     def backup(self):
         """Backup the configs."""
@@ -81,7 +85,8 @@ def set_parallelize_options(devices=None,
                             cache_compute_cost=None,
                             forward_stage_layer_ids=None,
                             sub_physical_mesh_shapes=None,
-                            sub_logical_mesh_shapes=None):
+                            sub_logical_mesh_shapes=None,
+                            pipeline_distributed_compile=True):
     """
     Set the global options for all @parallelize decorator.
 
@@ -118,6 +123,8 @@ def set_parallelize_options(devices=None,
         for each forward stage. Used for "manual_gpipe".
       sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
         submeshes for each forward stage. Used for manual layer slicing.
+      pipeline_distributed_compile (bool): Whether to use distributed compilation
+        in pipeline parallel for each stage. Disabling it helps debug.
     """
     global global_config
 
@@ -137,6 +144,7 @@ def set_parallelize_options(devices=None,
     global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
     # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
+    global_config.pipeline_distributed_compile = pipeline_distributed_compile
 
 
 # Don't let the compilation on the driver node use GPUs.

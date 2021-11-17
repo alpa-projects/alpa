@@ -848,8 +848,11 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                 compiled.proto).as_hlo_module()
         else:
             hlo_module = compiled.hlo_modules()[0]
-        self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
-            hlo_module, out_acc_grad_indices)
+        if physical_mesh.total_devices > 1:
+            self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
+                hlo_module, out_acc_grad_indices)
+        else:
+            self.grad_sync_channel_ids = ""
         self.skip_allreduce_env_name =\
             hlo_module.name() + "XLA_SKIP_NCCL_COLLECTIVE_IDS"
         super(PartialGradAccMeshDriverExecutable,

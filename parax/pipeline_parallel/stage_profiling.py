@@ -34,6 +34,17 @@ class CompileWorker:
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
 
+    def _get_input_output_sharding(self, sharding_annotated_computation):
+        hlo_module = sharding_annotated_computation.as_hlo_module()
+        hlo_module.infer_spmd_shardings()
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        output_sharding = hlo_module.spmd_output_sharding()
+        input_sharding_protos = [
+            sharding.proto_tuple() for sharding in input_shardings
+        ]
+        output_sharding_proto = output_sharding.proto_tuple()
+        return input_sharding_protos, output_sharding_proto
+
     def compile_stage_with_search(self, new_global_config, logical_mesh, proto,
                                   avals, out_avals, donate_invars):
         """
@@ -50,42 +61,24 @@ class CompileWorker:
             strategy_config: The sharding strategy from auto sharding
         """
         global_config.restore(new_global_config)
-        xla_computation = xla_client.XlaComputation(proto)
         self.cnt += 1
 
-        logical_mesh_choices = [logical_mesh]
-        search_task = None
-        record_file = None
-
-        protos, strategy_config = compile_with_search(
-            self.backend,
-            xla_computation,
-            avals,
-            out_avals,
-            donate_invars,
-            None,
-            logical_mesh_choices,
-            global_config.mesh_shape_search_mode,
-            global_config.memory_budget_per_device,
-            search_task,
-            record_file,
-            multiple_stages=True,
-            grad_acc_num_micro_batches=None,
-            bypass_device_assignment_check=True)
-        assert len(
-            protos) == 1, "compile worker compiles multiple stages in a time"
-        sharded_proto = protos[0]
+        jaxpr_config = (avals, out_avals, donate_invars)
+        mesh_config = (None, [logical_mesh
+                             ], global_config.mesh_shape_search_mode,
+                       global_config.memory_budget_per_device, None, None)
+        multiple_stage_config = {
+            "multiple_stages": "stage_and_merged",
+            "grad_acc_num_micro_batches": None,
+            "bypass_device_assignment_check": True
+        }
+        protos, sharded_proto, strategy_config = self.compile_with_config(
+            proto, jaxpr_config, mesh_config, multiple_stage_config)
         sharding_annotated_computation = xla_client.XlaComputation(
             sharded_proto)
-        hlo_module = sharding_annotated_computation.as_hlo_module()
         if logical_mesh.total_devices > 1:
-            hlo_module.infer_spmd_shardings()
-            input_shardings = hlo_module.spmd_parameters_shardings()
-            output_sharding = hlo_module.spmd_output_sharding()
-            input_sharding_protos = [
-                sharding.proto_tuple() for sharding in input_shardings
-            ]
-            output_sharding_proto = output_sharding.proto_tuple()
+            (input_sharding_protos, output_sharding_proto
+            ) = self._get_input_output_sharding(sharding_annotated_computation)
         else:
             input_sharding_protos = None
             output_sharding_proto = None
@@ -104,10 +97,8 @@ class CompileWorker:
     def compile_with_config(self, proto, jaxpr_config, mesh_config,
                             multiple_stage_config):
         built = xla_client.XlaComputation(proto)
-        computation_protos, strategy_config = compile_with_search(
-            self.backend, built, *jaxpr_config, *mesh_config,
-            **multiple_stage_config)
-        return computation_protos, strategy_config
+        return compile_with_search(self.backend, built, *jaxpr_config,
+                                   *mesh_config, **multiple_stage_config)
 
 
 class CompileWorkerPool:

@@ -389,6 +389,10 @@ class MeshHostWorker:
         for device in self.local_devices:
             device.synchronize_all_activity()
 
+    @staticmethod
+    def check_alive():
+        return 0
+
     def shutdown(self):
         self.sync()
         del self.buffers
@@ -504,6 +508,7 @@ class PhysicalDeviceMesh:
                 # "NCCL_DEBUG": "INFO",
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
+                # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
 
             # Launch a ray actor
@@ -692,6 +697,8 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
+                    # TODO(yonghao): the following assertion will fail, which does not make sense
+                    # assert not isinstance(arg, DistributedArray)
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -792,16 +799,16 @@ class PhysicalDeviceMesh:
             for device in self.devices:
                 device.synchronize_all_activity()
 
-    def shutdown(self):
+    def shutdown(self, forced=False):
         """Shut down the mesh."""
         if not self.launched:
             return
         if self.is_distributed:
-            ray.get([w.shutdown.remote() for w in self.workers])
+            if not forced:
+                ray.get([w.shutdown.remote() for w in self.workers])
             for worker in self.workers:
                 ray.kill(worker)
             self.workers = None
-
             # shutdown grpc server
             self.service_server.shutdown()
             self.service_server = None

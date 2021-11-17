@@ -33,6 +33,7 @@ class GlobalConfig:
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
+        self.pipeline_runtime_mode = "paper"  # or "production"
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
@@ -56,6 +57,7 @@ class GlobalConfig:
 
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
+
 
     def backup(self):
         """Backup the configs."""

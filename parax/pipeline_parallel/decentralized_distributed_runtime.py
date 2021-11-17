@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, Sequence, List, Callable
 
 import numpy as np
+import ray.exceptions
 from jax.core import Var
 from jax.interpreters import pxla
 import jax.numpy as jnp
@@ -22,6 +23,7 @@ from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
+from parax.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -719,7 +721,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             len(self.output_local_uuid_list[mesh.workers[0]])
             for mesh in self.physical_meshes
         ]
-        self._debug_check()
+
+        # check if there is OOM
+        if global_config.pipeline_runtime_mode == "paper":
+            self._check_alive()
 
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -753,7 +758,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if donate:
                     for buf in bufs:
                         buf.set_deleted_on_workers()
-
         # construct output_bufs first.
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             num_devices_per_host = physical_mesh.num_devices_per_host
@@ -773,7 +777,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         device_id,
                         output_uuid_transposed[i][host_id][device_id],
                         dtype=dtype)
-
         return self.outs_handler(output_bufs)
 
     def _setup_outs_handler(self):
@@ -901,6 +904,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for mesh in self.physical_meshes:
                 mesh.reset_remote_timer(name)
 
+    def _check_alive(self):
+        try:
+            rets = [worker.check_alive.remote()
+                    for mesh in self.physical_meshes
+                    for worker in mesh.workers]
+            ray.get(rets)
+        except ray.exceptions.RayActorError:
+            self._exception_shutdown()
+
     def shutdown(self):
         self._destroy_collective_groups()
         if not self.physical_meshes:
@@ -909,6 +921,26 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.reset_benchmark_timers()
         for mesh in self.physical_meshes:
             mesh.shutdown()
+
+    def _exception_shutdown(self):
+        """In this shutdown, some actors might have died."""
+        # recycle collective group info
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i < j and self._collective_groups[i][j]:
+                    group_name = self._collective_groups[i][j].group_name
+                    # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+                    name = "info_" + group_name
+                    try:
+                        store = ray.get_actor(name)
+                        ray.kill(store)
+                    except ValueError:
+                        pass
+        # TODO(Hao): recycle the NCCLUniqueID named actor. Their name is MD5 hashed.
+        #            each of them will takes 1 CPU.
+        # recycle info actors
+        for mesh in self.physical_meshes:
+            mesh.shutdown(forced=True)
 
 
 class PipelineMeshWorkerExecutable:

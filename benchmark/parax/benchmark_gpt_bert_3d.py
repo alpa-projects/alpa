@@ -1,10 +1,10 @@
 import argparse
-
+from datetime import datetime
 import ray
 
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case, setup_benchmark
 from benchmark.util import run_cmd
-from datetime import datetime
+from benchmark.parax.paper_manual_gpt_suite import paper_manual_gpt_suite
 
 GB = 1024 ** 3
 
@@ -143,6 +143,7 @@ default_benchmark_suite = {
 benchmark_suites = {
     "default": default_benchmark_suite,
     "sanity_check": sanity_check_suite,
+    "paper_gpt": paper_manual_gpt_suite,
 }
 
 
@@ -177,13 +178,13 @@ if __name__ == "__main__":
 
         # construct case str
         output_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        for case in benchmark_suites[args.suite][num_gpus]:
-            case_str = str(case)
-            ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
-                         f"--model {args.model} "
-                         f"--niter {args.niter} "
-                         f'--case "{case_str}" '
-                         f"--output {output_name}")
-            # print("Exit code: {}".format(ret))
+        for num_gpus, cases in benchmark_suites[args.suite]:
+            for case in cases:
+                case_str = str(case)
+                ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
+                             f"--model {args.model} "
+                             f"--niter {args.niter} "
+                             f'--case "{case_str}" '
+                             f"--output {output_name}")
     else:
         raise RuntimeError()

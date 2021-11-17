@@ -215,7 +215,7 @@ class GpipeSchedule(PipelineSchedule):
             return rev
 
         # backward schedules
-        # Note: large microbatch index is executed earlier.
+        # Note: large microbatch index is executed earlier in backward now.
         for k in range(num_clock):
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))

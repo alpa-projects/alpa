@@ -328,7 +328,7 @@ class PipeDreamFlush(PipelineSchedule):
         # append apply_grad schedules
         scheds = [None] * n
         for stage_idx, worker in self.apply_grad_placement.items():
-            scheds[worker] = (0, stage_idx)
+            scheds[worker] = (self.last_backward_batch_index, stage_idx)
         schedules.append(scheds)
         return schedules
 

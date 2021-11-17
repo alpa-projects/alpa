@@ -240,6 +240,8 @@ class OrderedSet:
             return self.dict == other.dict
         return False
 
+    def __class_getitem__(cls, item):
+        return f"{cls.__name__}[{item.__name__}]"
 
 def cached_property(fn, *args, **kwargs):
     """

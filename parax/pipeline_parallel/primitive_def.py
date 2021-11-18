@@ -5,6 +5,7 @@ from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
+from parax.monkey_patch import xla_identity
 
 from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
 
@@ -55,6 +56,13 @@ def mark_gradient(grad):
     return grad
 
 
+def mark_hook_jaxpreqn(invars, outvars):
+    return new_jaxpr_eqn(invars, outvars, pipeline_p, {
+        'name': 'hook',
+        'mark_type': 'hook'
+    })
+
+
 ########## Internal Registration ##########
 
 
@@ -97,6 +105,9 @@ def _pipeline_abstract_eval(*args, **kwargs):
 
 
 def _pipeline_xla_translation(c, *args, **kwargs):
+    # TODO(yonghao): separate identity and marker in JAX
+    if kwargs["mark_type"] == "hook":
+        return xla_identity(c, *args, opaque=b"hook")
     return mark_pipeline_xla(c, *args)
 
 

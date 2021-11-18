@@ -1,12 +1,13 @@
-import jax
-import jax.numpy as jnp
-import ray
-import math
-import numba
-import numpy as np
 from datetime import datetime
+import math
 from time import time
 from typing import Sequence
+
+from jax.lib import xla_extension as _xla
+import numba
+import numpy as np
+import ray
+
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
@@ -69,7 +70,8 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
     last_max_stage_cost = 0.0
     # FIXME(zhuohan): Set this gap as a tunable parameter in global config
     gap = 1e-6
-    assert len(all_possible_stage_costs), "no solution in auto stage construction."
+    assert len(
+        all_possible_stage_costs), "no solution in auto stage construction."
     for max_stage_cost in all_possible_stage_costs:
         if max_stage_cost * num_microbatches >= best_cost:
             break
@@ -136,6 +138,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     compute_cost = np.full((num_layers, num_layers), np.inf)
     stage_infos = []
     stage_indices = []
+
     for start in range(0, num_layers):
         for end in range(start, num_layers):
             layer_indices = (
@@ -144,21 +147,9 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
             stage_name = "stage_{}_{}".format(start, end)
             stage_info = generate_stage_info(layers, layer_indices,
                                              donation_mapping, global_outvars,
-                                             stage_name)
+                                             stage_name, end - start)
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
-    # compute intermediates
-    intermediate_sizes = dict()
-    for start in range(num_layers):
-        forward_layers = [[layer] for layer in layers[start:num_layers]]
-        backward_layers = [
-            [layer] for layer in layers[num_layers:2 * num_layers - start]
-        ]
-        batch_outputs = pipeline_all_intermediate_size(forward_layers,
-                                                       backward_layers,
-                                                       num_micro_batches)
-        for end in range(start, num_layers):
-            intermediate_sizes[(start, end)] = batch_outputs[end - start]
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
     compiled_outputs = compile_all(stage_infos, mesh.get_default_logical_mesh(),
@@ -169,7 +160,8 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                                                   compiled_outputs,
                                                   stage_infos):
         _, avals, out_avals, tot_donation = stage_info
-        proto, config, in_shardings, out_shardings = compiled_output
+        proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
+        # _xla.HloSharding(hooked_proto[0]).proto_tuple()
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)
@@ -181,7 +173,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                                                         donated_invars, [])
         cost = executable.profile_with_dummy_inputs()
         # TODO(yonghao): disabled currently because it does not consider sharding spec
-            # intermediates=intermediate_sizes[(start, end)])
+        # intermediates=intermediate_sizes[(start, end)])
         compute_cost[start, end] = np.mean(cost)
     return compute_cost
 

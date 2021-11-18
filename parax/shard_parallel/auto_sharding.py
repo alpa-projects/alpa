@@ -170,7 +170,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
         if multiple_stages:
             hlo_stages = get_auto_sharded_hlo_stages()
-            sharded_proto = get_auto_sharded_merged_hlo_proto()
+            sharded_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
         assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
@@ -212,7 +212,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     strategy_config = StrategyConfig(build_random_seed,
                                      logical_mesh.id_mesh.shape,
                                      solution_vector)
-    if multiple_stages == "stage_and_merged":
+    if multiple_stages == "stage_and_hooked":
         return hlo_stages, sharded_proto, strategy_config
     if multiple_stages:
         return hlo_stages, strategy_config
@@ -745,20 +745,20 @@ def _call_solver_serialized_args(
 # Auto-sharded pipeline stages
 auto_sharded_hlo_stages = None
 
-auto_sharded_merged_hlo_proto = None
+hooked_sharding_protos = None
 
 def set_auto_sharded_hlo_stages(hlo_module_protos):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
     global auto_sharded_hlo_stages
     auto_sharded_hlo_stages = hlo_module_protos
 
-def set_auto_sharded_merged_hlo_proto(hlo_module_proto):
-    global auto_sharded_merged_hlo_proto
-    auto_sharded_merged_hlo_proto = hlo_module_proto
+def set_hooked_sharding_protos(hlo_module_proto):
+    global hooked_sharding_protos
+    hooked_sharding_protos = hlo_module_proto
 
 def get_auto_sharded_hlo_stages():
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stages
 
-def get_auto_sharded_merged_hlo_proto():
-    return auto_sharded_merged_hlo_proto
+def get_hooked_sharding_protos():
+    return hooked_sharding_protos

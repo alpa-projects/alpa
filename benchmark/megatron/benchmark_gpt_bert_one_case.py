@@ -124,7 +124,7 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     # Model configs
     model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,\
         vocab_size, dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
-    num_micro_batches, force_dp,  checkpoint_activations, tie_embedding, auto_stage \
+    num_micro_batches, force_dp,  checkpoint_activations, _, _ \
         = benchmark_case
 
     num_gpus = dp_size * tensor_mp_size * pipeline_mp_size
@@ -187,7 +187,7 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
         timers(name).reset()
 
     # Benchmark step time
-    repeat = 10
+    repeat = 5
     number = 1
     costs = benchmark_func(run_func, sync_func=None,
                            warmup=0, repeat=repeat, number=number)
@@ -199,17 +199,20 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
                                 hidden_size, vocab_size,
                                 torch.distributed.get_world_size(),
                                 np.mean(costs))
+    tflops_ckpt = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
+                                     hidden_size, vocab_size,
+                                     torch.distributed.get_world_size(),
+                                     np.mean(costs), True)
     heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-             "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs",
+             "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
               "Peak Mem"]
     values = [model_type, str(benchmark_case[1:6]),
               str((dp_size, tensor_mp_size, pipeline_mp_size)),
               "N/A", str(num_micro_batches), "N/A",
-              str(checkpoint_activations),
-              f"{parameter_count/1e9:.3f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}",
+              str(checkpoint_activations), f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
+              f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
               f"{peak_mem/GB:5.3f}"]
-    write_tsv(heads, values, f"{output_file_name}_{model_type}.tsv")
+    write_tsv(heads, values, f"{model_type}_{output_file_name}_rank{rank}.tsv")
 
 
 if __name__ == "__main__":
@@ -218,4 +221,3 @@ if __name__ == "__main__":
     del sys.argv[-1]
     del sys.argv[-1]
     benchmark_gpt_bert_one_case(case, output_file_name)
-

@@ -2,7 +2,8 @@ import argparse
 from datetime import datetime
 
 from util import run_cmd
-from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite
+
+from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 
 # B = global_batch_size, S = seq_len,
 # H = hidden_size, L = num_layers, V = vocab_size, #head = num_heads,
@@ -68,6 +69,7 @@ default_benchmark_suite = {
 benchmark_suites = {
 "default": default_benchmark_suite,
 "paper_gpt": paper_gpt_suite,
+"test_gpt": test_gpt_suite,
 }
 
 
@@ -79,8 +81,7 @@ def benchmark_all(args):
     except KeyError:
         print(f"No available benchmark suite for {args.suite} with {num_gpus} GPUs.")
         exit()
-
-    output_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    output_name = args.exp_name + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     for case in benchmark_suites[args.suite][num_gpus]:
         case_str = str((args.model,) + case)
@@ -112,7 +113,8 @@ if __name__ == "__main__":
     parser.add_argument("--node_rank", type=int)
     parser.add_argument("--master_addr", type=str)
     parser.add_argument("--master_port", type=str)
-    parser.add_argument("--suite", type=str, default="default_benchmark_suite")
+    parser.add_argument("--suite", type=str, default="paper_gpt")
+    parser.add_argument("--exp_name", type=str, default="")
     args = parser.parse_args()
 
     benchmark_all(args)

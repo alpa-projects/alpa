@@ -9,7 +9,8 @@ import ray
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
                    mark_pipeline, manual_layer_slicing)
-from parax.model.bert_model import BertConfig, FlaxBertLayerCollection, TrainState
+from parax.model.bert_model import BertConfig, FlaxBertLayerCollection
+from parax.model.model_util import TrainState
 from parax.util import write_tsv, list_gpu_info, print_used_time
 
 MB = 1024 ** 2
@@ -136,7 +137,8 @@ def benchmark_transformer_one_case(benchmark_case):
         hidden_size=hidden_size,
         intermediate_size=hidden_size * 4,
         num_attention_heads=num_heads,
-        pipeline_mp_size=pipeline_mp_size))
+        pipeline_mp_size=pipeline_mp_size,
+        add_manual_pipeline_markers=True))
 
     state = create_train_state(rngkey, model, batch)
     print_used_time("Create train state")
@@ -151,7 +153,6 @@ def benchmark_transformer_one_case(benchmark_case):
             train_step(state, batch, rngkey)
         else:
             state = train_step(state, batch, rngkey)
-            # train_step(state, batch, rngkey)
 
     overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
     print_used_time("Benchmark")
@@ -194,7 +195,7 @@ benchmark_suite_4_gpu = [
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  2,  True, False),
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  4,  True, False),
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  8,  True, False),
-    # (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, True, False), # OOM on Gpipe, but not 1F1B
+    (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, True, False), # OOM on Gpipe, but not 1F1B
 
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  1,  False, False), # might OOM
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  2,  False, False),
@@ -203,12 +204,15 @@ benchmark_suite_4_gpu = [
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  16, False, False), # Gpipe OOM
     (32,  1024, 1536, 4,  1536//96,  1,   2,   1,   2,   2,  32, False, False), # might OOM
 
-    # (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  1,  False, False), # might OOM
+    (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  1,  False, False), # might OOM
     (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  2,  False, False),
     (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  4,  False, False),
     (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  8,  False, False),
     (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  16, False, False),
     (32,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,   4,  32, False, False),
+
+    # memory stress tests
+    (512,  1024, 1536, 4,  1536//96,  1,   1,   1,   1,  4,  128, False, False),
 ]
 
 benchmark_suite_8_gpu = [

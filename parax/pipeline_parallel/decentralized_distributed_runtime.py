@@ -2,7 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, Sequence, List, Callable
+from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
 import numpy as np
 import ray.exceptions
@@ -19,7 +19,7 @@ from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    next_remote_buffer_uuid, RemoteBufferRef)
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
-from parax.pipeline_parallel.schedules import GpipeSchedule, cached_property
+from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
@@ -46,10 +46,10 @@ class PipelineInstType(enum.IntEnum):
 @dataclass
 class PipelineInstruction:
     opcode: PipelineInstType
-    task_uuid: int
-    input_uuids: np.ndarray
-    output_uuids: np.ndarray
-    opaques: Dict[str, Any]
+    task_uuid: Optional[int]
+    input_uuids: Optional[np.ndarray]
+    output_uuids: Optional[np.ndarray]
+    opaques: Optional[Dict[str, Any]]
 
     @classmethod
     def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs):
@@ -101,7 +101,7 @@ def flatten_uuid_set(container):
     output = OrderedSet()
     for e in container:
         if isinstance(e, np.ndarray) or isinstance(e, list):
-            output.union(flatten_uuid_set(e))
+            output.update(flatten_uuid_set(e))
             continue
         output.add(e)
     return output
@@ -140,7 +140,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  global_outvars: List[Var],
                  physical_meshes: List[PhysicalDeviceMesh],
                  dependency: np.ndarray,
-                 schedule: GpipeSchedule,
+                 schedule: PipelineSchedule,
                  is_batch: List[bool],
                  num_batch=1):
         super(DecentralizedDistributedRuntime,
@@ -209,11 +209,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             if invar in not_batch_invars:
                 var_key = repr(invar)
                 key = (repr(invar), 0)
-            # TODO(yonghao): only works for GPipeSchedule, move this fn there?
             elif (invar in self.grad_dummy_invars and
-                  batch_idx < self.num_batch - 1):
+                  batch_idx != self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
-                key = (var_key, batch_idx + 1)
+                key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
             else:
                 var_key = repr(invar)
                 key = (repr(invar), batch_idx)
@@ -307,9 +306,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     # Get input and output uuids. They should be at the mesh
                     input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host))
+                        (len(stage.invars), num_devices_per_host), dtype=np.int64)
                     output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host))
+                        (len(stage.outvars), num_devices_per_host), dtype=np.int64)
                     for idx, invar in enumerate(stage.invars):
                         _, key = get_invar_key(invar, batch_idx)
                         input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
@@ -322,11 +321,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                 zip(list(input_uuids[idx]),
                                     list(output_uuids[idx])))
 
-                    # TODO(yonghao): only works for GPipeSchedule.
                     kwargs = {
-                        "skip_grad_sync": not (stage_idx >= num_mesh and
-                                               stage_idx < num_mesh * 2 and
-                                               batch_idx == 0),
+                        "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
                         "sync_before": False,
                         "sync_after": False,
                     }
@@ -362,10 +358,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for uuid in list(uuids)
             ]
                                  for uuids in list(accumulated_uuids)]
+            donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(accumulated_uuids))
             accumulated_uuid_lists[worker] = accumulated_uuids
             self.instruction_lists[worker] = self._compile_free(
-                worker, used_outside)
+                worker, used_outside, donated)
 
         return (executable_config_lists, input_local_uuid_list, grad_uuids,
                 accumulated_uuid_lists)
@@ -452,8 +449,13 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 grad_var_spec_dict = mesh_grad_vars[mesh_idx]
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
-                # TODO(yonghao): only works for GPipeSchedule
-                keys = [(repr(var), self.num_batch - 1) for var in grad_vars]
+
+                # TODO(yonghao): below, we start accumulation according to hints provided by schedule;
+                #    this is a case that only works for pipeline-parallel training and gradients.
+                #    In some model, some var has non-gradient intermediate states that need accumulation.
+                #    for these vars, we need to record its first mb index when accum will take place.
+                keys = [(repr(var), self.schedule.first_backward_batch_index)
+                        for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx, var_at,
                     executable_config_lists, keys, True)
@@ -536,7 +538,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = dict()
-            for stage_idx in self.schedule.worker_stage_mapping[mesh_idx]:
+            for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
                 stage = self.stages[stage_idx]
                 for spec, invar in zip(stage.input_sharding_specs,
                                        stage.invars):
@@ -602,7 +604,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         global_outvar_set = OrderedSet(self.global_outvars)
         for mesh_idx in range(num_mesh):
             var_to_spec = dict()
-            for stage_idx in self.schedule.worker_stage_mapping[mesh_idx]:
+            for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
                 stage = self.stages[stage_idx]
                 for spec, outvar in zip(stage.output_sharding_specs,
                                         stage.outvars):
@@ -612,7 +614,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # assign indices and get specs
         for outvar in self.global_outvars:
             # the apply gradient only writes to microbatch 0
-            key = (repr(outvar), 0)
+            key = (repr(outvar), self.schedule.last_backward_batch_index)
             var_meshes = var_at[key]
             mesh_out_indices = dict()
             for mesh_idx in var_meshes:
@@ -679,23 +681,26 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.instruction_lists[w].append(
                 PipelineInstruction.RECV(task_uuid, output_uuids, False))
 
-    def _compile_free(self, worker, used_outside):
+    def _compile_free(self, worker, used_outside, donated):
         """Add FREE PipelineInstruction to recycle memory
         """
         instruction_list: Sequence[
             PipelineInstruction] = self.instruction_lists[worker]
         new_list = []
-        used_later_uuids = OrderedSet(used_outside)
+        cannot_free_uuids = OrderedSet(used_outside)
+        cannot_free_uuids.update(donated)
         for instruction in reversed(instruction_list):
             # for free instruction, do not free again
-            if not (instruction.opcode == PipelineInstType.FREE or
-                    instruction.input_uuids is None):
-                input_uuids = flatten_uuid_set(list(instruction.input_uuids))
-                unused_uuids = list(input_uuids.difference(used_later_uuids))
+            if instruction.input_uuids is None:
+                new_list.append(instruction)
+                continue
+            input_uuids = flatten_uuid_set(list(instruction.input_uuids))
+            if not (instruction.opcode == PipelineInstType.FREE):
+                unused_uuids = list(input_uuids.difference(cannot_free_uuids))
                 if len(unused_uuids):
                     new_list.append(
                         PipelineInstruction.FREE(np.array(unused_uuids)))
-                used_later_uuids.update(input_uuids)
+            cannot_free_uuids.update(input_uuids)
             new_list.append(instruction)
         return list(reversed(new_list))
 

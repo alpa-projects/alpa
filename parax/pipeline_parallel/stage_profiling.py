@@ -8,7 +8,7 @@ from ray.util import ActorPool
 import jax.numpy as jnp
 from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
 from jax.interpreters import pxla
-from jax.lib import xla_bridge, xla_client
+from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
 from parax.global_env import global_config
@@ -20,8 +20,9 @@ from parax.pipeline_parallel.computation import (
     merge_computation_jaxprs)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
-                                                HloProtoStatus)
-from parax.util import jaxpr_to_hlo_computation, OrderedSet
+                                                HloProtoStatus,
+                                                sharding_proto_to_sharding_spec)
+from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
 
 class CompileWorker:
@@ -239,8 +240,12 @@ def compile_and_profile_stage_compute_cost(
     return ret, split_in_specs, split_out_specs
 
 
-def generate_stage_info(all_layers, selected_indices, donation_mapping,
-                        global_outvars, name, insert_hook_after=None):
+def generate_stage_info(all_layers,
+                        selected_indices,
+                        donation_mapping,
+                        global_outvars,
+                        name,
+                        insert_hook_after=None):
     """Combine selected layers together for profiling"""
     backend = xla_bridge.get_backend("gpu")
 
@@ -250,9 +255,9 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    merged = merge_computation_jaxprs(jaxprs, used_outside, "0",
-                                      selected_donation_mapping,
-                                      insert_hook_after)
+    merged, hook = merge_computation_jaxprs(jaxprs, used_outside, "0",
+                                            selected_donation_mapping,
+                                            insert_hook_after)
     outvars = OrderedSet(merged.jaxpr.outvars)
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
@@ -264,7 +269,7 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
 
     built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
     proto = built.as_serialized_hlo_module_proto()
-    return (proto, avals, out_avals, tot_donation)
+    return (proto, avals, out_avals, tot_donation), hook
 
 
 def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
@@ -377,3 +382,29 @@ def profile_layer_communication_cost(
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
+
+
+def compute_intermediate_size(serialized_proto, hook, config):
+    """Compute bytes of serialized proto"""
+
+    def get_byte(aval):
+        return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
+
+    avals = [v.aval for v in hook.invars]
+    logical_mesh_shape = config.logical_mesh_shape
+    if np.prod(logical_mesh_shape) == 1:
+        tot = sum([get_byte(aval) for aval in avals])
+        return tot
+    hlo_sharding = _xla.HloSharding(serialized_proto[0]).proto_tuple()
+    assert len(hlo_sharding[3]) == len(hook.invars), hlo_sharding
+    sharding_specs = sharding_proto_to_sharding_spec(hlo_sharding, avals,
+                                                     logical_mesh_shape)
+    sharded_shapes = [
+        get_shard_shape(aval, spec)
+        for aval, spec in zip(avals, sharding_specs)
+    ]
+    tot = sum([
+        np.prod(shape) * np.dtype(aval.dtype).itemsize
+        for shape, aval in zip(sharded_shapes, avals)
+    ])
+    return tot

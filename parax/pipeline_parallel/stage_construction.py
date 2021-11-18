@@ -3,7 +3,6 @@ import math
 from time import time
 from typing import Sequence
 
-from jax.lib import xla_extension as _xla
 import numba
 import numpy as np
 import ray
@@ -12,8 +11,8 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, split_global_use_and_donate,
-    generate_stage_info, compile_all)
+    compile_and_profile_stage_compute_cost, compute_intermediate_size,
+    split_global_use_and_donate, generate_stage_info, compile_all)
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
 from parax.util import OrderedSet
 
@@ -138,6 +137,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     compute_cost = np.full((num_layers, num_layers), np.inf)
     stage_infos = []
     stage_indices = []
+    stage_hooks = []
 
     for start in range(0, num_layers):
         for end in range(start, num_layers):
@@ -145,23 +145,24 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
             stage_name = "stage_{}_{}".format(start, end)
-            stage_info = generate_stage_info(layers, layer_indices,
-                                             donation_mapping, global_outvars,
-                                             stage_name, end - start)
+            stage_info, hook = generate_stage_info(layers, layer_indices,
+                                                   donation_mapping,
+                                                   global_outvars, stage_name,
+                                                   end - start)
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
+            stage_hooks.append(hook)
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    compiled_outputs = compile_all(stage_infos, mesh.get_default_logical_mesh(),
-                                   n_workers, 1)
+    logical_mesh = mesh.get_default_logical_mesh()
+    compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
     physical_mesh = mesh.get_physical_mesh()
-    for (start,
-         end), compiled_output, stage_info in zip(stage_indices,
-                                                  compiled_outputs,
-                                                  stage_infos):
+    for (start, end), compiled_output, stage_info, hook in zip(
+            stage_indices, compiled_outputs, stage_infos, stage_hooks):
         _, avals, out_avals, tot_donation = stage_info
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
-        # _xla.HloSharding(hooked_proto[0]).proto_tuple()
+        intermediate_size = compute_intermediate_size(
+            hooked_proto, hook, config) * num_micro_batches
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)
@@ -173,7 +174,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                                                         donated_invars, [])
         cost = executable.profile_with_dummy_inputs()
         # TODO(yonghao): disabled currently because it does not consider sharding spec
-        # intermediates=intermediate_sizes[(start, end)])
+        # intermediates=intermediate_size)
         compute_cost[start, end] = np.mean(cost)
     return compute_cost
 

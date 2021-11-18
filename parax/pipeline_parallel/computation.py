@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+# TODO(yonghao): Many redundant Jaxpr visit in this file. Wrap JaxprEqn for "ReplaceAllUseWith"
 @dataclass
 class PipelineComputation(ABC):
     """
@@ -677,6 +678,31 @@ def generate_sharded_xla_computations(
     return computations
 
 
+def rewrite_hook(eqns, gensym_fn):
+    for idx, eqn in enumerate(eqns):
+        eqn: JaxprEqn
+        if ("mark_type" in eqn.params and
+                eqn.params["mark_type"] == "hook"):
+            later_eqns = eqns[idx + 1:]
+            used_vars = OrderedSet()
+            defined_vars = OrderedSet()
+            for e in later_eqns:
+                used_vars.update(
+                    [v for v in e.invars if isinstance(v, Var)])
+                defined_vars.update(e.outvars)
+            marked = used_vars.difference(defined_vars)
+            hooked = list(marked)
+            new_hook = mark_hook_jaxpreqn(
+                hooked, [gensym_fn(v.aval) for v in hooked])
+            rewrite_dict = dict(zip(hooked, new_hook.outvars))
+            eqns[idx] = new_hook
+            for i in range(idx + 1, len(eqns)):
+                e = eqns[i]
+                eqns[i] = new_jaxpr_eqn(
+                    [get_var_mapping(rewrite_dict, v) for v in e.invars], e.outvars,
+                    e.primitive, e.params)
+            return new_hook
+
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                              used: OrderedSet[Var],
                              new_marker_name,
@@ -733,31 +759,8 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
             new_eqns.append(mark_hook_jaxpreqn([], []))
 
     if insert_hook_after is not None:
-        for idx, eqn in enumerate(new_eqns):
-            eqn: JaxprEqn
-            if ("mark_type" in eqn.params and
-                    eqn.params["mark_type"] == "hook"):
-                gensym_fn = gensym([j.jaxpr for j in jaxprs])
-                later_eqns = new_eqns[idx + 1:]
-                used_vars = OrderedSet()
-                defined_vars = OrderedSet()
-                for e in later_eqns:
-                    used_vars.update(
-                        [v for v in e.invars if isinstance(v, Var)])
-                    defined_vars.update(e.outvars)
-                marked = used_vars.difference(defined_vars)
-                hooked = list(marked)
-                new_hook = mark_hook_jaxpreqn(
-                    hooked, [gensym_fn(v.aval) for v in hooked])
-                # TODO(yonghao): Cannot bear it. Wrap JaxprEqn for "ReplaceAllUseWith"
-                rewrite_dict = dict(zip(hooked, new_hook.outvars))
-                new_eqns[idx] = new_hook
-                for i in range(idx + 1, len(new_eqns)):
-                    e = new_eqns[i]
-                    new_eqns[i] = new_jaxpr_eqn(
-                        [get_var_mapping(rewrite_dict, v) for v in e.invars], e.outvars,
-                        e.primitive, e.params)
-                break
+        gensym_fn = gensym([j.jaxpr for j in jaxprs])
+        new_hook = rewrite_hook(new_eqns, gensym_fn)
 
     constvars = OrderedSet(new_constvars.keys())
     new_invars = [k for k in new_invars_dict.keys() if k not in constvars]
@@ -780,9 +783,12 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         [new_outvars_dict[v] for v in new_outvars], new_outvars,
         new_marker_name, "end")
     new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
-    return ClosedJaxpr(
+    new_jaxpr = ClosedJaxpr(
         Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
         list(new_constvars.values()))
+    if insert_hook_after is not None:
+        return new_jaxpr, new_hook
+    return new_jaxpr
 
 
 def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):

@@ -11,7 +11,8 @@ from benchmark.parax.benchmark_transformer_layer_3d import report_pipeline_break
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, mark_pipeline, manual_layer_slicing, automatic_layer_slicing)
-from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
+from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
+from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import write_tsv, print_used_time
 

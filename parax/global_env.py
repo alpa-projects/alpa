@@ -33,6 +33,7 @@ class GlobalConfig:
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
+        self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
 
         ########## Options for auto-sharding solver ##########
@@ -85,6 +86,7 @@ def set_parallelize_options(devices=None,
                             forward_stage_layer_ids=None,
                             sub_physical_mesh_shapes=None,
                             sub_logical_mesh_shapes=None,
+                            pipeline_parallel_schedule="1f1b",
                             pipeline_distributed_compile=True):
     """
     Set the global options for all @parallelize decorator.
@@ -122,6 +124,7 @@ def set_parallelize_options(devices=None,
         for each forward stage. Used for "manual_gpipe".
       sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
         submeshes for each forward stage. Used for manual layer slicing.
+      pipeline_parallel_schedule (str): the pipeline schedule, "gpipe" or "1f1b".
       pipeline_distributed_compile (bool): Whether to use distributed compilation
         in pipeline parallel for each stage. Disabling it helps debug.
     """
@@ -143,6 +146,7 @@ def set_parallelize_options(devices=None,
     global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
     # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
+    global_config.pipeline_parallel_schedule = pipeline_parallel_schedule
     global_config.pipeline_distributed_compile = pipeline_distributed_compile
 
 

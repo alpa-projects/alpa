@@ -11,7 +11,7 @@ from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
-                                               gen_dependency_with_stages)
+                                               gen_dependency_with_stages, PipeDreamFlush)
 from parax.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
@@ -117,21 +117,33 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         donation_mapping, jax_all_stages)
 
     # Generate pipeline schedule and placement
-    schedule = GpipeSchedule(dependency=dependency,
-                             sliced_meshes=sliced_meshes,
-                             apply_grad_placement=apply_grad_placement,
-                             num_batch=num_micro_batches)
+    if global_config.pipeline_parallel_schedule == "gpipe":
+        logger.debug("Using `gpipe` schedule.")
+        schedule = GpipeSchedule(dependency=dependency, meshes=sliced_meshes,
+                                 apply_grad_placement=apply_grad_placement,
+                                 num_batch=num_micro_batches)
+    elif global_config.pipeline_parallel_schedule == "1f1b":
+        logger.debug("Using `1f1b` schedule.")
+        schedule = PipeDreamFlush(dependency=dependency, meshes=sliced_meshes,
+                                  apply_grad_placement=apply_grad_placement,
+                                  num_batch=num_micro_batches)
+    else:
+        raise RuntimeError("Unrecognized pipeline parallel schedule. "
+                           "Got `{}`. Availabe ones are `gpipe` or `1f1b`."
+                           .format(global_config.pipeline_parallel_schedule))
+    if logger.level == logging.DEBUG:
+        logger.debug(schedule.pprint_schedule(print=False))
+
     physical_meshes = []
     for i, mesh in enumerate(schedule.meshes):
-        logger.debug("Launch the {}th mesh...".format(i))
         physical_meshes.append(mesh.get_physical_mesh(skip_launch=True))
 
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
     donatable_dict = [[] for _ in range(num_meshes)]
-    worker_stage_mapping = schedule.worker_stage_mapping
+    mesh_stage_mapping = schedule.mesh_stage_mapping
     donatable_list = get_donatable_intermediate(
-        jax_all_stages, worker_stage_mapping,
+        jax_all_stages, mesh_stage_mapping,
         OrderedSet(global_invars).union(grad_in_to_out.keys()))
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
@@ -213,7 +225,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                 xla_stages[i] = xla_stage
     compile_workers.shutdown()
 
-    for physical_mesh in physical_meshes:
+    for i, physical_mesh in enumerate(physical_meshes):
+        logger.debug("Launch the {}th mesh...".format(i))
         physical_mesh.launch_xla_servers()
 
     # Wrap all things into a distributed runtime

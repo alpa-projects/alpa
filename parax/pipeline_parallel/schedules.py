@@ -1,11 +1,15 @@
 """Generate pipeline schedules."""
-
-from typing import List
+import logging
+from abc import abstractmethod, ABCMeta
+from typing import List, Tuple
 
 import numpy as np
 
 from parax.pipeline_parallel.computation import PipelineComputation
 from parax.util import cached_property, OrderedSet
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
@@ -13,7 +17,7 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
                                apply_grad_deps=()):
     """Generate the dependency matrix for a list of pipeline stages."""
     n_stages = len(compute_stages) + n_apply_grad_stages
-    d = np.zeros([n_stages, n_stages], dtype=np.int)
+    d = np.zeros([n_stages, n_stages], dtype=int)
     var_stage_id = {}
     for i, stage in enumerate(compute_stages):
         for var in stage.invars:
@@ -31,14 +35,32 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
     return d
 
 
-class GpipeSchedule:
+def gen_linear_pipeline_dependency(num_stage):
     """
-    Construct a Gpipe-like schedule.
+    Generate a dependency matrix that marks the neighbors and forward/backward
+    stage pairs as neighbors.
+
+    For test only.
+    """
+    assert num_stage % 2 == 0
+    d = np.zeros([num_stage, num_stage], dtype=int)
+    for i in range(num_stage - 1):
+        d[i + 1][i] = 1
+    for i in range(num_stage // 2):
+        d[num_stage - 1 - i][i] = 1
+    return d
+
+
+class PipelineSchedule(metaclass=ABCMeta):
+    """
+    A pipeline schedule used by the distributed runtime.
+
+    The core interface of this schedule is .schedule object.
 
     Args:
         dependency (np.array): dependency adjacency matrix.
         sliced_mesh (List[VirtualMesh]): a list of pre-sliced virtual meshes
-            to assign workers on.
+            to assign stages on.
         apply_grad_placement (Dict[int, int]): A map from apply grad's stage idx
             to the worker it is assigned.
         num_batch (int): number of microbatches.
@@ -47,17 +69,110 @@ class GpipeSchedule:
     def __init__(self,
                  *,
                  dependency,
-                 sliced_meshes,
+                 meshes,
                  apply_grad_placement,
                  num_batch=1):
         self.dependency = dependency
-        self.meshes = sliced_meshes
+        self.meshes = meshes
         self.apply_grad_placement = apply_grad_placement
         self.num_batch = num_batch
-        self.num_stage = dependency.shape[0]
-        self.num_worker = len(sliced_meshes)
-        self.num_mesh = len(sliced_meshes)
-        self._schedules = self._generate_schedule()
+
+        self._schedules : List[List[Tuple]] = self._generate_schedule()
+
+    @abstractmethod
+    def _generate_schedule(self):
+        """Implementation of the schedule."""
+        raise NotImplementedError()
+
+    def pprint_schedule(self, print=False):
+        """Pretty print the schedule."""
+        printout = "\n"
+        device_str = " ".join([
+            "{:<8}".format("d" + str(d))
+            for d in range(self.num_mesh)
+        ])
+        printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
+        for clock, scheds in enumerate(self.schedules):
+            sched_str = " ".join(
+                ["{:<8}".format(str(sched)) for sched in scheds])
+            printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
+        if print:
+            logger.info(printout)
+        return printout
+
+    @property
+    def schedules(self):
+        """Return the schedules."""
+        return self._schedules
+
+    @property
+    def num_stage(self):
+        """Return the number of stage, including apply_grad stages."""
+        return self.dependency.shape[0]
+
+    @property
+    def num_mesh(self):
+        return len(self.meshes)
+
+    @property
+    def num_clock(self):
+        """Return the number of clocks in the schedule."""
+        return len(self._schedules)
+
+    @cached_property
+    def stage_mesh_mapping(self):
+        """Generate a stage-worker mapping according to the schedule."""
+        placements = dict()
+        for tasks in self._schedules:
+            for mesh_idx, task in enumerate(tasks):
+                if task:
+                    _, stage_idx = task
+                    if stage_idx not in placements:
+                        placements[stage_idx] = OrderedSet()
+                    if mesh_idx not in placements[stage_idx]:
+                        placements[stage_idx].add(mesh_idx)
+        return placements
+
+    @cached_property
+    def mesh_stage_mapping(self):
+        """Generate a worker-stage mapping according to the schedule."""
+        ownership = dict()
+        for tasks in self._schedules:
+            for mesh_idx, task in enumerate(tasks):
+                if task:
+                    _, stage_idx = task
+                    if mesh_idx not in ownership:
+                        ownership[mesh_idx] = OrderedSet()
+                    if stage_idx not in ownership[mesh_idx]:
+                        ownership[mesh_idx].add(stage_idx)
+        return ownership
+
+    def stage_placement(self, stage_idx):
+        """Query the placement of a stage given its stage index."""
+        return self.stage_mesh_mapping[stage_idx]
+
+    def mesh_placement(self, mesh_idx):
+        """Query the responsible stages of a worker given a worker index."""
+        return self.mesh_stage_mapping[mesh_idx]
+
+    @abstractmethod
+    def should_skip_grad_sync(self, task):
+        """
+        Query if grad sync (w/ other date replicas) should be skipped on a task.
+
+        Args:
+            task (Tuple[int]): (batch index, stage index).
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def previous_backward_batch_index(self, batch_idx):
+        """Return microbatch index during backward prior to batch_idx."""
+        raise NotImplementedError()
+
+
+class GpipeSchedule(PipelineSchedule):
+    """Construct a Gpipe-like schedule."""
 
     def _generate_schedule(self):
         """
@@ -80,7 +195,7 @@ class GpipeSchedule:
         5 reverse...
         """
         m = self.num_batch
-        n = self.num_worker
+        n = self.num_mesh
         num_clock = m + n - 1
         schedules = []
         for k in range(num_clock):
@@ -95,10 +210,12 @@ class GpipeSchedule:
                 if not task:
                     rev.append(None)
                 else:
-                    rev.append((task[0], 2 * n - 1 - task[1]))
+                    rev.append((m - 1 - task[0], 2 * n - 1 - task[1]))
+                    # rev.append((task[0], 2 * n - 1 - task[1]))
             return rev
 
         # backward schedules
+        # Note: large microbatch index is executed earlier in backward now.
         for k in range(num_clock):
             mapped_scheds = schedules[num_clock - k - 1]
             schedules.append(reverse(mapped_scheds))
@@ -106,66 +223,133 @@ class GpipeSchedule:
         # apply_grad schedules
         scheds = [None] * n
         for stage_idx, worker in self.apply_grad_placement.items():
-            scheds[worker] = (0, stage_idx)
+            scheds[worker] = (self.last_backward_batch_index, stage_idx)
         schedules.append(scheds)
         return schedules
 
-    def pprint_schedule(self):
-        """Pretty print the schedule."""
-        printout = "\n"
-        device_str = " ".join([
-            "{:<8}".format("d" + str(d))
-            for d in range(self.num_pipeline_worker)
-        ])
-        printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
-        for clock, scheds in enumerate(self.schedules):
-            sched_str = " ".join(
-                ["{:<8}".format(str(sched)) for sched in scheds])
-            printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
-        return printout
-
-    @cached_property
-    def stage_worker_mapping(self):
-        """Generate a stage-worker mapping according to the schedule."""
-        placements = dict()
-        for tasks in self._schedules:
-            for worker_idx, task in enumerate(tasks):
-                if task:
-                    _, stage_idx = task
-                    if stage_idx not in placements:
-                        placements[stage_idx] = OrderedSet()
-                    if worker_idx not in placements[stage_idx]:
-                        placements[stage_idx].add(worker_idx)
-        return placements
-
-    @cached_property
-    def worker_stage_mapping(self):
-        """Generate a worker-stage mapping according to the schedule."""
-        ownership = dict()
-        for tasks in self._schedules:
-            for worker_idx, task in enumerate(tasks):
-                if task:
-                    _, stage_idx = task
-                    if worker_idx not in ownership:
-                        ownership[worker_idx] = OrderedSet()
-                    if stage_idx not in ownership[worker_idx]:
-                        ownership[worker_idx].add(stage_idx)
-        return ownership
-
-    def stage_placement(self, stage_idx):
-        """Query the placement of a stage given its stage index."""
-        return self.stage_worker_mapping[stage_idx]
-
-    def worker_placement(self, worker_idx):
-        """Query the responsible stages of a worker given a worker index."""
-        return self.worker_stage_mapping[worker_idx]
+    def should_skip_grad_sync(self, task):
+        batch_idx, stage_idx = task
+        do_grad_sync = False
+        if self.num_mesh <= stage_idx < self.num_mesh * 2 \
+                and batch_idx == self.last_backward_batch_index:
+            do_grad_sync = True
+        return not do_grad_sync
 
     @property
-    def schedules(self):
-        """Return the schedules as a matrix."""
-        return self._schedules
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        return 0
+        # return self.num_batch - 1
 
     @property
-    def num_clock(self):
-        """Return the number of clocks in the schedule."""
-        return len(self._schedules)
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
+        return self.num_batch - 1
+        # return 0
+
+    def previous_backward_batch_index(self, batch_idx):
+        assert batch_idx > 0
+        return batch_idx - 1
+        # return batch_idx + 1
+
+
+class PipeDreamFlush(PipelineSchedule):
+    """
+    Generate a PipeDream-Flush schedule (a.k.a. 1F1B).
+
+    It has similar latency to GPipe but is more memory-efficient.
+    """
+    def _generate_schedule(self):
+        m = self.num_batch
+        n = self.num_mesh
+
+        # equal to gpipe
+        num_clock = (m + n - 1) * 2
+        schedules = [[None] * n for k in range(num_clock)]
+
+        num_warmup_microbatches = [min(n - i - 1, m) for i in range(n)]
+        num_microbatches_remaining = [m - i for i in num_warmup_microbatches]
+
+        next_fwd_mb_idx = [0 for _ in range(n)]
+        next_bwd_mb_idx = [0 for _ in range(n)]
+        next_available_clock = [i for i in range(n)]
+        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n], dtype=np.int32)
+
+        # warm-up clocks
+        for i in range(n):
+            for j in range(num_warmup_microbatches[i]):
+                schedules[next_available_clock[i]][i] = (next_fwd_mb_idx[i], i)
+                next_available_clock[i] = next_available_clock[i] + 1
+                next_fwd_mb_idx[i] = next_fwd_mb_idx[i] + 1
+
+        # run 1F1B
+        for i in reversed(range(n)):
+            # from the last device to the first
+            for j in range(num_microbatches_remaining[i]):
+                # running through all the remaining microbatches
+                # forward
+                next_clock = next_available_clock[i]
+                schedules[next_clock][i] = (next_fwd_mb_idx[i], i)
+                next_fwd_mb_idx[i] = next_fwd_mb_idx[i] + 1
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                next_clock = next_clock + 1
+
+                # backward
+                # first, offset the next available clock to the clock
+                # when the previous stage has just finished backward of the target mb.
+                if i + 1 < n:  # not the last device
+                    # find the next possible backward clock
+                    while finished_bwd_batch_indices[next_clock][i + 1] <= next_bwd_mb_idx[i]:
+                        assert finished_bwd_batch_indices[next_clock - 1][i] == next_bwd_mb_idx[i]
+                        finished_bwd_batch_indices[next_clock][i] = finished_bwd_batch_indices[next_clock - 1][i]
+                        next_clock = next_clock + 1
+
+                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
+                next_available_clock[i] = next_clock + 1
+
+        # run cooldown passes
+        for i in reversed(range(n)):
+            for j in range(num_warmup_microbatches[i]):
+                assert i + 1 < n
+                next_clock = next_available_clock[i]
+                while finished_bwd_batch_indices[next_clock][i + 1] <= next_bwd_mb_idx[i]:
+                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                    next_clock = next_clock + 1
+                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n- 1 - i)
+                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
+                next_available_clock[i] = next_clock + 1
+            # update status matrix for the last worker
+            if i > 0:
+                finished_bwd_batch_indices[next_available_clock[i]:num_clock, i] = m
+
+        # append apply_grad schedules
+        scheds = [None] * n
+        for stage_idx, worker in self.apply_grad_placement.items():
+            scheds[worker] = (self.last_backward_batch_index, stage_idx)
+        schedules.append(scheds)
+        return schedules
+
+    def should_skip_grad_sync(self, task):
+        batch_idx, stage_idx = task
+        do_grad_sync = False
+        if self.num_mesh <= stage_idx < self.num_mesh * 2 \
+                and batch_idx == self.last_backward_batch_index:
+            do_grad_sync = True
+        return not do_grad_sync
+
+    @property
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        return 0
+
+    @property
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
+        return self.num_batch - 1
+
+    def previous_backward_batch_index(self, batch_idx):
+        assert batch_idx > 0
+        return batch_idx - 1

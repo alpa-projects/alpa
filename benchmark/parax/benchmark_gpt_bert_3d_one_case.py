@@ -181,7 +181,7 @@ def benchmark_one_case(benchmark_case, external_args):
                                 np.mean(overall_costs[2:]))
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
-    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], external_args.niter)
+    # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], external_args.niter)
     heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
              "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs"]
     paralell_config = (l_dim0, l_dim1, pipeline_mp_size)

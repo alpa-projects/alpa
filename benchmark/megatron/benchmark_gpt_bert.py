@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 
 from util import run_cmd
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite
@@ -79,6 +80,8 @@ def benchmark_all(args):
         print(f"No available benchmark suite for {args.suite} with {num_gpus} GPUs.")
         exit()
 
+    output_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+
     for case in benchmark_suites[args.suite][num_gpus]:
         case_str = str((args.model,) + case)
 
@@ -87,7 +90,8 @@ def benchmark_all(args):
             ret = run_cmd('python3 -m torch.distributed.launch '
                          f'--nproc_per_node {args.nproc_per_node} '
                          'benchmark_gpt_bert_one_case.py '
-                         f'"{case_str}"')
+                          f'"{case_str}" '
+                          f'{output_name}')
         else:
             # Multiple nodes
             ret = run_cmd('python3 -m torch.distributed.launch '
@@ -97,7 +101,8 @@ def benchmark_all(args):
                          f'--master_addr {args.master_addr} '
                          f'--master_port {args.master_port} '
                          'benchmark_gpt_bert_one_case.py '
-                         f'"{case_str}"')
+                         f'"{case_str}" '
+                         f'{output_name}')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -111,4 +116,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     benchmark_all(args)
-

@@ -120,7 +120,7 @@ def get_bert_functions():
     return model_provider, loss_func, forward_step
 
 
-def benchmark_gpt_bert_one_case(benchmark_case):
+def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     # Model configs
     model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,\
         vocab_size, dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
@@ -209,11 +209,13 @@ def benchmark_gpt_bert_one_case(benchmark_case):
               f"{parameter_count/1e9:.3f}",
               f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}",
               f"{peak_mem/GB:5.3f}"]
-    write_tsv(heads, values, f"result_{model_type}.tsv")
+    write_tsv(heads, values, f"{output_file_name}_{model_type}.tsv")
 
 
 if __name__ == "__main__":
-    case = eval(sys.argv[-1])
+    case = eval(sys.argv[-2])
+    output_file_name = sys.argv[-1]
     del sys.argv[-1]
-    benchmark_gpt_bert_one_case(case)
+    del sys.argv[-1]
+    benchmark_gpt_bert_one_case(case, output_file_name)
 

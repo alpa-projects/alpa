@@ -19,36 +19,6 @@ fixed_params = (True, False, False)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
-2: [
-    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie, Auto-layer-slicing
-    # (32,  *gpt_specs["350M"],  1,   2,   1,   1,   1,  1,    1,  *fixed_params),
-    # (32,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  1,    1,  *fixed_params),
-    # (2,  *gpt_specs["760M"],  2,   1,   1,   1,   1,  1,    1,  *fixed_params),
-
-    # (16,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  1,    1,  *fixed_params),
-],
-
-4: [
-    # (16,  *gpt_specs["760M"],  2,   2,   1,   1,   1,  1,    1,  *fixed_params),
-    # (32,  *gpt_specs["760M"],  2,   2,   1,   1,   1,  1,    1,  *fixed_params),
-    # (64,  *gpt_specs["760M"],  2,   2,   1,   1,   1,  2,    1,  *fixed_params),
-    # (32,  *gpt_specs["760M"],  2,   1,   1,   1,   2,  1,    1,  *fixed_params),
-    # (32,  *gpt_specs["760M"],  1,   1,   1,   1,   4,  1,    1,  *fixed_params),
-    # (32,  *gpt_specs["760M"],  1,   4,   1,   1,   1,  2,    1,  *fixed_params),
-    # (32,  *gpt_specs["1.3B"],  2,   2,   1,   1,   1,  4,    1,  *fixed_params),
-    # (32,  *gpt_specs["1.3B"],  1,   4,   1,   1,   1,  2,    1,  *fixed_params),
-
-    # (32,  *gpt_specs["1.3B"],  2,   1,   1,   1,   2,  4,    1,  *fixed_params),
-
-    # (64,  *gpt_specs["1.3B"],  2,   1,   1,   1,   2,  4,    1,  *fixed_params),
-    # (32,  *gpt_specs["1.3B"],  1,   2,   1,   1,   2,  2,    1,  *fixed_params),
-    (64,  *gpt_specs["1.3B"],  1,   2,   1,   1,   2,  4,    1,  *fixed_params),
-    (128,  *gpt_specs["1.3B"],  1,   2,   1,   1,   2,  8,    1,  *fixed_params),
-    (256,  *gpt_specs["1.3B"],  1,  2,   1,   1,   2,  16,    1,  *fixed_params),
-    (512,  *gpt_specs["1.3B"],  1,  2,   1,   1,   2,  32,    1,  *fixed_params),
-    (1024,  *gpt_specs["1.3B"],  1,  2,   1,   1,   2,  64,    1,  *fixed_params),
-],
-
 8: [
     # (32,  *gpt_specs["1.3B"],  4,   2,   1,   1,   1,  1,    1,  *fixed_params),
     # (32,  *gpt_specs["1.3B"],  4,   1,   1,   1,   2,  2,    1,  *fixed_params),
@@ -66,6 +36,13 @@ test_gpt_suite = {
 
     (256,  *gpt_specs["2.7B"],  1,   1,   1,   1,   8,  32,    1,  *fixed_params),
     (512,  *gpt_specs["2.7B"],  1,   1,   1,   1,   8,  64,    1,  *fixed_params),
+],
+
+16: [
+    # 2.7B model
+
+
+    # 6.7B model
 ]
 
 }
@@ -318,7 +295,6 @@ paper_gpt_suite = {
     # ====================
     # 2.7B model
     # DP maximally can only be 2
-    # (8,  *gpt_specs["2.7B"],  1,   1,   1,   1,   8,  1,    1,  *fixed_params), # OK
 
     # DP 2 + MP 4, max per-gpu bs = 1
     (8,  *gpt_specs["2.7B"],  2,   4,   1,   1,   1,  1,    1,  *fixed_params),
@@ -379,14 +355,54 @@ paper_gpt_suite = {
 ],
 
 16: [
+    # 2.7B model
+    # DP maximally can only be 4
+    # DP = 4, MP =4
+    (8,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  1,    1,  *fixed_params),
+
+    # DP = 4, MP = 2, PP = 2
+    (8,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  1,    1,  *fixed_params),
+
+    # DP = 4, PP = 4
+    (8,  *gpt_specs["2.7B"],  4,   1,   1,   1,   4,  1,    1,  *fixed_params),
+
+    # DP = 2, MP = 8
+    (8,  *gpt_specs["2.7B"],  2,   8,   1,   1,   4,  1,    1,  *fixed_params),
+
+    # DP = 2, MP = 4, PP = 2
+
+    # DP = 2, MP = 2, PP = 4
+
+    # DP = 2, PP = 8
+
+    # MP = 8, PP = 2
+
+    # MP = 4, PP = 4
+
+    # MP = 2, PP = 8
+
+    # MP = 1, PP = 16
+
+    # =================
+    # 6.7B model
+    # TODO (figure out the largest available microBS)
+
 
 ],
 
 32: [
+    # From now on, we maximize DP if possible.
+    # 6.7 B model
 
+    #==================
+    # 13B model
 ],
 
 64: [
+    # 13B model
+
+    #==================
+    # 39B model
 
 ]
 }

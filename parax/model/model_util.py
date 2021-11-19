@@ -290,6 +290,9 @@ def optax_adafactor(
 
 
 class TrainState(train_state.TrainState):
+    """This is an improved version of the original flax train state that wraps
+    the logic for mixed precision training.
+    """
     master_copy: flax.core.FrozenDict[str, Any]
     dynamic_scale: flax.optim.DynamicScale
 

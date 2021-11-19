@@ -41,7 +41,7 @@ class GlobalConfig:
         self.force_data_parallel = False  # Whether force to generate data-parallel
         self.force_zero_stage_3 = False  # Whether force to generate a strategy similar to
         # ZeRO optimizer stage 3
-        self.force_zero_stage_3_all_gather_threshold = 1 << 20  # The threshold of all-gather combiner
+        self.force_zero_stage_3_all_gather_threshold = 1 << 26  # The threshold of all-gather combiner
         # if force_zero_stage_3 is true.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.

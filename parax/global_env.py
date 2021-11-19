@@ -18,7 +18,7 @@ class GlobalConfig:
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
 
-        # logical mesh shape related options
+        ########## Options for logical mesh shape search ##########
         self.search_logical_mesh_shape = False
         self.mesh_shape_search_mode = "cost_model"
         self.mesh_shape_search_log_file = None
@@ -39,10 +39,15 @@ class GlobalConfig:
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
+        self.allow_replicated_parameters = True  # Whether allow replicated parameters.
         self.force_data_parallel = False  # Whether force to generate data-parallel
+        self.force_zero_stage_3 = False  # Whether force to generate a strategy similar to
+        # ZeRO optimizer stage 3
+        self.force_zero_stage_3_all_gather_threshold = 1 << 26  # The threshold of all-gather combiner
+        # if force_zero_stage_3 is true.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
+        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
-        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape
 
         ########## Options for eager pipeline runtime ##########
         self.pipeline_aggressively_sync = False

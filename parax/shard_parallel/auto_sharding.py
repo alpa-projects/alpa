@@ -88,8 +88,20 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
         mesh_shape = logical_mesh.id_mesh.shape
 
+        # Set configs for force_zero_stage_3
+        if global_config.force_zero_stage_3:
+            force_data_parallel = True
+            prefer_reduce_scatter = True
+            reduce_scatter_aggresive_partition = True
+            all_gather_threshold = global_config.force_zero_stage_3_all_gather_threshold
+        else:
+            force_data_parallel = global_config.force_data_parallel
+            prefer_reduce_scatter = global_config.prefer_reduce_scatter
+            reduce_scatter_aggresive_partition = False
+            all_gather_threshold = 1 << 60
+
         # Set configs for force_data_parallel
-        if global_config.force_data_parallel:
+        if force_data_parallel:
             allow_all_gather = False
             allow_all_to_all = False
 
@@ -127,8 +139,10 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::all_gather_cost": 1e10,
                 "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
                 "auto_sharding::all_to_all_cost": 1e10,
-                "auto_sharding::prefer_reduce_scatter":
-                    global_config.prefer_reduce_scatter,
+                "auto_sharding::allow_replicated_parameters":
+                    global_config.allow_replicated_parameters,
+                "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
+                "auto_sharding::reduce_scatter_aggresive_partition": reduce_scatter_aggresive_partition,
                 "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
                     global_config.allow_recompute_heavy_op,
@@ -150,7 +164,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                     logical_mesh.physical_mesh, "prof_result", None),
 
                 # Communication combiner options
-                "combiner::all_gather_threshold": 1 << 60,
+                "combiner::all_gather_threshold": all_gather_threshold,
                 "combiner::all_reduce_threshold": 1 << 60,
                 "combiner::use_continuous_buffer": True,
 

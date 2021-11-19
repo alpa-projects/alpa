@@ -141,10 +141,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::all_to_all_cost": 1e10,
                 "auto_sharding::allow_replicated_parameters":
                     global_config.allow_replicated_parameters,
-                "auto_sharding::prefer_reduce_scatter":
-                    prefer_reduce_scatter,
-                "auto_sharding::reduce_scatter_aggresive_partition":
-                    reduce_scatter_aggresive_partition,
+                "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
+                "auto_sharding::reduce_scatter_aggresive_partition": reduce_scatter_aggresive_partition,
                 "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
                     global_config.allow_recompute_heavy_op,

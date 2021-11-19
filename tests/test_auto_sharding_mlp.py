@@ -343,7 +343,8 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
         global_config.force_zero_stage_3 = True
-        global_config.force_zero_stage_3_all_gather_threshold = (32 * 32 + 32) * 6 * 4
+        global_config.force_zero_stage_3_all_gather_threshold = (32 * 32 +
+                                                                 32) * 6 * 4
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_model_parallel_reduce_scatter(self):
@@ -410,7 +411,8 @@ def suite():
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))
     suite.addTest(
-        AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3"))
+        AutoShardingMLPTest(
+            "test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3"))
 
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))

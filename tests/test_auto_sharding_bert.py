@@ -166,7 +166,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 deterministic, use_remat, device_mesh)
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
+                                      i)
 
     def test_bert_layer_model_parallel(self):
         batch_size = 8
@@ -362,7 +363,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 # The special case is too complicated, skip it
                 continue
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i, 1)
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
+                                      i, 1)
 
     def test_bert_mlm_model_parallel(self):
         batch_size = 16
@@ -591,7 +593,8 @@ def suite():
     suite.addTest(
         AutoShardingAttentionTest("test_bert_mlm_2d_mesh_reduce_scatter"))
     suite.addTest(
-        AutoShardingAttentionTest("test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
+        AutoShardingAttentionTest(
+            "test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
 
     suite.addTest(
         AutoShardingAttentionTest("test_bert_layer_model_parallel_remat"))

@@ -16,7 +16,7 @@ from parax.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainSt
 from parax.model.model_util import optax_adafactor
 
 from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
-                                    assert_expert_partitioned)
+                                    assert_expert_partitioned, assert_sharding_zero_stage_3)
 
 
 class AutoShardingMoETest(unittest.TestCase):
@@ -295,6 +295,7 @@ class AutoShardingMoETest(unittest.TestCase):
             # Special case: zero stage 3
             if global_config.force_zero_stage_3:
                 assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
+                assert_sharding_zero_stage_3(state, 4)
                 continue
 
             # Normal cases

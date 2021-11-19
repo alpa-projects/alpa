@@ -290,8 +290,14 @@ class AutoShardingMoETest(unittest.TestCase):
             # Check communication cost
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-                count_communication_primitives(hlo_ir)
+                count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
 
+            # Special case: zero stage 3
+            if global_config.force_zero_stage_3:
+                assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
+                continue
+
+            # Normal cases
             if global_config.prefer_reduce_scatter:
                 if global_config.force_data_parallel:
                     assert 0 < n_reduce_scatter <= 2
@@ -302,7 +308,7 @@ class AutoShardingMoETest(unittest.TestCase):
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
             else:
                 if global_config.force_data_parallel:
-                    assert n_all_reduce <= 2  # one for loss, one for weight
+                    assert n_all_reduce == 1
                     assert n_total == n_all_reduce
                 else:
                     assert n_all_reduce <= 4
@@ -355,6 +361,11 @@ class AutoShardingMoETest(unittest.TestCase):
         global_config.force_data_parallel = True
         self.test_moe_lm()
 
+    def test_moe_lm_data_parallel_reduce_scatter_zero_3(self):
+        global_config.force_zero_stage_3 = True
+        global_config.force_zero_stage_3_all_gather_threshold = 1
+        self.test_moe_lm()
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -370,6 +381,8 @@ def suite():
     suite.addTest(AutoShardingMoETest("test_moe_lm_2d_reduce_scatter"))
     suite.addTest(
         AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
+    suite.addTest(
+        AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter_zero_3"))
 
     return suite
 

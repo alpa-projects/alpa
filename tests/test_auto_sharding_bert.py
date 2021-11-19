@@ -166,8 +166,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 deterministic, use_remat, device_mesh)
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
-                                      i)
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i)
 
     def test_bert_layer_model_parallel(self):
         batch_size = 8
@@ -359,8 +358,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, deterministic, device_mesh)
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
-                                      i, 1)
+            if global_config.force_zero_stage_3:
+                # The special case is too complicated, skip it
+                continue
+
+            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, i, 1)
 
     def test_bert_mlm_model_parallel(self):
         batch_size = 16
@@ -520,6 +522,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         global_config.prefer_reduce_scatter = True
         self.test_bert_mlm_data_parallel()
 
+    def test_bert_mlm_data_parallel_reduce_scatter_zero_3(self):
+        global_config.force_zero_stage_3 = True
+        global_config.force_zero_stage_3_all_gather_threshold = 1
+        self.test_bert_mlm_data_parallel()
+
     def test_bert_mlm_model_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_bert_mlm_model_parallel()
@@ -583,6 +590,8 @@ def suite():
             "test_bert_mlm_model_parallel_reduce_scatter"))
     suite.addTest(
         AutoShardingAttentionTest("test_bert_mlm_2d_mesh_reduce_scatter"))
+    suite.addTest(
+        AutoShardingAttentionTest("test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
 
     suite.addTest(
         AutoShardingAttentionTest("test_bert_layer_model_parallel_remat"))

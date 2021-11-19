@@ -681,27 +681,27 @@ def generate_sharded_xla_computations(
 def rewrite_hook(eqns, gensym_fn):
     for idx, eqn in enumerate(eqns):
         eqn: JaxprEqn
-        if ("mark_type" in eqn.params and
-                eqn.params["mark_type"] == "hook"):
-            later_eqns = eqns[idx + 1:]
+        if ("mark_type" in eqn.params and eqn.params["mark_type"] == "hook"):
             used_vars = OrderedSet()
             defined_vars = OrderedSet()
-            for e in later_eqns:
-                used_vars.update(
-                    [v for v in e.invars if isinstance(v, Var)])
-                defined_vars.update(e.outvars)
-            marked = used_vars.difference(defined_vars)
+            for e in eqns[0:idx]:
+                defined_vars.update(
+                    [v for v in e.outvars if not isinstance(v, DropVar)])
+            for e in eqns[idx + 1:]:
+                used_vars.update([v for v in e.invars if isinstance(v, Var)])
+            marked = used_vars.intersection(defined_vars)
             hooked = list(marked)
-            new_hook = mark_hook_jaxpreqn(
-                hooked, [gensym_fn(v.aval) for v in hooked])
+            new_hook = mark_hook_jaxpreqn(hooked,
+                                          [gensym_fn(v.aval) for v in hooked])
             rewrite_dict = dict(zip(hooked, new_hook.outvars))
             eqns[idx] = new_hook
             for i in range(idx + 1, len(eqns)):
                 e = eqns[i]
                 eqns[i] = new_jaxpr_eqn(
-                    [get_var_mapping(rewrite_dict, v) for v in e.invars], e.outvars,
-                    e.primitive, e.params)
+                    [get_var_mapping(rewrite_dict, v) for v in e.invars],
+                    e.outvars, e.primitive, e.params)
             return new_hook
+
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                              used: OrderedSet[Var],

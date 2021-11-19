@@ -139,6 +139,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     stage_indices = []
     stage_hooks = []
 
+    # TODO(yonghao): only generate these info once for all mesh shape
     for start in range(0, num_layers):
         for end in range(start, num_layers):
             layer_indices = (

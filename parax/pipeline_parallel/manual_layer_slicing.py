@@ -7,6 +7,7 @@ from jax._src.api import make_jaxpr
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       new_jaxpr_eqn, gensym)
 from jax.interpreters.partial_eval import remat_call_p
+import numpy as np
 
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
@@ -39,12 +40,37 @@ def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
     return sliced_eqns
 
 
-def transform_pipeline_forward(fn: Callable, transform_fn, static_argnums=()):
+def lift_pipeline_marker(jaxpr: ClosedJaxpr):
+    """Lift the first and last pipeline marker if it is not the first/last eqn of all."""
+    marker_idx = np.nonzero([e.primitive is pipeline_p for e in jaxpr.eqns])[0]
+    assert marker_idx.size > 1
+    start_idx = marker_idx[0]
+    end_idx = marker_idx[-1]
+    new_eqns = ([jaxpr.eqns[start_idx]] + jaxpr.eqns[0:start_idx] +
+                jaxpr.eqns[start_idx + 1:end_idx] + jaxpr.eqns[end_idx + 1:] +
+                [jaxpr.eqns[end_idx]])
+    cnt = 0
+    for eqn in new_eqns:
+        if eqn.primitive is pipeline_p:
+            eqn.params["name"] = str(cnt)
+            if eqn.params["mark_type"] == "end":
+                cnt += 1
+    return ClosedJaxpr(
+        Jaxpr(jaxpr.jaxpr.constvars, jaxpr.jaxpr.invars, jaxpr.jaxpr.outvars,
+              new_eqns), jaxpr.consts)
+
+
+def transform_pipeline_forward(fn: Callable,
+                               transform_fn,
+                               static_argnums=(),
+                               lift_markers=False):
 
     def get_sliced(*args):
         origin_jaxpr, out_shape_tree = make_jaxpr(fn,
                                                   static_argnums=static_argnums,
                                                   return_shape=True)(*args)
+        if lift_markers:
+            origin_jaxpr = lift_pipeline_marker(origin_jaxpr)
         sliced_eqns = slice_eqns_by_pipeline_marks(origin_jaxpr)
         return origin_jaxpr, sliced_eqns, out_shape_tree
 
@@ -181,7 +207,7 @@ def insert_marker(origin_jaxpr, sliced_eqns):
               origin_jaxpr.jaxpr.outvars, new_eqns), origin_jaxpr.consts)
 
 
-def manual_layer_slicing(fn: Callable, static_argnums=()):
+def manual_layer_slicing(fn: Callable, static_argnums=(), lift_markers=False):
     """
     A helper for manual layer slicing to mark all variables sent cross layers.
     Args:
@@ -215,7 +241,7 @@ def manual_layer_slicing(fn: Callable, static_argnums=()):
         mark_pipeline("2", "end"): marks loss
     """
     return transform_pipeline_forward(fn, add_pipeline_marks_for_sliced_eqns,
-                                      static_argnums)
+                                      static_argnums, lift_markers)
 
 
 def remat(fn: Callable, static_argnums=(), use_pipeline=True):

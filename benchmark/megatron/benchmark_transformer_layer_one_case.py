@@ -1,3 +1,5 @@
+import time
+
 import argparse
 import os
 import sys
@@ -152,6 +154,7 @@ def benchmark_transformer_layer_one_case(benchmark_case):
               f"{peak_mem/GB:5.3f}", f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", ]
     result_tsv = "result_trans-" + str(rank) + ".tsv"
     write_tsv(heads, values, result_tsv)
+    time.sleep(10)
 
 
 if __name__ == "__main__":

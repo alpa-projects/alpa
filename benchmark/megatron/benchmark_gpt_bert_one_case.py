@@ -213,6 +213,7 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
               f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
               f"{peak_mem/GB:5.3f}"]
     write_tsv(heads, values, f"{model_type}_{output_file_name}_rank{rank}.tsv")
+    time.sleep(10)
 
 
 if __name__ == "__main__":

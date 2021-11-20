@@ -536,19 +536,39 @@ def log_jaxpr(jaxpr, name):
 ########################################
 
 
+def get_memory_status(local_devices):
+    return local_devices[0].client_memory_usage
+
+
 def profile_xla_executable(compiled, backend, local_devices):
     """Measure the time costs of a xla executable with dummy inputs."""
     hlo_module = compiled.hlo_modules()[0]
+    cost_failed = [np.inf] * 3
 
     # Allocate dummy buffers
     input_shapes = hlo_module.parameter_shapes()
-    device_inputs = []
+
+    # prune OOM cases, not exact because third party lib not considered:
+    free_mem = get_memory_status(local_devices)
+    input_bytes = 0
     for shape in input_shapes:
-        device_inputs.append([
-            backend.buffer_from_pyval(
-                np.empty(shape.dimensions(), shape.numpy_dtype()),
-                local_devices[i]) for i in range(len(local_devices))
-        ])
+        input_bytes += np.prod(
+            shape.dimensions()) * shape.numpy_dtype().itemsize
+    if free_mem < compiled.total_allocation_size():
+        return cost_failed
+
+    device_inputs = []
+    try:
+        for shape in input_shapes:
+            device_inputs.append([
+                backend.buffer_from_pyval(
+                    np.empty(shape.dimensions(), shape.numpy_dtype()), device)
+                for device in local_devices
+            ])
+        local_devices[0].synchronize_all_activity()
+    except:
+        return cost_failed
+    free_mem = get_memory_status(local_devices)
 
     # Run benchmark
     def run_func():
@@ -564,8 +584,38 @@ def profile_xla_executable(compiled, backend, local_devices):
 
         local_devices[0].synchronize_all_activity()
 
-    costs = benchmark_func(run_func, repeat=3, number=3)
+    try:
+        costs = benchmark_func(run_func, repeat=3, number=3)
+    except:
+        costs = cost_failed
     return costs
+
+
+def profile_pipeline_xla_executable(compiled,
+                                    backend,
+                                    local_devices,
+                                    intermediates=0):
+    """wrap profile xla executable with intermediates of other microbatches"""
+    # count memory for intermediates in other microbatch for pipeline-parallelism
+    cost_failed = [np.inf] * 3
+    intermediates = int(intermediates)
+
+    free_mem = get_memory_status(local_devices)
+    if free_mem < intermediates:
+        return cost_failed
+
+    dummy_buffer = []
+    if intermediates > 0:
+        shape = (intermediates,)
+        dtype = np.int8
+        for device in local_devices:
+            try:
+                dummy_buffer.append(
+                    backend.buffer_from_pyval(np.empty(shape, dtype), device))
+            except:
+                return cost_failed
+
+    return profile_xla_executable(compiled, backend, local_devices)
 
 
 def benchmark_func(run_func,

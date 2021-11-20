@@ -342,9 +342,9 @@ class MeshHostWorker:
             return prof_result
         return None
 
-    def profile_executable_with_dummy_inputs(self, uuid: int):
+    def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
-            self.backend, self.local_devices)
+            self.backend, self.local_devices, **kwargs)
 
     # TODO(yonghao): the sync function should be carefully reconsidered
     def profile_resharding_send_task(self,

@@ -40,11 +40,15 @@ test_gpt_suite = {
 
 16: [
     # 2.7B model
+    # (16,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  1,    1,  *fixed_params),
+    # DP = 2, MP = 2, PP = 4
 
-
+    # (16,  *gpt_specs["2.7B"],  1,   1,   1,   1,   16,  1,    1,  *fixed_params),
     # 6.7B model
-]
 
+    # (16,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  1,    1,  *fixed_params),
+    (8,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  1,    1,  *fixed_params),
+]
 }
 
 
@@ -358,41 +362,137 @@ paper_gpt_suite = {
     # 2.7B model
     # DP maximally can only be 4
     # DP = 4, MP =4
-    (8,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  1,    1,  *fixed_params),
+    (16,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  4,   4,   1,   1,   1,  64,    1,  *fixed_params),
 
     # DP = 4, MP = 2, PP = 2
-    (8,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  1,    1,  *fixed_params),
+    (16,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  4,   2,   1,   1,   2,  64,    1,  *fixed_params),
 
     # DP = 4, PP = 4
-    (8,  *gpt_specs["2.7B"],  4,   1,   1,   1,   4,  1,    1,  *fixed_params),
+    # impossible even when bs = 1
 
     # DP = 2, MP = 8
-    (8,  *gpt_specs["2.7B"],  2,   8,   1,   1,   4,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["2.7B"],  2,   8,   1,   1,   1,  1,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  2,   8,   1,   1,   1,  2,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  2,   8,   1,   1,   1,  4,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  2,   8,   1,   1,   1,  8,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  2,   8,   1,   1,   1,  16,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  2,   8,   1,   1,   1,  32,    1,  *fixed_params),
 
     # DP = 2, MP = 4, PP = 2
+    (32,  *gpt_specs["2.7B"],  2,   4,   1,   1,   2,  1,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  2,   4,   1,   1,   2,  2,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  2,   4,   1,   1,   2,  4,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  2,   4,   1,   1,   2,  8,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  2,   4,   1,   1,   2,  16,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  2,   4,   1,   1,   2,  32,    1,  *fixed_params),
 
     # DP = 2, MP = 2, PP = 4
+    (32,  *gpt_specs["2.7B"],  2,   2,   1,   1,   4,  1,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  2,   2,   1,   1,   4,  2,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  2,   2,   1,   1,   4,  4,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  2,   2,   1,   1,   4,  8,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  2,   2,   1,   1,   4,  16,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  2,   2,   1,   1,   4,  32,    1,  *fixed_params),
 
     # DP = 2, PP = 8
+    (16,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  2,   1,   1,   1,   8,  64,    1,  *fixed_params),
 
     # MP = 8, PP = 2
+    (32,  *gpt_specs["2.7B"],  1,   8,   1,   1,   2,  1,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  1,   8,   1,   1,   2,  2,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  1,   8,   1,   1,   2,  4,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  1,   8,   1,   1,   2,  8,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  1,   8,   1,   1,   2,  16,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  1,   8,   1,   1,   2,  32,    1,  *fixed_params),
 
     # MP = 4, PP = 4
+    (32,  *gpt_specs["2.7B"],  1,   4,   1,   1,   4,  1,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  1,   4,   1,   1,   4,  2,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  1,   4,   1,   1,   4,  4,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  1,   4,   1,   1,   4,  8,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  1,   4,   1,   1,   4,  16,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  1,   4,   1,   1,   4,  32,    1,  *fixed_params),
 
     # MP = 2, PP = 8
+    (32,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  1,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  2,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  4,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  8,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  16,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  32,    1,  *fixed_params),
 
     # MP = 1, PP = 16
+    (16,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["2.7B"],  1,   2,   1,   1,   8,  64,    1,  *fixed_params),
 
-    # =================
+
+    # ======================================
     # 6.7B model
-    # TODO (figure out the largest available microBS)
+    # DP maximally can only be 1
 
+    # MP = 8, PP = 2
+    (16,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["6.7B"],  1,   8,   1,   1,   2,  64,    1,  *fixed_params),
 
+    # MP = 4, PP = 4
+    (16,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["6.7B"],  1,   4,   1,   1,   4,  64,    1,  *fixed_params),
+
+    # MP = 2, PP = 8
+    (16,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["6.7B"],  1,   2,   1,   1,   8,  64,    1,  *fixed_params),
+
+    # MP = 1, PP = 16
+    (8,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  1,    1,  *fixed_params),
+    (32,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  2,    1,  *fixed_params),
+    (64,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  4,    1,  *fixed_params),
+    (128,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  8,    1,  *fixed_params),
+    (256,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  16,    1,  *fixed_params),
+    (512,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  32,    1,  *fixed_params),
+    (1024,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  64,    1,  *fixed_params),
 ],
 
 32: [
     # From now on, we maximize DP if possible.
-    # 6.7 B model
+    # 6.7B model
 
     #==================
     # 13B model

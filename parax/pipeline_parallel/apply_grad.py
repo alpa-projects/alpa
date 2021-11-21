@@ -164,6 +164,21 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     return new_closed_jaxpr, update_outs, grad_in_to_out
 
 
+def get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
+                                      global_invars, donated_invars,
+                                      donation_mapping):
+    outvar_mesh = dict()
+    donated_global_vars = set([
+        invar for invar, donate in zip(global_invars, donated_invars) if donate
+    ])
+    for stage_idx, stage in enumerate(jax_pipeline_stages):
+        for invar in stage.invars:
+            if invar in donated_global_vars:
+                outvar_mesh.setdefault(donation_mapping[invar],
+                                       OrderedSet()).add(stage_to_mesh[stage_idx])
+    return outvar_mesh
+
+
 def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
                            num_micro_batches, num_meshes, global_invars,
@@ -187,14 +202,21 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
         apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
         global_outvars)
 
+    # update donation mapping
     donation_mapping = dict()
     for idx, invar in enumerate(global_invars):
         if donated_invars[idx]:
             donation_mapping[invar] = global_outvars[idx]
+    # create outvar constraints
+    outvar_mesh = get_apply_grad_outvar_constraints(jax_pipeline_stages,
+                                                    stage_to_mesh,
+                                                    global_invars,
+                                                    donated_invars,
+                                                    donation_mapping)
 
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
-                                                   gradvar_to_mesh, num_meshes,
-                                                   donation_mapping)
+                                                   gradvar_to_mesh, outvar_mesh,
+                                                   num_meshes, donation_mapping)
     apply_deps, apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        mask,
@@ -278,13 +300,15 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
-                         mesh_num, donation_mapping):
+                         outvar_mesh: Dict[Var, OrderedSet[int]], mesh_num,
+                         donation_mapping):
     """
     Slice the apply gradient jaxpr based on mesh allocation information
     Args:
         closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function.
-        grad_mesh (Dict[Var, int]): dict indicating which mesh the variable is at.
+        grad_mesh (Dict[Var, int]): some invars should be at certain mesh.
         If not in the dict, the variable should be a global parameter.
+        outvar_mesh (Dict[Var, int]): some outvars should be at certain mesh
         mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
         donation_mapping (Dict[Var, Var]): donation mapping for global invars
@@ -306,6 +330,8 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     sliced_eqns = [list() for _ in range(mesh_num)]
     invars = [list() for _ in range(mesh_num)]
     outvars = [list() for _ in range(mesh_num)]
+    for var in outvar_mesh:
+        var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
     # propagate mesh assignments from input
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         at_mesh = OrderedSet()
@@ -321,7 +347,6 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                 if not isinstance(outvar, DropVar):
                     var_mesh[outvar] = OrderedSet(at_mesh)
             eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
-    # TODO(yonghao): do in rounds, consider donation
     changed = True
     while (changed):
         changed = False

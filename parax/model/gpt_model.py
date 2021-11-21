@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from parax.model.bert_model import BertConfig, FlaxBertModule, FlaxMaskedLMOutput
+from parax.model.model_util import TrainState
 
 
 class FlaxGPTForLMModule(nn.Module):

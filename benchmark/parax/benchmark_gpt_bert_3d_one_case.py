@@ -190,11 +190,11 @@ def benchmark_one_case(benchmark_case, external_args):
     heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
              "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)"]
     paralell_config = (l_dim0, l_dim1, pipeline_mp_size)
-    values = [model_type, str(benchmark_case[:6]), str(paralell_config), str(benchmark_case[8:10]),
+    values = [model_type, str(benchmark_case[:5]), str(paralell_config), str(benchmark_case[8:10]),
               str(benchmark_case[11]), str(benchmark_case[12]), str(benchmark_case[13]),
               f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}",
               f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
-    write_tsv(heads, values, f"{external_args.output}_{model_type}.tsv")
+    write_tsv(heads, values, f"{model_type}_parax_{external_args.output}.tsv")
 
     executable.shutdown()
 
@@ -207,7 +207,7 @@ def setup_benchmark():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=10)
+    parser.add_argument("--niter", type=int, default=7)
     parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--output", type=str, default="result")
     args = parser.parse_args()

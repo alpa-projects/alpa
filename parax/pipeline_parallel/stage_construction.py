@@ -1,19 +1,19 @@
-import jax
-import jax.numpy as jnp
-import ray
-import math
-import numba
-import numpy as np
 from datetime import datetime
+import math
 from time import time
 from typing import Sequence
+
+import numba
+import numpy as np
+import ray
+
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, split_global_use_and_donate,
-    generate_stage_info, compile_all)
-from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
+    compile_and_profile_stage_compute_cost, compute_intermediate_size,
+    split_global_use_and_donate, generate_stage_info, compile_all)
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
 from parax.util import OrderedSet
 
 
@@ -69,6 +69,8 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
     last_max_stage_cost = 0.0
     # FIXME(zhuohan): Set this gap as a tunable parameter in global config
     gap = 1e-6
+    assert len(
+        all_possible_stage_costs), "no solution in auto stage construction."
     for max_stage_cost in all_possible_stage_costs:
         if max_stage_cost * num_microbatches >= best_cost:
             break
@@ -81,6 +83,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
         if cost < best_cost:
             best_cost = cost
             best_solution = solution
+    assert best_solution is not None, "no solution in auto stage construction."
     return best_cost, best_solution
 
 
@@ -126,50 +129,57 @@ def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
     return compute_cost
 
 
-def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars):
+def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
+                                num_micro_batches):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
     compute_cost = np.full((num_layers, num_layers), np.inf)
     stage_infos = []
     stage_indices = []
+    stage_hooks = []
+
+    # TODO(yonghao): only generate these info once for all mesh shape
     for start in range(0, num_layers):
         for end in range(start, num_layers):
-            layer_indices = indices[start:end +
-                                    1] + indices[2 * num_layers - end -
-                                                 1:2 * num_layers - start]
+            layer_indices = (
+                indices[start:end + 1] +
+                indices[2 * num_layers - end - 1:2 * num_layers - start])
             stage_name = "stage_{}_{}".format(start, end)
-            stage_info = generate_stage_info(layers, layer_indices,
-                                             donation_mapping, global_outvars,
-                                             stage_name)
+            stage_info, hook = generate_stage_info(layers, layer_indices,
+                                                   donation_mapping,
+                                                   global_outvars, stage_name,
+                                                   end - start)
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
+            stage_hooks.append(hook)
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    compiled_outputs = compile_all(stage_infos, mesh.get_default_logical_mesh(),
-                                   n_workers, 1)
+    logical_mesh = mesh.get_default_logical_mesh()
+    compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
     physical_mesh = mesh.get_physical_mesh()
-    for (start,
-         end), compiled_output, stage_info in zip(stage_indices,
-                                                  compiled_outputs,
-                                                  stage_infos):
+    for (start, end), compiled_output, stage_info, hook in zip(
+            stage_indices, compiled_outputs, stage_infos, stage_hooks):
         _, avals, out_avals, tot_donation = stage_info
-        proto, config, in_shardings, out_shardings = compiled_output
+        proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
+        intermediate_size = compute_intermediate_size(
+            hooked_proto, hook, config) * num_micro_batches
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        executable = NormalMeshDriverExecutable(physical_mesh, compiled, config,
-                                                avals, out_avals,
-                                                donated_invars)
-        cost = executable.profile_with_dummy_inputs()
+        executable = PartialGradAccMeshDriverExecutable(physical_mesh, compiled,
+                                                        config, avals,
+                                                        out_avals,
+                                                        donated_invars, [])
+        cost = executable.profile_with_dummy_inputs(intermediates=intermediate_size)
         compute_cost[start, end] = np.mean(cost)
     return compute_cost
 
 
 def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars):
+                     global_outvars, num_micro_batches):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -185,7 +195,8 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh,
                                                         layers,
                                                         donation_mapping,
-                                                        global_outvars)
+                                                        global_outvars,
+                                                        num_micro_batches)
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
         print(
@@ -371,7 +382,8 @@ def cluster_layers_and_slice_mesh(layers,
             else:
                 compute_cost = get_compute_cost(mesh, submesh_choices, layers,
                                                 donation_mapping,
-                                                global_outvars)
+                                                global_outvars,
+                                                num_micro_batches)
                 np.save(
                     f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}",
                     compute_cost)

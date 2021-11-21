@@ -1,6 +1,7 @@
 """Test auto sharding with MLP."""
 
 import unittest
+from itertools import chain
 
 import jax
 import jax.numpy as jnp
@@ -80,6 +81,21 @@ def assert_fully_sharded(x):
     assert is_fully_sharded(x), f"Not fully sharded: {str(x.sharding_spec)}"
 
 
+def assert_sharding_zero_stage_3(state, allow_not_sharded_params=0):
+    if isinstance(state, optim.base.Optimizer):
+        params = jax.tree_util.tree_leaves(state.target)
+        opt_state = jax.tree_util.tree_leaves(state.state.param_states)
+    else:
+        params = jax.tree_util.tree_leaves(state.params)
+        opt_state = jax.tree_util.tree_leaves(state.opt_state)
+
+    num_not_sharded = 0
+    for weight in chain(params, opt_state):
+        if not is_sharded(weight) and len(weight.shape) > 1:
+            num_not_sharded += 1
+    assert num_not_sharded <= allow_not_sharded_params
+
+
 def assert_data_parallel_cost(state,
                               hlo_ir,
                               objective,
@@ -106,12 +122,22 @@ def assert_data_parallel_cost(state,
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
 
+    # Special case 1 : adafactor
     if optimizer_type == "adafactor" and global_config.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
         assert n_all_gather <= 2
         assert n_all_reduce <= 2
         return
 
+    # Special case 2 : force zero stage 3
+    if global_config.force_zero_stage_3:
+        assert n_all_reduce == 0
+        assert n_all_gather == 2
+        assert n_reduce_scatter == 1
+        assert_sharding_zero_stage_3(state)
+        return
+
+    # Normal case
     if global_config.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
         assert n_all_gather == 1
@@ -326,6 +352,12 @@ class AutoShardingMLPTest(unittest.TestCase):
         global_config.prefer_reduce_scatter = True
         self.test_n_layer_mlp_data_parallel()
 
+    def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
+        global_config.force_zero_stage_3 = True
+        global_config.force_zero_stage_3_all_gather_threshold = (32 * 32 +
+                                                                 32) * 6 * 4
+        self.test_n_layer_mlp_data_parallel()
+
     def test_n_layer_mlp_model_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_n_layer_mlp_model_parallel()
@@ -389,6 +421,10 @@ def suite():
 
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))
+    suite.addTest(
+        AutoShardingMLPTest(
+            "test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3"))
+
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))
     suite.addTest(

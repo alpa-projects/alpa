@@ -15,7 +15,8 @@ from parax.util import OrderedSet
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable
-from parax.pipeline_parallel.primitive_def import (pipeline_p,
+from parax.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
+                                                   pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.pipeline_parallel.manual_layer_slicing import get_var_mapping
 from parax.shard_parallel.auto_sharding import (compile_with_search,
@@ -23,7 +24,7 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 get_input_output_sharding_specs,
                                                 hlo_sharding_to_sharding_spec,
                                                 HloProtoStatus)
-from parax.util import get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias, log_jaxpr
+from parax.util import OrderedSet, get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias, log_jaxpr
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+# TODO(yonghao): Many redundant Jaxpr visit in this file. Wrap JaxprEqn for "ReplaceAllUseWith"
 @dataclass
 class PipelineComputation(ABC):
     """
@@ -607,7 +609,8 @@ def generate_sharded_xla_computations_compile_config(
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
-    built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars, backend)
+    built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars,
+                                     backend)
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
     jaxpr_config = in_avals, out_avals, dummy_donated_invars
@@ -675,10 +678,36 @@ def generate_sharded_xla_computations(
     return computations
 
 
+def rewrite_hook(eqns, gensym_fn):
+    for idx, eqn in enumerate(eqns):
+        eqn: JaxprEqn
+        if ("mark_type" in eqn.params and eqn.params["mark_type"] == "hook"):
+            used_vars = OrderedSet()
+            defined_vars = OrderedSet()
+            for e in eqns[0:idx]:
+                defined_vars.update(
+                    [v for v in e.outvars if not isinstance(v, DropVar)])
+            for e in eqns[idx + 1:]:
+                used_vars.update([v for v in e.invars if isinstance(v, Var)])
+            marked = used_vars.intersection(defined_vars)
+            hooked = list(marked)
+            new_hook = mark_hook_jaxpreqn(hooked,
+                                          [gensym_fn(v.aval) for v in hooked])
+            rewrite_dict = dict(zip(hooked, new_hook.outvars))
+            eqns[idx] = new_hook
+            for i in range(idx + 1, len(eqns)):
+                e = eqns[i]
+                eqns[i] = new_jaxpr_eqn(
+                    [get_var_mapping(rewrite_dict, v) for v in e.invars],
+                    e.outvars, e.primitive, e.params)
+            return new_hook
+
+
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                              used: OrderedSet[Var],
                              new_marker_name,
-                             donation_mapping=None) -> ClosedJaxpr:
+                             donation_mapping=None,
+                             insert_hook_after=None) -> ClosedJaxpr:
     """
     Merge continuous jaxprs and remove pipe markers.:
 
@@ -726,6 +755,12 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
             if outvar in used:
                 new_outvars_dict[outvar] = get_var_mapping(var_map, invar)
             var_map[outvar] = get_var_mapping(var_map, invar)
+        if idx == insert_hook_after:
+            new_eqns.append(mark_hook_jaxpreqn([], []))
+
+    if insert_hook_after is not None:
+        gensym_fn = gensym([j.jaxpr for j in jaxprs])
+        new_hook = rewrite_hook(new_eqns, gensym_fn)
 
     constvars = OrderedSet(new_constvars.keys())
     new_invars = [k for k in new_invars_dict.keys() if k not in constvars]
@@ -748,9 +783,12 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         [new_outvars_dict[v] for v in new_outvars], new_outvars,
         new_marker_name, "end")
     new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
-    return ClosedJaxpr(
+    new_jaxpr = ClosedJaxpr(
         Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
         list(new_constvars.values()))
+    if insert_hook_after is not None:
+        return new_jaxpr, new_hook
+    return new_jaxpr
 
 
 def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):

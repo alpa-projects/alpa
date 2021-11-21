@@ -15,7 +15,8 @@ from test_auto_sharding_mlp import (
     assert_all_replicated, assert_close, assert_column_partitioned,
     assert_data_parallel_cost, assert_fully_sharded, assert_less_equal,
     assert_sharded, assert_replicated_column_partitioned,
-    assert_replicated_row_partitioned, assert_row_partitioned, is_fully_sharded)
+    assert_replicated_row_partitioned, assert_row_partitioned, is_fully_sharded,
+    assert_sharding_zero_stage_3)
 
 
 class AutoShardingAttentionTest(unittest.TestCase):
@@ -359,6 +360,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, deterministic, device_mesh)
 
+            if global_config.force_zero_stage_3:
+                # only the weight and opt_state of token_embed is not sharded
+                assert_sharding_zero_stage_3(optimizer, 3)
+                continue
+
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
                                       i, 1)
 
@@ -520,6 +526,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         global_config.prefer_reduce_scatter = True
         self.test_bert_mlm_data_parallel()
 
+    def test_bert_mlm_data_parallel_reduce_scatter_zero_3(self):
+        global_config.force_zero_stage_3 = True
+        global_config.force_zero_stage_3_all_gather_threshold = 1
+        self.test_bert_mlm_data_parallel()
+
     def test_bert_mlm_model_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_bert_mlm_model_parallel()
@@ -583,6 +594,9 @@ def suite():
             "test_bert_mlm_model_parallel_reduce_scatter"))
     suite.addTest(
         AutoShardingAttentionTest("test_bert_mlm_2d_mesh_reduce_scatter"))
+    suite.addTest(
+       AutoShardingAttentionTest(
+           "test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
 
     suite.addTest(
         AutoShardingAttentionTest("test_bert_layer_model_parallel_remat"))

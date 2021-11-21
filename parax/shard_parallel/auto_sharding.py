@@ -60,7 +60,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         this file.
       strategy_config (Optional[StrategyConfig]): If is not None, do compilation
         according to this configuration.
-      multiple_stages (bool): Whether to return multiple stages sliced by xla_pipeline_maker.
+      multiple_stages (bool | str): Whether to return multiple stages sliced by xla_pipeline_maker.
       grad_acc_num_micro_batches (Optional[int]): The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
@@ -88,8 +88,20 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
         mesh_shape = logical_mesh.id_mesh.shape
 
+        # Set configs for force_zero_stage_3
+        if global_config.force_zero_stage_3:
+            force_data_parallel = True
+            prefer_reduce_scatter = True
+            reduce_scatter_aggresive_partition = True
+            all_gather_threshold = global_config.force_zero_stage_3_all_gather_threshold
+        else:
+            force_data_parallel = global_config.force_data_parallel
+            prefer_reduce_scatter = global_config.prefer_reduce_scatter
+            reduce_scatter_aggresive_partition = False
+            all_gather_threshold = 1 << 60
+
         # Set configs for force_data_parallel
-        if global_config.force_data_parallel:
+        if force_data_parallel:
             allow_all_gather = False
             allow_all_to_all = False
 
@@ -127,8 +139,10 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::all_gather_cost": 1e10,
                 "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
                 "auto_sharding::all_to_all_cost": 1e10,
-                "auto_sharding::prefer_reduce_scatter":
-                    global_config.prefer_reduce_scatter,
+                "auto_sharding::allow_replicated_parameters":
+                    global_config.allow_replicated_parameters,
+                "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
+                "auto_sharding::reduce_scatter_aggresive_partition": reduce_scatter_aggresive_partition,
                 "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
                     global_config.allow_recompute_heavy_op,
@@ -150,7 +164,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                     logical_mesh.physical_mesh, "prof_result", None),
 
                 # Communication combiner options
-                "combiner::all_gather_threshold": 1 << 60,
+                "combiner::all_gather_threshold": all_gather_threshold,
                 "combiner::all_reduce_threshold": 1 << 60,
                 "combiner::use_continuous_buffer": True,
 
@@ -170,6 +184,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
         if multiple_stages:
             hlo_stages = get_auto_sharded_hlo_stages()
+            sharded_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
         assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
@@ -211,6 +226,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     strategy_config = StrategyConfig(build_random_seed,
                                      logical_mesh.id_mesh.shape,
                                      solution_vector)
+    if multiple_stages == "stage_and_hooked":
+        return hlo_stages, sharded_proto, strategy_config
     if multiple_stages:
         return hlo_stages, strategy_config
     return compiled, strategy_config
@@ -742,13 +759,20 @@ def _call_solver_serialized_args(
 # Auto-sharded pipeline stages
 auto_sharded_hlo_stages = None
 
+hooked_sharding_protos = None
 
 def set_auto_sharded_hlo_stages(hlo_module_protos):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
     global auto_sharded_hlo_stages
     auto_sharded_hlo_stages = hlo_module_protos
 
+def set_hooked_sharding_protos(hlo_module_proto):
+    global hooked_sharding_protos
+    hooked_sharding_protos = hlo_module_proto
 
 def get_auto_sharded_hlo_stages():
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stages
+
+def get_hooked_sharding_protos():
+    return hooked_sharding_protos

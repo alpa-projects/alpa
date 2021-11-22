@@ -77,6 +77,14 @@ class MeshHostWorker:
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
+    def get_usage_memory(self):
+        self.sync()
+        return self.local_devices[0].client_memory_usage / (1024 ** 3)
+
+    def get_memory(self):
+        self.sync()
+        return self.local_devices[0].client_memory_peak / (1024 ** 3)
+
     def put_non_zero_buffer(self,
                             uuid: int,
                             device_id: int,

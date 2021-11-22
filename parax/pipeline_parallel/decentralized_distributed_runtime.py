@@ -51,38 +51,54 @@ class PipelineInstruction:
     input_uuids: Optional[np.ndarray]
     output_uuids: Optional[np.ndarray]
     opaques: Optional[Dict[str, Any]]
+    info: str
+    print_uuids: bool = False
 
     @classmethod
-    def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs):
+    def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs, info=""):
         return cls(opcode=PipelineInstType.RUN,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=output_uuids,
-                   opaques={"kwargs": kwargs})
+                   opaques={"kwargs": kwargs},
+                   info=info)
 
     @classmethod
-    def SEND(cls, task_uuid, input_uuids):
+    def SEND(cls, task_uuid, input_uuids, info=""):
         return cls(opcode=PipelineInstType.SEND,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=None,
-                   opaques=None)
+                   opaques=None,
+                   info=info)
 
     @classmethod
-    def RECV(cls, task_uuid, output_uuids, set_empty_buffer):
+    def RECV(cls, task_uuid, output_uuids, set_empty_buffer, info=""):
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
                    output_uuids=output_uuids,
-                   opaques={"set_empty_buffer": set_empty_buffer})
+                   opaques={"set_empty_buffer": set_empty_buffer},
+                   info=info)
 
     @classmethod
-    def FREE(cls, input_uuids):
+    def FREE(cls, input_uuids, info=""):
         return cls(opcode=PipelineInstType.FREE,
                    task_uuid=None,
                    input_uuids=input_uuids,
                    output_uuids=None,
-                   opaques=None)
+                   opaques=None,
+                   info=info,
+                   print_uuids=False)
+
+    def __str__(self):
+        ret = ""
+        ret += "Optype: " + str(self.opcode)  + "Task uuid: " + str(self.task_uuid) #+ "\n"
+        if self.print_uuids:
+            ret += "input uuids:" + str(self.input_uuids) #+ "\n"
+            ret += "output uuids:" + str(self.output_uuids) #+ "\n"
+        ret += " Info: " + self.info #+ "\n"
+        return ret
 
 
 AllocateZeroWorkerExecutableConfig = namedtuple(
@@ -213,7 +229,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             elif (invar in self.grad_dummy_invars and
                   batch_idx != self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
-                key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
+                key = (var_key,
+                       self.schedule.previous_backward_batch_index(batch_idx))
             else:
                 var_key = repr(invar)
                 key = (repr(invar), batch_idx)
@@ -307,9 +324,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     # Get input and output uuids. They should be at the mesh
                     input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host), dtype=np.int64)
+                        (len(stage.invars), num_devices_per_host),
+                        dtype=np.int64)
                     output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host), dtype=np.int64)
+                        (len(stage.outvars), num_devices_per_host),
+                        dtype=np.int64)
                     for idx, invar in enumerate(stage.invars):
                         _, key = get_invar_key(invar, batch_idx)
                         input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
@@ -323,7 +342,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                     list(output_uuids[idx])))
 
                     kwargs = {
-                        "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
+                        "skip_grad_sync":
+                            self.schedule.should_skip_grad_sync(task),
                         "sync_before": False,
                         "sync_after": False,
                     }
@@ -394,10 +414,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 in_uuids = []
                 out_uuids = output_uuids[worker_idx]
             self.instruction_lists[worker].append(
-                PipelineInstruction.RUN(config.exec_uuid, in_uuids, out_uuids, {
-                    "sync_before": False,
-                    "sync_after": False
-                }))
+                PipelineInstruction.RUN(
+                    config.exec_uuid,
+                    in_uuids,
+                    out_uuids, {
+                        "sync_before": False,
+                        "sync_after": False
+                    },
+                    info="mem zero" if preallocated else "allocate zero"))
 
         # (args, workers, devices)
         transposed = output_uuids.transpose([1, 0, 2])
@@ -730,7 +754,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # check if there is OOM
         if global_config.pipeline_runtime_mode == "paper":
             self._check_alive()
-
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_args = [
@@ -1013,6 +1036,7 @@ class PipelineMeshWorkerExecutable:
                                        task_config.grad_shard_shapes,
                                        task_config.grad_shard_dtypes)
 
+
     def execute_on_worker(self, input_global_uuids, output_global_uuids):
         # copy to local env
         assert len(self.input_local_uuids) == len(input_global_uuids)
@@ -1035,31 +1059,27 @@ class PipelineMeshWorkerExecutable:
         # Execute
         timers("overall").start(sync_func=self.worker.sync)
         for instruction in self.instructions:
-            used_memory = 16 * 0.95 - self.worker.local_devices[0].client_memory_usage / (1024**3)
-            print("Instruction: {}, meta: {}, ...Memory usage: {} GB...".
-                  format(instruction.opcode, instruction.opaques, used_memory))
             if instruction.opcode == PipelineInstType.RUN:
-                timers("compute").start(self.worker.sync)
+                timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
-                timers("compute").suspend(self.worker.sync)
+                timers("compute").suspend()
             elif instruction.opcode == PipelineInstType.SEND:
-                timers("resharding_send").start(self.worker.sync)
+                timers("resharding_send").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids)
-                timers("resharding_send").suspend(self.worker.sync)
+                timers("resharding_send").suspend()
             elif instruction.opcode == PipelineInstType.RECV:
-                timers("resharding_recv").start(self.worker.sync)
+                timers("resharding_recv").start()
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques["set_empty_buffer"])
-                timers("resharding_recv").suspend(self.worker.sync)
+                timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
-                timers("111").start(self.worker.sync)
                 self.worker.delete_buffers(instruction.input_uuids)
-                timers("111").suspend(self.worker.sync)
+
 
         for timer_name in ["compute", "resharding_send", "resharding_recv"]:
             if timer_name in timers:

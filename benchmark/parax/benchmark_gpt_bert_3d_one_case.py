@@ -194,7 +194,7 @@ def benchmark_one_case(benchmark_case, external_args):
               str(benchmark_case[11]), str(benchmark_case[12]), str(benchmark_case[13]),
               f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}",
               f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
-    write_tsv(heads, values, f"{model_type}_parax_{external_args.output}.tsv")
+    write_tsv(heads, values, f"{model_type}_parax_{external_args.exp_name}.tsv")
 
     executable.shutdown()
 
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=7)
     parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--output", type=str, default="result")
+    parser.add_argument("--exp_name", type=str, default="result")
     args = parser.parse_args()
     case = eval(args.case)
     setup_benchmark()

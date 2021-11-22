@@ -14,7 +14,7 @@ from parax.pipeline_parallel.stage_profiling import (compile_all,
                                                      split_global_use_and_donate)
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks)
+    mark_missing_vars_in_backward_computation_pipeline_marks)
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
@@ -83,9 +83,9 @@ acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_grad_to_accumulate_grad(
     compute_jaxpr, gensym_fn)
 
 stages = slice_closed_jaxpr_by_full_pipeline_marks(acc_grad_jaxpr)
-stages = mark_missing_vars_in_pipeline_marks(stages,
-                                             acc_grad_jaxpr.jaxpr.invars,
-                                             acc_grad_jaxpr.jaxpr.outvars)
+stages = mark_missing_vars_in_backward_computation_pipeline_marks(stages,
+                                                                  acc_grad_jaxpr.jaxpr.invars,
+                                                                  acc_grad_jaxpr.jaxpr.outvars)
 
 donated_global_invars = compute_jaxpr.jaxpr.invars[:-2]
 global_invars = acc_grad_jaxpr.jaxpr.invars

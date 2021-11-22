@@ -11,7 +11,7 @@ from jax.interpreters import partial_eval as pe
 from parax.pipeline_parallel.computation import (
     PipelineComputation, XlaPipelineComputation,
     slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks)
+    mark_missing_vars_in_backward_computation_pipeline_marks)
 from parax.pipeline_parallel.base_runtime import BaseRuntime
 
 # pylint: disable=redefined-builtin
@@ -154,7 +154,7 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     global_outvars = closed_jaxpr.jaxpr.outvars
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         closed_jaxpr)
-    jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
+    jax_pipeline_stages = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_stages, global_invars, global_outvars)
     xla_pipeline_stages = [
         XlaPipelineComputation.from_jax_pipeline_computation(stage)

@@ -1,6 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
 import enum
+import jax
 import logging
 from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
@@ -1034,26 +1035,31 @@ class PipelineMeshWorkerExecutable:
         # Execute
         timers("overall").start(sync_func=self.worker.sync)
         for instruction in self.instructions:
+            used_memory = 16 * 0.95 - self.worker.local_devices[0].client_memory_usage / (1024**3)
+            print("Instruction: {}, meta: {}, ...Memory usage: {} GB...".
+                  format(instruction.opcode, instruction.opaques, used_memory))
             if instruction.opcode == PipelineInstType.RUN:
-                timers("compute").start()
+                timers("compute").start(self.worker.sync)
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
-                timers("compute").suspend()
+                timers("compute").suspend(self.worker.sync)
             elif instruction.opcode == PipelineInstType.SEND:
-                timers("resharding_send").start()
+                timers("resharding_send").start(self.worker.sync)
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids)
-                timers("resharding_send").suspend()
+                timers("resharding_send").suspend(self.worker.sync)
             elif instruction.opcode == PipelineInstType.RECV:
-                timers("resharding_recv").start()
+                timers("resharding_recv").start(self.worker.sync)
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques["set_empty_buffer"])
-                timers("resharding_recv").suspend()
+                timers("resharding_recv").suspend(self.worker.sync)
             elif instruction.opcode == PipelineInstType.FREE:
+                timers("111").start(self.worker.sync)
                 self.worker.delete_buffers(instruction.input_uuids)
+                timers("111").suspend(self.worker.sync)
 
         for timer_name in ["compute", "resharding_send", "resharding_recv"]:
             if timer_name in timers:

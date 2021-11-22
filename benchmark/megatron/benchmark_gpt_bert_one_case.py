@@ -194,7 +194,7 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     timers.log(names, normalizer=repeat * number)
 
     # Print results
-    peak_mem = torch.cuda.max_memory_allocated(0)
+    peak_mem = torch.cuda.max_memory_allocated(rank)
     tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
                                 hidden_size, vocab_size,
                                 torch.distributed.get_world_size(),

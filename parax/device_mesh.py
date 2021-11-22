@@ -509,6 +509,7 @@ class PhysicalDeviceMesh:
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".95",
             }
 
             # Launch a ray actor

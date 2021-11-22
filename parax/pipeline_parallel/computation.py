@@ -381,6 +381,7 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
             var_computation_id[var] = -1
 
     computation_marked_to_unmarked_invars = [{} for _ in computations]
+    computation_weight_invars = [{} for _ in computations]
     computation_additional_invars = [OrderedSet() for _ in computations]
     computation_additional_outvars = [OrderedSet() for _ in computations]
     for computation_id, computation in enumerate(computations):
@@ -401,7 +402,7 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
                         if (computation_id >= num_forward_computations and
                                 source_computation_id == 2 * num_forward_computations - computation_id - 1 and
                                 var in computation_marked_to_unmarked_invars[source_computation_id]):
-                            computation_additional_invars[computation_id].add(
+                            computation_weight_invars[computation_id][var] = (
                                 computation_marked_to_unmarked_invars[source_computation_id][var])
                             continue
                         # Mark all the variables in the backward computation
@@ -433,7 +434,8 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
         computation_var_mapping = {
             var: gensym_func(var.aval)
             for var in computation_additional_invars[i] |
-            computation_additional_outvars[i]
+            computation_additional_outvars[i] |
+            computation_weight_invars[i].keys()
         }
         pipeline_start_invars = list(computation.eqns[0].invars)
         pipeline_start_outvars = [
@@ -444,6 +446,9 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
         for var in computation_additional_invars[i]:
             pipeline_start_invars.append(var)
             pipeline_start_outvars.append(computation_var_mapping[var])
+        for marked_var, unmarked_var in computation_weight_invars[i].items():
+            pipeline_start_invars.append(unmarked_var)
+            pipeline_start_outvars.append(computation_var_mapping[marked_var])
         pipeline_start_invars_without_literal = []
         pipeline_start_outvars_without_literal = []
         for invar, outvar in zip(pipeline_start_invars, pipeline_start_outvars):

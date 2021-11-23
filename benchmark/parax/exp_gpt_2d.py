@@ -28,10 +28,6 @@ gpt_specs = {
 "13B":  (1024, 5120,  40,  40,    51200),
 "39B":  (1024, 8192,  48,  64,    51200),
 "76B":  (1024, 10240, 60,  80,    51200),
-
-"4L":   (1024, 2560,  4,   32,    51200),
-"8L":   (1024, 2560,  8,   32,    51200),
-"16L":  (1024, 2560,  16,  32,    51200),
 }
 
 paper_gpt_2d_suite = {  # key = number of gpus, value = a list of cases
@@ -77,13 +73,13 @@ paper_gpt_2d_suite = {  # key = number of gpus, value = a list of cases
     (40,   *gpt_specs["1.3B"],  2,  4,  1,  False, False, True),
     (48,   *gpt_specs["1.3B"],  2,  4,  1,  False, False, True),
     (40,   *gpt_specs["1.3B"],  1,  8,  1,  False, False, True),  # BUG
-    (48,   *gpt_specs["1.3B"],  1,  8,  1,  False, False, True),  # BUG
+    (48,   *gpt_specs["1.3B"],  1,  8,  1,  False, False, True),
 
     (4,    *gpt_specs["2.7B"],  4,  2,  1,  False, False, True),
     (8,    *gpt_specs["2.7B"],  2,  4,  1,  False, False, True),
     (16,   *gpt_specs["2.7B"],  2,  4,  1,  False, False, True),
     (16,   *gpt_specs["2.7B"],  1,  8,  1,  False, False, True),  # BUG
-    (24,   *gpt_specs["2.7B"],  1,  8,  1,  False, False, True),  # BUG
+    (24,   *gpt_specs["2.7B"],  1,  8,  1,  False, False, True),
 ],
 }
 

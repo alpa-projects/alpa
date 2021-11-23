@@ -470,7 +470,7 @@ class PhysicalDeviceMesh:
                     for i in devices_this_host
                 ])
             if not skip_launch:
-                self._launch_xla_servers()
+                self.launch_xla_servers()
 
     @property
     def host_ips(self):
@@ -513,6 +513,7 @@ class PhysicalDeviceMesh:
 
             # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
+            # TODO(zhuohan): use stage_profile_worker for profiling
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
             worker = cls.options(runtime_env={

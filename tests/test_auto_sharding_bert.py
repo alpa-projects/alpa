@@ -595,8 +595,8 @@ def suite():
     suite.addTest(
         AutoShardingAttentionTest("test_bert_mlm_2d_mesh_reduce_scatter"))
     suite.addTest(
-       AutoShardingAttentionTest(
-           "test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
+        AutoShardingAttentionTest(
+            "test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
 
     suite.addTest(
         AutoShardingAttentionTest("test_bert_layer_model_parallel_remat"))

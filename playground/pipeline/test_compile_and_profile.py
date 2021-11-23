@@ -98,15 +98,15 @@ origin_jaxpr = make_jaxpr(dummy_large_trans)(*args)
 
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks)
+    mark_missing_vars_in_backward_computation_pipeline_marks)
 from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, create_collective_group,
     profile_layer_communication_cost)
 
 compute_jaxpr, _, _ = split_compute_grad_and_apply_grad(origin_jaxpr)
 stages = slice_closed_jaxpr_by_full_pipeline_marks(compute_jaxpr)
-stages = mark_missing_vars_in_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
-                                             compute_jaxpr.jaxpr.outvars)
+stages = mark_missing_vars_in_backward_computation_pipeline_marks(stages, compute_jaxpr.jaxpr.invars,
+                                                                  compute_jaxpr.jaxpr.outvars)
 # for stage in stages:
 #     print(stage.closed_jaxpr())
 '''----------------profile cost c----------------'''

@@ -11,14 +11,15 @@ from parax.device_mesh import VirtualMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
-                                               gen_dependency_with_stages, PipeDreamFlush)
+                                               gen_dependency_with_stages,
+                                               PipeDreamFlush)
 from parax.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_compile_config,
-    get_donatable_intermediate, mark_missing_vars_in_pipeline_marks,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
-    split_donate_invars)
+    get_donatable_intermediate,
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars)
 from parax.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
@@ -72,7 +73,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
-    jax_pipeline_layers = mark_missing_vars_in_pipeline_marks(
+    jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_layers, acc_grad_invars, acc_grad_outvars)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
 
@@ -119,18 +120,21 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":
         logger.debug("Using `gpipe` schedule.")
-        schedule = GpipeSchedule(dependency=dependency, meshes=sliced_meshes,
+        schedule = GpipeSchedule(dependency=dependency,
+                                 meshes=sliced_meshes,
                                  apply_grad_placement=apply_grad_placement,
                                  num_batch=num_micro_batches)
     elif global_config.pipeline_parallel_schedule == "1f1b":
         logger.debug("Using `1f1b` schedule.")
-        schedule = PipeDreamFlush(dependency=dependency, meshes=sliced_meshes,
+        schedule = PipeDreamFlush(dependency=dependency,
+                                  meshes=sliced_meshes,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_micro_batches)
     else:
-        raise RuntimeError("Unrecognized pipeline parallel schedule. "
-                           "Got `{}`. Availabe ones are `gpipe` or `1f1b`."
-                           .format(global_config.pipeline_parallel_schedule))
+        raise RuntimeError(
+            "Unrecognized pipeline parallel schedule. "
+            "Got `{}`. Availabe ones are `gpipe` or `1f1b`.".format(
+                global_config.pipeline_parallel_schedule))
     if logger.level == logging.DEBUG:
         logger.debug(schedule.pprint_schedule(print=False))
 

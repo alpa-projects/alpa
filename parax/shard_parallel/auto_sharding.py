@@ -761,18 +761,22 @@ auto_sharded_hlo_stages = None
 
 hooked_sharding_protos = None
 
+
 def set_auto_sharded_hlo_stages(hlo_module_protos):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
     global auto_sharded_hlo_stages
     auto_sharded_hlo_stages = hlo_module_protos
 
+
 def set_hooked_sharding_protos(hlo_module_proto):
     global hooked_sharding_protos
     hooked_sharding_protos = hlo_module_proto
 
+
 def get_auto_sharded_hlo_stages():
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stages
+
 
 def get_hooked_sharding_protos():
     return hooked_sharding_protos

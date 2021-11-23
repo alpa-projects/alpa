@@ -2,6 +2,7 @@
 import logging
 import pickle
 import time
+import os
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import List, Union, Sequence, Tuple
@@ -51,7 +52,10 @@ def device_str_to_id(device_str):
 class MeshHostWorker:
     """A ray actor that manages the xla computation on a single host."""
 
-    def __init__(self, server_address, num_hosts, host_id):
+    def __init__(self, server_address, num_hosts, host_id, override_devices=None):
+        if override_devices is not None:
+            # Override CUDA_VISIBLE_DEVICES set by ray
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, override_devices))
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.distributed_client = \
@@ -417,14 +421,19 @@ class PhysicalDeviceMesh:
                  host_ids=None,
                  host_info=None,
                  head_ip=None,
+                 port=None,
                  num_devices_per_host=1,
                  use_ray=False,
-                 skip_launch=False):
+                 override_ray_num_gpus=False,
+                 skip_launch=False,
+                 ):
         # actually we can infer use_ray by checking ip addresses.
         self.use_ray = use_ray
+        self.override_ray_num_gpus = override_ray_num_gpus
         self.host_ids = host_ids
         self.host_info = host_info
         self.head_ip = head_ip
+        self.port = np.random.randint(20000, 23000) if port is None else port
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
         self.prof_result = ProfilingResult()
@@ -434,9 +443,16 @@ class PhysicalDeviceMesh:
         if not use_ray and not devices:
             raise RuntimeError(
                 "`devices` are required for single-host device mesh.")
-        # if devices and use_ray:
-        #     raise RuntimeError("`devices` should not be passed in when using a Ray cluster.")
+        if override_ray_num_gpus:
+            if not use_ray:
+                raise RuntimeError(
+                    "`override_ray_num_gpus` can only be used with `use_ray`.")
+            if not devices:
+                raise RuntimeError(
+                    "`devices` are required for `override_ray_num_gpus`")
+
         if not use_ray:
+            # Single-host device mesh
             self.devices = devices
             self.host_ids = [0]
             self.host_info = None
@@ -445,8 +461,7 @@ class PhysicalDeviceMesh:
                 device_id_to_str(self.head_ip, d.id) for d in devices
             ]
             self.num_devices_per_host = len(self.devices)
-
-        if use_ray:
+        else:
             self.device_strs = []
             if devices:
                 if len(devices) != len(host_ids):
@@ -481,17 +496,18 @@ class PhysicalDeviceMesh:
         ]
         return ips
 
-    def _launch_xla_servers(self):
+    def launch_xla_servers(self):
         # Launch distributed xla runtime
-        port = np.random.randint(20000, 23000)
-        self.server_address = f"{self.head_ip}:{port}"
+        assert not self.launched
+
+        self.server_address = f"{self.head_ip}:{self.port}"
         self.service_server = None
         logger.debug(
-            "Trying to start XLA gRPC server on port: {}...".format(port))
+            "Trying to start XLA gRPC server on port: {}...".format(self.port))
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
         logger.debug(
-            "Success to start XLA gRPC server on port: {}...".format(port))
+            "Success to start XLA gRPC server on port: {}...".format(self.port))
         time.sleep(0.5)
 
         # Launch workers
@@ -513,19 +529,20 @@ class PhysicalDeviceMesh:
 
             # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
-            # TODO(zhuohan): use stage_profile_worker for profiling
-            cls = ray.remote(num_gpus=self.num_devices_per_host,
-                             resources={node_resource: 1e-3})(MeshHostWorker)
-            worker = cls.options(runtime_env={
-                "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i)
+            if self.override_ray_num_gpus:
+                cls = ray.remote(resources={node_resource: 1e-3})(MeshHostWorker)
+                worker = cls.options(runtime_env={
+                    "env_vars": env_vars
+                }).remote(self.server_address, self.num_hosts, i, self.devices[i])
+            else:
+                cls = ray.remote(num_gpus=self.num_devices_per_host,
+                                 resources={node_resource: 1e-3})(MeshHostWorker)
+                worker = cls.options(runtime_env={
+                    "env_vars": env_vars
+                }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
         self.sync_workers()
         self.launched = True
-
-    def launch_xla_servers(self):
-        assert not self.launched
-        self._launch_xla_servers()
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU model."""

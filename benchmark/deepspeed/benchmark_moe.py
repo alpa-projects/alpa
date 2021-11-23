@@ -3,6 +3,7 @@ import os
 import random
 
 from util import run_cmd
+from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_suite
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, S_ = expert_group_size, E = expert_number,

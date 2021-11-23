@@ -69,6 +69,7 @@ def xla_identity(c, *args, opaque=b''):
             out.append(xc.ShapeIndex(cur))
         return out
 
+<<<<<<< HEAD
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
@@ -86,14 +87,31 @@ def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
                           call_jaxpr):
 
     bias_args = xla_identity(c, *in_nodes)
+=======
+    def id(c, op_type, *args):
+        input_params = xc.ops.Tuple(c, args)
+        input_shape = c.get_shape(input_params)
+        aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
+        op_metadata = xc.OpMetadata(op_type=op_type)
+        c.set_op_metadata(op_metadata)
+        output_tuple = xc.ops.CustomCallWithOnlyAliasing(
+            c,
+            b'identity',
+            operands=(input_params,),
+            shape=input_shape,
+            output_operand_aliasing=aliasing)
+        c.clear_op_metadata()
+        return output_tuple
+
+    bias_args = id(c, "remat_begin", *in_nodes)
+>>>>>>> update shape
     bias_args = [
         xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))
     ]
     outs = jaxpr_subcomp(
         c, call_jaxpr, backend, axis_env, (),
         extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
-
-    return xops.Tuple(c, outs)
+    return id(c, "remat_end", *outs)
 
 
 jax.xla._remat_using_while = _remat_using_identity

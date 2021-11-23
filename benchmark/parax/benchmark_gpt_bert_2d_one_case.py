@@ -189,7 +189,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                 hidden_size, vocab_size,
                                 physical_mesh.total_devices,
-                                np.mean(latencies))
+                                np.mean(latencies), use_remat)
     param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
     # Restore global config

@@ -157,7 +157,7 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
     logical_mesh = mesh.get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
-    physical_mesh = mesh.get_physical_mesh()
+    physical_mesh = mesh.get_physical_mesh(override_ray_num_gpus=True)
     for (start, end), compiled_output, stage_info, hook in zip(
             stage_indices, compiled_outputs, stage_infos, stage_hooks):
         _, avals, out_avals, tot_donation = stage_info

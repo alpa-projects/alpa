@@ -61,14 +61,16 @@ benchmark_suites = {
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=10,
         help="Number of benchmark iteration")
+    parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--suite", choices=["default"], default="default")
-    parser.add_argument("--use-separate-process", action="store_true")
+    parser.add_argument("--use-separate-process", action="store_true",
+        help="Launch separate processes for benchmark to isolate errors."
+              "Erros in a single case will not terminate this script.")
     args = parser.parse_args()
 
     # Get benchmark suite and run all cases
@@ -87,7 +89,7 @@ if __name__ == "__main__":
 
     # Run all cases
     for case in suite:
-        result = benchmark_one_case(case, args.model, args.niter, args.local,
+        result = benchmark_one_case(args.model, case, args.niter, args.local,
                                     args.use_separate_process)
         param_count, ilp_objective, alloc_mem, latencies, tflops = result
 

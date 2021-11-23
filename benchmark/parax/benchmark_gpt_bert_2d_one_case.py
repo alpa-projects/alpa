@@ -201,7 +201,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 PICKLE_FILE_NAME = "tmp_transfer.pkl"
 
 
-def benchmark_one_case(case, model, niter, local, use_separate_process=False, dump_result=False):
+def benchmark_one_case(model, case, niter, local, use_separate_process=False, dump_result=False):
     if not use_separate_process:
         # Launch physical mesh
         if local:
@@ -250,4 +250,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     case = eval(args.case)
-    benchmark_one_case(case, args.model, args.niter, args.local, False, args.dump_result)
+    benchmark_one_case(args.model, case, args.niter, args.local, False, args.dump_result)

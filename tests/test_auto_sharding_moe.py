@@ -16,7 +16,8 @@ from parax.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainSt
 from parax.model.model_util import optax_adafactor
 
 from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
-                                    assert_expert_partitioned, assert_sharding_zero_stage_3)
+                                    assert_expert_partitioned,
+                                    assert_sharding_zero_stage_3)
 
 
 class AutoShardingMoETest(unittest.TestCase):

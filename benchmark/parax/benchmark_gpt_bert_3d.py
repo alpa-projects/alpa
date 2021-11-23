@@ -1,10 +1,10 @@
 import argparse
-
+from datetime import datetime
 import ray
 
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case, setup_benchmark
 from benchmark.util import run_cmd
-from datetime import datetime
+from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 
 GB = 1024 ** 3
 
@@ -143,16 +143,19 @@ default_benchmark_suite = {
 benchmark_suites = {
     "default": default_benchmark_suite,
     "sanity_check": sanity_check_suite,
+    "paper_gpt": paper_gpt_suite,
+    "test_gpt": test_gpt_suite,
 }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=10)
-    parser.add_argument("--suite", choices=["default", "sanity_check"], default="sanity_check")
-    parser.add_argument("--mode", choices=["normal", "nonstop"], default="normal")
-    parser.add_argument("--output", type=str, default="result")
+    parser.add_argument("--niter", type=int, default=7)  # 2 warmup + 2 actual run.
+    parser.add_argument("--suite", choices=["default", "sanity_check", "paper_gpt", "test_gpt"],
+                        default="paper_gpt")
+    parser.add_argument("--mode", choices=["normal", "nonstop"], default="nonstop")
+    parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
 
     print("- Benchmarking in {} mode.".format(args.mode))
@@ -173,17 +176,21 @@ if __name__ == "__main__":
     elif args.mode == "nonstop":
         ray.init(address="auto")
         num_gpus = int(ray.cluster_resources()["GPU"])
+        print("num_gpus... {}".format(num_gpus))
         ray.shutdown()
-
         # construct case str
-        output_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_name = args.exp_name + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         for case in benchmark_suites[args.suite][num_gpus]:
+            dp, mp, pp = case[6], case[7], case[10]
+            if pp <= 1:
+                print(f"Skipping the case: {str(case)}, because PP <= 1. Lianmin will test it.")
+                continue
             case_str = str(case)
+
             ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
                          f"--model {args.model} "
                          f"--niter {args.niter} "
                          f'--case "{case_str}" '
                          f"--output {output_name}")
-            # print("Exit code: {}".format(ret))
     else:
         raise RuntimeError()

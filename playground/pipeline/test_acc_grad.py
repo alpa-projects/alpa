@@ -10,7 +10,7 @@ from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing
 from parax.pipeline_parallel.computation import (
     apply_grad_add_marker, compute_grad_to_accumulate_grad, apply_grad_get_mean,
     get_var_mapping, slice_closed_jaxpr_by_full_pipeline_marks,
-    mark_missing_vars_in_pipeline_marks, mark_gradvar_to_mesh, slice_apply_gradient,
+    mark_missing_vars_in_backward_computation_pipeline_marks, mark_gradvar_to_mesh, slice_apply_gradient,
     replace_all_with)
 from parax.pipeline_parallel.three_d_parallel import split_compute_grad_and_apply_grad, split_donate_invars
 from parax.pipeline_parallel.primitive_def import mark_pipeline
@@ -196,7 +196,7 @@ def test_compute_and_apply(microbatches):
     acc_outvars = acc_grad_jaxpr.jaxpr.outvars
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
-    jax_pipeline_stages = mark_missing_vars_in_pipeline_marks(
+    jax_pipeline_stages = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_stages, acc_invars, acc_outvars)
     # delete the two lines below in auto mesh version
     stage_num = len(jax_pipeline_stages)

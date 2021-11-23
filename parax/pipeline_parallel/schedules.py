@@ -77,7 +77,7 @@ class PipelineSchedule(metaclass=ABCMeta):
         self.apply_grad_placement = apply_grad_placement
         self.num_batch = num_batch
 
-        self._schedules : List[List[Tuple]] = self._generate_schedule()
+        self._schedules: List[List[Tuple]] = self._generate_schedule()
 
     @abstractmethod
     def _generate_schedule(self):
@@ -87,10 +87,8 @@ class PipelineSchedule(metaclass=ABCMeta):
     def pprint_schedule(self, print=False):
         """Pretty print the schedule."""
         printout = "\n"
-        device_str = " ".join([
-            "{:<8}".format("d" + str(d))
-            for d in range(self.num_mesh)
-        ])
+        device_str = " ".join(
+            ["{:<8}".format("d" + str(d)) for d in range(self.num_mesh)])
         printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
         for clock, scheds in enumerate(self.schedules):
             sched_str = " ".join(
@@ -259,6 +257,7 @@ class PipeDreamFlush(PipelineSchedule):
 
     It has similar latency to GPipe but is more memory-efficient.
     """
+
     def _generate_schedule(self):
         m = self.num_batch
         n = self.num_mesh
@@ -273,7 +272,8 @@ class PipeDreamFlush(PipelineSchedule):
         next_fwd_mb_idx = [0 for _ in range(n)]
         next_bwd_mb_idx = [0 for _ in range(n)]
         next_available_clock = [i for i in range(n)]
-        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n], dtype=np.int32)
+        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n],
+                                              dtype=np.int32)
 
         # warm-up clocks
         for i in range(n):
@@ -299,9 +299,12 @@ class PipeDreamFlush(PipelineSchedule):
                 # when the previous stage has just finished backward of the target mb.
                 if i + 1 < n:  # not the last device
                     # find the next possible backward clock
-                    while finished_bwd_batch_indices[next_clock][i + 1] <= next_bwd_mb_idx[i]:
-                        assert finished_bwd_batch_indices[next_clock - 1][i] == next_bwd_mb_idx[i]
-                        finished_bwd_batch_indices[next_clock][i] = finished_bwd_batch_indices[next_clock - 1][i]
+                    while finished_bwd_batch_indices[next_clock][
+                            i + 1] <= next_bwd_mb_idx[i]:
+                        assert finished_bwd_batch_indices[
+                            next_clock - 1][i] == next_bwd_mb_idx[i]
+                        finished_bwd_batch_indices[next_clock][
+                            i] = finished_bwd_batch_indices[next_clock - 1][i]
                         next_clock = next_clock + 1
 
                 schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
@@ -314,16 +317,19 @@ class PipeDreamFlush(PipelineSchedule):
             for j in range(num_warmup_microbatches[i]):
                 assert i + 1 < n
                 next_clock = next_available_clock[i]
-                while finished_bwd_batch_indices[next_clock][i + 1] <= next_bwd_mb_idx[i]:
-                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                while finished_bwd_batch_indices[next_clock][
+                        i + 1] <= next_bwd_mb_idx[i]:
+                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[
+                        i]
                     next_clock = next_clock + 1
-                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n- 1 - i)
+                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
                 finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
                 next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
                 next_available_clock[i] = next_clock + 1
             # update status matrix for the last worker
             if i > 0:
-                finished_bwd_batch_indices[next_available_clock[i]:num_clock, i] = m
+                finished_bwd_batch_indices[next_available_clock[i]:num_clock,
+                                           i] = m
 
         # append apply_grad schedules
         scheds = [None] * n

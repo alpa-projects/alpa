@@ -58,7 +58,7 @@ jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
 
-def xla_identity(c, *args, opaque=b''):
+def xla_identity(c, *args, opaque=b'', op_type=None):
 
     def all_index(shape, cur):
         out = []
@@ -72,6 +72,9 @@ def xla_identity(c, *args, opaque=b''):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
+    if op_type:
+        op_metadata = xc.OpMetadata(op_type=op_type)
+        c.set_op_metadata(op_metadata)
     output_tuple = xc.ops.CustomCallWithOnlyAliasing(
         c,
         b'identity',
@@ -79,21 +82,20 @@ def xla_identity(c, *args, opaque=b''):
         shape=input_shape,
         output_operand_aliasing=aliasing,
         opaque=opaque)
+    c.clear_op_metadata()
     return output_tuple
 
 
 def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
                           call_jaxpr):
-
-    bias_args = xla_identity(c, *in_nodes)
+    bias_args = xla_identity(c, *in_nodes, op_type="remat_begin")
     bias_args = [
         xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))
     ]
     outs = jaxpr_subcomp(
         c, call_jaxpr, backend, axis_env, (),
         extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
-
-    return xops.Tuple(c, outs)
+    return xla_identity(c, *outs, op_type="remat_end")
 
 
 jax.xla._remat_using_while = _remat_using_identity

@@ -1,10 +1,10 @@
 import argparse
-import os
-import time
 from functools import partial
+import os
+import pickle
+import time
 
 from flax import linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,43 +12,12 @@ import optax
 import ray
 
 import parax
-from benchmark.util import compute_gpt_parameter_count
+from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops, GB
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
+                   DeviceCluster, PhysicalDeviceMesh)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
-                        count_communication_primitives, print_used_time)
-
-
-GB = 1024 ** 3
-
-
-def compute_data_parallel_cost(optimizer, logical_mesh, physical_mesh):
-    """For debugging usage."""
-    shapes = jax.tree_util.tree_map(lambda x : np.prod(x.shape), optimizer.target)
-    sizes = jax.tree_util.tree_leaves(shapes)
-    cost = 0
-    print(logical_mesh.mesh_beta)
-    for size in sizes:
-        cost += logical_mesh.all_reduce_cost(size * 4, 0)
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,4), (1,5), (2,6), (3,7),), size / 4, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,2,4,6,), (1,3,5,7)), size / 2, "float32")
-        #cost += physical_mesh.prof_result.estimate_all_reduce(((0,1,2,3,4,5,6,7),), size, "float32")
-    print(cost)
-
-
-def compute_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
-                   num_gpus, latency, checkpoint_activations=False):
-    factor = 96 if checkpoint_activations else 72
-    total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
-          (1 + seq_len / (6 * hidden_size)) \
-          + 6 * batch_size * seq_len * hidden_size * vocab_size
-    # Note: if we use dot to compute forward embedding
-    # then the last term in total_flops should be
-    # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
-    tflops = total_flop / latency / num_gpus / 1e12
-    return tflops
+from parax.util import map_to_shape, count_communication_primitives, print_used_time, run_cmd
 
 
 def load_profiling_result(physical_mesh):
@@ -109,7 +78,7 @@ def get_train_step(grad_func, num_layers, dtype):
 
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
-        # TODO(lmzheng): add dynamic scale for mixed-precision training
+        # TODO(lmzheng): add dynamic scaling for mixed-precision training
         return new_state
 
     return train_step
@@ -217,121 +186,68 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     print_used_time("Benchmark")
 
     # Compute statistics
-    tflops = compute_tflops(batch_size, seq_len, num_layers,
-                            hidden_size, vocab_size,
-                            physical_mesh.total_devices,
-                            np.mean(latencies))
+    tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
+                                hidden_size, vocab_size,
+                                physical_mesh.total_devices,
+                                np.mean(latencies), use_remat)
     param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
     # Restore global config
     global_config.restore(backup)
 
-    return latencies, alloc_mem, tflops, param_count, ilp_objective
+    return param_count, ilp_objective, alloc_mem, latencies, tflops
 
 
-def benchmark_one_case(case):
-    # Launch physical mesh
-    if args.local:
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
+PICKLE_FILE_NAME = "tmp_transfer.pkl"
+
+
+def benchmark_one_case(case, model, niter, local, use_separate_process=False, dump_result=False):
+    if not use_separate_process:
+        # Launch physical mesh
+        if local:
+            physical_mesh = PhysicalDeviceMesh(jax.devices())
+        else:
+            ray.init(address="auto", ignore_reinit_error=True)
+            device_cluster = DeviceCluster()
+            physical_mesh = device_cluster.get_physical_mesh()
+            jax.config.update('jax_platform_name', 'cpu')
+
+        global_config.use_dummy_value_for_benchmarking = True
+
+        # Run benchmark
+        result = benchmark_gpt_bert_internal(physical_mesh, model, case, niter)
+
+        physical_mesh.shutdown()
     else:
-        device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.get_physical_mesh()
+        # Launch a new process for benchmark to isolate errors.
+        # Get the return data via pickle.
+        ret = run_cmd("python3 benchmark_gpt_bert_2d_one_case.py "
+                     f"--model {model} "
+                     f"--niter {niter} "
+                     f'--case "{case}" '
+                     f"{'--local' if local else ''} "
+                     f"--dump-result ")
+        if ret == 0:
+            result = pickle.load(open(PICKLE_FILE_NAME, "rb"))
+        else:
+            result = -1, -1, -1, [-1], -1
 
-    # Run benchmark
-    result = benchmark_gpt_bert_internal(physical_mesh, args.model, case, args.niter)
-    latencies, alloc_mem, tflops, param_count, ilp_objective = result
+    if dump_result:
+        pickle.dump(result, open(PICKLE_FILE_NAME, "wb"))
 
-    # Log results
-    heads = ["Model", "Model Config", "Parallel Config", "Param Count",
-             "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
-    values = [args.model, case[:-6], case[-6:],
-              f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{ilp_objective:.2f}",
-              f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
-    write_tsv(heads, values, f"result_{args.model}.tsv")
-
-    physical_mesh.shutdown()
-
-
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1,
-# NB = num_micro_batches, FD = force_data_parallel,
-# RS = prefer_reduce_scatter, CK = use_checkpoint
-
-default_benchmark_suite = {  # key = number of gpus, value = a list of cases
-1: [
-    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False, False),
-    (8,  1024,  1536, 10, 1536//96,  25600, 1,  1,  1,  False, False, False),
-],
-
-4: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-],
-
-8: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (256,  512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False, True,  False),
-    (512,  512,  1024, 10, 1024//64,  25600, 8,  1,  2,  False, True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  True),
-],
-
-16: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    #(512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, True,  False),
-    #(2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
-    #(16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
-    #(64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
-    #(16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  False, True,  False),
-    #(64,   1024, 4096, 10, 4096//128, 25600, 16, 1,  4,  False, True,  False),
-
-    (16,    1024, 6144, 10, 6144//128, 25600, 2,  8,  1,  False, False, False),
-    (64,    1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, False, False),
-    (128,   1024, 6144, 10, 6144//128, 25600, 2,  8,  8,  False, False, False),
-    (16,    1024, 6144, 10, 6144//128, 25600, 2,  8,  1,  False, True,  False),
-    (64,    1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, True,  False),
-    (128,   1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, True,  False),
-]
-}
-
-
-benchmark_suites = {
-    "default": default_benchmark_suite,
-}
+    return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=10,
-        help="Number of benchmark iteration")
-    parser.add_argument("--suite", choices=["default"], default="default")
+    parser.add_argument("--niter", type=int, default=10)
+    parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
+    parser.add_argument("--dump-result", action="store_true",
+        help="Dump results into a temporary pickle file")
     args = parser.parse_args()
 
-    # Set global environments
-    if args.local:
-        num_gpus = list_gpu_info().count("UUID")
-    else:
-        ray.init(address="auto")
-        jax.config.update('jax_platform_name', 'cpu')
-        num_gpus = int(ray.cluster_resources()["GPU"])
-
-    global_config.use_dummy_value_for_benchmarking = True
-
-    # Get benchmark suite and run all cases
-    try:
-        suite = benchmark_suites[args.suite][num_gpus]
-    except KeyError:
-        suite = None
-
-    if not suite:
-        print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
-        exit()
-
-    for case in suite:
-        benchmark_one_case(case)
+    case = eval(args.case)
+    benchmark_one_case(case, args.model, args.niter, args.local, False, args.dump_result)

@@ -795,7 +795,8 @@ def jax_tensor_index(src_tensor, indices, size):
 def run_cmd(cmd):
     """Run a bash commond."""
     print(cmd)
-    os.system(cmd)
+    ret = os.system(cmd)
+    return ret
 
 
 def list_gpu_info():

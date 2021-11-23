@@ -12,6 +12,8 @@ moe_specs = {
 }
 
 
+fixed_params = (True, False, False)
+
 
 test_moe_suite = {
 
@@ -20,7 +22,9 @@ test_moe_suite = {
 
 paper_moe_suite = {
 1: [
-#
+    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing), EP
+    (32, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params, 1),
+    (64, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params, 1),
 
 ],
 

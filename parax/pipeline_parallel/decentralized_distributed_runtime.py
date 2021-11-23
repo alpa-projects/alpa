@@ -756,10 +756,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self._check_alive()
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            ray.get(physical_mesh.workers[0].sync.remote())
-            print(f"before shard_args mesh_idx={mesh_idx} get_memory():",
-                  ray.get(physical_mesh.workers[0].get_memory.remote()), "get_usage_memory():",
-                  ray.get(physical_mesh.workers[0].get_usage_memory.remote()))
+            # ray.get(physical_mesh.workers[0].sync.remote())
+            # print(f"before shard_args mesh_idx={mesh_idx} get_memory():",
+            #       ray.get(physical_mesh.workers[0].get_memory.remote()), "get_usage_memory():",
+            #       ray.get(physical_mesh.workers[0].get_usage_memory.remote()))
             mesh_args = [
                 split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
@@ -774,10 +774,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
-            ray.get(physical_mesh.workers[0].sync.remote())
-            print(f"after shard_args mesh_idx={mesh_idx} get_memory():",
-                  ray.get(physical_mesh.workers[0].get_memory.remote()), "get_usage_memory():",
-                  ray.get(physical_mesh.workers[0].get_usage_memory.remote()))
+            # print(f"after shard_args mesh_idx={mesh_idx} get_memory():",
+            #       ray.get(physical_mesh.workers[0].get_memory.remote()), "get_usage_memory():",
+            #       ray.get(physical_mesh.workers[0].get_usage_memory.remote()))
 
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):

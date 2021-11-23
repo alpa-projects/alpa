@@ -16,6 +16,7 @@ from parax.model.model_util import (FlaxBaseModelOutput,
                                     FlaxBertForPreTrainingOutput,
                                     FlaxMaskedLMOutput, TrainState)
 from parax import mark_pipeline
+from parax.model.model_util import TrainState
 
 
 class BertConfig:

@@ -1,6 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
 import enum
+import jax
 import logging
 from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
@@ -50,38 +51,54 @@ class PipelineInstruction:
     input_uuids: Optional[np.ndarray]
     output_uuids: Optional[np.ndarray]
     opaques: Optional[Dict[str, Any]]
+    info: str
+    print_uuids: bool = False
 
     @classmethod
-    def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs):
+    def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs, info=""):
         return cls(opcode=PipelineInstType.RUN,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=output_uuids,
-                   opaques={"kwargs": kwargs})
+                   opaques={"kwargs": kwargs},
+                   info=info)
 
     @classmethod
-    def SEND(cls, task_uuid, input_uuids):
+    def SEND(cls, task_uuid, input_uuids, info=""):
         return cls(opcode=PipelineInstType.SEND,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=None,
-                   opaques=None)
+                   opaques=None,
+                   info=info)
 
     @classmethod
-    def RECV(cls, task_uuid, output_uuids, set_empty_buffer):
+    def RECV(cls, task_uuid, output_uuids, set_empty_buffer, info=""):
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
                    output_uuids=output_uuids,
-                   opaques={"set_empty_buffer": set_empty_buffer})
+                   opaques={"set_empty_buffer": set_empty_buffer},
+                   info=info)
 
     @classmethod
-    def FREE(cls, input_uuids):
+    def FREE(cls, input_uuids, info=""):
         return cls(opcode=PipelineInstType.FREE,
                    task_uuid=None,
                    input_uuids=input_uuids,
                    output_uuids=None,
-                   opaques=None)
+                   opaques=None,
+                   info=info,
+                   print_uuids=False)
+
+    def __str__(self):
+        ret = ""
+        ret += "Optype: " + str(self.opcode)  + "Task uuid: " + str(self.task_uuid)
+        if self.print_uuids:
+            ret += "input uuids:" + str(self.input_uuids)
+            ret += "output uuids:" + str(self.output_uuids)
+        ret += " Info: " + self.info
+        return ret
 
 
 AllocateZeroWorkerExecutableConfig = namedtuple(
@@ -397,10 +414,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 in_uuids = []
                 out_uuids = output_uuids[worker_idx]
             self.instruction_lists[worker].append(
-                PipelineInstruction.RUN(config.exec_uuid, in_uuids, out_uuids, {
-                    "sync_before": False,
-                    "sync_after": False
-                }))
+                PipelineInstruction.RUN(
+                    config.exec_uuid,
+                    in_uuids,
+                    out_uuids, {
+                        "sync_before": False,
+                        "sync_after": False
+                    },
+                    info="mem zero" if preallocated else "allocate zero"))
 
         # (args, workers, devices)
         transposed = output_uuids.transpose([1, 0, 2])
@@ -733,9 +754,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # check if there is OOM
         if global_config.pipeline_runtime_mode == "paper":
             self._check_alive()
-
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            # ray.get(physical_mesh.workers[0].sync.remote())
+            # print(f"before shard_args mesh_idx={mesh_idx} get_memory():",
+            #       ray.get(physical_mesh.workers[0].get_memory.remote()), "get_usage_memory():",
+            #       ray.get(physical_mesh.workers[0].get_usage_memory.remote()))
             mesh_args = [
                 split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
@@ -750,6 +774,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
+            # print(f"after shard_args mesh_idx={mesh_idx} get_memory():",
+            #       ray.get(physical_mesh.workers[0].get_memory.remote()), "get_usage_memory():",
+            #       ray.get(physical_mesh.workers[0].get_usage_memory.remote()))
 
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -1015,6 +1042,7 @@ class PipelineMeshWorkerExecutable:
                                        AllocZeroBufferWorkerExecutable,
                                        task_config.grad_shard_shapes,
                                        task_config.grad_shard_dtypes)
+
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids):
         # copy to local env

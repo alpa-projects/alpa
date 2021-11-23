@@ -77,6 +77,14 @@ class MeshHostWorker:
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
+    def get_usage_memory(self):
+        self.sync()
+        return self.local_devices[0].client_memory_usage / (1024 ** 3)
+
+    def get_memory(self):
+        self.sync()
+        return self.local_devices[0].client_memory_peak / (1024 ** 3)
+
     def put_non_zero_buffer(self,
                             uuid: int,
                             device_id: int,
@@ -509,6 +517,7 @@ class PhysicalDeviceMesh:
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".95",
             }
 
             # Launch a ray actor
@@ -699,6 +708,12 @@ class PhysicalDeviceMesh:
                 else:  # Slow path
                     # TODO(yonghao): the following assertion will fail, which does not make sense
                     # assert not isinstance(arg, DistributedArray)
+                    # if hasattr(arg, "shape"):
+                    #     expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize
+                    # else:
+                    #     expected = 1
+                    # before_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
+                    # before_memory_peak = ray.get(self.workers[0].get_memory.remote())
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -706,6 +721,12 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
+                    # after_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
+                    # after_memory_peak = ray.get(self.workers[0].get_memory.remote())
+                    # actual = after_memory_usage - before_memory_usage
+                    # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
+                    #     expected, actual, before_memory_usage, after_memory_usage
+                    # ))
 
             return input_bufs
         else:

@@ -93,11 +93,11 @@ class PipelineInstruction:
 
     def __str__(self):
         ret = ""
-        ret += "Optype: " + str(self.opcode)  + "Task uuid: " + str(self.task_uuid) #+ "\n"
+        ret += "Optype: " + str(self.opcode)  + "Task uuid: " + str(self.task_uuid)
         if self.print_uuids:
-            ret += "input uuids:" + str(self.input_uuids) #+ "\n"
-            ret += "output uuids:" + str(self.output_uuids) #+ "\n"
-        ret += " Info: " + self.info #+ "\n"
+            ret += "input uuids:" + str(self.input_uuids)
+            ret += "output uuids:" + str(self.output_uuids)
+        ret += " Info: " + self.info
         return ret
 
 
@@ -1086,7 +1086,6 @@ class PipelineMeshWorkerExecutable:
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 self.worker.delete_buffers(instruction.input_uuids)
-
 
         for timer_name in ["compute", "resharding_send", "resharding_recv"]:
             if timer_name in timers:

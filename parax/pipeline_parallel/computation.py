@@ -188,6 +188,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     output_sharding_specs: Any = None
     output_acc_grad_indices: Sequence[int] = None
     donatables: OrderedSet[Var] = None
+    compiled = None
 
     @classmethod
     def from_auto_sharded_computation(
@@ -270,6 +271,9 @@ class XlaShardedPipelineComputation(PipelineComputation):
             self.donated_invars[var_indices[invar]] = True
 
     def get_compiled(self, mesh=None):
+        # TODO(yonghao): use more general cache functions
+        if self.compiled is not None:
+            return self.compiled
 
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError(
@@ -301,6 +305,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             strategy_config.logical_mesh_shape)
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
+        self.compiled = compiled
         return compiled
 
     def get_runnable(self, mesh=None):

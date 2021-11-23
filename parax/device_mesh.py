@@ -706,14 +706,6 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
-                    # TODO(yonghao): the following assertion will fail, which does not make sense
-                    # assert not isinstance(arg, DistributedArray)
-                    # if hasattr(arg, "shape"):
-                    #     expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize
-                    # else:
-                    #     expected = 1
-                    # before_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
-                    # before_memory_peak = ray.get(self.workers[0].get_memory.remote())
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)

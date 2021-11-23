@@ -212,7 +212,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             elif (invar in self.grad_dummy_invars and
                   batch_idx != self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
-                key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
+                key = (var_key,
+                       self.schedule.previous_backward_batch_index(batch_idx))
             else:
                 var_key = repr(invar)
                 key = (repr(invar), batch_idx)
@@ -306,9 +307,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     # Get input and output uuids. They should be at the mesh
                     input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host), dtype=np.int64)
+                        (len(stage.invars), num_devices_per_host),
+                        dtype=np.int64)
                     output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host), dtype=np.int64)
+                        (len(stage.outvars), num_devices_per_host),
+                        dtype=np.int64)
                     for idx, invar in enumerate(stage.invars):
                         _, key = get_invar_key(invar, batch_idx)
                         input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
@@ -322,7 +325,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                     list(output_uuids[idx])))
 
                     kwargs = {
-                        "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
+                        "skip_grad_sync":
+                            self.schedule.should_skip_grad_sync(task),
                         "sync_before": False,
                         "sync_after": False,
                     }

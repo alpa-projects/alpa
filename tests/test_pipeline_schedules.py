@@ -6,13 +6,12 @@ from parax.pipeline_parallel.schedules import gen_linear_pipeline_dependency, \
 
 class PipelineScheduleTest(unittest.TestCase):
 
-
-    def test_schedule_basics(self, schedule_type, num_stage,
-                             num_mesh, num_batch):
+    def test_schedule_basics(self, schedule_type, num_stage, num_mesh,
+                             num_batch):
         deps = gen_linear_pipeline_dependency(num_stage)
         meshes = [None] * num_mesh
         num_fwd_stage = num_stage // 2
-        apply_grad_placement = {num_stage + i : i for i in range(num_fwd_stage)}
+        apply_grad_placement = {num_stage + i: i for i in range(num_fwd_stage)}
         if schedule_type == "gpipe":
             schedule_cls = GpipeSchedule
         elif schedule_type == "1f1b":
@@ -43,16 +42,16 @@ class PipelineScheduleTest(unittest.TestCase):
                                             "and apply_grad stages."
             stage_indices_list = list(stage_indices)
             stage_indices_list.sort()
-            f, b, a = stage_indices_list[0], stage_indices_list[1], stage_indices_list[2]
+            f, b, a = stage_indices_list[0], stage_indices_list[
+                1], stage_indices_list[2]
             assert f == 2 * num_mesh - 1 - b
             assert a == num_stage + f
-
 
     def test_1f1b(self, num_stage, num_mesh, num_batch):
         deps = gen_linear_pipeline_dependency(num_stage)
         meshes = [None] * num_mesh
         num_fwd_stage = num_stage // 2
-        apply_grad_placement = {num_stage + i : i for i in range(num_fwd_stage)}
+        apply_grad_placement = {num_stage + i: i for i in range(num_fwd_stage)}
         s = PipeDreamFlush(dependency=deps,
                            meshes=meshes,
                            apply_grad_placement=apply_grad_placement,
@@ -84,9 +83,11 @@ class PipelineScheduleTest(unittest.TestCase):
             for num_stage in num_stages:
                 for num_batch in num_batches:
                     num_mesh = num_stage // 2
-                    print("Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}.".
-                          format(type, num_stage, num_mesh, num_batch))
-                    self.test_schedule_basics(type, num_stage, num_mesh, num_batch)
+                    print(
+                        "Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}."
+                        .format(type, num_stage, num_mesh, num_batch))
+                    self.test_schedule_basics(type, num_stage, num_mesh,
+                                              num_batch)
                     if type == "1f1b":
                         self.test_1f1b(num_stage, num_mesh, num_batch)
 

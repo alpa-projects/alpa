@@ -59,6 +59,7 @@ jax.random.fold_in = remove_fold_in
 
 
 def xla_identity(c, *args, opaque=b''):
+
     def all_index(shape, cur):
         out = []
         if shape.is_tuple():
@@ -79,6 +80,7 @@ def xla_identity(c, *args, opaque=b''):
         output_operand_aliasing=aliasing,
         opaque=opaque)
     return output_tuple
+
 
 def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
                           call_jaxpr):

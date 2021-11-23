@@ -386,9 +386,11 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     computation_additional_outvars = [OrderedSet() for _ in computations]
     for computation_id, computation in enumerate(computations):
         for eqn in computation.eqns:
-            if eqn.primitive == pipeline_p and eqn.params["mark_type"] == "start":
+            if eqn.primitive == pipeline_p and eqn.params[
+                    "mark_type"] == "start":
                 for invar, outvar in zip(eqn.invars, eqn.outvars):
-                    computation_marked_to_unmarked_invars[computation_id][outvar] = invar
+                    computation_marked_to_unmarked_invars[computation_id][
+                        outvar] = invar
             for var in eqn.invars:
                 if (not isinstance(var, Literal) and
                         var not in computation.consts_dir and
@@ -400,10 +402,14 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
                         # computation, do not let the invar go into the stage.
                         # Instead, we can directly use the original invar.
                         if (computation_id >= num_forward_computations and
-                                source_computation_id == 2 * num_forward_computations - computation_id - 1 and
-                                var in computation_marked_to_unmarked_invars[source_computation_id]):
+                                source_computation_id
+                                == 2 * num_forward_computations -
+                                computation_id - 1 and
+                                var in computation_marked_to_unmarked_invars[
+                                    source_computation_id]):
                             computation_weight_invars[computation_id][var] = (
-                                computation_marked_to_unmarked_invars[source_computation_id][var])
+                                computation_marked_to_unmarked_invars[
+                                    source_computation_id][var])
                             continue
                         # Mark all the variables in the backward computation
                         # that are not currently defined in pipeline markers.
@@ -424,10 +430,10 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     new_computations = []
 
     for i, computation in enumerate(computations):
-        assert (computation.eqns[0].primitive is pipeline_p and computation.eqns[
-            0].params["mark_type"] == "start")
-        assert (computation.eqns[-1].primitive is pipeline_p and computation.eqns[
-            -1].params["mark_type"] == "end")
+        assert (computation.eqns[0].primitive is pipeline_p and
+                computation.eqns[0].params["mark_type"] == "start")
+        assert (computation.eqns[-1].primitive is pipeline_p and
+                computation.eqns[-1].params["mark_type"] == "end")
         new_computation = JaxPipelineComputation(
             computation.name, consts_dir=computation.consts_dir)
 

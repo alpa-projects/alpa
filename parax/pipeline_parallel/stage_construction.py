@@ -157,7 +157,21 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
     logical_mesh = mesh.get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
-    physical_mesh = mesh.get_physical_mesh(override_ray_num_gpus=True)
+    # TODO(zhuohan): set the number of multiplex physical meshes as a tunable parameter
+    n_multiplex_physical_meshes = 8
+    physical_mesh = [mesh.get_physical_mesh(override_ray_num_gpus=True) for _ in range(n_multiplex_physical_meshes)]
+    physical_mesh_id = 0
+    multiplex_profile_jobs = []
+
+    def finish_profile_jobs():
+        while len(multiplex_profile_jobs) > 0:
+            ((start, end), executable,
+             intermediate_size) = multiplex_profile_jobs.pop(0)
+            cost = executable.profile_with_dummy_inputs(
+                intermediates=intermediate_size)
+            compute_cost[start, end] = np.mean(cost)
+            del executable
+
     for (start, end), compiled_output, stage_info, hook in zip(
             stage_indices, compiled_outputs, stage_infos, stage_hooks):
         _, avals, out_avals, tot_donation = stage_info
@@ -169,13 +183,17 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                                     output_shardings=out_shardings)
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        executable = PartialGradAccMeshDriverExecutable(physical_mesh, compiled,
+        executable = PartialGradAccMeshDriverExecutable(physical_mesh[physical_mesh_id], compiled,
                                                         config, avals,
                                                         out_avals,
                                                         donated_invars, [])
-        cost = executable.profile_with_dummy_inputs(
-            intermediates=intermediate_size)
-        compute_cost[start, end] = np.mean(cost)
+        multiplex_profile_jobs.append(((start, end), executable, intermediate_size))
+        physical_mesh_id += 1
+        if physical_mesh_id == n_multiplex_physical_meshes:
+            physical_mesh_id = 0
+            finish_profile_jobs()
+    finish_profile_jobs()
+
     return compute_cost
 
 

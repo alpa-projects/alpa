@@ -34,6 +34,8 @@ class CompileWorker:
     def __init__(self, global_config_backup):
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
+        # FIXME: global_config_backup is conflict with new_global_config
+        #        in compile_stage_with_search.
         global_config.restore(global_config_backup)
 
     def _get_input_output_sharding(self, sharding_annotated_computation):

@@ -35,7 +35,6 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
                         jax_tensor_index, OrderedSet)
-from parax.multiplex_mesh_host_worker import MultiplexMeshHostWorker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

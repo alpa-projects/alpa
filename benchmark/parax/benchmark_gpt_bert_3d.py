@@ -32,8 +32,7 @@ sanity_check_suite = {
     # the performance below on p3.16
     # Parax: 0.602, 0.618, 0.543, 0.563
     # Megatron: 0.596 (DP), 0.69 (MP)
-    (8,  1024,  1024, 8, 1024//64, 51200, 4,   1,   1,   4,   2,  1,   True, True, False, False),
-
+    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
     #(32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
     #(32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
     #(32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
@@ -194,7 +193,7 @@ if __name__ == "__main__":
         paralell_config = (dp, mp, pp)
         values = [args.model, str(case[:5]), str(paralell_config), str(case[8:10]),
                   str(case[11]), str(case[12]), str(case[13]),
-                  f"{max_mem_allocated}",
                   f"{np.mean(latencies[2:]):.3f}", f"{np.std(latencies[2:]):.3f}",
-                  f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
+                  f"{parameter_count/1e9:.3f}", f"{max_mem_allocated/GB:.3f}",
+                  f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
         write_tsv(heads, values, output_name)

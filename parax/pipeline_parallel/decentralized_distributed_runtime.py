@@ -945,7 +945,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 mesh.reset_remote_timer(name)
 
     def get_total_allocation_size(self):
-        # TODO: compute the theoratical total allocation size
+        # TODO: compute the theoretical total allocation size
         raise NotImplemented
 
     def get_hlo_text(self):

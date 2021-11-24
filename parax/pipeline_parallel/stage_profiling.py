@@ -108,11 +108,17 @@ class CompileWorker:
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 
-    def __init__(self, num_cpus, num_gpus, global_config_backup, debug_mode=False):
+    def __init__(self,
+                 num_cpus,
+                 num_gpus,
+                 global_config_backup,
+                 debug_mode=False):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
         global_config_backup.pop("devices")
-        self.actors = [worker_cls.remote(global_config_backup) for _ in range(num_cpus)]
+        self.actors = [
+            worker_cls.remote(global_config_backup) for _ in range(num_cpus)
+        ]
         self.pool = ActorPool(self.actors)
         self.local_worker = CompileWorker() if debug_mode else None
 

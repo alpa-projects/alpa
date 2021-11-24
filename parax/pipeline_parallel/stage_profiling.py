@@ -34,6 +34,8 @@ class CompileWorker:
     def __init__(self, global_config_backup):
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
+        # FIXME: global_config_backup is conflict with new_global_config
+        #        in compile_stage_with_search.
         global_config.restore(global_config_backup)
 
     def _get_input_output_sharding(self, sharding_annotated_computation):
@@ -286,7 +288,8 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
         stage_info_list: List of info for compilation. Each info is a tuple with:
             (proto, in_avals, out_avals, donate_invars)
     """
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus,
+                                        global_config.backup())
     backup_config = global_config.backup()
     global_config.num_micro_batches = None
     global_config.devices = logical_mesh

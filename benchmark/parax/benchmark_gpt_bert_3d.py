@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
                  "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)"]
-        paralell_config = (case[6], case[7], case[10])
+        paralell_config = (dp, mp, pp)
         values = [args.model, str(case[:5]), str(paralell_config), str(case[8:10]),
                   str(case[11]), str(case[12]), str(case[13]),
                   f"{np.mean(latencies[2:]):.3f}", f"{np.std(latencies[2:]):.3f}",

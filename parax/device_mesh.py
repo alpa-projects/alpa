@@ -77,14 +77,6 @@ class MeshHostWorker:
         self.buffers[uuid] = \
             self.backend.buffer_from_pyval(data, self.local_devices[device_id])
 
-    def get_usage_memory(self):
-        self.sync()
-        return self.local_devices[0].client_memory_usage / (1024 ** 3)
-
-    def get_memory(self):
-        self.sync()
-        return self.local_devices[0].client_memory_peak / (1024 ** 3)
-
     def put_non_zero_buffer(self,
                             uuid: int,
                             device_id: int,
@@ -111,6 +103,14 @@ class MeshHostWorker:
                 self.buffers[uuid].block_until_ready()
         else:
             self.buffers[uuids].block_until_ready()
+
+    def get_memory_allocated(self):
+        self.sync()
+        return max(d.memory_allocated() for d in self.local_devices)
+
+    def get_max_memory_allocated(self):
+        self.sync()
+        return max(d.max_memory_allocated() for d in self.local_devices)
 
     ##### Executable Related Functions #####
     def put_executable(self, uuid: int, executable_class, *args):

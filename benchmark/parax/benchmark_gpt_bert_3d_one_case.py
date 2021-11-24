@@ -1,4 +1,5 @@
 import argparse
+import pickle
 
 import jax
 import jax.numpy as jnp
@@ -170,23 +171,26 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
         state = train_step(state, batch, rngkey)
 
     timer_name = "overall"
-    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+    latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
     print_used_time("Benchmark")
 
     # Compute statistics
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                 hidden_size, vocab_size,
                                 virtual_mesh.total_devices,
-                                np.mean(overall_costs[2:]))
+                                np.mean(latencies[2:]))
     tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                      hidden_size, vocab_size,
                                      virtual_mesh.total_devices,
-                                     np.mean(overall_costs[2:]), True)
+                                     np.mean(latencies[2:]), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
     # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
     executable.shutdown()
     return parameter_count, latencies, tflops, tflops_ckpt
+
+
+PICKLE_FILE_NAME = "tmp_transfer.pkl"
 
 
 def benchmark_one_case(model, case, niter, use_separate_process=False, dump_result=False):
@@ -196,7 +200,6 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         global_config.use_dummy_value_for_benchmarking = True
 
         result = benchmark_gpt_bert_internal(model, case, niter)
-        return result
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.

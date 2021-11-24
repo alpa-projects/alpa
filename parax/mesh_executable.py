@@ -1032,8 +1032,8 @@ class AllocZeroBufferWorkerExecutable:
     def execute_on_worker(self,
                           input_uuids,
                           output_uuids,
-                          sync_before=True,
-                          sync_after=True):
+                          sync_before=False,
+                          sync_after=False):
         buffer_dict = self.worker.buffers
         before_sync_func = self.sync_func if sync_before else None
         after_sync_func = self.sync_func if sync_after else None

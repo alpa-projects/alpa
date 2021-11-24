@@ -350,16 +350,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
                     worker_tmp_instructions[worker].append(
                         PipelineInstruction.RUN(exec_uuid, input_uuids,
-                                                output_uuids, kwargs))
+                                                output_uuids, kwargs, info="stage " + str(stage_idx)))
                 # free all received buffers
-                received_uuids = [
-                    var_at[key].pop(mesh_idx) for key in received_keys
-                ]
-                for worker_idx, worker in enumerate(physical_mesh.workers):
-                    instructions = worker_tmp_instructions[worker]
-                    for uuids in received_uuids:
-                        instructions.append(
-                            PipelineInstruction.FREE(uuids[worker_idx]))
+                # received_uuids = [
+                #     var_at[key].pop(mesh_idx) for key in received_keys
+                # ]
+                # for worker_idx, worker in enumerate(physical_mesh.workers):
+                #     instructions = worker_tmp_instructions[worker]
+                #     for uuids in received_uuids:
+                #         instructions.append(
+                #             PipelineInstruction.FREE(uuids[worker_idx]))
             for worker in worker_tmp_instructions:
                 self.instruction_lists[worker].extend(
                     worker_tmp_instructions[worker])
@@ -1066,6 +1066,11 @@ class PipelineMeshWorkerExecutable:
         # Execute
         timers("overall").start(sync_func=self.worker.sync)
         for instruction in self.instructions:
+            # print("usage: {}, peak: {}, next instruction: {}".format(self.worker.get_usage_memory(),
+            #                                                          self.worker.get_memory(),
+            #                                                          instruction))
+            # if not ("FREE" in str(instruction) or "zero" in str(instruction) or "mem" in str(instruction)):
+            #     print("my uuid: {}, instruction: {}".format(self.my_uuid, instruction))
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,

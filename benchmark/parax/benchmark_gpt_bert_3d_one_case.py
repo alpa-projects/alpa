@@ -88,10 +88,11 @@ def benchmark_one_case(benchmark_case, external_args):
 
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel,
-     use_remat, auto_layer, auto_stage) = benchmark_case
+     use_remat, tie_word_embeddings, auto_layer) = benchmark_case
+    auto_stage = auto_layer
 
     dtype = jnp.float16
-    tie_word_embeddings = False
+    # tie_word_embeddings = False
 
     # Parallel configs
     grad_func = parax.grad
@@ -106,7 +107,8 @@ def benchmark_one_case(benchmark_case, external_args):
                                 strategy="3d_parallel",
                                 num_micro_batches=num_micro_batches,
                                 sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
-                                sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size)
+                                sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
+                                pipeline_parallel_schedule="1f1b")
     else:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",

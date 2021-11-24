@@ -505,7 +505,7 @@ class PhysicalDeviceMesh:
         ]
         return ips
 
-    def launch_xla_servers(self):
+    def launch_xla_servers(self, sync=True):
         # Launch distributed xla runtime
         assert not self.launched
 
@@ -551,7 +551,8 @@ class PhysicalDeviceMesh:
                     "env_vars": env_vars
                 }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
-        self.sync_workers()
+        if sync:
+            self.sync_workers()
         self.launched = True
 
     def get_signature(self) -> str:

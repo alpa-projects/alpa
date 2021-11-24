@@ -158,8 +158,10 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     logical_mesh = mesh.get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
     # TODO(zhuohan): set the number of multiplex physical meshes as a tunable parameter
-    n_multiplex_physical_meshes = 8
-    physical_meshes = [mesh.get_physical_mesh(override_ray_num_gpus=True) for _ in range(n_multiplex_physical_meshes)]
+    n_multiplex_physical_meshes = 2
+    physical_meshes = [mesh.get_physical_mesh(override_ray_num_gpus=True, skip_launch=True) for _ in range(n_multiplex_physical_meshes)]
+    for physical_mesh in physical_meshes:
+        physical_mesh.launch_xla_servers(sync=False)
     physical_mesh_id = 0
     multiplex_profile_jobs = []
 
@@ -171,9 +173,9 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                 intermediates=intermediate_size)
             compute_cost[start, end] = np.mean(cost)
             del executable
-            physical_meshes[physical_mesh_id].shutdown()
-        for physical_mesh in physical_meshes:
-            physical_mesh.launch_xla_servers()
+        #     physical_meshes[physical_mesh_id].shutdown()
+        # for physical_mesh in physical_meshes:
+        #     physical_mesh.launch_xla_servers()
 
     for (start, end), compiled_output, stage_info, hook in zip(
             stage_indices, compiled_outputs, stage_infos, stage_hooks):

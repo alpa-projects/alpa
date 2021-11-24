@@ -32,10 +32,11 @@ sanity_check_suite = {
     # the performance below on p3.16
     # Parax: 0.602, 0.618, 0.543, 0.563
     # Megatron: 0.596 (DP), 0.69 (MP)
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
+    (8,  1024,  1024, 8, 1024//64, 51200, 4,   1,   1,   4,   2,  1,   True, True, False, False),
+
+    #(32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
+    #(32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
+    #(32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
 ]
 }
 

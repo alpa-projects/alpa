@@ -176,6 +176,10 @@ class XlaPipelineComputation(PipelineComputation):
         return partial(xla._execute_compiled, compiled, out_avals,
                        result_handlers, kept_var_idx)
 
+    def get_hlo_text(self):
+        xla_computation = xc.XlaComputation(self.hlo_proto)
+        return xla_computation.as_hlo_text()
+
 
 @dataclass
 class XlaShardedPipelineComputation(PipelineComputation):
@@ -323,7 +327,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
         return mesh_executable.get_driver_callable()
 
-    def hlo_proto_str(self):
+    def get_hlo_text(self):
         xla_computation = xc.XlaComputation(self.hlo_proto)
         return xla_computation.as_hlo_text()
 

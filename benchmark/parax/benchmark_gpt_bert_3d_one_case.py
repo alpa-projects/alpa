@@ -164,6 +164,12 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
+    # dump hlo ir for debugging
+    stage_hlo_texts = executable.get_hlo_text()
+    for i in range(stage_hlo_texts):
+        with open(f"last_stage_{i}.hlo", "w") as fout:
+            fout.write(hlo_text)
+
     executable.sync()
     print_used_time("Compile (worker)")
 

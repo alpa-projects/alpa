@@ -229,11 +229,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                 xla_stages[i] = xla_stage
     compile_workers.shutdown()
 
+    # Wrap all things into a distributed runtime
     for i, physical_mesh in enumerate(physical_meshes):
         logger.debug("Launch the {}th mesh...".format(i))
         physical_mesh.launch_xla_servers()
-
-    # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
     jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
                                          global_invars=global_invars,

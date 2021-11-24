@@ -214,7 +214,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
-        run_cmd("rm -rf {TMP_PICKLE_FILE_NAME}")
+        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
         ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
                      f"--model {model} "
                      f"--niter {niter} "

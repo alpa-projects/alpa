@@ -2,6 +2,8 @@
 import logging
 import pickle
 import time
+import os
+
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import List, Union, Sequence, Tuple
@@ -52,7 +54,10 @@ def device_str_to_id(device_str):
 class MeshHostWorker:
     """A ray actor that manages the xla computation on a single host."""
 
-    def __init__(self, server_address, num_hosts, host_id):
+    def __init__(self, server_address, num_hosts, host_id, override_devices=None):
+        if override_devices is not None:
+            # Override CUDA_VISIBLE_DEVICES set by ray
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, override_devices))
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.distributed_client = \
@@ -532,7 +537,7 @@ class PhysicalDeviceMesh:
             # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
             if self.override_ray_num_gpus:
-                cls = ray.remote(resources={node_resource: 1e-3})(MultiplexMeshHostWorker)
+                cls = ray.remote(resources={node_resource: 1e-3})(MeshHostWorker)
                 worker = cls.options(runtime_env={
                     "env_vars": env_vars
                 }).remote(self.server_address, self.num_hosts, i, self.devices[i])

@@ -403,6 +403,10 @@ class MeshHostWorker:
         for device in self.local_devices:
             device.synchronize_all_activity()
 
+    @staticmethod
+    def check_alive():
+        return 0
+
     def shutdown(self):
         self.sync()
         del self.buffers

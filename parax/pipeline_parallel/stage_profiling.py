@@ -286,7 +286,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
         stage_info_list: List of info for compilation. Each info is a tuple with:
             (proto, in_avals, out_avals, donate_invars)
     """
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus, global_config.backup())
     backup_config = global_config.backup()
     global_config.num_micro_batches = None
     global_config.devices = logical_mesh

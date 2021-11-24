@@ -166,9 +166,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
 
     # dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
-    for i in range(stage_hlo_texts):
+    for i in range(len(stage_hlo_texts)):
         with open(f"last_stage_{i}.hlo", "w") as fout:
-            fout.write(hlo_text)
+            fout.write(stage_hlo_texts[i])
 
     executable.sync()
     print_used_time("Compile (worker)")
@@ -179,6 +179,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     timer_name = "overall"
     latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
     print_used_time("Benchmark")
+
+    mem_allocated = executable.get_memory_allocated()
+    max_mem_allocated = executable.get_max_memory_allocated()
 
     # Compute statistics
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
@@ -193,7 +196,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
 
     # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
     executable.shutdown()
-    return parameter_count, latencies, tflops, tflops_ckpt
+    return parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt
 
 
 PICKLE_FILE_NAME = "tmp_transfer.pkl"
@@ -217,7 +220,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         if ret == 0:
             result = pickle.load(open(PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, [-1], -1, -1
+            result = -1, -1, -1, [-1], -1, -1
 
     if dump_result:
         pickle.dump(result, open(PICKLE_FILE_NAME, "wb"))

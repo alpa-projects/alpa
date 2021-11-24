@@ -198,7 +198,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     return param_count, ilp_objective, alloc_mem, latencies, tflops
 
 
-TMP_PICKLE_FILE_NAME = "tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(model, case, niter, local, use_separate_process=False, dump_result=False):

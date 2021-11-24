@@ -65,6 +65,9 @@ def compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
     total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
           (1 + seq_len / (6 * hidden_size)) \
           + 6 * batch_size * seq_len * hidden_size * vocab_size
+    # Note: if we use dot to compute forward embedding
+    # then the last term in total_flops should be
+    # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
     tflops = total_flop / latency / num_gpus / 1e12
     return tflops
 

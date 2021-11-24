@@ -31,3 +31,4 @@ benchmark/deepspeed/data
 
 # Numpy cache
 *.npy
+*.pkl

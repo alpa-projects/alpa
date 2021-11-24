@@ -170,7 +170,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
-    compile_workers = CompileWorkerPool(num_meshes, 1)
+    compile_workers = CompileWorkerPool(num_meshes, 1, global_config.backup())
     compile_fn = lambda w, v: w.compile_with_config.remote(*v)
     compile_intermediate = [None] * num_meshes
     for mesh_idx in range(num_meshes):

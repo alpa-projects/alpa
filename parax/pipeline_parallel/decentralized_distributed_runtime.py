@@ -93,7 +93,8 @@ class PipelineInstruction:
 
     def __str__(self):
         ret = ""
-        ret += "Opcode: " + str(self.opcode)[17:] + ", Task uuid: " + str(self.task_uuid)
+        ret += "Opcode: " + str(self.opcode)[17:] + ", Task uuid: " + str(
+            self.task_uuid)
         if self.print_uuids:
             ret += ", input uuids:" + str(self.input_uuids)
             ret += ", output uuids:" + str(self.output_uuids)
@@ -349,8 +350,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     }
 
                     worker_tmp_instructions[worker].append(
-                        PipelineInstruction.Run(exec_uuid, input_uuids,
-                                                output_uuids, kwargs, info=f"stage {stage_idx}"))
+                        PipelineInstruction.Run(exec_uuid,
+                                                input_uuids,
+                                                output_uuids,
+                                                kwargs,
+                                                info=f"stage {stage_idx}"))
                 # free all received buffers
                 received_uuids = [
                     var_at[key].pop(mesh_idx) for key in received_keys
@@ -414,14 +418,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 in_uuids = []
                 out_uuids = output_uuids[worker_idx]
             self.instruction_lists[worker].append(
-                PipelineInstruction.Run(
-                    config.exec_uuid,
-                    in_uuids,
-                    out_uuids, {
-                        "sync_before": False,
-                        "sync_after": False
-                    },
-                    info="mem set zero" if preallocated else "allocate zero for recv"))
+                PipelineInstruction.Run(config.exec_uuid,
+                                        in_uuids,
+                                        out_uuids, {
+                                            "sync_before": False,
+                                            "sync_after": False
+                                        },
+                                        info="mem set zero" if preallocated else
+                                        "allocate zero for recv"))
 
         # (args, workers, devices)
         transposed = output_uuids.transpose([1, 0, 2])
@@ -1042,7 +1046,6 @@ class PipelineMeshWorkerExecutable:
                                        AllocZeroBufferWorkerExecutable,
                                        task_config.grad_shard_shapes,
                                        task_config.grad_shard_dtypes)
-
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids):
         # copy to local env

@@ -116,10 +116,18 @@ class BaseDistributedRuntime(BaseRuntime):
         raise NotImplementedError()
 
     def get_memory_allocated(self):
-        return max(ray.get([mesh.get_memory_allocated.remote() for mesh in self.physical_meshes]))
+        calls = []
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                calls.append(worker.get_memory_allocated.remote())
+        return max(ray.get(calls))
 
     def get_max_memory_allocated(self):
-        return max(ray.get([mesh.get_max_memory_allocated.remote() for mesh in self.physical_meshes]))
+        calls = []
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                calls.append(worker.get_max_memory_allocated.remote())
+        return max(ray.get(calls))
 
     def sync(self):
         """Sync all workers' GPU activities."""

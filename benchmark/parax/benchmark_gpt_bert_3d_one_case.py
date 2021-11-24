@@ -167,8 +167,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     # dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
     for i in range(len(stage_hlo_texts)):
-        with open(f"last_stage_{i}.hlo", "w") as fout:
+        with open(f"tmp/stage_{i}.hlo", "w") as fout:
             fout.write(stage_hlo_texts[i])
+    with open(f"tmp/resharding_tasks.txt", "w") as fout:
+        fout.write(executable.print_resharding_tasks())
 
     executable.sync()
     print_used_time("Compile (worker)")
@@ -177,7 +179,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
         state = train_step(state, batch, rngkey)
 
     timer_name = "overall"
-    latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+    latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)[2:]
     print_used_time("Benchmark")
 
     mem_allocated = executable.get_memory_allocated()
@@ -187,11 +189,11 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                 hidden_size, vocab_size,
                                 virtual_mesh.total_devices,
-                                np.mean(latencies[2:]))
+                                np.mean(latencies))
     tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                      hidden_size, vocab_size,
                                      virtual_mesh.total_devices,
-                                     np.mean(latencies[2:]), True)
+                                     np.mean(latencies), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
     # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
@@ -199,7 +201,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     return parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt
 
 
-PICKLE_FILE_NAME = "tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(model, case, niter, use_separate_process=False, dump_result=False):
@@ -212,18 +214,19 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
+        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
         ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
                      f"--model {model} "
                      f"--niter {niter} "
                      f'--case "{case}" '
                      f"--dump-result ")
         if ret == 0:
-            result = pickle.load(open(PICKLE_FILE_NAME, "rb"))
+            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
             result = -1, -1, -1, [-1], -1, -1
 
     if dump_result:
-        pickle.dump(result, open(PICKLE_FILE_NAME, "wb"))
+        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
 
     return result
 
@@ -237,6 +240,7 @@ if __name__ == "__main__":
         help="Dump results into a temporary pickle file")
     args = parser.parse_args()
 
+    run_cmd("mkdir -p tmp")
     case = eval(args.case)
     benchmark_one_case(args.model, case, args.niter,
                        use_separate_process=False, dump_result=args.dump_result)

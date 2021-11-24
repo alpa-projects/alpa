@@ -32,3 +32,4 @@ benchmark/deepspeed/data
 # Numpy cache
 *.npy
 *.pkl
+benchmark/parax/tmp

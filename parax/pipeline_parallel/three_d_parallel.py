@@ -168,6 +168,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     else:
         slms = [None] * num_meshes
 
+    # Print jaxpr for debugging
+    #for i in range(len(jax_all_stages)):
+    #    with open(f"tmp/stage_{i}.jaxpr", "w") as fout:
+    #        fout.write(str(jax_all_stages[i].closed_jaxpr()))
+
     # Call auto-sharding pass to shard each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1, global_config.backup())

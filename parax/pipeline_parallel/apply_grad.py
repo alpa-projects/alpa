@@ -175,7 +175,8 @@ def get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
         for invar in stage.invars:
             if invar in donated_global_vars:
                 outvar_mesh.setdefault(donation_mapping[invar],
-                                       OrderedSet()).add(stage_to_mesh[stage_idx])
+                                       OrderedSet()).add(
+                                           stage_to_mesh[stage_idx])
     return outvar_mesh
 
 

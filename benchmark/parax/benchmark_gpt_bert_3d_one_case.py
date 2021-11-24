@@ -1,4 +1,5 @@
 import argparse
+import pickle
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ from parax import (parallelize, global_config, set_parallelize_options,
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import write_tsv, print_used_time
+from parax.util import print_used_time, run_cmd
 
 GB = 1024 ** 3
 
@@ -79,13 +80,11 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
 
     return train_step
 
-def benchmark_one_case(benchmark_case, external_args):
+def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
-    model_type = external_args.model
-
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel,
      use_remat, auto_layer, auto_stage) = benchmark_case
@@ -168,40 +167,56 @@ def benchmark_one_case(benchmark_case, external_args):
     executable.sync()
     print_used_time("Compile (worker)")
 
-    for i in range(external_args.niter):
+    for i in range(niter):
         state = train_step(state, batch, rngkey)
 
     timer_name = "overall"
-    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+    latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
     print_used_time("Benchmark")
 
     # Compute statistics
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                 hidden_size, vocab_size,
                                 virtual_mesh.total_devices,
-                                np.mean(overall_costs[2:]))
+                                np.mean(latencies[2:]))
     tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                      hidden_size, vocab_size,
                                      virtual_mesh.total_devices,
-                                     np.mean(overall_costs[2:]), True)
+                                     np.mean(latencies[2:]), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
 
-    # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], external_args.niter)
-    heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-             "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)"]
-    paralell_config = (l_dim0, l_dim1, pipeline_mp_size)
-    values = [model_type, str(benchmark_case[:5]), str(paralell_config), str(benchmark_case[8:10]),
-              str(benchmark_case[11]), str(benchmark_case[12]), str(benchmark_case[13]),
-              f"{np.mean(overall_costs[2:]):.3f}", f"{np.std(overall_costs[2:]):.3f}",
-              f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
-    write_tsv(heads, values, f"{model_type}_parax_{external_args.exp_name}.tsv")
-
+    # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
     executable.shutdown()
+    return parameter_count, latencies, tflops, tflops_ckpt
 
 
-def setup_benchmark():
-    jax.config.update('jax_platform_name', 'cpu')
-    global_config.use_dummy_value_for_benchmarking = True
+PICKLE_FILE_NAME = "tmp_transfer.pkl"
+
+
+def benchmark_one_case(model, case, niter, use_separate_process=False, dump_result=False):
+    if not use_separate_process:
+        ray.init(address="auto", ignore_reinit_error=True)
+        jax.config.update('jax_platform_name', 'cpu')
+        global_config.use_dummy_value_for_benchmarking = True
+
+        result = benchmark_gpt_bert_internal(model, case, niter)
+    else:
+        # Launch a new process for benchmark to isolate errors.
+        # Get the return data via pickle.
+        ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
+                     f"--model {model} "
+                     f"--niter {niter} "
+                     f'--case "{case}" '
+                     f"--dump-result ")
+        if ret == 0:
+            result = pickle.load(open(PICKLE_FILE_NAME, "rb"))
+        else:
+            result = -1, [-1], -1, -1
+
+    if dump_result:
+        pickle.dump(result, open(PICKLE_FILE_NAME, "wb"))
+
+    return result
 
 
 if __name__ == "__main__":
@@ -209,10 +224,10 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=7)
     parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--exp_name", type=str, default="result")
+    parser.add_argument("--dump-result", action="store_true",
+        help="Dump results into a temporary pickle file")
     args = parser.parse_args()
+
     case = eval(args.case)
-    setup_benchmark()
-    ray.init(address="auto")
-    benchmark_one_case(case, args)
-    ray.shutdown()
+    benchmark_one_case(args.model, case, args.niter,
+                       use_separate_process=False, dump_result=args.dump_result)

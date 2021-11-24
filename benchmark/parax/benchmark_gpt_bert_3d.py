@@ -1,9 +1,11 @@
 import argparse
 from datetime import datetime
+
+import numpy as np
 import ray
 
-from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case, setup_benchmark
-from benchmark.util import run_cmd
+from parax.util import write_tsv
+from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 
 GB = 1024 ** 3
@@ -30,10 +32,10 @@ sanity_check_suite = {
     # the performance below on p3.16
     # Parax: 0.602, 0.618, 0.543, 0.563
     # Megatron: 0.596 (DP), 0.69 (MP)
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, True),
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False),
-    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False),
+    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
+    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
+    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False),
+    (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   False, True, False, False),
 ]
 }
 
@@ -154,43 +156,42 @@ if __name__ == "__main__":
     parser.add_argument("--niter", type=int, default=7)  # 2 warmup + 2 actual run.
     parser.add_argument("--suite", choices=["default", "sanity_check", "paper_gpt", "test_gpt"],
                         default="paper_gpt")
-    parser.add_argument("--mode", choices=["normal", "nonstop"], default="nonstop")
+    parser.add_argument("--no-separate-process", action='store_false',
+                        help="Do not launch separate processes for benchmark."
+                             "Erros in a single case will terminate this script.",
+                        dest='use_separate_process')
     parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
 
-    print("- Benchmarking in {} mode.".format(args.mode))
-    if args.mode == "normal":
-        ray.init(address="auto")
-        setup_benchmark()
-        num_gpus = int(ray.cluster_resources()["GPU"])
-        try:
-            suite = benchmark_suites[args.suite][num_gpus]
-        except KeyError:
-            suite = None
-        if not suite:
-            print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
-            exit()
-        for case in suite:
-            benchmark_one_case(case, args)
-        ray.shutdown()
-    elif args.mode == "nonstop":
-        ray.init(address="auto")
-        num_gpus = int(ray.cluster_resources()["GPU"])
-        print("num_gpus... {}".format(num_gpus))
-        ray.shutdown()
-        # construct case str
-        output_name = args.exp_name + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        for case in benchmark_suites[args.suite][num_gpus]:
-            dp, mp, pp = case[6], case[7], case[10]
-            if pp <= 1:
-                print(f"Skipping the case: {str(case)}, because PP <= 1. Lianmin will test it.")
-                continue
-            case_str = str(case)
+    print(f"- Use separate process: {args.use_separate_process}")
 
-            ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
-                         f"--model {args.model} "
-                         f"--niter {args.niter} "
-                         f'--case "{case_str}" '
-                         f"--output {output_name}")
-    else:
-        raise RuntimeError()
+    ray.init(address="auto")
+    num_gpus = int(ray.cluster_resources()["GPU"])
+    try:
+        suite = benchmark_suites[args.suite][num_gpus]
+    except KeyError:
+        suite = None
+    if not suite:
+        print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
+        exit()
+
+    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    output_name = f"{args.model}_parax_{args.exp_name}-{date_str}.tsv"
+    for case in suite:
+        dp, mp, pp = case[6], case[7], case[10]
+        if pp <= 1:
+            print(f"Skipping the case: {str(case)}, because PP <= 1. Lianmin will test it.")
+            continue
+
+        result = benchmark_one_case(args.model, case, args.niter,
+                                    use_separate_process=args.use_separate_process)
+        parameter_count, latencies, tflops, tflops_ckpt = result
+
+        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
+                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)"]
+        paralell_config = (dp, mp, pp)
+        values = [args.model, str(case[:5]), str(paralell_config), str(case[8:10]),
+                  str(case[11]), str(case[12]), str(case[13]),
+                  f"{np.mean(latencies[2:]):.3f}", f"{np.std(latencies[2:]):.3f}",
+                  f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
+        write_tsv(heads, values, output_name)

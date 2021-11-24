@@ -7,6 +7,7 @@ from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
 from jax.core import Var
 from jax.interpreters import pxla
+from jax.lib import xla_client, xla_bridge, xla_extension
 import jax.numpy as jnp
 import numpy as np
 import ray.exceptions
@@ -942,6 +943,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for name in timer_names:
             for mesh in self.physical_meshes:
                 mesh.reset_remote_timer(name)
+
+    def get_total_allocation_size(self):
+        # TODO: compute the theoretical total allocation size
+        raise NotImplemented
+
+    def get_hlo_text(self):
+        """Return the HLO text for all stages."""
+        ret = []
+        for i in range(len(self.stages)):
+            ret.append(self.stages[i].get_hlo_text())
+        return ret
 
     def _check_alive(self):
         try:

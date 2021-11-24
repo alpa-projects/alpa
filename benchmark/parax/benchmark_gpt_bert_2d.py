@@ -4,7 +4,7 @@ import ray
 
 import numpy as np
 
-from parax.util import list_gpu_info, write_tsv
+from parax.util import list_gpu_info, write_tsv, run_cmd
 
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case
 
@@ -86,6 +86,7 @@ if __name__ == "__main__":
     if not suite:
         print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
         exit()
+    run_cmd("mkdir -p tmp")
 
     # Run all cases
     for case in suite:

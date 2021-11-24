@@ -175,6 +175,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         self.uuid_counter = 0
         self.instruction_lists = dict()
+        self.hlo_texts_after_spmd_partitioner = []
 
         # make this the states of this class
         (executable_config_lists, input_local_uuid_list, grad_uuids,
@@ -500,14 +501,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_idx = list(mesh_idx)[0]
             compiled = stage.get_compiled(self.physical_meshes[mesh_idx])
             hlo_module = compiled.hlo_modules()[0]
-
-            # For debug purpose
-            if logger.level <= logging.DEBUG:
-                name = f"stage_{stage_idx}.hlo"
-                hlo_ir = hlo_module.to_string()
-                with open(name, "w") as f:
-                    f.write(hlo_ir)
-
+            self.hlo_texts_after_spmd_partitioner.append(hlo_module.to_string())
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             strategy_config = stage.strategy_config
             grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
@@ -948,12 +942,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # TODO: compute the theoretical total allocation size
         raise NotImplemented
 
-    def get_hlo_text(self):
+    def get_hlo_text(self, after_spmd_partitioner=True):
         """Return the HLO text for all stages."""
-        ret = []
-        for i in range(len(self.stages)):
-            ret.append(self.stages[i].get_hlo_text())
-        return ret
+        if after_spmd_partitioner:
+            return self.hlo_texts_after_spmd_partitioner
+        else:
+            ret = []
+            for i in range(len(self.stages)):
+                ret.append(self.stages[i].get_hlo_text())
+            return ret
 
     def _check_alive(self):
         try:

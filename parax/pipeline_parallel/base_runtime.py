@@ -228,7 +228,9 @@ class BaseDistributedRuntime(BaseRuntime):
                     self._collective_groups[i][j].destroy()
 
     def print_resharding_tasks(self):
+        ret = ""
         for src_idx in range(len(self._resharding_tasks)):
             for dst_idx in range(len(self._resharding_tasks)):
                 for var, task in self._resharding_tasks[src_idx][dst_idx].items():
-                    print(f"{var}: Mesh {src_idx}->{dst_idx}, {task}")
+                    ret += f"{var}: Mesh {src_idx}->{dst_idx}, {task}\n"
+        return ret

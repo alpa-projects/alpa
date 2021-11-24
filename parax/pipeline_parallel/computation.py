@@ -176,6 +176,10 @@ class XlaPipelineComputation(PipelineComputation):
         return partial(xla._execute_compiled, compiled, out_avals,
                        result_handlers, kept_var_idx)
 
+    def get_hlo_text(self):
+        xla_computation = xc.XlaComputation(self.hlo_proto)
+        return xla_computation.as_hlo_text()
+
 
 @dataclass
 class XlaShardedPipelineComputation(PipelineComputation):
@@ -188,6 +192,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     output_sharding_specs: Any = None
     output_acc_grad_indices: Sequence[int] = None
     donatables: OrderedSet[Var] = None
+    compiled = None
 
     @classmethod
     def from_auto_sharded_computation(
@@ -270,6 +275,9 @@ class XlaShardedPipelineComputation(PipelineComputation):
             self.donated_invars[var_indices[invar]] = True
 
     def get_compiled(self, mesh=None):
+        # TODO(yonghao): use more general cache functions
+        if self.compiled is not None:
+            return self.compiled
 
         if not isinstance(mesh, PhysicalDeviceMesh):
             raise RuntimeError(
@@ -301,6 +309,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             strategy_config.logical_mesh_shape)
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
+        self.compiled = compiled
         return compiled
 
     def get_runnable(self, mesh=None):
@@ -318,7 +327,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
         return mesh_executable.get_driver_callable()
 
-    def hlo_proto_str(self):
+    def get_hlo_text(self):
         xla_computation = xc.XlaComputation(self.hlo_proto)
         return xla_computation.as_hlo_text()
 
@@ -386,9 +395,11 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     computation_additional_outvars = [OrderedSet() for _ in computations]
     for computation_id, computation in enumerate(computations):
         for eqn in computation.eqns:
-            if eqn.primitive == pipeline_p and eqn.params["mark_type"] == "start":
+            if eqn.primitive == pipeline_p and eqn.params[
+                    "mark_type"] == "start":
                 for invar, outvar in zip(eqn.invars, eqn.outvars):
-                    computation_marked_to_unmarked_invars[computation_id][outvar] = invar
+                    computation_marked_to_unmarked_invars[computation_id][
+                        outvar] = invar
             for var in eqn.invars:
                 if (not isinstance(var, Literal) and
                         var not in computation.consts_dir and
@@ -400,10 +411,14 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
                         # computation, do not let the invar go into the stage.
                         # Instead, we can directly use the original invar.
                         if (computation_id >= num_forward_computations and
-                                source_computation_id == 2 * num_forward_computations - computation_id - 1 and
-                                var in computation_marked_to_unmarked_invars[source_computation_id]):
+                                source_computation_id
+                                == 2 * num_forward_computations -
+                                computation_id - 1 and
+                                var in computation_marked_to_unmarked_invars[
+                                    source_computation_id]):
                             computation_weight_invars[computation_id][var] = (
-                                computation_marked_to_unmarked_invars[source_computation_id][var])
+                                computation_marked_to_unmarked_invars[
+                                    source_computation_id][var])
                             continue
                         # Mark all the variables in the backward computation
                         # that are not currently defined in pipeline markers.
@@ -424,10 +439,10 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     new_computations = []
 
     for i, computation in enumerate(computations):
-        assert (computation.eqns[0].primitive is pipeline_p and computation.eqns[
-            0].params["mark_type"] == "start")
-        assert (computation.eqns[-1].primitive is pipeline_p and computation.eqns[
-            -1].params["mark_type"] == "end")
+        assert (computation.eqns[0].primitive is pipeline_p and
+                computation.eqns[0].params["mark_type"] == "start")
+        assert (computation.eqns[-1].primitive is pipeline_p and
+                computation.eqns[-1].params["mark_type"] == "end")
         new_computation = JaxPipelineComputation(
             computation.name, consts_dir=computation.consts_dir)
 

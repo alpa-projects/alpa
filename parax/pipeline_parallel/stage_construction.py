@@ -173,7 +173,8 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
                                                         config, avals,
                                                         out_avals,
                                                         donated_invars, [])
-        cost = executable.profile_with_dummy_inputs(intermediates=intermediate_size)
+        cost = executable.profile_with_dummy_inputs(
+            intermediates=intermediate_size)
         compute_cost[start, end] = np.mean(cost)
     return compute_cost
 

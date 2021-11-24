@@ -120,14 +120,19 @@ def get_bert_functions():
     return model_provider, loss_func, forward_step
 
 
-def benchmark_gpt_bert_one_case(benchmark_case):
+def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     # Model configs
     model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,\
-        vocab_size, dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches,\
-        ddp_impl, checkpoint_activations = benchmark_case
+        vocab_size, dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
+    num_micro_batches, force_dp,  checkpoint_activations, _, _ \
+        = benchmark_case
+
     num_gpus = dp_size * tensor_mp_size * pipeline_mp_size
     assert global_batch_size % (dp_size * num_micro_batches) == 0
     micro_batch_size = global_batch_size // dp_size // num_micro_batches
+
+    # always use local DDP
+    ddp_impl = True
 
     # Parallel configs
     # Initialize megatron
@@ -182,7 +187,7 @@ def benchmark_gpt_bert_one_case(benchmark_case):
         timers(name).reset()
 
     # Benchmark step time
-    repeat = 10
+    repeat = 5
     number = 1
     costs = benchmark_func(run_func, sync_func=None,
                            warmup=0, repeat=repeat, number=number)
@@ -194,18 +199,27 @@ def benchmark_gpt_bert_one_case(benchmark_case):
                                 hidden_size, vocab_size,
                                 torch.distributed.get_world_size(),
                                 np.mean(costs))
-    heads = ["Type", "Case", "Mesh Shape", "#MB", "Remat", "Tie-Embed",
-             "#Params", "Peak Mem", "Mean Time", "Std Time", "TFLOPs"]
+    tflops_ckpt = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
+                                     hidden_size, vocab_size,
+                                     torch.distributed.get_world_size(),
+                                     np.mean(costs), True)
+    heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
+             "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
+              "Peak Mem"]
     values = [model_type, str(benchmark_case[1:6]),
-              str((dp_size, tensor_mp_size, pipeline_mp_size)), str(num_micro_batches),
-              str(checkpoint_activations), "No",
-              f"{parameter_count/1e9:.3f}", f"{peak_mem/GB:5.3f}",
-              f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}", f"{tflops:.2f}"]
-    write_tsv(heads, values, f"result_{model_type}.tsv")
+              str((dp_size, tensor_mp_size, pipeline_mp_size)),
+              "N/A", str(num_micro_batches), "N/A",
+              str(checkpoint_activations), f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
+              f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+              f"{peak_mem/GB:5.3f}"]
+    write_tsv(heads, values, f"{model_type}_megatron_{output_file_name}_rank{rank}.tsv")
+    print("Sleeping for 30 seconds before starting the next case. ")
+    time.sleep(30)
 
 
 if __name__ == "__main__":
-    case = eval(sys.argv[-1])
+    case = eval(sys.argv[-2])
+    output_file_name = sys.argv[-1]
     del sys.argv[-1]
-    benchmark_gpt_bert_one_case(case)
-
+    del sys.argv[-1]
+    benchmark_gpt_bert_one_case(case, output_file_name)

@@ -537,7 +537,7 @@ def log_jaxpr(jaxpr, name):
 
 
 def get_memory_status(local_devices):
-    return local_devices[0].client_memory_usage
+    return local_devices[0].available_memory()
 
 
 def profile_xla_executable(compiled, backend, local_devices):
@@ -795,7 +795,8 @@ def jax_tensor_index(src_tensor, indices, size):
 def run_cmd(cmd):
     """Run a bash commond."""
     print(cmd)
-    os.system(cmd)
+    ret = os.system(cmd)
+    return ret
 
 
 def list_gpu_info():

@@ -1,16 +1,19 @@
 from collections import namedtuple
 from dataclasses import dataclass
 import enum
+import jax
 import logging
 from typing import Any, Dict, Sequence, List, Callable, Union, Optional
 
-import numpy as np
-import ray.exceptions
 from jax.core import Var
 from jax.interpreters import pxla
+from jax.lib import xla_client, xla_bridge, xla_extension
 import jax.numpy as jnp
+import numpy as np
+import ray.exceptions
 
 from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
+from parax.global_env import global_config
 from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    MemzeroWorkerExecutable,
                                    PartialGradAccMeshWorkerExecutable,
@@ -23,7 +26,6 @@ from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
 from parax.util import OrderedSet, get_shard_shape
-from parax.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -50,38 +52,55 @@ class PipelineInstruction:
     input_uuids: Optional[np.ndarray]
     output_uuids: Optional[np.ndarray]
     opaques: Optional[Dict[str, Any]]
+    info: str
+    print_uuids: bool = False
 
     @classmethod
-    def RUN(cls, task_uuid, input_uuids, output_uuids, kwargs):
+    def Run(cls, task_uuid, input_uuids, output_uuids, kwargs, info=""):
         return cls(opcode=PipelineInstType.RUN,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=output_uuids,
-                   opaques={"kwargs": kwargs})
+                   opaques={"kwargs": kwargs},
+                   info=info)
 
     @classmethod
-    def SEND(cls, task_uuid, input_uuids):
+    def Send(cls, task_uuid, input_uuids, info=""):
         return cls(opcode=PipelineInstType.SEND,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
                    output_uuids=None,
-                   opaques=None)
+                   opaques=None,
+                   info=info)
 
     @classmethod
-    def RECV(cls, task_uuid, output_uuids, set_empty_buffer):
+    def Recv(cls, task_uuid, output_uuids, set_empty_buffer, info=""):
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
                    output_uuids=output_uuids,
-                   opaques={"set_empty_buffer": set_empty_buffer})
+                   opaques={"set_empty_buffer": set_empty_buffer},
+                   info=info)
 
     @classmethod
-    def FREE(cls, input_uuids):
+    def Free(cls, input_uuids, info=""):
         return cls(opcode=PipelineInstType.FREE,
                    task_uuid=None,
                    input_uuids=input_uuids,
                    output_uuids=None,
-                   opaques=None)
+                   opaques=None,
+                   info=info,
+                   print_uuids=False)
+
+    def __str__(self):
+        ret = ""
+        ret += "Opcode: " + str(self.opcode)[17:] + ", Task uuid: " + str(
+            self.task_uuid)
+        if self.print_uuids:
+            ret += ", input uuids:" + str(self.input_uuids)
+            ret += ", output uuids:" + str(self.output_uuids)
+        ret += ", Info: " + self.info
+        return ret
 
 
 AllocateZeroWorkerExecutableConfig = namedtuple(
@@ -212,7 +231,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             elif (invar in self.grad_dummy_invars and
                   batch_idx != self.schedule.first_backward_batch_index):
                 var_key = self.grad_dummy_invars[invar]
-                key = (var_key, self.schedule.previous_backward_batch_index(batch_idx))
+                key = (var_key,
+                       self.schedule.previous_backward_batch_index(batch_idx))
             else:
                 var_key = repr(invar)
                 key = (repr(invar), batch_idx)
@@ -306,9 +326,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     # Get input and output uuids. They should be at the mesh
                     input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host), dtype=np.int64)
+                        (len(stage.invars), num_devices_per_host),
+                        dtype=np.int64)
                     output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host), dtype=np.int64)
+                        (len(stage.outvars), num_devices_per_host),
+                        dtype=np.int64)
                     for idx, invar in enumerate(stage.invars):
                         _, key = get_invar_key(invar, batch_idx)
                         input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
@@ -322,14 +344,18 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                     list(output_uuids[idx])))
 
                     kwargs = {
-                        "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
+                        "skip_grad_sync":
+                            self.schedule.should_skip_grad_sync(task),
                         "sync_before": False,
                         "sync_after": False,
                     }
 
                     worker_tmp_instructions[worker].append(
-                        PipelineInstruction.RUN(exec_uuid, input_uuids,
-                                                output_uuids, kwargs))
+                        PipelineInstruction.Run(exec_uuid,
+                                                input_uuids,
+                                                output_uuids,
+                                                kwargs,
+                                                info=f"stage {stage_idx}"))
                 # free all received buffers
                 received_uuids = [
                     var_at[key].pop(mesh_idx) for key in received_keys
@@ -338,7 +364,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     instructions = worker_tmp_instructions[worker]
                     for uuids in received_uuids:
                         instructions.append(
-                            PipelineInstruction.FREE(uuids[worker_idx]))
+                            PipelineInstruction.Free(uuids[worker_idx]))
             for worker in worker_tmp_instructions:
                 self.instruction_lists[worker].extend(
                     worker_tmp_instructions[worker])
@@ -393,10 +419,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 in_uuids = []
                 out_uuids = output_uuids[worker_idx]
             self.instruction_lists[worker].append(
-                PipelineInstruction.RUN(config.exec_uuid, in_uuids, out_uuids, {
-                    "sync_before": False,
-                    "sync_after": False
-                }))
+                PipelineInstruction.Run(config.exec_uuid,
+                                        in_uuids,
+                                        out_uuids, {
+                                            "sync_before": False,
+                                            "sync_after": False
+                                        },
+                                        info="mem set zero" if preallocated else
+                                        "allocate zero for recv"))
 
         # (args, workers, devices)
         transposed = output_uuids.transpose([1, 0, 2])
@@ -662,7 +692,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for w, task_uuid in resharding_task.send_worker_task_ids.items():
             input_uuids = send_buf_uuids[w]
             self.instruction_lists[w].append(
-                PipelineInstruction.SEND(task_uuid, input_uuids))
+                PipelineInstruction.Send(task_uuid, input_uuids))
 
         # collect uuids of each recv_tile in each worker based on resharding_task's plan
         for receiver_str in resharding_task.receiver_uuid_plan:
@@ -679,7 +709,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for w, task_uuid in resharding_task.recv_worker_task_ids.items():
             output_uuids = recv_buf_uuids[w]
             self.instruction_lists[w].append(
-                PipelineInstruction.RECV(task_uuid, output_uuids, False))
+                PipelineInstruction.Recv(task_uuid, output_uuids, False))
 
     def _compile_free(self, worker, used_outside, donated):
         """Add FREE PipelineInstruction to recycle memory
@@ -699,7 +729,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 unused_uuids = list(input_uuids.difference(cannot_free_uuids))
                 if len(unused_uuids):
                     new_list.append(
-                        PipelineInstruction.FREE(np.array(unused_uuids)))
+                        PipelineInstruction.Free(np.array(unused_uuids)))
             cannot_free_uuids.update(input_uuids)
             new_list.append(instruction)
         return list(reversed(new_list))
@@ -729,9 +759,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # check if there is OOM
         if global_config.pipeline_runtime_mode == "paper":
             self._check_alive()
-
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            # ray.get(physical_mesh.workers[0].sync.remote())
+            # print(f"before shard_args mesh_idx={mesh_idx} allocated:",
+            #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
+            #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
             mesh_args = [
                 split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
@@ -746,6 +779,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
+            # print(f"after shard_args mesh_idx={mesh_idx} allocated:",
+            #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
+            #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
 
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -908,6 +944,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for mesh in self.physical_meshes:
                 mesh.reset_remote_timer(name)
 
+    def get_total_allocation_size(self):
+        # TODO: compute the theoretical total allocation size
+        raise NotImplemented
+
+    def get_hlo_text(self):
+        """Return the HLO text for all stages."""
+        ret = []
+        for i in range(len(self.stages)):
+            ret.append(self.stages[i].get_hlo_text())
+        return ret
+
     def _check_alive(self):
         try:
             rets = [
@@ -1034,6 +1081,10 @@ class PipelineMeshWorkerExecutable:
         # Execute
         timers("overall").start(sync_func=self.worker.sync)
         for instruction in self.instructions:
+            #print(instruction)
+            #print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
+            #      f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB")
+
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,

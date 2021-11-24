@@ -105,6 +105,14 @@ class MeshHostWorker:
         else:
             self.buffers[uuids].block_until_ready()
 
+    def get_memory_allocated(self):
+        self.sync()
+        return max(d.memory_allocated() for d in self.local_devices)
+
+    def get_max_memory_allocated(self):
+        self.sync()
+        return max(d.max_memory_allocated() for d in self.local_devices)
+
     ##### Executable Related Functions #####
     def put_executable(self, uuid: int, executable_class, *args):
         self.executables[uuid] = executable_class(self, uuid, *args)
@@ -518,6 +526,7 @@ class PhysicalDeviceMesh:
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".95",
             }
 
             # Launch a ray actor
@@ -708,8 +717,6 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
-                    # TODO(yonghao): the following assertion will fail, which does not make sense
-                    # assert not isinstance(arg, DistributedArray)
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -717,6 +724,12 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
+                    # after_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
+                    # after_memory_peak = ray.get(self.workers[0].get_memory.remote())
+                    # actual = after_memory_usage - before_memory_usage
+                    # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
+                    #     expected, actual, before_memory_usage, after_memory_usage
+                    # ))
 
             return input_bufs
         else:

@@ -31,9 +31,12 @@ class CompileWorker:
     To activaite the worker, a gpu resource is required.
     """
 
-    def __init__(self):
+    def __init__(self, global_config_backup):
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
+        # FIXME: global_config_backup is conflict with new_global_config
+        #        in compile_stage_with_search.
+        global_config.restore(global_config_backup)
 
     def _get_input_output_sharding(self, sharding_annotated_computation):
         hlo_module = sharding_annotated_computation.as_hlo_module()
@@ -107,10 +110,17 @@ class CompileWorker:
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 
-    def __init__(self, num_cpus, num_gpus, debug_mode=False):
+    def __init__(self,
+                 num_cpus,
+                 num_gpus,
+                 global_config_backup,
+                 debug_mode=False):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
-        self.actors = [worker_cls.remote() for _ in range(num_cpus)]
+        global_config_backup.pop("devices")
+        self.actors = [
+            worker_cls.remote(global_config_backup) for _ in range(num_cpus)
+        ]
         self.pool = ActorPool(self.actors)
         self.local_worker = CompileWorker() if debug_mode else None
 
@@ -278,7 +288,8 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
         stage_info_list: List of info for compilation. Each info is a tuple with:
             (proto, in_avals, out_avals, donate_invars)
     """
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus,
+                                        global_config.backup())
     backup_config = global_config.backup()
     global_config.num_micro_batches = None
     global_config.devices = logical_mesh

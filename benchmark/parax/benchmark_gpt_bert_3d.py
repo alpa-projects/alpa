@@ -171,7 +171,7 @@ if __name__ == "__main__":
                         default="paper_gpt")
     parser.add_argument("--no-separate-process", action='store_false',
                         help="Do not launch separate processes for benchmark."
-                             "Erros in a single case will terminate this script.",
+                             "Errors in a single case will terminate this script.",
                         dest='use_separate_process')
     parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
@@ -201,12 +201,12 @@ if __name__ == "__main__":
         parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt = result
 
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "Peak Mem",
-                 "TFLOPs", "TFLOPs (ckpt)"]
+                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs",
+                 "TFLOPs (ckpt)", "Peak Mem",]
         paralell_config = (dp, mp, pp)
         values = [args.model, str(case[:5]), str(paralell_config), str(case[8:10]),
                   str(case[11]), str(case[12]), str(case[13]),
                   f"{np.mean(latencies[2:]):.3f}", f"{np.std(latencies[2:]):.3f}",
-                  f"{parameter_count/1e9:.3f}", f"{max_mem_allocated/GB:.3f}",
-                  f"{tflops:.2f}", f"{tflops_ckpt:.2f}"]
+                  f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                  f"{max_mem_allocated/GB:.3f}"]
         write_tsv(heads, values, output_name)

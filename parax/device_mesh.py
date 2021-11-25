@@ -147,10 +147,8 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in offset)
             to_send = xla_buffer_to_cupy(self.buffers[uuid])
             if slice_shape == tensor_shape:
-                print(">>>>>> Send fastest path...")
                 col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
             else:
-                print(">>>>>> Send fast path...")
                 ind, n_elements = infer_offset_and_n_elements(offset)
                 col.send_multigpu(to_send[ind],
                                   dst_rank,
@@ -159,7 +157,6 @@ class MeshHostWorker:
                                   n_elements=n_elements)
         else:
             # slower path, because of indexing.
-            print(">>>>>> Send slow path")
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
             src_buffer = jax_tensor_index(
@@ -190,10 +187,8 @@ class MeshHostWorker:
             to_recv = xla_buffer_to_cupy(self.buffers[uuid],
                                          take_ownership=True)
             if slice_shape == tensor_shape:
-                print(">>>>>> Recv fastest path: {}".format(slice_shape))
                 col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
             else:
-                print(">>>>>> Recv fast path: slice shape {}, tensor shape: {}".format(slice_shape, tensor_shape))
                 ind, n_elements = infer_offset_and_n_elements(
                     indices_in_dst_tile)
                 col.recv_multigpu(to_recv[ind],
@@ -205,7 +200,6 @@ class MeshHostWorker:
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/parax-project/parax/issues/145
-            print(">>>>>> Recv slow path")
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
@@ -714,13 +708,10 @@ class PhysicalDeviceMesh:
                 else:  # Slow path
                     # TODO(yonghao): the following assertion will fail, which does not make sense
                     # assert not isinstance(arg, DistributedArray)
-                    if hasattr(arg, "shape"):
-                        expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize
-                    else:
-                        expected = 1
-                    before_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
-                    before_memory_peak = ray.get(self.workers[0].get_memory.remote())
-                    # self.sync_workers()
+                    expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize \
+                        if hasattr(arg, "shape") else 1
+                    before_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
+                    before_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -728,8 +719,8 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
-                    after_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
-                    after_memory_peak = ray.get(self.workers[0].get_memory.remote())
+                    after_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
+                    after_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
                     actual = after_memory_usage - before_memory_usage
                     # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
                     #     expected, actual, before_memory_usage, after_memory_usage

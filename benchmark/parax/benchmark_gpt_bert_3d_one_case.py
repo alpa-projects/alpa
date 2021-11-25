@@ -195,8 +195,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
                                      virtual_mesh.total_devices,
                                      np.mean(latencies[2:]), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
-
-    # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
+    # report_pipeline_breakdown(executable,
+    #                           ["resharding_send", "resharding_recv", "compute", "alloc", "fake_overall",
+    #                            "free", "execute_timer", "execute_2", "execute_3"],
+    #                           niter)
     executable.shutdown()
     return parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt
 

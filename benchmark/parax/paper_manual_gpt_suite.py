@@ -20,29 +20,58 @@ max_global_batch_size = 1024
 
 test_gpt_suite = {
     # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie, Auto-layer-slicing
+
+
+1: [
+    (8,  1024,  1024,  4,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+    (8,  1024,  1024,  8,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+    (8,  1024,  1024,  16,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+    (8,  1024,  1024,  24,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+    (8,  1024,  1024,  32,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+    (8,  1024,  1024,  48,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+],
+
 4: [
-    (32,  1024,  1024, 4, 1024//64, 1024, 2,   1,   1,   2,   2,  8,   True, True, False, False),
+    # Increase hidden size.
+    (32,  1024,  1024,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  2048,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  3072,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  4096,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  4608,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+
+    # Increase #layers
+    (32,  1024,  1024,  2,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  8,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  16,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  24,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  32,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  48,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
+
+    # Increase #layers
+    (32,  1024,  1024,  2,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  4,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  8,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  16,    32,   51200,  4,   1,   1,   4,  1,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  24,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  32,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  48,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
+
+    (32,  1024,  1024,  2,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  4,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  8,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  16,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  24,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  32,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
+    (32,  1024,  1024,  48,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
 ],
 
 8: [
-    # (16,  *gpt_specs["1.3B"],  4,   1,   1,   4,   2,  1,    True,  *fixed_params),
-    # (32,  *gpt_specs["1.3B"],  4,   1,   1,   4,   2,  2,    True,  *fixed_params),
-    # (32,  *gpt_specs["1.3B"],  2,   2,   1,   4,   2,  1,    False,  *fixed_params),
-    # (64,  *gpt_specs["1.3B"],  2,   2,   1,   4,   2,  2,    False,  *fixed_params),
-
-    # (128,  *gpt_specs["1.3B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
-    # (512,  *gpt_specs["1.3B"],  2,   2,   1,   4,   2,  16,    False,  *fixed_params),
-    # (1024,  *gpt_specs["1.3B"],  2,   2,   1,   4,   2,  32,    False,  *fixed_params),
-    # (64,  *gpt_specs["1.3B"],  4,   1,   1,   4,   2,  4,    True,  *fixed_params),
-    # (128,  *gpt_specs["1.3B"],  4,   1,   1,   4,   2,  8,    True,  *fixed_params),
-    # (256,  *gpt_specs["1.3B"],  4,   1,   1,   4,   2,  16,    True,  *fixed_params),
+    # 3D performance case: we lose 1 tflops.
     (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
-    # (256,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  32,    False,  *fixed_params),
-    # (512,  *gpt_specs["2.7B"],  1,   4,   1,   4,   2,  64,    False,  *fixed_params),
-    # (64,  *gpt_specs["1.3B"],  2,   1,   1,   2,   4,  4,    True,  *fixed_params),
-    # (16,  1024,  1536 * 2,  6,    32,   51200,  4,   1,   1,   4,   2,  1,    True,  *fixed_params),
-    # (32,  1024,  1024, 4, 1024//64, 1024, 2,   1,   1,   2,   2,  8,   True, True, False, False),
 
+    # memory case. the case below should use peak memory 9.4Gb in Megatron.
+    (16,  1024,  1536 * 2,  6,    32,   51200,  4,   1,   1,   4,   2,  1,    True,  *fixed_params),
 ],
 
 16: [
@@ -93,14 +122,14 @@ paper_gpt_suite = {
     (256,  *gpt_specs["350M"],  1,   2,   1,   1,   1,  16,    1,  *fixed_params),
 
     # PP
-    (16,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  1,    1,  *fixed_params),
-    (32,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  2,    1,  *fixed_params),
-    (64,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  4,    1,  *fixed_params),
-    (128,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  8,    1,  *fixed_params),
-    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  16,    1,  *fixed_params),
-    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  32,    1,  *fixed_params),
-    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  64,    1,  *fixed_params),
-    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  128,    1,  *fixed_params),
+    (16,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  1,    False,  *fixed_params),
+    (32,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  2,    False,  *fixed_params),
+    (64,  *gpt_specs["350M"],  1,   1,   1,   1,   2,  4,    False,  *fixed_params),
+    (128,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  8,    False,  *fixed_params),
+    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  16,    False,  *fixed_params),
+    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  32,    False,  *fixed_params),
+    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  64,    False,  *fixed_params),
+    (256,  *gpt_specs["350M"],  1,  1,   1,   1,   2,  128,    False,  *fixed_params),
 
     # 760M, cannot train even with bs = 1 per gpu
     # DP all OOM.
@@ -112,19 +141,19 @@ paper_gpt_suite = {
     (128,  *gpt_specs["760M"],  1,  2,   1,   1,   1,  8,    1,  *fixed_params),
 
     # PP, each 1/2 model can have maax batch_size = 8
-    (16,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  1,    1,  *fixed_params),
-    (32,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  2,    1,  *fixed_params),
-    (32,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  4,    1,  *fixed_params),
-    (64,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  4,    1,  *fixed_params),
-    (64,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  8,    1,  *fixed_params),
-    (128,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  8,    1,  *fixed_params),
-    (128,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  16,    1,  *fixed_params),
-    (256,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  16,    1,  *fixed_params),
-    (256,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  32,    1,  *fixed_params),
-    (512,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  32,    1,  *fixed_params),
-    (512,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  64,    1,  *fixed_params),
-    (1024,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  64,    1,  *fixed_params),
-    (1024,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  128,    1,  *fixed_params),
+    (16,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  1,    False,  *fixed_params),
+    (32,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  2,    False,  *fixed_params),
+    (32,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  4,    False,  *fixed_params),
+    (64,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  4,    False,  *fixed_params),
+    (64,  *gpt_specs["760M"],  1,   1,   1,   1,   2,  8,    False,  *fixed_params),
+    (128,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  8,    False,  *fixed_params),
+    (128,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  16,    False,  *fixed_params),
+    (256,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  16,    False,  *fixed_params),
+    (256,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  32,    False,  *fixed_params),
+    (512,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  32,    False,  *fixed_params),
+    (512,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  64,    False,  *fixed_params),
+    (1024,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  64,    False,  *fixed_params),
+    (1024,  *gpt_specs["760M"],  1,  1,   1,   1,   2,  128,    False,  *fixed_params),
 ],
 
 4: [

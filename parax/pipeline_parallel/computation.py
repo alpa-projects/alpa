@@ -416,9 +416,6 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
                                 computation_id - 1 and
                                 var in computation_marked_to_unmarked_invars[
                                     source_computation_id]):
-                                #and
-                                #var_computation_id[computation_marked_to_unmarked_invars[
-                                #    source_computation_id][var]] == -1):
                             computation_weight_invars[computation_id][var] = (
                                 computation_marked_to_unmarked_invars[
                                     source_computation_id][var])

@@ -87,11 +87,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel,
-     use_remat, tie_word_embeddings, auto_layer) = benchmark_case
-    auto_stage = auto_layer
+     use_remat, auto_layer, auto_stage) = benchmark_case
 
     dtype = jnp.float16
-    # tie_word_embeddings = False
+    tie_word_embeddings = False
 
     # Parallel configs
     grad_func = parax.grad
@@ -195,10 +194,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
                                      virtual_mesh.total_devices,
                                      np.mean(latencies[2:]), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
-    # report_pipeline_breakdown(executable,
-    #                           ["resharding_send", "resharding_recv", "compute", "alloc", "fake_overall",
-    #                            "free", "execute_timer", "execute_2", "execute_3"],
-    #                           niter)
+    # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute", "alloc"], niter)
     executable.shutdown()
     return parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt
 

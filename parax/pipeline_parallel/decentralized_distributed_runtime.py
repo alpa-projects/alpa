@@ -1086,7 +1086,6 @@ class PipelineMeshWorkerExecutable:
             #      f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
             #      f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
-
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,

@@ -725,7 +725,6 @@ class PhysicalDeviceMesh:
                     # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
                     #     expected, actual, before_memory_usage, after_memory_usage
                     # ))
-                    self.sync_workers()
 
             return input_bufs
         else:

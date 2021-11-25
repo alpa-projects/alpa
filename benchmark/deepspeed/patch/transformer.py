@@ -420,6 +420,7 @@ class ParallelSelfAttention(MegatronModule):
 def bias_dropout_add(x, bias, residual, prob, training) :
     # type: (Tensor, Tensor, Tensor, float, bool) -> Tensor
     out = torch.nn.functional.dropout(x + bias, p=prob, training=training)
+    # print(">>>>>>>>>>>>>>>> getting dropout: {}, {}".format(x.shape, bias.shape))
     out = residual + out
     return out
 
@@ -978,9 +979,10 @@ class ParallelMOETransformerLayer(MegatronModule):
         # mlp_output, mlp_bias = self.mlp(layernorm_output)
         # MoE
         moe_output, _, _ = self.moe(layernorm_output)
-        moe_bias = torch.zeros([moe_output.shape[0]], dtype=moe_output.dtype,
-                               device=moe_output.device)
-        # print(">>>>>>>>>>>>>>>> getting here: moe_output: {}".format(moe_output))
+        moe_bias = torch.zeros_like(moe_output, dtype=moe_output.dtype,
+                                    device=moe_output.device)
+        # print(">>>>>>>>>>>>>>>> getting here: moe_output: {}".format(moe_output.shape))
+        # print(">>>>>>>>>>>>>>>> getting here: moe_output: {}".format(moe_bias.shape))
 
         # Second residual connection.
         if self.apply_residual_connection_post_layernorm:

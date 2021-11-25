@@ -195,8 +195,8 @@ def get_optimizer(model):
                                        lr=args.lr,
                                        weight_decay=args.weight_decay,
                                        beta1=args.adam_beta1,
-                                       eps2=(1e-30, 1e-3)
-                                       )
+                                       eps2=(1e-30, 1e-3))
+            print(">>>>>> Parax benchmark: using the {} optimizer.".format(optimizer))
         else:
             optimizer = torch.optim.AdamW(param_groups,
                                           lr=args.lr,

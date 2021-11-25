@@ -165,7 +165,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("last.hlo", "w") as fout:
+    with open("tmp/last_2d.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -198,7 +198,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     return param_count, ilp_objective, alloc_mem, latencies, tflops
 
 
-PICKLE_FILE_NAME = "tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(model, case, niter, local, use_separate_process=False, dump_result=False):
@@ -221,6 +221,7 @@ def benchmark_one_case(model, case, niter, local, use_separate_process=False, du
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
+        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
         ret = run_cmd("python3 benchmark_gpt_bert_2d_one_case.py "
                      f"--model {model} "
                      f"--niter {niter} "
@@ -228,12 +229,12 @@ def benchmark_one_case(model, case, niter, local, use_separate_process=False, du
                      f"{'--local' if local else ''} "
                      f"--dump-result ")
         if ret == 0:
-            result = pickle.load(open(PICKLE_FILE_NAME, "rb"))
+            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
             result = -1, -1, -1, [-1], -1
 
     if dump_result:
-        pickle.dump(result, open(PICKLE_FILE_NAME, "wb"))
+        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
 
     return result
 
@@ -249,5 +250,6 @@ if __name__ == "__main__":
         help="Dump results into a temporary pickle file")
     args = parser.parse_args()
 
+    run_cmd("mkdir -p tmp")
     case = eval(args.case)
     benchmark_one_case(args.model, case, args.niter, args.local, False, args.dump_result)

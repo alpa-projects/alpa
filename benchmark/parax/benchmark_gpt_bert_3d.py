@@ -4,7 +4,7 @@ from datetime import datetime
 import numpy as np
 import ray
 
-from parax.util import write_tsv
+from parax.util import write_tsv, run_cmd
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 
@@ -179,7 +179,9 @@ if __name__ == "__main__":
     if not suite:
         print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
         exit()
+    run_cmd("mkdir -p tmp")
 
+    # Run all cases
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     output_name = f"{args.model}_parax_{args.exp_name}-{date_str}.tsv"
     for case in suite:
@@ -198,7 +200,7 @@ if __name__ == "__main__":
         paralell_config = (dp, mp, pp)
         values = [args.model, str(case[:5]), str(paralell_config), str(case[8:10]),
                   str(case[11]), str(case[12]), str(case[13]),
-                  f"{np.mean(latencies[2:]):.3f}", f"{np.std(latencies[2:]):.3f}",
+                  f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
                   f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                   f"{max_mem_allocated/GB:.3f}"]
         write_tsv(heads, values, output_name)

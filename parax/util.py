@@ -537,7 +537,7 @@ def log_jaxpr(jaxpr, name):
 
 
 def get_memory_status(local_devices):
-    return local_devices[0].client_memory_usage
+    return local_devices[0].available_memory()
 
 
 def profile_xla_executable(compiled, backend, local_devices):

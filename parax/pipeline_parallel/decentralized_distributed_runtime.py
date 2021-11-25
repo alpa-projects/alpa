@@ -34,7 +34,8 @@ timer_names = {
     "overall": "average",
     "compute": "sum",
     "resharding_send": "sum",
-    "resharding_recv": "sum"
+    "resharding_recv": "sum",
+    "free": "sum",
 }
 
 
@@ -358,14 +359,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                                 kwargs,
                                                 info=f"stage {stage_idx}"))
                 # free all received buffers
-                received_uuids = [
-                    var_at[key].pop(mesh_idx) for key in received_keys
-                ]
-                for worker_idx, worker in enumerate(physical_mesh.workers):
-                    instructions = worker_tmp_instructions[worker]
-                    for uuids in received_uuids:
-                        instructions.append(
-                            PipelineInstruction.Free(uuids[worker_idx]))
+                # received_uuids = [
+                #     var_at[key].pop(mesh_idx) for key in received_keys
+                # ]
+                # for worker_idx, worker in enumerate(physical_mesh.workers):
+                #     instructions = worker_tmp_instructions[worker]
+                #     for uuids in received_uuids:
+                #         instructions.append(
+                #             PipelineInstruction.Free(uuids[worker_idx]))
             for worker in worker_tmp_instructions:
                 self.instruction_lists[worker].extend(
                     worker_tmp_instructions[worker])
@@ -1078,10 +1079,9 @@ class PipelineMeshWorkerExecutable:
         # Execute
         timers("overall").start(sync_func=self.worker.sync)
         for instruction in self.instructions:
-            #print(instruction)
-            #print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
-            #      f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB")
-
+            # print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
+            #      f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
+            #      f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
@@ -1101,9 +1101,11 @@ class PipelineMeshWorkerExecutable:
                     instruction.opaques["set_empty_buffer"])
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
+                timers("free").start()
                 self.worker.delete_buffers(instruction.input_uuids)
+                timers("free").suspend()
 
-        for timer_name in ["compute", "resharding_send", "resharding_recv"]:
+        for timer_name in ["compute", "resharding_send", "resharding_recv", "free"]:
             if timer_name in timers:
                 timers(timer_name).stop()
         timers("overall").stop(sync_func=self.worker.sync)

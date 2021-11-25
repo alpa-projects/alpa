@@ -706,6 +706,12 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
+                    # TODO(yonghao): the following assertion will fail, which does not make sense
+                    # assert not isinstance(arg, DistributedArray)
+                    expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize \
+                        if hasattr(arg, "shape") else 1
+                    before_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
+                    before_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -713,9 +719,9 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
-                    # after_memory_usage = ray.get(self.workers[0].get_usage_memory.remote())
-                    # after_memory_peak = ray.get(self.workers[0].get_memory.remote())
-                    # actual = after_memory_usage - before_memory_usage
+                    after_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
+                    after_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
+                    actual = after_memory_usage - before_memory_usage
                     # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
                     #     expected, actual, before_memory_usage, after_memory_usage
                     # ))

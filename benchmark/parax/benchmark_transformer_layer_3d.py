@@ -25,6 +25,8 @@ def report_pipeline_breakdown(executable, timer_names, niter):
     other = overall_costs
     for timer_name in timer_names:
         costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+        if len(costs) == 0:
+            costs = [0.0] * niter
         percentage = [cost / overall_costs[i] * 100 for i, cost in enumerate(costs)]
         other = [remain - costs[i] for i, remain in enumerate(other)]
         other_percentage = [remain - percentage[i] for i, remain in enumerate(other_percentage)]

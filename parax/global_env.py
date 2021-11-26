@@ -49,10 +49,11 @@ class GlobalConfig:
         self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
-        ########## Options for eager pipeline runtime ##########
+        ########## Options for pipeline runtime ##########
+        self.pipeline_distributed_compile = True
+        self.pipeline_use_signal_send_recv = False
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
-        self.pipeline_distributed_compile = True
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during

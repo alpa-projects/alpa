@@ -71,6 +71,13 @@ class MeshHostWorker:
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         set_override_backend(self.backend)
 
+        if global_config.pipeline_use_signal_send_recv:
+            print("Use signal send recv")
+            self.signal_tensors = []
+            for d in self.local_devices:
+                self.signal_tensors.append(jax_tensor_to_cupy(
+                    device_put(jnp.ones((1,), dtype=jnp.int8), d), take_ownership=True))
+
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         assert uuid not in self.buffers
@@ -141,6 +148,11 @@ class MeshHostWorker:
             dst_gpu_idx (int): the gpu index on the destination rank.
             group_name (str): collective group name
         """
+        if global_config.pipeline_use_signal_send_recv:
+            signal = self.signal_tensors[uuid % len(self.local_devices)]
+            col.send_multigpu(signal, dst_rank, dst_gpu_idx, group_name)
+            return
+
         tensor_shape = self.buffers[uuid].shape
         if is_continuous_subset(offset, tensor_shape):
             # fast path, two cases: (1) same shape, (2) continuous subset.
@@ -164,7 +176,6 @@ class MeshHostWorker:
                 slice_sizes)
             to_send = jax_tensor_to_cupy(src_buffer)
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
-        return True
 
     def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
                   src_gpu_idx, group_name):
@@ -181,6 +192,12 @@ class MeshHostWorker:
         """
         if uuid not in self.buffers:
             raise RuntimeError("Buffer has not been created.")
+
+        if global_config.pipeline_use_signal_send_recv:
+            signal = self.signal_tensors[uuid % len(self.local_devices)]
+            col.recv_multigpu(signal, src_rank, src_gpu_idx, group_name)
+            return
+
         tensor_shape = self.buffers[uuid].shape
         slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
         if is_continuous_subset(indices_in_dst_tile, tensor_shape):
@@ -218,7 +235,6 @@ class MeshHostWorker:
                 xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
-        return True
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
@@ -232,7 +248,6 @@ class MeshHostWorker:
             self.send_tile(buf_uuid,
                            *tile_detail,
                            group_name=task['group_name'])
-        return True
 
     def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
         task = self.recv_tasks[uuid]
@@ -244,7 +259,6 @@ class MeshHostWorker:
                                recv_detail[0],
                                *recv_subtask,
                                group_name=task['group_name'])
-        return True
 
     ##### Profiling Related Functions #####
     def profile_collective(self, primitive_name, size_range, replica_groups,
@@ -820,9 +834,9 @@ class PhysicalDeviceMesh:
 
     def shutdown(self, forced=False):
         """Shut down the mesh."""
-        if not self.launched:
-            return
         if self.is_distributed:
+            if not self.launched:
+                return
             if not forced:
                 ray.get([w.shutdown.remote() for w in self.workers])
             for worker in self.workers:
@@ -831,9 +845,9 @@ class PhysicalDeviceMesh:
             # shutdown grpc server
             self.service_server.shutdown()
             self.service_server = None
+            self.launched = False
         else:
             self.sync_workers()
-        self.launched = False
 
 
 class LogicalDeviceMesh:

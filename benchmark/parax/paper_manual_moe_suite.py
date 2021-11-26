@@ -21,7 +21,7 @@ test_moe_suite = {
 1: [
     # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP ,
     # (16, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    (4, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
+    (8, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
     # (128, *moe_specs["380M"],   1,    1,    1,    1,   1,    16,  True,    *fixed_params,     1),
 ]
 

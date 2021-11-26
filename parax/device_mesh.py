@@ -820,9 +820,9 @@ class PhysicalDeviceMesh:
 
     def shutdown(self, forced=False):
         """Shut down the mesh."""
-        if not self.launched:
-            return
         if self.is_distributed:
+            if not self.launched:
+                return
             if not forced:
                 ray.get([w.shutdown.remote() for w in self.workers])
             for worker in self.workers:
@@ -831,9 +831,9 @@ class PhysicalDeviceMesh:
             # shutdown grpc server
             self.service_server.shutdown()
             self.service_server = None
+            self.launched = False
         else:
             self.sync_workers()
-        self.launched = False
 
 
 class LogicalDeviceMesh:

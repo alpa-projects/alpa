@@ -55,8 +55,7 @@ def benchmark_all(args):
         print(">>>>>> Parax benchmark: Working on case {}...".format(str(case)), flush=True)
         batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, expert_capacity, num_expert, \
         dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
-        num_micro_batches, force_dp, checkpoint_activations, _, _, \
-        ep_size = case
+        num_micro_batches, force_dp, checkpoint_activations, _, _, ep_size = case
 
         use_deepspeed = True
 
@@ -127,8 +126,8 @@ def benchmark_all(args):
             gpt_options += "--moe "
             gpt_options += "--ep-world-size {} ".format(ep_size)
             gpt_options += "--num-experts {} ".format(str(num_expert))
-            gpt_options += "--top-k 1 "
-            gpt_options += "--min-capacity 0 "
+            gpt_options += "--top-k 2 "
+            gpt_options += "--min-capacity 4 "
             gpt_options += "--noisy-gate-policy None "
             gpt_options += "--moe-param-group "
             gpt_options += "--output_name {}".format(output_name)
@@ -147,6 +146,7 @@ def benchmark_all(args):
                       f"pretrain_gpt2_moe.py {gpt_options}")
         print(">>>>>> Parax benchmark: sleep for 30 seconds before starting the next case.", flush=True)
         time.sleep(30)
+        os.system('kill %d' % os.getpid())
 
 
 if __name__ == "__main__":

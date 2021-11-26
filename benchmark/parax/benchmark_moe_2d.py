@@ -174,7 +174,8 @@ def benchmark_one_case(case):
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
     #B,   S,    H,    L,  #head,     V,     S_,   E,  D0, D1, NB, FD,    RS,    CK
-    (8,   1024, 1024, 12, 1024//64,  25600, 1024, 4,  1,  1,  1,  False, True,  False),
+    # (8,   1024, 1024, 12, 1024//64,  25600, 1024, 4,  1,  1,  1,  False, True,  False),
+    (4, 1024, 768, 8, 16, 32000, 1, 8, 1, 1, 1, False, False, False)
 ],
 
 2: [

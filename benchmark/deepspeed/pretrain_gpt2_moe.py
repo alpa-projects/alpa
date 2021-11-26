@@ -241,6 +241,7 @@ if __name__ == "__main__":
         num_heads = args.num_attention_heads
         num_experts = args.num_experts
         vocab_size = args.padded_vocab_size
+        mlp_factor = 8
         if args.deepspeed:
             num_micro_batches = json.load(open(
                 args.deepspeed_config))["gradient_accumulation_steps"]
@@ -255,17 +256,16 @@ if __name__ == "__main__":
 
         # TODO(Hao): the param count and tflops are for GPT, not GPT-MoE
         param_count = compute_moe_parameter_count(
-            num_layers, hidden_size, vocab_size, num_experts, mlp_factor=4)
-
-
+            num_layers, hidden_size, vocab_size, num_experts, mlp_factor=mlp_factor)
         tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
                                     hidden_size, vocab_size, num_experts,
                                     torch.distributed.get_world_size(),
-                                    np.mean(latencies), mlp_factor=4)
+                                    np.mean(latencies), mlp_factor=mlp_factor)
         tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
                                          hidden_size, vocab_size, num_experts,
                                          torch.distributed.get_world_size(),
-                                         np.mean(latencies), mlp_factor=4, checkpoint_activations=True)
+                                         np.mean(latencies), mlp_factor=mlp_factor,
+                                         checkpoint_activations=True)
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts)
         parallel_config = (mpu.get_data_parallel_world_size(),
                            mpu.get_model_parallel_world_size(),

@@ -19,9 +19,10 @@ fixed_params = (True,  False,  False)
 test_moe_suite = {
 
 1: [
-    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing), EP
+    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP ,
     # (16, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    (64, *moe_specs["380M"],   1,    1,    1,    1,   1,    4,  True,   *fixed_params,  1),
+    (4, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
+    # (128, *moe_specs["380M"],   1,    1,    1,    1,   1,    16,  True,    *fixed_params,     1),
 ]
 
 }
@@ -29,7 +30,7 @@ test_moe_suite = {
 
 paper_moe_suite = {
 1: [
-    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing), EP
+    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing),
     (32, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
     (64, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
 

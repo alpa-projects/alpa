@@ -58,7 +58,7 @@ def benchmark_moe_internal(benchmark_case, niter):
     print_used_time(None)
 
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, expert_group_size, num_experts,\
+    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size, \
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,\
         num_micro_batches, force_data_parallel, use_remat, tie_word_embeddings, \
         auto_layer, _ = benchmark_case
@@ -143,10 +143,10 @@ def benchmark_moe_internal(benchmark_case, niter):
 
     # Compute statistics
     tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                hidden_size, vocab_size, num_experts,
+                                hidden_size, expert_group_size, vocab_size, num_experts,
                                 virtual_mesh.total_devices, np.mean(latencies))
     tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                     hidden_size, vocab_size, num_experts,
+                                     hidden_size, expert_group_size, vocab_size, num_experts,
                                      virtual_mesh.total_devices, np.mean(latencies),
                                      checkpoint_activations=True)
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,

@@ -258,12 +258,13 @@ if __name__ == "__main__":
         param_count = compute_moe_parameter_count(
             num_layers, hidden_size, vocab_size, num_experts, mlp_factor=mlp_factor)
         tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                    hidden_size, vocab_size, num_experts,
+                                    hidden_size, batch_size * seq_len // num_micro_batches,
+                                    vocab_size, num_experts,
                                     torch.distributed.get_world_size(),
                                     np.mean(latencies), mlp_factor=mlp_factor)
         tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                         hidden_size, vocab_size, num_experts,
-                                         torch.distributed.get_world_size(),
+                                         hidden_size, batch_size * seq_len // num_micro_batches ,
+                                         vocab_size, num_experts, torch.distributed.get_world_size(),
                                          np.mean(latencies), mlp_factor=mlp_factor,
                                          checkpoint_activations=True)
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts)
@@ -276,9 +277,9 @@ if __name__ == "__main__":
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
                  "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
                  "Peak Mem"]
-        values = ["MoE", str(model_config), str(parallel_config),
+        values = ["MOE", str(model_config), str(parallel_config),
                   "N/A", str(num_micro_batches), "N/A",
-                  str(args.checkpoint_activations), f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-                  f"{param_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                  f"{alloc_mem/GB:5.3f}"]
+                  str(args.checkpoint_activations), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                  f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                  f"{alloc_mem/GB:5.3f}G"]
         write_tsv(heads, values,f"moe_deepspeed_{args.output_name}_rank{rank}.tsv")

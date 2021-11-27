@@ -12,7 +12,7 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all)
+    split_global_use_and_donate, generate_stage_info, compile_all, ProfileWorker)
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
 from parax.util import OrderedSet
 
@@ -129,7 +129,7 @@ def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
     return compute_cost
 
 
-def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
+def distributed_profile_on_mesh(meshes, layers, donation_mapping, global_outvars,
                                 num_micro_batches):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
@@ -155,32 +155,21 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
             stage_hooks.append(hook)
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    logical_mesh = mesh.get_default_logical_mesh()
+    logical_mesh = meshes[0].get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
-    physical_mesh = mesh.get_physical_mesh()
+    profile_worker = ray.remote(num_cpus=1e-3)(ProfileWorker)(meshes[0])
     for (start, end), compiled_output, stage_info, hook in zip(
             stage_indices, compiled_outputs, stage_infos, stage_hooks):
-        _, avals, out_avals, tot_donation = stage_info
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
             hooked_proto, hook, config) * num_micro_batches
-        compiled = ProtoAndSharding(proto=proto,
-                                    input_shardings=in_shardings,
-                                    output_shardings=out_shardings)
-        donated_invars = (True,) * len(tot_donation) + (False,) * (
-            len(avals) - len(tot_donation))
-        executable = PartialGradAccMeshDriverExecutable(physical_mesh, compiled,
-                                                        config, avals,
-                                                        out_avals,
-                                                        donated_invars, [])
-        cost = executable.profile_with_dummy_inputs(
-            intermediates=intermediate_size)
+        cost = profile_worker.profile.remote(compiled_output, stage_info, intermediate_size)
         compute_cost[start, end] = np.mean(cost)
     return compute_cost
 
 
 def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars, num_micro_batches):
+                     global_outvars, num_micro_batches, distributed_profile=True):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -189,15 +178,23 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
     # Reverse submesh_choices to test larger meshes first
     for mesh_id, submesh in reversed(list(enumerate(submesh_choices))):
         num_hosts, num_devices = submesh
-        sliced_virtual_mesh = virtual_mesh.slice_2d(
-            list(range(num_hosts)),
-            [list(range(num_devices)) for _ in range(num_hosts)])
         tic = time()
-        mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh,
-                                                        layers,
-                                                        donation_mapping,
-                                                        global_outvars,
-                                                        num_micro_batches)
+        if distributed_profile:
+            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(num_hosts, num_devices)
+            mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_meshes,
+                                                            layers,
+                                                            donation_mapping,
+                                                            global_outvars,
+                                                            num_micro_batches)
+        else:
+            sliced_virtual_mesh = virtual_mesh.slice_2d(
+                list(range(num_hosts)),
+                [list(range(num_devices)) for _ in range(num_hosts)])
+            mesh_compute_cost = profile_on_mesh(sliced_virtual_mesh,
+                                                layers,
+                                                donation_mapping,
+                                                global_outvars)
+
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
         print(

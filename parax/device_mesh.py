@@ -1160,6 +1160,21 @@ class VirtualMesh:
                            num_devices_per_host=len(device_indices[0]),
                            devices=device_indices)
 
+    def slice_profiling_submeshes(self, submesh_num_hosts, submesh_num_devices_per_host):
+        num_hosts = len(self.host_ids)
+        num_devices_per_host = self.num_devices_per_host
+        num_host_submeshes = num_hosts // submesh_num_hosts
+        num_device_submeshes = num_devices_per_host // submesh_num_devices_per_host
+        all_submeshes = []
+        for i in range(num_host_submeshes):
+            for j in range(num_device_submeshes):
+                host_indices = list(range(i * submesh_num_hosts,
+                                          (i + 1) * submesh_num_hosts))
+                device_indices = list(range(j * submesh_num_devices_per_host,
+                                            (j + 1) * submesh_num_devices_per_host))
+                all_submeshes.append(self.slice_2d(host_indices, device_indices))
+        return all_submeshes
+
     @property
     def total_devices(self):
         """Return the total number of GPUs on this mesh."""

@@ -720,6 +720,8 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
+                    # FIXME(yonghao): by get memory allocated there is an implicit sync between driver
+                    # and worker devices. If not so, the total memory allocated drastically increases.
                     expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize \
                         if hasattr(arg, "shape") else 1
                     before_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())

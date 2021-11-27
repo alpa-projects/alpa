@@ -157,14 +157,14 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping, global_outvars
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
     logical_mesh = meshes[0].get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
-    profile_worker = ray.remote(num_cpus=1e-3)(ProfileWorker)(meshes[0])
+    profile_worker = ray.remote(num_cpus=1e-3)(ProfileWorker).remote(meshes[0])
     for (start, end), compiled_output, stage_info, hook in zip(
             stage_indices, compiled_outputs, stage_infos, stage_hooks):
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
             hooked_proto, hook, config) * num_micro_batches
         cost = profile_worker.profile.remote(compiled_output, stage_info, intermediate_size)
-        compute_cost[start, end] = np.mean(cost)
+        compute_cost[start, end] = np.mean(ray.get(cost))
     return compute_cost
 
 

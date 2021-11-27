@@ -36,12 +36,12 @@ class AutoStageClusteringTest(PipelineBasicTest):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoStageClusteringTest('test_mlp_auto_stage_clustering'))
-    suite.addTest(AutoStageClusteringTest('test_mlp_auto_layer_and_stage'))
-    suite.addTest(
-        AutoStageClusteringTest('test_2_layer_bert_auto_stage_clustering'))
-    suite.addTest(
-        AutoStageClusteringTest('test_2_layer_bert_auto_layer_and_stage'))
+    # suite.addTest(AutoStageClusteringTest('test_mlp_auto_stage_clustering'))
+    # suite.addTest(AutoStageClusteringTest('test_mlp_auto_layer_and_stage'))
+    # suite.addTest(
+    #     AutoStageClusteringTest('test_2_layer_bert_auto_stage_clustering'))
+    # suite.addTest(
+    #     AutoStageClusteringTest('test_2_layer_bert_auto_layer_and_stage'))
     suite.addTest(
         AutoStageClusteringTest('test_8_layer_bert_auto_stage_clustering'))
     suite.addTest(

@@ -1105,7 +1105,9 @@ class PipelineMeshWorkerExecutable:
                 self.worker.delete_buffers(instruction.input_uuids)
                 timers("free").suspend()
 
-        for timer_name in ["compute", "resharding_send", "resharding_recv", "free"]:
+        for timer_name in [
+                "compute", "resharding_send", "resharding_recv", "free"
+        ]:
             if timer_name in timers:
                 timers(timer_name).stop()
         timers("overall").stop(sync_func=self.worker.sync)

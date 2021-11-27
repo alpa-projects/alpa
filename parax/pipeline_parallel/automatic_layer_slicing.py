@@ -65,7 +65,8 @@ def eqn_flops(eqn: JaxprEqn) -> float:
         xla_computation = xla.primitive_subcomputation(
             eqn.primitive, *map(lambda x: x.aval, eqn.invars), **eqn.params)
     hlo_module = xla_computation.as_hlo_module()
-    properties = xc._xla.hlo_module_cost_analysis(xc.get_local_backend("gpu"), hlo_module)
+    properties = xc._xla.hlo_module_cost_analysis(xc.get_local_backend("gpu"),
+                                                  hlo_module)
     return properties["flops"] if "flops" in properties else 0.0
 
 

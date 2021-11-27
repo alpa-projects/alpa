@@ -144,6 +144,7 @@ class CompileWorkerPool:
 
 
 class ProfileWorker:
+
     def __init__(self, virtual_mesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
@@ -154,9 +155,8 @@ class ProfileWorker:
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)
         donated_invars = (True,) * len(tot_donation) + (False,) * (
-                len(avals) - len(tot_donation))
-        executable = PartialGradAccMeshDriverExecutable(self.mesh,
-                                                        compiled,
+            len(avals) - len(tot_donation))
+        executable = PartialGradAccMeshDriverExecutable(self.mesh, compiled,
                                                         config, avals,
                                                         out_avals,
                                                         donated_invars, [])
@@ -170,9 +170,7 @@ class ProfileWorkerPool:
 
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        self.actors = [
-            worker_cls.remote(mesh) for mesh in virtual_meshes
-        ]
+        self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
         self.pool = ActorPool(self.actors)
 
     def submit(self, fn, value):

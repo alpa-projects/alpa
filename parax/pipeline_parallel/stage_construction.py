@@ -12,7 +12,8 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all, ProfileWorkerPool)
+    split_global_use_and_donate, generate_stage_info, compile_all,
+    ProfileWorkerPool)
 from parax.util import OrderedSet
 
 
@@ -128,8 +129,8 @@ def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
     return compute_cost
 
 
-def distributed_profile_on_mesh(meshes, layers, donation_mapping, global_outvars,
-                                num_micro_batches):
+def distributed_profile_on_mesh(meshes, layers, donation_mapping,
+                                global_outvars, num_micro_batches):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
@@ -157,22 +158,26 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping, global_outvars
     logical_mesh = meshes[0].get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
     profile_workers = ProfileWorkerPool(meshes)
-    for compiled_output, stage_info, hook in zip(
-            compiled_outputs, stage_infos, stage_hooks):
+    for compiled_output, stage_info, hook in zip(compiled_outputs, stage_infos,
+                                                 stage_hooks):
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
             hooked_proto, hook, config) * num_micro_batches
-        profile_workers.submit(
-            lambda w, v: w.profile.remote(*v),
-            (compiled_output, stage_info, intermediate_size))
+        profile_workers.submit(lambda w, v: w.profile.remote(*v),
+                               (compiled_output, stage_info, intermediate_size))
     for start, end in stage_indices:
         compute_cost[start, end] = np.mean(profile_workers.get_next())
     profile_workers.shutdown()
     return compute_cost
 
 
-def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars, num_micro_batches, distributed_profile=True):
+def get_compute_cost(virtual_mesh,
+                     submesh_choices,
+                     layers,
+                     donation_mapping,
+                     global_outvars,
+                     num_micro_batches,
+                     distributed_profile=True):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -183,18 +188,16 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         num_hosts, num_devices = submesh
         tic = time()
         if distributed_profile:
-            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(num_hosts, num_devices)
-            mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_meshes,
-                                                            layers,
-                                                            donation_mapping,
-                                                            global_outvars,
-                                                            num_micro_batches)
+            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+                num_hosts, num_devices)
+            mesh_compute_cost = distributed_profile_on_mesh(
+                sliced_virtual_meshes, layers, donation_mapping, global_outvars,
+                num_micro_batches)
         else:
             sliced_virtual_mesh = virtual_mesh.slice_2d(
                 list(range(num_hosts)),
                 [list(range(num_devices)) for _ in range(num_hosts)])
-            mesh_compute_cost = profile_on_mesh(sliced_virtual_mesh,
-                                                layers,
+            mesh_compute_cost = profile_on_mesh(sliced_virtual_mesh, layers,
                                                 donation_mapping,
                                                 global_outvars)
 

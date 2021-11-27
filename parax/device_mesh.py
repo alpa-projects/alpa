@@ -1168,10 +1168,11 @@ class VirtualMesh:
         all_submeshes = []
         for i in range(num_host_submeshes):
             for j in range(num_device_submeshes):
-                host_indices = list(range(i * submesh_num_hosts,
-                                          (i + 1) * submesh_num_hosts))
-                device_indices = list(range(j * submesh_num_devices_per_host,
-                                            (j + 1) * submesh_num_devices_per_host))
+                host_indices = range(i * submesh_num_hosts,
+                                     (i + 1) * submesh_num_hosts)
+                device_indices = [range(j * submesh_num_devices_per_host,
+                                        (j + 1) * submesh_num_devices_per_host)
+                                  for _ in host_indices]
                 all_submeshes.append(self.slice_2d(host_indices, device_indices))
         return all_submeshes
 

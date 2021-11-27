@@ -126,13 +126,7 @@ def benchmark_moe_internal(benchmark_case, niter):
     print_used_time("Compile (worker)")
 
     for i in range(niter):
-        start_time = time.time()
-        executable.sync()
         state = train_step(state, batch, rngkey)
-        executable.sync()
-        end_time = time.time()
-        print(end_time - start_time)
-
 
     timer_name = "overall"
     latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)[2:]

@@ -356,6 +356,20 @@ class FlaxBertLayerCollection(nn.Module):
         else:
             trans_func = lambda x: x
 
+        # Mixed rematerialization
+        #layers = []
+        #for i in range(self.config.num_hidden_layers):
+        #    if i % 2 == 0:
+        #        layer = trans_func(FlaxBertLayer)(self.config,
+        #                                  name=str(i),
+        #                                  dtype=self.dtype)
+        #    else:
+        #        layer = FlaxBertLayer(self.config,
+        #                              name=str(i),
+        #                              dtype=self.dtype)
+        #    layers.append(layer)
+        #self.layers = layers
+
         self.layers = [
             trans_func(FlaxBertLayer)(self.config,
                                       name=str(i),

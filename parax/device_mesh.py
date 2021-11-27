@@ -531,7 +531,7 @@ class PhysicalDeviceMesh:
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".95",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
             }
 
             # Launch a ray actor
@@ -720,6 +720,12 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
+                    # FIXME(yonghao): by get memory allocated there is an implicit sync between driver
+                    # and worker devices. If not so, the total memory allocated drastically increases.
+                    expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize \
+                        if hasattr(arg, "shape") else 1
+                    before_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
+                    before_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -727,6 +733,12 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
+                    after_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
+                    after_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
+                    actual = after_memory_usage - before_memory_usage
+                    # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
+                    #     expected, actual, before_memory_usage, after_memory_usage
+                    # ))
 
             return input_bufs
         else:

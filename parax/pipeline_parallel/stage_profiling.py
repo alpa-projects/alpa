@@ -165,6 +165,32 @@ class ProfileWorker:
         return cost
 
 
+class ProfileWorkerPool:
+    """wrapped ray.util.ActorPool"""
+
+    def __init__(self, virtual_meshes):
+        worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
+        self.actors = [
+            worker_cls.remote(mesh) for mesh in virtual_meshes
+        ]
+        self.pool = ActorPool(self.actors)
+        self.local_worker = CompileWorker(virtual_meshes[0])
+
+    def submit(self, fn, value):
+        self.pool.submit(fn, value)
+
+    def get_next(self):
+        return self.pool.get_next()
+
+    def shutdown(self, force=True):
+        for w in self.actors:
+            if force:
+                ray.kill(w)
+            else:
+                w.__ray_terminate__.remote()
+        gc.collect()
+
+
 def split_global_use_and_donate(layers, layer_indices, donation_mapping,
                                 global_outvars):
     '''

@@ -174,7 +174,6 @@ class ProfileWorkerPool:
             worker_cls.remote(mesh) for mesh in virtual_meshes
         ]
         self.pool = ActorPool(self.actors)
-        self.local_worker = CompileWorker(virtual_meshes[0])
 
     def submit(self, fn, value):
         self.pool.submit(fn, value)

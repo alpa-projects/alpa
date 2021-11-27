@@ -167,6 +167,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping, global_outvars
             (compiled_output, stage_info, intermediate_size))
     for start, end in stage_indices:
         compute_cost[start, end] = np.mean(profile_workers.get_next())
+    profile_workers.shutdown()
     return compute_cost
 
 

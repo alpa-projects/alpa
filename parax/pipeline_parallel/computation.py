@@ -9,6 +9,7 @@ from jax._src.util import partial, safe_map
 from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
+from jaxlib import xla_extension
 import numpy as np
 
 from parax.util import OrderedSet
@@ -654,11 +655,13 @@ def generate_sharded_xla_computations_compile_config(
     backend = xb.get_backend(backend_name)
     built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars,
                                      backend)
+    flops = xla_extension.hlo_module_count_flop_dot_conv_only(
+        built.as_hlo_module())
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
     jaxpr_config = in_avals, out_avals, dummy_donated_invars
     proto = built.as_serialized_hlo_module_proto()
-    return proto, jaxpr_config
+    return proto, jaxpr_config, flops
 
 
 def generate_computations_from_protos(jax_computations, acc_grad_outvars,
@@ -684,7 +687,7 @@ def generate_sharded_xla_computations(
         computation_donate_invars, physical_mesh, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
         donatable_lists, search_task, record_file):
-    proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
+    proto, jaxpr_config, flops = generate_sharded_xla_computations_compile_config(
         name, jax_computations, computation_donate_invars)
     built = xc.XlaComputation(proto)
     in_avals, out_avals, donated_invars = jaxpr_config
@@ -718,7 +721,7 @@ def generate_sharded_xla_computations(
             jax_computations, computation_protos, computation_donate_invars,
             donatable_lists)
     ]
-    return computations
+    return computations, flops
 
 
 def rewrite_hook(eqns, gensym_fn):

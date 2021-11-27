@@ -162,7 +162,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  dependency: np.ndarray,
                  schedule: PipelineSchedule,
                  is_batch: List[bool],
-                 num_batch=1):
+                 num_batch=1,
+                 flop_count=None):
         super(DecentralizedDistributedRuntime,
               self).__init__(pipeline_stages=pipeline_stages,
                              global_invars=global_invars,
@@ -175,6 +176,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                              num_batch=num_batch)
 
         self.uuid_counter = 0
+        self.flop_count = flop_count
         self.instruction_lists = dict()
         self.hlo_texts_after_spmd_partitioner = []
 
@@ -756,10 +758,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self._check_alive()
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            # ray.get(physical_mesh.workers[0].sync.remote())
-            # print(f"before shard_args mesh_idx={mesh_idx} allocated:",
-            #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
-            #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
             mesh_args = [
                 split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
@@ -993,6 +991,21 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh in self.physical_meshes:
             mesh.shutdown(forced=True)
 
+    def profile_all_executables(self):
+        all_profiled = []
+        for _, physical_mesh in enumerate(self.physical_meshes):
+            all_worker_profiled = []
+            for _, worker in enumerate(physical_mesh.workers):
+                worker: MeshHostWorker
+                all_worker_profiled.append(
+                    ray.get(
+                        worker.profile_executable_with_dummy_inputs.remote(
+                            self._worker_executable_uuid_mapping[worker])))
+            if len(all_worker_profiled) == 1:
+                all_worker_profiled = all_worker_profiled[0]
+            all_profiled.append(all_worker_profiled)
+        return all_profiled
+
 
 class PipelineMeshWorkerExecutable:
 
@@ -1023,6 +1036,7 @@ class PipelineMeshWorkerExecutable:
         self.acc_grad_buffers = {}
         self.acc_in_uuids = [list(uuids) for uuids in list(acc_local_uuids)]
         self.acc_out_uuids = acc_out_uuids
+        self.partial_grad_exec_uuids = OrderedSet()
         # Create tasks
         for task_config in executable_configs:
             self._related_exec_uuids.append(task_config.exec_uuid)
@@ -1032,6 +1046,7 @@ class PipelineMeshWorkerExecutable:
                                            task_config.hlo_proto,
                                            task_config.strategy_config,
                                            task_config.grad_sync_channel_ids)
+                self.partial_grad_exec_uuids.add(task_config.exec_uuid)
                 continue
             elif isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0
@@ -1056,6 +1071,7 @@ class PipelineMeshWorkerExecutable:
                                        AllocZeroBufferWorkerExecutable,
                                        task_config.grad_shard_shapes,
                                        task_config.grad_shard_dtypes)
+        self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids):
         # copy to local env
@@ -1129,6 +1145,12 @@ class PipelineMeshWorkerExecutable:
         # Clean the dict
         buffers.clear()
         return True
+
+    def profile_with_dummy_inputs(self, *args, **kwargs):
+        return {
+            exec_id: self.worker.profile_executable_with_dummy_inputs(exec_id)
+            for exec_id in self.partial_grad_exec_uuids
+        }
 
     def __del__(self):
         self.worker.delete_executable(self.my_uuid)

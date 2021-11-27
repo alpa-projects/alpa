@@ -178,6 +178,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     compile_workers = CompileWorkerPool(num_meshes, 1, global_config.backup())
     compile_fn = lambda w, v: w.compile_with_config.remote(*v)
     compile_intermediate = [None] * num_meshes
+    total_flops = 0
     for mesh_idx in range(num_meshes):
         physical_mesh = physical_meshes[mesh_idx]
         if slms[mesh_idx]:
@@ -197,7 +198,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         search_task = None
         record_file = None
         if global_config.pipeline_distributed_compile:
-            proto, jaxpr_config = generate_sharded_xla_computations_compile_config(
+            proto, jaxpr_config, flops = generate_sharded_xla_computations_compile_config(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
             mesh_config = (None, logical_mesh_choices, logical_mesh_search_mode,
                            memory_budget_per_device, search_task, record_file)
@@ -212,12 +213,14 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                 (proto, jaxpr_config, mesh_config, multiple_stage_config))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
+            total_flops += flops
         else:
-            sharded_xla_stages = generate_sharded_xla_computations(
+            sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
                 memory_budget_per_device, acc_grad_outvars,
                 donatable_dict[mesh_idx], search_task, record_file)
+            total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage
@@ -233,6 +236,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage
     compile_workers.shutdown()
+    total_flops *= num_micro_batches
 
     # Wrap all things into a distributed runtime
     for i, physical_mesh in enumerate(physical_meshes):
@@ -247,7 +251,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                          dependency=dependency,
                                          schedule=schedule,
                                          is_batch=batch_invars,
-                                         num_batch=num_micro_batches)
+                                         num_batch=num_micro_batches,
+                                         flop_count=total_flops)
 
     def ret_func(*args, **kwargs):
         return jp.run(*args, **kwargs)

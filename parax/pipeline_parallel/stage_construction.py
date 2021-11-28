@@ -172,7 +172,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
                                (compiled_output, stage_info, intermediate_size))
 
-    print("- Compile all stages")
+    print("- Profile all stages")
     for start, end in tqdm.tqdm(stage_indices):
         compute_cost[start, end] = np.mean(profile_workers.get_next())
     profile_workers.shutdown()

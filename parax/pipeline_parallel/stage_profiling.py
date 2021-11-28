@@ -342,7 +342,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
     global_config.strategy = "shard_parallel"
     global_config.use_dummy_value_for_benchmarking = True
     compile_config = global_config.backup()
-    for stage_info in stage_info_list:
+    for stage_info in tqdm.tqdm(stage_info_list):
         proto, avals, out_avals, donate_invars = stage_info
         compile_workers.submit(
             lambda w, v: w.compile_stage_with_search.remote(*v),
@@ -350,7 +350,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
              donate_invars))
 
     compiled_outputs = []
-    for stage_info in stage_info_list:
+    for stage_info in tqdm.tqdm(stage_info_list):
         compiled_output = compile_workers.get_next()
         compiled_outputs.append(compiled_output)
 

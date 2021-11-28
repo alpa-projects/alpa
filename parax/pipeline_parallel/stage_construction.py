@@ -3,6 +3,7 @@ import math
 from time import time
 from typing import Sequence
 
+import tqdm
 import numba
 import numpy as np
 import ray
@@ -139,6 +140,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     stage_indices = []
     stage_hooks = []
 
+    print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shape
     for start in range(0, num_layers):
         for end in range(start, num_layers):
@@ -153,19 +155,25 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
             stage_hooks.append(hook)
+
+    print("- Compile all stages")
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
     logical_mesh = meshes[0].get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
+
+    print("- Start all profiling tasks")
     profile_workers = ProfileWorkerPool(meshes)
-    for compiled_output, stage_info, hook in zip(compiled_outputs, stage_infos,
-                                                 stage_hooks):
+    for compiled_output, stage_info, hook in tqdm.tqdm(zip(compiled_outputs, stage_infos,
+                                                 stage_hooks)):
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
             hooked_proto, hook, config) * num_micro_batches
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
                                (compiled_output, stage_info, intermediate_size))
-    for start, end in stage_indices:
+
+    print("- Compile all stages")
+    for start, end in tqdm.tqdm(stage_indices):
         compute_cost[start, end] = np.mean(profile_workers.get_next())
     profile_workers.shutdown()
     return compute_cost
@@ -183,8 +191,12 @@ def get_compute_cost(virtual_mesh,
     num_submesh_choices = len(submesh_choices)
     compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
                            np.inf)
+    print("-" * 20 + " Automatic stage clustering " + "-" * 20)
+    print(f"submesh_choices: {submesh_choices}")
+
     # Reverse submesh_choices to test larger meshes first
     for mesh_id, submesh in reversed(list(enumerate(submesh_choices))):
+        print(f"- Profiling for submesh {mesh_id} {submesh}:")
         num_hosts, num_devices = submesh
         tic = time()
         if distributed_profile:
@@ -204,10 +216,18 @@ def get_compute_cost(virtual_mesh,
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
         print(
-            f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds'
+            f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
+            f' seconds'
         )
-        print(f'profiled costs are: {mesh_compute_cost}')
-        print('=' * 30)
+        print(f'Profiled costs are: {mesh_compute_cost}')
+        print('-' * 50)
+
+    timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
+    np.save(compute_cost_file_name, compute_cost)
+    print(f'Compute cost saved to: {compute_cost_file_name}')
+
+    print("-" * 70)
     return compute_cost
 
 
@@ -388,9 +408,6 @@ def cluster_layers_and_slice_mesh(layers,
                                                 donation_mapping,
                                                 global_outvars,
                                                 num_micro_batches)
-                np.save(
-                    f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}",
-                    compute_cost)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,
                                 compute_cost)

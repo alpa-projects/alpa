@@ -54,7 +54,7 @@ class MLPModel(nn.Module):
     hidden_dim: int
     output_dim: int
     manual_pipeline_layer: bool = True
-    use_bias: bool = True
+    use_bias: bool = False
 
     @nn.compact
     def __call__(self, x):
@@ -211,7 +211,6 @@ class PipelineBasicTest(unittest.TestCase):
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()
-
         return hlo_text
 
     def run_n_layer_bert(self,

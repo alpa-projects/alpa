@@ -100,6 +100,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             prefer_reduce_scatter = global_config.prefer_reduce_scatter
             reduce_scatter_aggresive_partition = False
             all_gather_threshold = 1 << 60
+        reduce_scatter_grad_acc_friendly = global_config.reduce_scatter_grad_acc_friendly
 
         # Set configs for force_data_parallel
         if force_data_parallel:
@@ -145,6 +146,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::allow_replicated_parameters":
                     global_config.allow_replicated_parameters,
                 "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
+                "auto_sharding::reduce_scatter_grad_acc_friendly": reduce_scatter_grad_acc_friendly,
                 "auto_sharding::reduce_scatter_aggresive_partition": reduce_scatter_aggresive_partition,
                 "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":

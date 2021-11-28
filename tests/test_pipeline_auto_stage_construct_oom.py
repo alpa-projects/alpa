@@ -17,7 +17,7 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoStageClusteringOOMTest('test_GPT3_27B'))
+    suite.addTest(AutoStageClusteringOOMTest('test_GPT3_3B'))
     return suite
 
 

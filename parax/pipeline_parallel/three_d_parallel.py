@@ -46,7 +46,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if num_micro_batches is None:
         logger.warning("num microbatch is unset. Use 1 by default.")
         num_micro_batches = 1
-    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches, avals)
+    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars,
+                                                   num_micro_batches, avals)
 
     # Split the jaxpr into compute_grad and apply_grad
     gensym_func = gensym([closed_jaxpr.jaxpr])
@@ -141,10 +142,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         physical_meshes.append(mesh.get_physical_mesh(skip_launch=True))
 
     # Call auto-sharding pass to shard each stage
-    xla_stages, total_flops = shard_each_stage(
-        jax_all_stages, physical_meshes, schedule,
-        n_stages, num_meshes, grad_in_to_out, global_invars,
-        acc_grad_outvars, donate_invars_dict, memory_budget_per_device)
+    xla_stages, total_flops = shard_each_stage(jax_all_stages, physical_meshes,
+                                               schedule, n_stages, num_meshes,
+                                               grad_in_to_out, global_invars,
+                                               acc_grad_outvars,
+                                               donate_invars_dict,
+                                               memory_budget_per_device)
     total_flops *= num_micro_batches
 
     # Wrap all things into a distributed runtime
@@ -170,9 +173,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     return ret_func  # pylint: disable=unnecessary-lambda
 
 
-def shard_each_stage(jax_all_stages, physical_meshes, schedule,
-                     n_stages, num_meshes, grad_in_to_out, global_invars,
-                     acc_grad_outvars, donate_invars_dict, memory_budget_per_device):
+def shard_each_stage(jax_all_stages, physical_meshes, schedule, n_stages,
+                     num_meshes, grad_in_to_out, global_invars,
+                     acc_grad_outvars, donate_invars_dict,
+                     memory_budget_per_device):
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]

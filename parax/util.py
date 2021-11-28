@@ -470,7 +470,8 @@ class XlaPassContext:
 ########################################
 
 
-def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches, raw_avals):
+def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
+                                 raw_avals):
     """Trace the jaxpr of the computation of a micro batch."""
     avals = []
     for aval, is_batch_var in zip(raw_avals, batch_invars):

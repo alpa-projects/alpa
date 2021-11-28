@@ -1014,7 +1014,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 handles.append(worker.get_max_memory_allocated.remote())
 
         peak_memory_list = ray.get(handles)
-        peak_memory_list = [m / (1024 ** 3) for m in peak_memory_list]
+        peak_memory_list = [m / (1024**3) for m in peak_memory_list]
         return peak_memory_list
 
 

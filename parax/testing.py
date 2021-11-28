@@ -212,8 +212,8 @@ class PipelineBasicTest(unittest.TestCase):
                 if i > 0:
                     state = actual_new_state
                 actual_new_state = parallel_train_step(state, batch)
-                assert_allclose(expected_new_state.params, actual_new_state.params,
-                                1e-3, 1e-3)
+                assert_allclose(expected_new_state.params,
+                                actual_new_state.params, 1e-3, 1e-3)
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()

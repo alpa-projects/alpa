@@ -71,6 +71,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
     run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
+    return_after_slice_auto_sharded_stages = multiple_stages
 
     total_devices = logical_mesh_choices[0].total_devices
     build_random_seed = 42
@@ -131,6 +132,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 # Build options
                 "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
                 "build_option::run_backend_codegen": run_backend_codegen,
+                "build_option::return_after_slice_auto_sharded_stages":
+                    return_after_slice_auto_sharded_stages,
 
                 # Auto-sharding solver options
                 "auto_sharding::enable": True,

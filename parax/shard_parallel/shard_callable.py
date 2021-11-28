@@ -209,7 +209,9 @@ def shard_parallel_internal_gradient_accumulation(
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
-    closed_jaxpr, avals = trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches, raw_avals)
+    closed_jaxpr, avals = trace_jaxpr_with_micro_batch(fun, batch_invars,
+                                                       num_micro_batches,
+                                                       raw_avals)
 
     closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads =\
         add_gradient_accumulation(closed_jaxpr, num_micro_batches)

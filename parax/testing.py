@@ -104,7 +104,7 @@ def create_train_state(rngkey, model, params):
 
 
 def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
-    params = model.init(rngkey, *params)
+    params = model.init_dummy(rngkey, *params)
     tx = optax.adam(learning_rate=1e-2)
     mixed_precision = (dtype == jnp.float16)
     state = TrainState.create(

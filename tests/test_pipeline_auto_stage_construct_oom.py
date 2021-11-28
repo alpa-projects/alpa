@@ -22,7 +22,8 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                          seq_len=256,
                          hidden_size=512,
                          num_heads=512 // 64,
-                         submesh_shapes=None):
+                         submesh_shapes=None,
+                         do_numerical_test=False):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",

@@ -1,6 +1,7 @@
 import gc
 from typing import Dict, Sequence, Tuple
 
+import tqdm
 import numpy as np
 import ray
 from ray.util import ActorPool

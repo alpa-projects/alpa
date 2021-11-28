@@ -159,16 +159,16 @@ class NormalMLP(MegatronModule):
 
         # Project to 4h.
         if not args.memory_centric_tiled_linear:
-            # self.dense_h_to_4h = mpu.ColumnParallelLinear(
-            #     args.hidden_size,
-            #     8 * args.hidden_size,
-            #     gather_output=False,
-            #     init_method=init_method,
-            #     skip_bias_add=True)
-            self.dense_h_to_4h = LinearReturnBias(
+            self.dense_h_to_4h = mpu.ColumnParallelLinear(
                 args.hidden_size,
                 8 * args.hidden_size,
-                bias=True)
+                gather_output=False,
+                init_method=init_method,
+                skip_bias_add=True)
+            # self.dense_h_to_4h = LinearReturnBias(
+            #     args.hidden_size,
+            #     8 * args.hidden_size,
+            #     bias=True)
         else:
             self.dense_h_to_4h = deepspeed.zero.TiledLinearReturnBias(
                 in_features=args.hidden_size,
@@ -190,16 +190,16 @@ class NormalMLP(MegatronModule):
 
         # Project back to h.
         if not args.memory_centric_tiled_linear:
-            # self.dense_4h_to_h = mpu.RowParallelLinear(
-            #     8 * args.hidden_size,
-            #     args.hidden_size,
-            #     input_is_parallel=True,
-            #     init_method=output_layer_init_method,
-            #     skip_bias_add=True)
-            self.dense_4h_to_h = LinearReturnBias(
+            self.dense_4h_to_h = mpu.RowParallelLinear(
                 8 * args.hidden_size,
                 args.hidden_size,
-                bias=True)
+                input_is_parallel=True,
+                init_method=output_layer_init_method,
+                skip_bias_add=True)
+            # self.dense_4h_to_h = LinearReturnBias(
+            #     8 * args.hidden_size,
+            #     args.hidden_size,
+            #     bias=True)
         else:
             self.dense_4h_to_h = deepspeed.zero.TiledLinearReturnBias(
                 in_features=8*args.hidden_size,

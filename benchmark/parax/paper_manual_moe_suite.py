@@ -27,23 +27,52 @@ test_moe_suite = {
 ],
 
 2: [
-    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP ,
-    # (16, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    # (8, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    # (16, *moe_specs["380M"],   2,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    (8, *moe_specs["380M"],   1,    2,    1,    1,   1,    1,  True,   *fixed_params,  4),
-    # (16, *moe_specs["380M"],   1,    2,    1,    1,   1,    1,  True,   *fixed_params,  2),
+    # B,        model,              S',           LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP
+    # (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    2,   1,    1,  True,   *fixed_params,     1),
+    # (16,     *moe_specs["380M"],  8 * 1024,        2,    1,    1,    2,   1,    1,  True,   *fixed_params,     1),
+    # (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    2,   1,    1,  True,   *fixed_params,     2),
+    # (128,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    8,  True,   *fixed_params,     2),
+    # (16,     *moe_specs["380M"],  8 * 1024,        1,    2,    1,    2,   1,    1,  True,   *fixed_params,     1),
+    # (16,     *moe_specs["380M"],  8 * 1024,        2,    1,    1,    2,   1,    1,  True,   *fixed_params,     1),
+    # (24,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    2,  True,   *fixed_params,     1),
+    # (64,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   1,    2,    1,    1,   1,    128,  True,   *fixed_params,     1),
 ],
 
 4: [
-    # B,  model,              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP ,
-    # (16, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    # (8, *moe_specs["380M"],   1,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    # (16, *moe_specs["380M"],   2,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    (32, *moe_specs["380M"],   4,    1,    1,    1,   1,    1,  True,   *fixed_params,  4),
-    (32, *moe_specs["380M"],   4,    1,    1,    1,   1,    1,  True,   *fixed_params,  2),
-    (32, *moe_specs["380M"],   4,    1,    1,    1,   1,    1,  True,   *fixed_params,  1),
-    # (64, *moe_specs["380M"],   1,    4,    1,    1,   1,    1,  True,   *fixed_params,  4),
+    # B,        model,                  S',           LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP
+    # (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    1,   1,    64,  True,   *fixed_params,     2),
+
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   1,    4,    1,    1,   1,    128,  True,   *fixed_params,     1),
+],
+
+8: [
+    # B,  model,                                     LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,    remat, tie, auto , EP ,
+    # (64,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    # (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    2,    1,    1,   1,    32,  True,   *fixed_params,     1),
+    # (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    4,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     4),
+],
+
+16: [
+    # (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     8),
+    # (64,     *moe_specs["4.5B"],  8 * 1024 // 2,   8,    2,    1,    1,   1,    1,  True,   *fixed_params,     4),
+
+    # (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     8),
+
+    # (32,     *moe_specs["4.5B"],  8 * 1024 // 2,   4,    4,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    # (128,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (512,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+
+],
+
+32: [
+
+    (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   32,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
 ]
 
 }
@@ -51,7 +80,7 @@ test_moe_suite = {
 
 paper_moe_suite = {
 1: [
-    # B,      model,                        LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing),
+    # B,      model,                             LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing),
 
     # 1 GPUs, deepspeed max bs = 8, parax = 16
     (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
@@ -62,23 +91,247 @@ paper_moe_suite = {
 ],
 
 2: [
-    # 2 GPUs, deepspeed max bs = ?
-    (8,     *moe_specs["380M"],  8 * 1024,   1,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    # 2 GPUs, deepspeed max effective bs = 8
+    # MP is always worse
+    # ===============================
+    # 380M model
+    # B,      model,                             LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing),
+    # (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    # (64,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+    # (256,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
+    # (1024,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    64,  True,   *fixed_params,     1),
+    #
+    # (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    # (64,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    # (256,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     2),
+    # (1024,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    64,  True,   *fixed_params,     2),
+
+    # ================================
+    # 690M model
+    # DP = 2, EP = 1
+    (16,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (64,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+    (256,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # DP = 2, EP = 2
+    (16,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    (64,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    (256,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    64,  True,   *fixed_params,     2),
+
+    # DP = 1, MP = 2, EP = 1
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   1,    2,    1,    1,   1,    128,  True,   *fixed_params,     1),
 ],
 
 4: [
+    # B,      model,                             LD0,  LD1,  PD0,  PD1,  PP,  NB,   FD,   (Remat, Tie, Auto-layer-slicing),
+    # ================================
+    # 690M model
+    # 4 GPUs, deepspeed max effective bs = 8, no MP
+    # DP = 4, EP = 1
+    (32,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (128,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    32,  True,   *fixed_params,     1),
+
+    # DP = 4， EP = 2
+    (32,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    (128,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    32,  True,   *fixed_params,     2),
+
+    # DP = 4， EP = 4
+    (32,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    (128,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    4,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    32,  True,   *fixed_params,     4),
+
+    # DP = 2， EP = 1， MP = 2
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   2,    2,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # DP = 2, EP = 2, MP = 2
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   2,    2,    1,    1,   1,    64,  True,   *fixed_params,     2),
+
+    # DP = 1， MP = 4， EP = 1
+    # effective batch size = 16
+    (1024,     *moe_specs["690M"],  8 * 1024 // 2,   1,    4,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+
+    # ================================
+    # 1.3B model
+    # 4 GPUs, deepspeed max effective bs = 8, no MP
+    # DP = 4, EP = 1
+    (32,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (128,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    8,  True,   *fixed_params,     1),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # DP = 4, EP = 2
+    (32,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    (128,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    32,  True,   *fixed_params,     2),
+
+    # DP = 4, EP = 4
+    (32,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    (128,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    4,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    32,  True,   *fixed_params,     4),
+
+    # DP = 2, MP = 2, EP = 1
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # DP =2, MP = 2, EP = 2
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    1,   1,    64,  True,   *fixed_params,     2),
+
+    # MP = 4
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   1,    4,    1,    1,   1,    128,  True,   *fixed_params,     1),
 
 ],
 
 8: [
+    # ================================
+    # 1.3B model
+    # DP = 8
+    (64,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (256,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
+
+    # DP = 8, EP = 2
+    (64,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    (256,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     2),
+
+    # DP = 8, EP = 4
+    (64,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    (256,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     4),
+
+    # DP = 8, EP = 8
+    (64,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     8),
+    (256,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     8),
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     8),
+
+    # DP = 4, MP = 2, EP = 4
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    2,    1,    1,   1,    32,  True,   *fixed_params,     4),
+
+    # DP = 4, MP = 2, EP = 2
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    2,    1,    1,   1,    32,  True,   *fixed_params,     2),
+
+    # DP = 4, MP = 2, EP = 1
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    2,    1,    1,   1,    32,  True,   *fixed_params,     1),
+
+    # DP = 2, MP = 4, EP = 2
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    4,    1,    1,   1,    64,  True,   *fixed_params,     2),
+
+    # DP = 2, MP = 4, EP = 1
+    (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    4,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # MP = 8: give up.. too  bad.
+    # (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   1,    8,    1,    1,   1,    64,  True,   *fixed_params,     1),
+
+    # ================================
+    # from now on, I give up MP.
+    # 2.4B model
+    # DP = 8, EP = 1
+    (32,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (256,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    8,  True,   *fixed_params,     1),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    32,  True,   *fixed_params,     1),
+
+    # DP = 8, EP = 2
+    (64,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    (256,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     2),
+
+    # DP = 8, EP = 4
+    (64,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    (256,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     4),
+
+    # DP = 8, ep = 8
+    (64,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    1,  True,   *fixed_params,     8),
+    (256,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    4,  True,   *fixed_params,     8),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     8),
+
+    # DP = 4, MP = 2， EP=4
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   4,    2,    1,    1,   1,    32,  True,   *fixed_params,     4),
 
 ],
 
 16: [
+    # ================================
+    # 2.4B model, max(ep) = 8, otherwise extremely slow.
 
+    # DP = 16, EP = 1
+    (128,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    (512,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     1),
+
+    # DP = 16, EP = 2
+    (128,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     2),
+    (512,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     2),
+
+    # DP = 16, EP = 4
+    (128,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    (512,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     4),
+
+    # DP = 16, EP = 8
+    (128,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     8),
+    (512,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     8),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     8),
+
+    # DP = 16， EP = 16:
+    (128,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     16),
+    (512,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     16),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     16),
+
+    # Note: MP * EP must <= 8
+    # DP = 8, MP = 2, EP = 4
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    2,    1,    1,   1,    16,  True,   *fixed_params,     4),
+
+
+    # ================================
+    # 4.5B model, max(ep) = 8, otherwise extremely slow.
+    # DP = 16, EP = 2
+    (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    2,  True,   *fixed_params,     2),
+    (512,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     2),
+    (1024,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    16,  True,   *fixed_params,     2),
+
+    # DP = 16, EP = 4
+    (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     4),
+    (512,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     4),
+
+    # DP = 16， EP = 8
+    (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     8),
+    (512,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     8),
+    (1024,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     8),
+
+    # DP = 16， EP = 16
+    (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    1,  True,   *fixed_params,     16),
+    (512,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    4,  True,   *fixed_params,     16),
+    (1024,     *moe_specs["4.5B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     16),
+
+    # DP = 8， MP = 2， EP = 4
+    (1024,     *moe_specs["4.5B"],  8 * 1024 // 2,   8,    2,    1,    1,   1,    16,  True,   *fixed_params,     4),
+
+    # DP = 4， MP = 4， EP = 4
+    (1024,     *moe_specs["4.5B"],  8 * 1024 // 2,   4,    4,    1,    1,   1,    32,  True,   *fixed_params,     4),
 ],
 
 32: [
+    # ================================
+    # 4.5B model, max(ep) = 8, otherwise extremely slow.
+    # DP = 32, EP = 1
+    (128,     *moe_specs["4.5B"],  8 * 1024 // 2,   32,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+
+    # DP = 32, EP = 2
+
+    # DP = 32, EP = 4
+
+    # DP = 32, EP = 8
+
+    # DP = 32, EP = 16
+
+    # DP = 32, EP = 32
+
 
 ],
 

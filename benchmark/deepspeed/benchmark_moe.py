@@ -133,7 +133,7 @@ def benchmark_all(args):
             gpt_options += "--output_name {}".format(output_name)
 
         if args.nnodes > 1:
-            host_options = "--hostfile hostfile "
+            host_options = "--hostfile hostfile_{}node ".format(args.nnodes)
         else:
             host_options = ""
 

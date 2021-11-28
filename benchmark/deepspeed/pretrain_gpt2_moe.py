@@ -257,13 +257,17 @@ if __name__ == "__main__":
         # TODO(Hao): the param count and tflops are for GPT, not GPT-MoE
         param_count = compute_moe_parameter_count(
             num_layers, hidden_size, vocab_size, num_experts, mlp_factor=mlp_factor)
+
+        expert_group_size = batch_size * seq_len // num_micro_batches \
+                            // mpu.get_data_parallel_world_size()
+
         tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                    hidden_size, batch_size * seq_len // num_micro_batches,
+                                    hidden_size, expert_group_size,
                                     vocab_size, num_experts,
                                     torch.distributed.get_world_size(),
                                     np.mean(latencies), mlp_factor=mlp_factor)
         tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                         hidden_size, batch_size * seq_len // num_micro_batches ,
+                                         hidden_size, expert_group_size ,
                                          vocab_size, num_experts, torch.distributed.get_world_size(),
                                          np.mean(latencies), mlp_factor=mlp_factor,
                                          checkpoint_activations=True)

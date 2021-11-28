@@ -4,7 +4,6 @@ import logging
 import jax
 from jax import linear_util as lu
 from jax.core import ClosedJaxpr, gensym
-from jax.interpreters import partial_eval as pe
 import numpy as np
 
 from parax.device_mesh import VirtualMesh
@@ -25,7 +24,7 @@ from parax.pipeline_parallel.apply_grad import (
     split_compute_grad_and_apply_grad)
 from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
 from parax.pipeline_parallel.stage_profiling import CompileWorkerPool
-from parax.util import get_micro_batch, OrderedSet
+from parax.util import trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -43,15 +42,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                        "VirtualMesh"))
 
     # Trace the function to get the jaxpr
-    virtual_mesh = devices
     num_micro_batches = global_config.num_micro_batches
     if num_micro_batches is None:
         logger.warning("num microbatch is unset. Use 1 by default.")
         num_micro_batches = 1
-    microbatch_avals = get_micro_batch(batch_invars, num_micro_batches, *avals)
-    with jax.disable_jit():
-        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, microbatch_avals)
-    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches, avals)
 
     # Split the jaxpr into compute_grad and apply_grad
     gensym_func = gensym([closed_jaxpr.jaxpr])
@@ -86,6 +81,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         donation_mapping = dict()
 
     # Construct pipeline stages by merging layers
+    virtual_mesh = devices
     jax_pipeline_stages, stage_to_mesh, sliced_meshes = (
         cluster_layers_and_slice_mesh(
             jax_pipeline_layers,
@@ -116,16 +112,18 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                global_invars, global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
         donation_mapping, jax_all_stages)
+    # Print jaxpr for debugging
+    #for i in range(len(jax_all_stages)):
+    #    with open(f"tmp/stage_{i}.jaxpr", "w") as fout:
+    #        fout.write(str(jax_all_stages[i].closed_jaxpr()))
 
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":
-        logger.debug("Using `gpipe` schedule.")
         schedule = GpipeSchedule(dependency=dependency,
                                  meshes=sliced_meshes,
                                  apply_grad_placement=apply_grad_placement,
                                  num_batch=num_micro_batches)
     elif global_config.pipeline_parallel_schedule == "1f1b":
-        logger.debug("Using `1f1b` schedule.")
         schedule = PipeDreamFlush(dependency=dependency,
                                   meshes=sliced_meshes,
                                   apply_grad_placement=apply_grad_placement,
@@ -142,6 +140,40 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     for i, mesh in enumerate(schedule.meshes):
         physical_meshes.append(mesh.get_physical_mesh(skip_launch=True))
 
+    # Call auto-sharding pass to shard each stage
+    xla_stages, total_flops = shard_each_stage(
+        jax_all_stages, physical_meshes, schedule,
+        n_stages, num_meshes, grad_in_to_out, global_invars,
+        acc_grad_outvars, donate_invars_dict, memory_budget_per_device)
+    total_flops *= num_micro_batches
+
+    # Wrap all things into a distributed runtime
+    for i, physical_mesh in enumerate(physical_meshes):
+        physical_mesh.launch_xla_servers()
+    grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
+
+    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
+                                         global_invars=global_invars,
+                                         grad_dummy_invars=grad_in_to_out,
+                                         global_outvars=global_outvars,
+                                         physical_meshes=physical_meshes,
+                                         dependency=dependency,
+                                         schedule=schedule,
+                                         is_batch=batch_invars,
+                                         num_batch=num_micro_batches,
+                                         flop_count=total_flops)
+
+    def ret_func(*args, **kwargs):
+        return jp.run(*args, **kwargs)
+
+    ret_func.get_executable = lambda: jp
+    return ret_func  # pylint: disable=unnecessary-lambda
+
+
+def shard_each_stage(jax_all_stages, physical_meshes, schedule,
+                     n_stages, num_meshes, grad_in_to_out, global_invars,
+                     acc_grad_outvars, donate_invars_dict, memory_budget_per_device):
+    # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
     donatable_dict = [[] for _ in range(num_meshes)]
@@ -149,6 +181,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     donatable_list = get_donatable_intermediate(
         jax_all_stages, mesh_stage_mapping,
         OrderedSet(global_invars).union(grad_in_to_out.keys()))
+
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
@@ -157,7 +190,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         stage_dict[mesh_idx].append(stage)
         donatable_dict[mesh_idx].append(donatable_list[i])
 
-    # address logical mesh requirement by users
+    # Address logical mesh requirement by users
     slms = global_config.sub_logical_mesh_shapes
     if slms != None:
         assert len(slms) == len(global_config.sub_physical_mesh_shapes)
@@ -168,12 +201,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     else:
         slms = [None] * num_meshes
 
-    # Print jaxpr for debugging
-    #for i in range(len(jax_all_stages)):
-    #    with open(f"tmp/stage_{i}.jaxpr", "w") as fout:
-    #        fout.write(str(jax_all_stages[i].closed_jaxpr()))
-
-    # Call auto-sharding pass to shard each stage
+    # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1, global_config.backup())
     compile_fn = lambda w, v: w.compile_with_config.remote(*v)
@@ -236,27 +264,5 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage
     compile_workers.shutdown()
-    total_flops *= num_micro_batches
 
-    # Wrap all things into a distributed runtime
-    for i, physical_mesh in enumerate(physical_meshes):
-        logger.debug("Launch the {}th mesh...".format(i))
-        physical_mesh.launch_xla_servers()
-    grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
-                                         global_invars=global_invars,
-                                         grad_dummy_invars=grad_in_to_out,
-                                         global_outvars=global_outvars,
-                                         physical_meshes=physical_meshes,
-                                         dependency=dependency,
-                                         schedule=schedule,
-                                         is_batch=batch_invars,
-                                         num_batch=num_micro_batches,
-                                         flop_count=total_flops)
-
-    def ret_func(*args, **kwargs):
-        return jp.run(*args, **kwargs)
-
-    ret_func.get_executable = lambda: jp
-
-    return ret_func  # pylint: disable=unnecessary-lambda
+    return xla_stages, total_flops

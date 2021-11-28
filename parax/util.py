@@ -20,6 +20,7 @@ from jax.api_util import shaped_abstractify
 from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla, pxla
+from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
@@ -469,8 +470,8 @@ class XlaPassContext:
 ########################################
 
 
-def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
-    """Divide the batch dimension by #micro-batches."""
+def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches, raw_avals):
+    """Trace the jaxpr of the computation of a micro batch."""
     avals = []
     for aval, is_batch_var in zip(raw_avals, batch_invars):
         if is_batch_var:
@@ -480,7 +481,10 @@ def get_micro_batch(batch_invars, num_micro_batches, *raw_avals):
             avals.append(aval.update(shape=shape))
         else:
             avals.append(aval)
-    return avals
+    with jax.disable_jit():
+        jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    return closed_jaxpr, avals
 
 
 def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,

@@ -54,7 +54,7 @@ class MLPModel(nn.Module):
     hidden_dim: int
     output_dim: int
     manual_pipeline_layer: bool = True
-    use_bias: bool = False
+    use_bias: bool = True
 
     @nn.compact
     def __call__(self, x):
@@ -162,7 +162,13 @@ class PipelineBasicTest(unittest.TestCase):
         ray.init(address="auto")
         jax.config.update('jax_platform_name', 'cpu')
 
+        # Backup global config
+        self.old_global_config = global_config.backup()
+
     def tearDown(self):
+        # Restore global config
+        global_config.restore(self.old_global_config)
+
         ray.shutdown()
         time.sleep(1)
 

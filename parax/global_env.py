@@ -95,7 +95,7 @@ def set_parallelize_options(devices=None,
                             sub_physical_mesh_shapes=None,
                             sub_logical_mesh_shapes=None,
                             pipeline_parallel_schedule="1f1b",
-                            pipeline_distributed_compile=False):
+                            pipeline_distributed_compile=True):
     """
     Set the global options for all @parallelize decorator.
 

@@ -164,8 +164,8 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
 
     print("- Start all profiling tasks")
     profile_workers = ProfileWorkerPool(meshes)
-    for compiled_output, stage_info, hook in tqdm.tqdm(zip(compiled_outputs, stage_infos,
-                                                 stage_hooks)):
+    for compiled_output, stage_info, hook in zip(compiled_outputs, stage_infos,
+                                                 stage_hooks):
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
             hooked_proto, hook, config) * num_micro_batches

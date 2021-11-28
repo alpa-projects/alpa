@@ -173,8 +173,10 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
                                (compiled_output, stage_info, intermediate_size))
 
     print("- Profile all stages")
-    for start, end in tqdm.tqdm(stage_indices):
+    pbar = tqdm.tqdm(stage_indices)
+    for start, end in pbar:
         compute_cost[start, end] = np.mean(profile_workers.get_next())
+        pbar.set_postfix({"datapoint": (start, end), "cost": compute_cost[start, end]})
     profile_workers.shutdown()
     return compute_cost
 

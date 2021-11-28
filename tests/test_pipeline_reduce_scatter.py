@@ -12,6 +12,7 @@ class PipelineReduceScatterTest(PipelineBasicTest):
         global_config.prefer_reduce_scatter = True
         global_config.reduce_scatter_grad_acc_friendly = False
         hlo_text = self.run_mlp(do_numerical_test=True)
+
         # Check number of communication primitives
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
             count_communication_primitives(hlo_text[0], ignore_scalar_all_reduce=True)

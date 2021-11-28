@@ -6,7 +6,7 @@ from parax.api import parallelize
 from parax.device_mesh import DeviceCluster
 from parax.global_env import set_parallelize_options, global_config
 from parax.model.bert_model import BertConfig
-from parax.testing import (get_bert_layer_train_step, BertLayerModel, PipelineBasicTest, create_train_state)
+from parax.testing import (get_bert_layer_train_step, BertLayerModel, PipelineBasicTest, create_dummy_train_state)
 
 
 class AutoStageClusteringOOMTest(PipelineBasicTest):
@@ -49,7 +49,7 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                                                  num_hidden_layers=n_layers),
                                manual_pipeline_layer=manual_pipeline_layer)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
-        state = create_train_state(rngkey, model, [x, attention_mask])
+        state = create_dummy_train_state(rngkey, model, [x, attention_mask])
 
         global_config.num_micro_batches = 2
         parallel_train_step = parallelize(train_step)

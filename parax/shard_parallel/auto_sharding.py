@@ -71,7 +71,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
     run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
-    return_after_slice_auto_sharded_stages = multiple_stages
+    return_after_slice_auto_sharded_stages = bool(multiple_stages)
 
     total_devices = logical_mesh_choices[0].total_devices
     build_random_seed = 42

@@ -142,8 +142,8 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shape
-    for start in range(0, num_layers):
-        for end in range(start, num_layers):
+    for start in tqdm.tqdm(range(0, num_layers)):
+        for end in tqdm.tqdm(range(start, num_layers), leave=False):
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])

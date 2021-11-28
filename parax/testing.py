@@ -54,19 +54,20 @@ class MLPModel(nn.Module):
     hidden_dim: int
     output_dim: int
     manual_pipeline_layer: bool = True
+    use_bias: bool = True
 
     @nn.compact
     def __call__(self, x):
         if self.manual_pipeline_layer:
             mark_pipeline(name='1', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
         x = nn.relu(x)
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
         if self.manual_pipeline_layer:
             mark_pipeline(name='1', mark_type='end')
             mark_pipeline(name='2', mark_type='start')
-        x = nn.Dense(features=self.hidden_dim, use_bias=True)(x)
-        x = nn.Dense(features=self.output_dim, use_bias=True)(x)
+        x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
+        x = nn.Dense(features=self.output_dim, use_bias=self.use_bias)(x)
         return x
 
 
@@ -168,13 +169,14 @@ class PipelineBasicTest(unittest.TestCase):
     def run_mlp(self,
                 manual_pipeline_layer=True,
                 test_remat=False,
-                pipeline_stage_mode="uniform_layer_gpipe"):
+                pipeline_stage_mode="uniform_layer_gpipe",
+                do_numerical_test=True):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
-        batch_size = 256
-        hidden_dim = 128
+        batch_size = 64
+        hidden_dim = 16
         input_dim = output_dim = hidden_dim
 
         model = MLPModel(hidden_dim=hidden_dim,
@@ -193,19 +195,24 @@ class PipelineBasicTest(unittest.TestCase):
         nstep = 3
         parallel_train_step = parallelize(train_step)
         executable = parallel_train_step.get_executable(state, batch)
-        expected_new_state = None
-        actual_new_state = None
-        for i in range(nstep):
-            if i > 0:
-                state = expected_new_state
-            expected_new_state = train_step(state, batch)
-            if i > 0:
-                state = actual_new_state
-            actual_new_state = parallel_train_step(state, batch)
-            assert_allclose(expected_new_state.params, actual_new_state.params,
-                            1e-3, 1e-3)
 
+        if do_numerical_test:
+            expected_new_state = None
+            actual_new_state = None
+            for i in range(nstep):
+                if i > 0:
+                    state = expected_new_state
+                expected_new_state = train_step(state, batch)
+                if i > 0:
+                    state = actual_new_state
+                actual_new_state = parallel_train_step(state, batch)
+                assert_allclose(expected_new_state.params, actual_new_state.params,
+                                1e-3, 1e-3)
+
+        hlo_text = executable.get_hlo_text()
         executable.shutdown()
+
+        return hlo_text
 
     def run_n_layer_bert(self,
                          n_layers,

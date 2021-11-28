@@ -214,6 +214,10 @@ class PipelineBasicTest(unittest.TestCase):
                          pipeline_stage_mode="uniform_layer_gpipe",
                          cache_compute_cost=None,
                          forward_stage_layer_ids=None,
+                         batch_size=16,
+                         seq_len=256,
+                         hidden_size=512,
+                         num_heads=512 // 64,
                          submesh_shapes=None):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
         set_parallelize_options(devices=virtual_mesh,
@@ -222,11 +226,6 @@ class PipelineBasicTest(unittest.TestCase):
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
-
-        batch_size = 16
-        seq_len = 256
-        hidden_size = 512
-        num_heads = 512 // 64
 
         train_step = get_bert_layer_train_step(manual_pipeline_layer,
                                                test_remat, n_layers)

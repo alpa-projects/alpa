@@ -194,27 +194,28 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     timers.log(names, normalizer=repeat * number)
 
     # Print results
-    peak_mem = torch.cuda.max_memory_allocated(0)
-    tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
-                                hidden_size, vocab_size,
-                                torch.distributed.get_world_size(),
-                                np.mean(costs))
-    tflops_ckpt = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
-                                     hidden_size, vocab_size,
-                                     torch.distributed.get_world_size(),
-                                     np.mean(costs), True)
-    heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-             "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
-              "Peak Mem"]
-    values = [model_type, str(benchmark_case[1:6]),
-              str((dp_size, tensor_mp_size, pipeline_mp_size)),
-              "N/A", str(num_micro_batches), "N/A",
-              str(checkpoint_activations), f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
-              f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-              f"{peak_mem/GB:5.3f}"]
-    write_tsv(heads, values, f"{model_type}_megatron_{output_file_name}_rank{rank}.tsv")
-    print("Sleeping for 30 seconds before starting the next case. ")
-    time.sleep(30)
+    if rank == 0:
+        peak_mem = torch.cuda.max_memory_allocated(0)
+        tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
+                                    hidden_size, vocab_size,
+                                    torch.distributed.get_world_size(),
+                                    np.mean(costs))
+        tflops_ckpt = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
+                                         hidden_size, vocab_size,
+                                         torch.distributed.get_world_size(),
+                                         np.mean(costs), True)
+        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
+                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
+                  "Peak Mem"]
+        values = [model_type, str(benchmark_case[1:6]),
+                  str((dp_size, tensor_mp_size, pipeline_mp_size)),
+                  "N/A", str(num_micro_batches), "N/A",
+                  str(checkpoint_activations), f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
+                  f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                  f"{peak_mem/GB:5.3f}"]
+        write_tsv(heads, values, f"{model_type}_megatron_{output_file_name}_rank{rank}.tsv")
+        print("Sleeping for 10 seconds before starting the next case. ")
+        time.sleep(10)
 
 
 if __name__ == "__main__":

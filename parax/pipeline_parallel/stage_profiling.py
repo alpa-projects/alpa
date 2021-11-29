@@ -124,7 +124,7 @@ class CompileWorkerPool:
             worker_cls.remote(global_config_backup) for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)
-        self.local_worker = CompileWorker() if debug_mode else None
+        self.local_worker = CompileWorker(global_config_backup) if debug_mode else None
 
     def local_get(self, fn, *value):
         return fn(self.local_worker, value)
@@ -151,7 +151,7 @@ class ProfileWorker:
 
     def profile(self, compiled_output, stage_info, intermediate_size):
         _, avals, out_avals, tot_donation = stage_info
-        proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
+        proto, config, in_shardings, out_shardings, _ = compiled_output
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)

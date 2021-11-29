@@ -125,7 +125,7 @@ class MeshHostWorker:
         self.sync()
         return min(d.available_memory() for d in self.local_devices)
 
-    def reset_remote_memory_stats(self):
+    def reset_memory_stats(self):
         self.sync()
         for device in self.local_devices:
             device.clear_memory_stats()

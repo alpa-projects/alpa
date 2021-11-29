@@ -19,8 +19,8 @@ from parax.util import OrderedSet
 
 
 @numba.jit(nopython=True)
-def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
-            compute_cost, max_stage_cost):
+def old_forward_dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
+                        compute_cost, max_stage_cost):
     # For f, layer ID start from 1
     f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float32)
     f_stage_max = np.full((num_layers + 1, num_devices + 1),
@@ -62,8 +62,65 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
     return total_cost, res
 
 
+@numba.jit(nopython=True)
+def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
+            compute_cost, max_n_succ_stages, max_stage_cost):
+    # For f, layer ID start from 0
+    # f[#pipeline stages,
+    #   layer id that is currently being considered,
+    #   number of devices used]
+    f = np.full((num_layers + 1, num_layers + 1, num_devices + 1), np.inf, dtype=np.float32)
+    f_stage_max = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
+                          0.0,
+                          dtype=np.float32)
+    f_argmin = np.full((num_layers + 1, num_layers + 1, num_devices + 1, 2), -1, dtype=np.int32)
+    f[0, num_layers, 0] = 0
+    for s in range(1, num_layers + 1):
+        for i in range(num_layers - 1, -1, -1):
+            for j in range(1, num_devices + 1):
+                for k in range(num_layers - 1, i - 1, -1):
+                    for m, submesh in enumerate(submesh_choices):
+                        n_submesh_devices = np.prod(np.array(submesh))
+                        if s - 1 <= max_n_succ_stages[i, k, m] and n_submesh_devices <= j:
+                            stage_cost = compute_cost[i, k, m]
+                            new_cost = f[s - 1, k + 1, j - n_submesh_devices] + stage_cost
+                            if stage_cost <= max_stage_cost and new_cost < f[s, i, j]:
+                                f[s, i, j] = new_cost
+                                f_stage_max[s, i, j] = max(f_stage_max[s - 1, k + 1, j - n_submesh_devices],
+                                                        stage_cost)
+                                f_argmin[s, i, j] = (k, m)
+
+    best_s = -1
+    best_total_cost = np.inf
+    for s in range(1, num_layers + 1):
+        if f[s, 0, num_devices] < best_total_cost:
+            best_s = s
+            best_total_cost = f[s, 0, num_devices]
+
+    if np.isinf(best_total_cost):
+        return np.inf, None
+
+    total_cost = f[best_s, 0, num_devices] + (
+        num_microbatches - 1) * f_stage_max[best_s, 0, num_devices]
+    current_s = best_s
+    current_layer = 0
+    current_devices = num_devices
+
+    res = []
+    while current_s > 0 and current_layer < num_layers and current_devices > 0:
+        next_start_layer, submesh_choice = f_argmin[current_s, current_layer, current_devices]
+        assert next_start_layer != -1 and current_devices != -1
+        res.append(((current_layer, next_start_layer), submesh_choice))
+        current_s -= 1
+        current_layer = next_start_layer
+        current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
+    assert current_s == 0 and current_layer == num_layers and current_devices == 0
+
+    return total_cost, res
+
+
 def dp(num_layers, num_devices, num_microbatches, submesh_choices,
-       compute_cost):
+       compute_cost, max_n_succ_stages):
     all_possible_stage_costs = np.sort(np.unique(compute_cost))
     best_cost = np.inf
     best_solution = None
@@ -78,9 +135,8 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
         if max_stage_cost - last_max_stage_cost < gap:
             continue
         cost, solution = dp_impl(num_layers, num_devices, num_microbatches,
-                                 submesh_choices, compute_cost, max_stage_cost)
-        if solution is not None:
-            solution = list(reversed(solution))
+                                 submesh_choices, compute_cost,
+                                 max_n_succ_stages, max_stage_cost)
         if cost < best_cost:
             best_cost = cost
             best_solution = solution
@@ -110,11 +166,12 @@ def get_submesh_choices(mesh: VirtualMesh):
 
 
 def distributed_profile_on_mesh(meshes, layers, donation_mapping,
-                                global_outvars, num_micro_batches):
+                                global_outvars):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
     compute_cost = np.full((num_layers, num_layers), np.inf)
+    max_n_succ_stages = np.full((num_layers, num_layers), -1)
     stage_infos = []
     stage_indices = []
     stage_hooks = []
@@ -156,22 +213,24 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     for start, end in pbar:
         cost, max_stage = profile_workers.get_next()
         compute_cost[start, end] = np.mean(cost)
-        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]}, max #stages supported = {max_stage}")
+        max_n_succ_stages[start, end] = max_stage
+        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]}, max_n_succ_stage = {max_stage}")
     profile_workers.shutdown()
-    return compute_cost
+    return compute_cost, max_n_succ_stages
 
 
 def get_compute_cost(virtual_mesh,
                      submesh_choices,
                      layers,
                      donation_mapping,
-                     global_outvars,
-                     num_micro_batches):
+                     global_outvars):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
     compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
                            np.inf)
+    max_n_succ_stages = np.full((num_layers, num_layers, num_submesh_choices),
+                           -1)
     print("-" * 20 + " Automatic stage clustering " + "-" * 20)
     print(f"submesh_choices: {submesh_choices}")
 
@@ -182,24 +241,28 @@ def get_compute_cost(virtual_mesh,
         tic = time()
         sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
             num_hosts, num_devices)
-        mesh_compute_cost = distributed_profile_on_mesh(
-            sliced_virtual_meshes, layers, donation_mapping, global_outvars,
-            num_micro_batches)
+        mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
+            sliced_virtual_meshes, layers, donation_mapping, global_outvars)
 
         compute_cost[:, :, mesh_id] = mesh_compute_cost
+        max_n_succ_stages[:, :, mesh_id] = mesh_max_n_succ_stages
         toc = time()
         print(f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
               f' seconds')
         print(f'Profiled costs are: {mesh_compute_cost}')
+        print(f'Profiled max_n_succ_stages are: {mesh_max_n_succ_stages}')
         print('-' * 50)
 
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
     np.save(compute_cost_file_name, compute_cost)
     print(f'Compute cost saved to: {compute_cost_file_name}')
+    max_n_succ_stages_file_name = (f"max-n-succ-stages-{timestamp}.npy")
+    np.save(max_n_succ_stages_file_name, max_n_succ_stages)
+    print(f'Maximum #successor stages saved to: {max_n_succ_stages_file_name}')
 
     print("-" * 70)
-    return compute_cost
+    return compute_cost, max_n_succ_stages
 
 
 def get_sliced_virtual_submeshes(virtual_mesh, submeshe_shapes):
@@ -373,15 +436,15 @@ def cluster_layers_and_slice_mesh(layers,
         if pipeline_stage_mode == "auto_gpipe":
             # use DP to find the optimal solution
             if cache_compute_cost is not None:
+                # FIXME(zhuohan): load max_n_succ_stages
                 compute_cost = np.load(cache_compute_cost)
             else:
-                compute_cost = get_compute_cost(mesh, submesh_choices, layers,
+                compute_cost, max_n_succ_stages = get_compute_cost(mesh, submesh_choices, layers,
                                                 donation_mapping,
-                                                global_outvars,
-                                                num_micro_batches)
+                                                global_outvars)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,
-                                compute_cost)
+                                compute_cost, max_n_succ_stages)
             forward_stage_layer_ids = [
                 list(range(start_id, end_id))
                 for (start_id, end_id), _ in solution

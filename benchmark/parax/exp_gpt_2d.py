@@ -111,7 +111,7 @@ if __name__ == "__main__":
 
         # Log results
         heads = ["Model", "Model Config", "Parallel Config", "Param Count",
-                 "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
+                 "Peak Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
         values = [args.model, case[:-6], case[-6:],
                   f"{param_count/1e9:.3f}", f"{peak_mem/GB:.3f}", f"{ilp_objective:.2f}",
                   f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]

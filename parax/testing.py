@@ -107,12 +107,11 @@ def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
     params = model.init_dummy(rngkey, *params)
     tx = optax.adam(learning_rate=1e-2)
     mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        mixed_precision=mixed_precision,
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              mixed_precision=mixed_precision,
+                              dynamic_scale=None)
     return state
 
 
@@ -287,8 +286,8 @@ class PipelineBasicTest(unittest.TestCase):
                 if i > 0:
                     state = actual_new_state
                 actual_new_state = parallel_train_step(state, batch)
-                assert_allclose(expected_new_state.params, actual_new_state.params,
-                                1e-3, 1.5e-3)
+                assert_allclose(expected_new_state.params,
+                                actual_new_state.params, 1e-3, 1.5e-3)
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()

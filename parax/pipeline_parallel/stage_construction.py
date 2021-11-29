@@ -217,10 +217,8 @@ def get_compute_cost(virtual_mesh,
 
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
-        print(
-            f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
-            f' seconds'
-        )
+        print(f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
+              f' seconds')
         print(f'Profiled costs are: {mesh_compute_cost}')
         print('-' * 50)
 

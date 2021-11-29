@@ -6,7 +6,8 @@ from parax.api import parallelize
 from parax.device_mesh import DeviceCluster
 from parax.global_env import set_parallelize_options, global_config
 from parax.model.bert_model import BertConfig
-from parax.testing import (get_bert_layer_train_step, BertLayerModel, PipelineBasicTest, create_dummy_train_state)
+from parax.testing import (get_bert_layer_train_step, BertLayerModel,
+                           PipelineBasicTest, create_dummy_train_state)
 
 
 class AutoStageClusteringOOMTest(PipelineBasicTest):
@@ -60,8 +61,8 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
         executable.shutdown()
 
     def test_GPT3_3B(self):
-        self.run_n_layer_bert(n_layers=32,
-                              hidden_size=2560,
+        self.run_n_layer_bert(n_layers=8,
+                              hidden_size=2048,
                               batch_size=16,
                               seq_len=1024,
                               num_heads=32,

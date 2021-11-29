@@ -3,6 +3,7 @@ import math
 from time import time
 from typing import Sequence
 
+import tqdm
 import numba
 import numpy as np
 import ray
@@ -12,8 +13,8 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
 from parax.device_mesh import VirtualMesh
 from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all)
-from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
+    split_global_use_and_donate, generate_stage_info, compile_all,
+    ProfileWorkerPool)
 from parax.util import OrderedSet
 
 
@@ -129,8 +130,8 @@ def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
     return compute_cost
 
 
-def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
-                                num_micro_batches):
+def distributed_profile_on_mesh(meshes, layers, donation_mapping,
+                                global_outvars, num_micro_batches):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
@@ -139,9 +140,10 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
     stage_indices = []
     stage_hooks = []
 
+    print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shape
-    for start in range(0, num_layers):
-        for end in range(start, num_layers):
+    for start in tqdm.tqdm(range(0, num_layers)):
+        for end in tqdm.tqdm(range(start, num_layers), leave=False):
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
@@ -153,58 +155,79 @@ def distributed_profile_on_mesh(mesh, layers, donation_mapping, global_outvars,
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
             stage_hooks.append(hook)
+
+    print("- Compile all stages")
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    logical_mesh = mesh.get_default_logical_mesh()
+    logical_mesh = meshes[0].get_default_logical_mesh()
     compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
-    physical_mesh = mesh.get_physical_mesh()
-    for (start, end), compiled_output, stage_info, hook in zip(
-            stage_indices, compiled_outputs, stage_infos, stage_hooks):
-        _, avals, out_avals, tot_donation = stage_info
+
+    print("- Start all profiling tasks")
+    profile_workers = ProfileWorkerPool(meshes)
+    for compiled_output, stage_info, hook in zip(compiled_outputs, stage_infos,
+                                                 stage_hooks):
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
             hooked_proto, hook, config) * num_micro_batches
-        compiled = ProtoAndSharding(proto=proto,
-                                    input_shardings=in_shardings,
-                                    output_shardings=out_shardings)
-        donated_invars = (True,) * len(tot_donation) + (False,) * (
-            len(avals) - len(tot_donation))
-        executable = PartialGradAccMeshDriverExecutable(physical_mesh, compiled,
-                                                        config, avals,
-                                                        out_avals,
-                                                        donated_invars, [])
-        cost = executable.profile_with_dummy_inputs(
-            intermediates=intermediate_size)
-        compute_cost[start, end] = np.mean(cost)
+        profile_workers.submit(lambda w, v: w.profile.remote(*v),
+                               (compiled_output, stage_info, intermediate_size))
+
+    print("- Profile all stages")
+    pbar = tqdm.tqdm(stage_indices)
+    for start, end in pbar:
+        compute_cost[start, end] = np.mean(profile_workers.get_next())
+        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]}")
+    profile_workers.shutdown()
     return compute_cost
 
 
-def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars, num_micro_batches):
+def get_compute_cost(virtual_mesh,
+                     submesh_choices,
+                     layers,
+                     donation_mapping,
+                     global_outvars,
+                     num_micro_batches,
+                     distributed_profile=True):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
     compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
                            np.inf)
+    print("-" * 20 + " Automatic stage clustering " + "-" * 20)
+    print(f"submesh_choices: {submesh_choices}")
+
     # Reverse submesh_choices to test larger meshes first
     for mesh_id, submesh in reversed(list(enumerate(submesh_choices))):
+        print(f"- Profiling for submesh {mesh_id} {submesh}:")
         num_hosts, num_devices = submesh
-        sliced_virtual_mesh = virtual_mesh.slice_2d(
-            list(range(num_hosts)),
-            [list(range(num_devices)) for _ in range(num_hosts)])
         tic = time()
-        mesh_compute_cost = distributed_profile_on_mesh(sliced_virtual_mesh,
-                                                        layers,
-                                                        donation_mapping,
-                                                        global_outvars,
-                                                        num_micro_batches)
+        if distributed_profile:
+            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+                num_hosts, num_devices)
+            mesh_compute_cost = distributed_profile_on_mesh(
+                sliced_virtual_meshes, layers, donation_mapping, global_outvars,
+                num_micro_batches)
+        else:
+            sliced_virtual_mesh = virtual_mesh.slice_2d(
+                list(range(num_hosts)),
+                [list(range(num_devices)) for _ in range(num_hosts)])
+            mesh_compute_cost = profile_on_mesh(sliced_virtual_mesh, layers,
+                                                donation_mapping,
+                                                global_outvars)
+
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()
-        print(
-            f'profiling for submesh {mesh_id} {submesh} takes {toc - tic} seconds'
-        )
-        print(f'profiled costs are: {mesh_compute_cost}')
-        print('=' * 30)
+        print(f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
+              f' seconds')
+        print(f'Profiled costs are: {mesh_compute_cost}')
+        print('-' * 50)
+
+    timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
+    np.save(compute_cost_file_name, compute_cost)
+    print(f'Compute cost saved to: {compute_cost_file_name}')
+
+    print("-" * 70)
     return compute_cost
 
 
@@ -385,9 +408,6 @@ def cluster_layers_and_slice_mesh(layers,
                                                 donation_mapping,
                                                 global_outvars,
                                                 num_micro_batches)
-                np.save(
-                    f"compute-cost-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}",
-                    compute_cost)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,
                                 compute_cost)

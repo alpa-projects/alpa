@@ -75,8 +75,10 @@ class MeshHostWorker:
             print("Use signal send recv")
             self.signal_tensors = []
             for d in self.local_devices:
-                self.signal_tensors.append(jax_tensor_to_cupy(
-                    device_put(jnp.ones((1,), dtype=jnp.int8), d), take_ownership=True))
+                self.signal_tensors.append(
+                    jax_tensor_to_cupy(device_put(
+                        jnp.ones((1,), dtype=jnp.int8), d),
+                                       take_ownership=True))
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -531,7 +533,7 @@ class PhysicalDeviceMesh:
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".95",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
             }
 
             # Launch a ray actor
@@ -720,12 +722,14 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
-                    # TODO(yonghao): the following assertion will fail, which does not make sense
-                    # assert not isinstance(arg, DistributedArray)
+                    # FIXME(yonghao): by get memory allocated there is an implicit sync between driver
+                    # and worker devices. If not so, the total memory allocated drastically increases.
                     expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize \
                         if hasattr(arg, "shape") else 1
-                    before_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
-                    before_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
+                    before_memory_usage = ray.get(
+                        self.workers[0].get_memory_allocated.remote())
+                    before_memory_peak = ray.get(
+                        self.workers[0].get_max_memory_allocated.remote())
                     arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
@@ -733,8 +737,10 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
-                    after_memory_usage = ray.get(self.workers[0].get_memory_allocated.remote())
-                    after_memory_peak = ray.get(self.workers[0].get_max_memory_allocated.remote())
+                    after_memory_usage = ray.get(
+                        self.workers[0].get_memory_allocated.remote())
+                    after_memory_peak = ray.get(
+                        self.workers[0].get_max_memory_allocated.remote())
                     actual = after_memory_usage - before_memory_usage
                     # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
                     #     expected, actual, before_memory_usage, after_memory_usage
@@ -1159,6 +1165,26 @@ class VirtualMesh:
                            head_ip=self.head_ip,
                            num_devices_per_host=len(device_indices[0]),
                            devices=device_indices)
+
+    def slice_profiling_submeshes(self, submesh_num_hosts,
+                                  submesh_num_devices_per_host):
+        num_hosts = len(self.host_ids)
+        num_devices_per_host = self.num_devices_per_host
+        num_host_submeshes = num_hosts // submesh_num_hosts
+        num_device_submeshes = num_devices_per_host // submesh_num_devices_per_host
+        all_submeshes = []
+        for i in range(num_host_submeshes):
+            for j in range(num_device_submeshes):
+                host_indices = range(i * submesh_num_hosts,
+                                     (i + 1) * submesh_num_hosts)
+                device_indices = [
+                    range(j * submesh_num_devices_per_host,
+                          (j + 1) * submesh_num_devices_per_host)
+                    for _ in host_indices
+                ]
+                all_submeshes.append(self.slice_2d(host_indices,
+                                                   device_indices))
+        return all_submeshes
 
     @property
     def total_devices(self):

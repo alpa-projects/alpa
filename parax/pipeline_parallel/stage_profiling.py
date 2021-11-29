@@ -1,6 +1,7 @@
 import gc
 from typing import Dict, Sequence, Tuple
 
+import tqdm
 import numpy as np
 import ray
 from ray.util import ActorPool
@@ -23,6 +24,7 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 HloProtoStatus,
                                                 sharding_proto_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
 
 
 class CompileWorker:
@@ -126,6 +128,51 @@ class CompileWorkerPool:
 
     def local_get(self, fn, *value):
         return fn(self.local_worker, value)
+
+    def submit(self, fn, value):
+        self.pool.submit(fn, value)
+
+    def get_next(self):
+        return self.pool.get_next()
+
+    def shutdown(self, force=True):
+        for w in self.actors:
+            if force:
+                ray.kill(w)
+            else:
+                w.__ray_terminate__.remote()
+        gc.collect()
+
+
+class ProfileWorker:
+
+    def __init__(self, virtual_mesh):
+        self.mesh = virtual_mesh.get_physical_mesh()
+
+    def profile(self, compiled_output, stage_info, intermediate_size):
+        _, avals, out_avals, tot_donation = stage_info
+        proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
+        compiled = ProtoAndSharding(proto=proto,
+                                    input_shardings=in_shardings,
+                                    output_shardings=out_shardings)
+        donated_invars = (True,) * len(tot_donation) + (False,) * (
+            len(avals) - len(tot_donation))
+        executable = PartialGradAccMeshDriverExecutable(self.mesh, compiled,
+                                                        config, avals,
+                                                        out_avals,
+                                                        donated_invars, [])
+        cost = executable.profile_with_dummy_inputs(
+            intermediates=intermediate_size)
+        return cost
+
+
+class ProfileWorkerPool:
+    """wrapped ray.util.ActorPool"""
+
+    def __init__(self, virtual_meshes):
+        worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
+        self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
+        self.pool = ActorPool(self.actors)
 
     def submit(self, fn, value):
         self.pool.submit(fn, value)
@@ -304,7 +351,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
              donate_invars))
 
     compiled_outputs = []
-    for stage_info in stage_info_list:
+    for stage_info in tqdm.tqdm(stage_info_list):
         compiled_output = compile_workers.get_next()
         compiled_outputs.append(compiled_output)
 

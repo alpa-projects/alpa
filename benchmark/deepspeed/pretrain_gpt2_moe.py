@@ -14,13 +14,10 @@
 # limitations under the License.
 
 """Pretrain GPT2"""
-import argparse
 
 import json
 import os
-import time
 import torch
-from megatron.data.gpt2_dataset import build_train_valid_test_datasets
 
 import deepspeed
 from deepspeed.runtime.utils import see_memory_usage
@@ -33,6 +30,7 @@ from megatron.model import GPT2Model
 from megatron.training import pretrain
 from megatron.utils import get_ltor_masks_and_position_ids
 from megatron.utils import reduce_losses, get_parameters_in_billions
+from megatron.data.gpt2_dataset import build_train_valid_test_datasets
 
 
 def moe_parser(parser):
@@ -254,7 +252,6 @@ if __name__ == "__main__":
         latencies = np.array(step_latencies[warmup_iter * num_micro_batches:])\
                     .reshape((-1, num_micro_batches)).sum(axis=-1)
 
-        # TODO(Hao): the param count and tflops are for GPT, not GPT-MoE
         param_count = compute_moe_parameter_count(
             num_layers, hidden_size, vocab_size, num_experts, mlp_factor=mlp_factor)
 

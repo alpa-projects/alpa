@@ -550,7 +550,7 @@ def profile_xla_executable(compiled, backend, local_devices):
     input_shapes = hlo_module.parameter_shapes()
 
     # prune OOM cases, not exact because third party lib not considered:
-    free_mem = get_memory_status(local_devices)
+    free_mem = local_devices[0].available_memory()
     input_bytes = 0
     for shape in input_shapes:
         input_bytes += np.prod(
@@ -569,7 +569,7 @@ def profile_xla_executable(compiled, backend, local_devices):
         local_devices[0].synchronize_all_activity()
     except:
         return cost_failed
-    free_mem = get_memory_status(local_devices)
+    free_mem = local_devices[0].available_memory()
 
     # Run benchmark
     def run_func():

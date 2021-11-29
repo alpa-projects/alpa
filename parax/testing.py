@@ -103,6 +103,18 @@ def create_train_state(rngkey, model, params):
     return state
 
 
+def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
+    params = model.init_dummy(rngkey, *params)
+    tx = optax.adam(learning_rate=1e-2)
+    mixed_precision = (dtype == jnp.float16)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              mixed_precision=mixed_precision,
+                              dynamic_scale=None)
+    return state
+
+
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
         if use_remat:
@@ -226,6 +238,10 @@ class PipelineBasicTest(unittest.TestCase):
                          pipeline_stage_mode="uniform_layer_gpipe",
                          cache_compute_cost=None,
                          forward_stage_layer_ids=None,
+                         batch_size=16,
+                         seq_len=256,
+                         hidden_size=512,
+                         num_heads=512 // 64,
                          submesh_shapes=None,
                          do_numerical_test=True):
         virtual_mesh = DeviceCluster().get_virtual_mesh()
@@ -235,11 +251,6 @@ class PipelineBasicTest(unittest.TestCase):
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
-
-        batch_size = 16
-        seq_len = 256
-        hidden_size = 512
-        num_heads = 512 // 64
 
         train_step = get_bert_layer_train_step(manual_pipeline_layer,
                                                test_remat, n_layers)
@@ -275,8 +286,8 @@ class PipelineBasicTest(unittest.TestCase):
                 if i > 0:
                     state = actual_new_state
                 actual_new_state = parallel_train_step(state, batch)
-                assert_allclose(expected_new_state.params, actual_new_state.params,
-                                1e-3, 1.5e-3)
+                assert_allclose(expected_new_state.params,
+                                actual_new_state.params, 1e-3, 1.5e-3)
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()

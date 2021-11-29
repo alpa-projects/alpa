@@ -1,6 +1,7 @@
 import gc
 from typing import Dict, Sequence, Tuple
 
+import tqdm
 import numpy as np
 import ray
 from ray.util import ActorPool
@@ -350,7 +351,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
              donate_invars))
 
     compiled_outputs = []
-    for stage_info in stage_info_list:
+    for stage_info in tqdm.tqdm(stage_info_list):
         compiled_output = compile_workers.get_next()
         compiled_outputs.append(compiled_output)
 

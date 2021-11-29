@@ -146,7 +146,7 @@ class CompileWorkerPool:
 
 class ProfileWorker:
 
-    def __init__(self, virtual_mesh):
+    def __init__(self, virtual_mesh: VirtualMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
     def profile(self, compiled_output, stage_info, intermediate_size):
@@ -161,9 +161,14 @@ class ProfileWorker:
                                                         config, avals,
                                                         out_avals,
                                                         donated_invars, [])
-        cost = executable.profile_with_dummy_inputs(
-            intermediates=intermediate_size)
-        return cost
+        self.mesh.reset_remote_memory_stats()
+        cost = executable.profile_with_dummy_inputs()
+        del executable
+        peak_memory = self.mesh.get_remote_memory_peak()
+        available_memory = self.mesh.get_remote_memory_available()
+        self.mesh.reset_remote_memory_stats()
+        max_stage = (available_memory - peak_memory) // intermediate_size
+        return cost, max_stage
 
 
 class ProfileWorkerPool:

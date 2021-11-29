@@ -24,7 +24,7 @@ from parax.measure_record import StrategyConfig
 from parax.timer import timers
 from parax.util import (compile_allocate_zero_buffers,
                         compile_memset_zero_buffers, get_shard_shape,
-                        profile_xla_executable, profile_pipeline_xla_executable)
+                        profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -909,18 +909,6 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         return super(PartialGradAccMeshWorkerExecutable,
                      self).execute_on_worker(input_uuids, output_uuids,
                                              **kwargs)
-
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
-        """Profile the time cost of this executable with dummy inputs."""
-        key = "intermediates"
-        passed_kwargs = dict()
-        if key in kwargs:
-            value = kwargs.pop(key)
-            passed_kwargs[key] = value
-        if len(kwargs):
-            logger.warning(f"kwargs {list(kwargs.keys())} are ignored")
-        return profile_pipeline_xla_executable(self.compiled, backend,
-                                               local_devices, **passed_kwargs)
 
 
 class AllocZeroBufferDriverExecutable:

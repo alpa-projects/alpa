@@ -992,18 +992,18 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh.shutdown(forced=True)
 
     def profile_all_executables(self):
-        all_profiled = []
+        all_profiled_handles = []
         for _, physical_mesh in enumerate(self.physical_meshes):
             all_worker_profiled = []
             for _, worker in enumerate(physical_mesh.workers):
                 worker: MeshHostWorker
                 all_worker_profiled.append(
-                    ray.get(
-                        worker.profile_executable_with_dummy_inputs.remote(
-                            self._worker_executable_uuid_mapping[worker])))
+                    worker.profile_executable_with_dummy_inputs.remote(
+                        self._worker_executable_uuid_mapping[worker]))
             if len(all_worker_profiled) == 1:
                 all_worker_profiled = all_worker_profiled[0]
-            all_profiled.append(all_worker_profiled)
+            all_profiled_handles.append(all_worker_profiled)
+        all_profiled = [ray.get(handles) for handles in all_profiled_handles]
         return all_profiled
 
     def get_peak_memory(self):

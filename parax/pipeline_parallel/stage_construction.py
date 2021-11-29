@@ -168,7 +168,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
                                                  stage_hooks):
         proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
         intermediate_size = compute_intermediate_size(
-            hooked_proto, hook, config) * num_micro_batches
+            hooked_proto, hook, config)
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
                                (compiled_output, stage_info, intermediate_size))
 

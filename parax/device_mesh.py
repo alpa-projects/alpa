@@ -854,7 +854,7 @@ class PhysicalDeviceMesh:
     def reset_remote_memory_stats(self):
         if self.is_distributed:
             for worker in self.workers:
-                ray.get(worker.clear_memory_stats.remote())
+                ray.get(worker.reset_memory_stats.remote())
         else:
             for device in self.devices:
                 device.clear_memory_stats()

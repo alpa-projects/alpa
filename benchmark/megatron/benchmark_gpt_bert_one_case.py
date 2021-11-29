@@ -187,7 +187,7 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
         timers(name).reset()
 
     # Benchmark step time
-    repeat = 5
+    repeat = 4
     number = 1
     costs = benchmark_func(run_func, sync_func=None,
                            warmup=0, repeat=repeat, number=number)

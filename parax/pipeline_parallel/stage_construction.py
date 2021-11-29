@@ -255,12 +255,8 @@ def get_compute_cost(virtual_mesh,
 
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
-    np.save(compute_cost_file_name, compute_cost)
+    np.save(compute_cost_file_name, (compute_cost, max_n_succ_stages))
     print(f'Compute cost saved to: {compute_cost_file_name}')
-    max_n_succ_stages_file_name = (f"max-n-succ-stages-{timestamp}.npy")
-    np.save(max_n_succ_stages_file_name, max_n_succ_stages)
-    print(f'Maximum #successor stages saved to: {max_n_succ_stages_file_name}')
-
     print("-" * 70)
     return compute_cost, max_n_succ_stages
 
@@ -437,7 +433,7 @@ def cluster_layers_and_slice_mesh(layers,
             # use DP to find the optimal solution
             if cache_compute_cost is not None:
                 # FIXME(zhuohan): load max_n_succ_stages
-                compute_cost = np.load(cache_compute_cost)
+                compute_cost, max_n_succ_stages = np.load(cache_compute_cost, allow_pickle=True)
             else:
                 compute_cost, max_n_succ_stages = get_compute_cost(mesh, submesh_choices, layers,
                                                 donation_mapping,

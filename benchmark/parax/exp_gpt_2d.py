@@ -88,7 +88,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=10,
+    parser.add_argument("--niter", type=int, default=5,
         help="Number of benchmark iteration")
     args = parser.parse_args()
 
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     # Run all cases
     for case in suite:
-        result = benchmark_one_case(case, args.model, args.niter,
+        result = benchmark_one_case(args.model, case, args.niter,
                                     local=False,
                                     use_separate_process=True)
         param_count, ilp_objective, alloc_mem, latencies, tflops = result

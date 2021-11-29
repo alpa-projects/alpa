@@ -72,7 +72,7 @@ def compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
     return tflops
 
 
-def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
+def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, group_size, vocab_size,
                        num_expert, num_gpus, latency, mlp_factor=8,
                        checkpoint_activations=False):
     factor = 4 if checkpoint_activations else 3
@@ -82,9 +82,21 @@ def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
     pure_transformer = pure_transformer * factor
 
     # num_layers / 2 attention-moe block
-    moe_transformer = batch_size * seq_len * (hidden_size ** 2) * (8 + 4 * mlp_factor * num_expert) +\
+    # transformer
+    moe_transformer = batch_size * seq_len * (hidden_size ** 2) * 8  +\
         4 * batch_size * (seq_len ** 2) * hidden_size
-    pure_transformer = pure_transformer * factor
+    # expert FFNs:
+    # moe_transformer += 2 * batch_size * seq_len * (hidden_size ** 2) * mlp_factor * 2
+    moe_transformer += 8 * batch_size *  seq_len * (hidden_size ** 2) * mlp_factor
+
+    # softmax
+    moe_transformer += 2 * batch_size * seq_len * hidden_size * num_expert
+    # top-2 gating
+    moe_transformer += 2 * (batch_size * seq_len) * 2 * group_size
+    # dispatch + combine
+    moe_transformer += 2 * batch_size * seq_len * hidden_size * 2 * group_size * 2
+
+    moe_transformer = moe_transformer * factor
 
     # vocab
     embedding = 6 * batch_size * seq_len * hidden_size * vocab_size

@@ -74,17 +74,17 @@ class ParallelMLP(MegatronModule):
         if not args.memory_centric_tiled_linear:
             self.dense_h_to_4h = mpu.ColumnParallelLinear(
                 args.hidden_size,
-                4 * args.hidden_size,
+                8 * args.hidden_size,
                 gather_output=False,
                 init_method=init_method,
                 skip_bias_add=True)
         else:
             self.dense_h_to_4h = deepspeed.zero.TiledLinearReturnBias(
                 in_features=args.hidden_size,
-                out_features=4*args.hidden_size,
+                out_features=8*args.hidden_size,
                 linear_cls=mpu.ColumnParallelLinear,
                 in_splits=args.tile_factor,
-                out_splits=4*args.tile_factor,
+                out_splits=8*args.tile_factor,
                 combine_out_splits=True,
                 gather_output=False,
                 init_method=init_method,
@@ -100,17 +100,17 @@ class ParallelMLP(MegatronModule):
         # Project back to h.
         if not args.memory_centric_tiled_linear:
             self.dense_4h_to_h = mpu.RowParallelLinear(
-                4 * args.hidden_size,
+                8 * args.hidden_size,
                 args.hidden_size,
                 input_is_parallel=True,
                 init_method=output_layer_init_method,
                 skip_bias_add=True)
         else:
             self.dense_4h_to_h = deepspeed.zero.TiledLinearReturnBias(
-                in_features=4*args.hidden_size,
+                in_features=8*args.hidden_size,
                 out_features=args.hidden_size,
                 linear_cls=mpu.RowParallelLinear,
-                in_splits=4*args.tile_factor,
+                in_splits=8*args.tile_factor,
                 out_splits=args.tile_factor,
                 input_is_already_split=False,
                 combine_out_splits=True,
@@ -126,6 +126,101 @@ class ParallelMLP(MegatronModule):
         if self.bias_gelu_fusion:
             intermediate_parallel = \
                     bias_gelu_impl(intermediate_parallel, bias_parallel)
+        else:
+            intermediate_parallel = \
+                self.activation_func(intermediate_parallel + bias_parallel)
+
+        # [s, b, h]
+        output, output_bias = self.dense_4h_to_h(intermediate_parallel)
+        return output, output_bias
+
+
+class LinearReturnBias(torch.nn.Linear):
+    def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+        super(LinearReturnBias, self).__init__(in_features, out_features,
+                                               bias=bias)
+
+    def forward(self, input):
+        return super().forward(input), self.state_dict()["bias"]
+
+
+class NormalMLP(MegatronModule):
+    """MLP.
+
+    MLP will take the input with h hidden state, project it to 4*h
+    hidden dimension, perform nonlinear transformation, and project the
+    state back into h hidden dimension. At the end, dropout is also
+    applied.
+    """
+
+    def __init__(self, init_method, output_layer_init_method):
+        super(NormalMLP, self).__init__()
+        args = get_args()
+
+        # Project to 4h.
+        if not args.memory_centric_tiled_linear:
+            self.dense_h_to_4h = mpu.ColumnParallelLinear(
+                args.hidden_size,
+                8 * args.hidden_size,
+                gather_output=False,
+                init_method=init_method,
+                skip_bias_add=True)
+            # self.dense_h_to_4h = LinearReturnBias(
+            #     args.hidden_size,
+            #     8 * args.hidden_size,
+            #     bias=True)
+        else:
+            self.dense_h_to_4h = deepspeed.zero.TiledLinearReturnBias(
+                in_features=args.hidden_size,
+                out_features=8*args.hidden_size,
+                linear_cls=mpu.ColumnParallelLinear,
+                in_splits=args.tile_factor,
+                out_splits=8*args.tile_factor,
+                combine_out_splits=True,
+                gather_output=False,
+                init_method=init_method,
+                skip_bias_add=True)
+
+        self.bias_gelu_fusion = args.bias_gelu_fusion
+        self.activation_func = F.gelu
+        if args.openai_gelu:
+            self.activation_func = openai_gelu
+        elif args.onnx_safe:
+            self.activation_func = erf_gelu
+
+        # Project back to h.
+        if not args.memory_centric_tiled_linear:
+            self.dense_4h_to_h = mpu.RowParallelLinear(
+                8 * args.hidden_size,
+                args.hidden_size,
+                input_is_parallel=True,
+                init_method=output_layer_init_method,
+                skip_bias_add=True)
+            # self.dense_4h_to_h = LinearReturnBias(
+            #     8 * args.hidden_size,
+            #     args.hidden_size,
+            #     bias=True)
+        else:
+            self.dense_4h_to_h = deepspeed.zero.TiledLinearReturnBias(
+                in_features=8*args.hidden_size,
+                out_features=args.hidden_size,
+                linear_cls=mpu.RowParallelLinear,
+                in_splits=8*args.tile_factor,
+                out_splits=args.tile_factor,
+                input_is_already_split=False,
+                combine_out_splits=True,
+                input_is_parallel=True,
+                init_method=output_layer_init_method,
+                skip_bias_add=True)
+
+    def forward(self, hidden_states):
+
+        # [s, b, 4hp]
+        intermediate_parallel, bias_parallel = self.dense_h_to_4h(hidden_states)
+
+        if self.bias_gelu_fusion:
+            intermediate_parallel = \
+                bias_gelu_impl(intermediate_parallel, bias_parallel)
         else:
             intermediate_parallel = \
                 self.activation_func(intermediate_parallel + bias_parallel)
@@ -420,6 +515,7 @@ class ParallelSelfAttention(MegatronModule):
 def bias_dropout_add(x, bias, residual, prob, training) :
     # type: (Tensor, Tensor, Tensor, float, bool) -> Tensor
     out = torch.nn.functional.dropout(x + bias, p=prob, training=training)
+    # print(">>>>>>>>>>>>>>>> getting dropout: {}, {}".format(x.shape, bias.shape))
     out = residual + out
     return out
 
@@ -906,7 +1002,7 @@ class ParallelMOETransformerLayer(MegatronModule):
         # MoE
         self.moe = deepspeed.moe.layer.MoE(
             hidden_size = args.hidden_size,
-            expert=ParallelMLP(init_method, output_layer_init_method),
+            expert=NormalMLP(init_method, output_layer_init_method),
             num_experts=args.num_experts,
             k=args.top_k,
             min_capacity=args.min_capacity,
@@ -914,7 +1010,7 @@ class ParallelMOETransformerLayer(MegatronModule):
         )
 
         # self.mlp = ParallelMLP(init_method,
-        #                        output_layer_init_method)
+                               # output_layer_init_method)
 
 
     def forward(self, hidden_states, attention_mask, layer_past=None,
@@ -975,12 +1071,11 @@ class ParallelMOETransformerLayer(MegatronModule):
         layernorm_output = self.post_attention_layernorm(layernorm_input)
 
         # MLP.
-        # mlp_output, mlp_bias = self.mlp(layernorm_output)
+        # moe_output, moe_bias = self.mlp(layernorm_output)
         # MoE
         moe_output, _, _ = self.moe(layernorm_output)
-        moe_bias = torch.zeros([moe_output.shape[0]], dtype=moe_output.dtype,
-                               device=moe_output.device)
-        # print(">>>>>>>>>>>>>>>> getting here: moe_output: {}".format(moe_output))
+        moe_bias = torch.zeros_like(moe_output, dtype=moe_output.dtype,
+                                    device=moe_output.device)
 
         # Second residual connection.
         if self.apply_residual_connection_post_layernorm:

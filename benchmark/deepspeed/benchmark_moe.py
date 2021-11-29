@@ -1,3 +1,7 @@
+import time
+
+from datetime import datetime
+
 import argparse
 import os
 import random
@@ -12,25 +16,11 @@ from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_sui
 # CK = use_checkpoint,
 # DS = use_deepspeed
 
-benchmark_suite_1_gpu = [
-    #B,    S,    H,    L,  #head,     V,     DP, TMP, NB, CK, DS
-    (16,   512,  1024, 10, 1024//64,  25600, 1,  1,   1,  0,  1),
-    (8,    1024, 1536, 10, 1536//96,  25600, 1,  1,   1,  0,  1),
-]
 
-benchmark_suite_4_gpu = [
-
-    # B,  S,    H,    L,  #head,     V,   S_,  E,  DP, TP, PP, NB, CK, DS
-
-]
-
-benchmark_suite_8_gpu = [
-    # B,  S,    H,    L,  #head,     V,    S_, E,  DP, TP, PP, NB, CK, DS
-]
-
-benchmark_suite_16_gpu = [
-    #B,    S,    H,    L,  #head,     V,     DP, TMP, NB, CK, DS
-]
+benchmark_suites = {
+    "paper_moe": paper_moe_suite,
+    "test_moe": test_moe_suite,
+}
 
 
 def update_ds_config(filename, gradient_accumulation_steps):
@@ -48,12 +38,12 @@ def update_ds_config(filename, gradient_accumulation_steps):
 def benchmark_all(args):
     num_gpus = args.nproc_per_node * args.nnodes
 
-    benchmark_suites = {
-        1 : benchmark_suite_1_gpu,
-        4 : benchmark_suite_4_gpu,
-        8 : benchmark_suite_8_gpu,
-        16 : benchmark_suite_16_gpu,
-    }
+    try:
+        _ = benchmark_suites[args.suite][num_gpus]
+    except KeyError:
+        print(f"No available benchmark suite for {args.suite} with {num_gpus} GPUs.")
+        exit()
+    output_name = args.exp_name + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     warmup_iter = 2
     bench_iter = 3
@@ -61,15 +51,17 @@ def benchmark_all(args):
     # MOE does not support stage 3
     config_file = "ds_zero_stage_2_moe_config.json"
 
-    for case in benchmark_suites[num_gpus]:
-        batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
-        expert_capacity, num_expert, \
-        dp_size, tensor_mp_size, pipeline_mp_size, num_micro_batches, \
-        checkpoint_activations, use_deepspeed = case
+    for case in benchmark_suites[args.suite][num_gpus]:
+        print(">>>>>> Parax benchmark: Working on case {}...".format(str(case)), flush=True)
+        batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_expert, _, \
+        dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
+        num_micro_batches, force_dp, checkpoint_activations, _, _, ep_size = case
+
+        use_deepspeed = True
 
         assert dp_size * tensor_mp_size == num_gpus
         assert batch_size % dp_size == 0
-        assert batch_size & num_micro_batches == 0
+        assert batch_size % num_micro_batches == 0
 
         gpt_options = (
             f"--model-parallel-size {tensor_mp_size} "
@@ -132,15 +124,16 @@ def benchmark_all(args):
 
         if num_expert > 1:
             gpt_options += "--moe "
-            gpt_options += "--ep-world-size 2 "
+            gpt_options += "--ep-world-size {} ".format(ep_size)
             gpt_options += "--num-experts {} ".format(str(num_expert))
-            gpt_options += "--top-k 1 "
-            gpt_options += "--min-capacity 0 "
+            gpt_options += "--top-k 2 "
+            gpt_options += "--min-capacity 4 "
             gpt_options += "--noisy-gate-policy None "
-            gpt_options += "--moe-param-group"
+            gpt_options += "--moe-param-group "
+            gpt_options += "--output_name {}".format(output_name)
 
         if args.nnodes > 1:
-            host_options = "--hostfile hostfile "
+            host_options = "--hostfile hostfile_{}node ".format(args.nnodes)
         else:
             host_options = ""
 
@@ -151,6 +144,8 @@ def benchmark_all(args):
                       f"--master_port {random.randint(30000, 40000)} "
                       f"--num_gpus {args.nproc_per_node} "
                       f"pretrain_gpt2_moe.py {gpt_options}")
+        print(">>>>>> Parax benchmark: sleep for 30 seconds before starting the next case.", flush=True)
+        time.sleep(30)
 
 
 if __name__ == "__main__":
@@ -158,6 +153,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--nnodes", type=int, default=1)
     parser.add_argument("--nproc_per_node", type=int, required=True)
+    parser.add_argument("--suite", type=str, default="paper_gpt")
+    parser.add_argument("--exp_name", type=str, default="none")
     args = parser.parse_args()
 
     benchmark_all(args)

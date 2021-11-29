@@ -200,6 +200,16 @@ class FlaxMoELayer(nn.Module):
                  attention_mask,
                  deterministic: bool = True,
                  output_attentions: bool = False):
+
+
+        if not isinstance(deterministic, bool):
+            # A temporary hack to walkaround the bug in flax.nn.remat
+            # Using `nn.remat(concrete=True)` works for regular use cases
+            # (e.g., train_step, init) but does not work for init_dummy.
+            # So we still need this hack.
+            deterministic = True
+            output_attentions = True
+
         attention_outputs = self.attention(hidden_states,
                                            attention_mask,
                                            deterministic=deterministic,
@@ -222,15 +232,21 @@ class FlaxMoELayerCollection(nn.Module):
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
+
+        if self.config.gradient_checkpointing:
+            trans_func = partial(nn.remat, concrete=True)
+        else:
+            trans_func = lambda x: x
+
         assert self.config.num_hidden_layers % 2 == 0
         layers = []
         for i in range(self.config.num_hidden_layers):
             if i % 2 == 0:
                 layers.append(
-                    FlaxMoELayer(self.config, name=str(i), dtype=self.dtype))
+                    trans_func(FlaxMoELayer)(self.config, name=str(i), dtype=self.dtype))
             else:
                 layers.append(
-                    FlaxBertLayer(self.config, name=str(i), dtype=self.dtype))
+                    trans_func(FlaxBertLayer)(self.config, name=str(i), dtype=self.dtype))
         self.layers = layers
 
         self.pipeline_mp_size = self.config.pipeline_mp_size

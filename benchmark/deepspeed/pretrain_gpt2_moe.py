@@ -14,28 +14,23 @@
 # limitations under the License.
 
 """Pretrain GPT2"""
-import argparse
 
-import os
 import json
-
+import os
 import torch
-import numpy as np
 
+import deepspeed
+from deepspeed.runtime.utils import see_memory_usage
 from megatron import get_args
-from megatron import print_rank_0
 from megatron import get_timers
 from megatron import get_tokenizer
 from megatron import mpu
-from megatron.data.gpt2_dataset import build_train_valid_test_datasets
+from megatron import print_rank_0
 from megatron.model import GPT2Model
 from megatron.training import pretrain
 from megatron.utils import get_ltor_masks_and_position_ids
 from megatron.utils import reduce_losses, get_parameters_in_billions
-
-
-import deepspeed
-from deepspeed.runtime.utils import see_memory_usage
+from megatron.data.gpt2_dataset import build_train_valid_test_datasets
 
 
 def moe_parser(parser):
@@ -112,12 +107,11 @@ def moe_parser(parser):
         help=
         '(moe) create separate moe param groups, required when using ZeRO w. MoE'
     )
-
-    # Include DeepSpeed configuration arguments
-    # full_parser = deepspeed.add_config_arguments(parser)
-    # args = full_parser.parse_args()
-
-    # return args, parser, full_parser
+    group.add_argument(
+        '--output_name',
+        default="none",
+        help="where to save results."
+    )
     return parser
 
 
@@ -227,28 +221,25 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 if __name__ == "__main__":
 
-    # print("args: {}..".format(args))
-    # print("parser: {}..".format(parser))
-    # print("full_parser: {}..".format(full_parser))
-    # args = get_args()
     pretrain(train_valid_test_datasets_provider, model_provider, forward_step,
              args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
              extra_args_provider=moe_parser)
-
-    if torch.distributed.get_rank() == 0:
+    args = get_args()
+    rank = torch.distributed.get_rank()
+    if rank == 0:
         import numpy as np
-        from util import compute_gpt_parameter_count, compute_gpt_tflops, write_tsv
+        from util import compute_moe_parameter_count, compute_moe_tflops, write_tsv
         from megatron.training import step_latencies
         GB = 1 << 30
-
-
 
         args = get_args()
         seq_len = args.seq_length
         num_layers = args.num_layers
         hidden_size = args.hidden_size
         num_heads = args.num_attention_heads
+        num_experts = args.num_experts
         vocab_size = args.padded_vocab_size
+        mlp_factor = 8
         if args.deepspeed:
             num_micro_batches = json.load(open(
                 args.deepspeed_config))["gradient_accumulation_steps"]
@@ -261,24 +252,35 @@ if __name__ == "__main__":
         latencies = np.array(step_latencies[warmup_iter * num_micro_batches:])\
                     .reshape((-1, num_micro_batches)).sum(axis=-1)
 
-        # TODO(Hao): the param count and tflops are for GPT, not GPT-MoE
-        param_count = compute_gpt_parameter_count(
-            num_layers, hidden_size, vocab_size)
-        tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
-                                    hidden_size, vocab_size,
+        param_count = compute_moe_parameter_count(
+            num_layers, hidden_size, vocab_size, num_experts, mlp_factor=mlp_factor)
+
+        expert_group_size = batch_size * seq_len // num_micro_batches \
+                            // mpu.get_data_parallel_world_size()
+
+        tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
+                                    hidden_size, expert_group_size,
+                                    vocab_size, num_experts,
                                     torch.distributed.get_world_size(),
-                                    np.mean(latencies))
-        model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size)
+                                    np.mean(latencies), mlp_factor=mlp_factor)
+        tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
+                                         hidden_size, expert_group_size ,
+                                         vocab_size, num_experts, torch.distributed.get_world_size(),
+                                         np.mean(latencies), mlp_factor=mlp_factor,
+                                         checkpoint_activations=True)
+        model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts)
         parallel_config = (mpu.get_data_parallel_world_size(),
                            mpu.get_model_parallel_world_size(),
-                           args.checkpoint_activations,
-                           num_micro_batches,
-                           args.deepspeed)
+                           1,
+                           args.ep_world_size)
 
         # Log results
-        heads = ["Model", "Model Config", "Parallel Config", "Param Count",
-                 "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
-        values = ["gpt", model_config, parallel_config,
-                  f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", "-1",
-                  f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
-        write_tsv(heads, values, f"result_gpt.tsv")
+        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
+                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
+                 "Peak Mem"]
+        values = ["MOE", str(model_config), str(parallel_config),
+                  "N/A", str(num_micro_batches), "N/A",
+                  str(args.checkpoint_activations), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                  f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                  f"{alloc_mem/GB:5.3f}G"]
+        write_tsv(heads, values,f"moe_deepspeed_{args.output_name}_rank{rank}.tsv")

@@ -77,14 +77,20 @@ class FlaxBertEmbeddings(nn.Module):
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
-        self.word_embeddings = nn.Embed(
+
+        if self.config.gradient_checkpointing:
+            trans_func = partial(nn.remat, concrete=True)
+        else:
+            trans_func = lambda x: x
+
+        self.word_embeddings = trans_func(nn.Embed)(
             self.config.vocab_size,
             self.config.hidden_size,
             embedding_init=jax.nn.initializers.normal(
                 stddev=self.config.initializer_range),
             dtype=self.dtype,
         )
-        self.position_embeddings = nn.Embed(
+        self.position_embeddings = trans_func(nn.Embed)(
             self.config.max_position_embeddings,
             self.config.hidden_size,
             embedding_init=jax.nn.initializers.normal(
@@ -93,7 +99,7 @@ class FlaxBertEmbeddings(nn.Module):
         )
 
         if self.config.type_vocab_size > 0:
-            self.token_type_embeddings = nn.Embed(
+            self.token_type_embeddings = trans_func(nn.Embed)(
                 self.config.type_vocab_size,
                 self.config.hidden_size,
                 embedding_init=jax.nn.initializers.normal(

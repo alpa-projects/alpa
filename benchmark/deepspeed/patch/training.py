@@ -195,8 +195,8 @@ def get_optimizer(model):
                                        lr=args.lr,
                                        weight_decay=args.weight_decay,
                                        beta1=args.adam_beta1,
-                                       eps2=(1e-30, 1e-3)
-                                       )
+                                       eps2=(1e-30, 1e-3))
+            print(">>>>>> Parax benchmark: we're using the {} optimizer.".format(type(optimizer)))
         else:
             optimizer = torch.optim.AdamW(param_groups,
                                           lr=args.lr,
@@ -292,7 +292,6 @@ def setup_model_and_optimizer(model_provider_func):
 
     if args.deepspeed:
         print_rank_0("DeepSpeed is enabled.")
-        # Note(Hao): the init below will overwrite the opt config provided in deepspeed.json
         model, optimizer, _, lr_scheduler = deepspeed.initialize(
             model=model,
             optimizer=optimizer,

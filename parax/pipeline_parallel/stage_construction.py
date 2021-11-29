@@ -109,27 +109,6 @@ def get_submesh_choices(mesh: VirtualMesh):
     return submesh_choices
 
 
-def profile_on_mesh(virtual_mesh, layers, donation_mapping, global_outvars):
-    mesh = virtual_mesh.get_physical_mesh()
-    assert len(layers) % 2 == 0
-    num_layers = len(layers) // 2
-    indices = list(range(2 * num_layers))
-    compute_cost = np.full((num_layers, num_layers), np.inf)
-    for start in range(0, num_layers):
-        for end in range(start, num_layers):
-            layer_indices = indices[start:end +
-                                    1] + indices[2 * num_layers - end -
-                                                 1:2 * num_layers - start]
-            local_donation_mapping, global_used_list, selected_layers = (
-                split_global_use_and_donate(layers, layer_indices,
-                                            donation_mapping, global_outvars))
-            cost, in_specs, out_specs = compile_and_profile_stage_compute_cost(
-                selected_layers, mesh, local_donation_mapping, global_used_list)
-            compute_cost[start, end] = np.mean(cost)
-    mesh.shutdown()
-    return compute_cost
-
-
 def distributed_profile_on_mesh(meshes, layers, donation_mapping,
                                 global_outvars, num_micro_batches):
     assert len(layers) % 2 == 0
@@ -175,8 +154,9 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     print("- Profile all stages")
     pbar = tqdm.tqdm(stage_indices)
     for start, end in pbar:
-        compute_cost[start, end] = np.mean(profile_workers.get_next())
-        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]}")
+        cost, max_stage = profile_workers.get_next()
+        compute_cost[start, end] = np.mean(cost)
+        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]}, max #stages supported = {max_stage}")
     profile_workers.shutdown()
     return compute_cost
 
@@ -186,8 +166,7 @@ def get_compute_cost(virtual_mesh,
                      layers,
                      donation_mapping,
                      global_outvars,
-                     num_micro_batches,
-                     distributed_profile=True):
+                     num_micro_batches):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -201,19 +180,11 @@ def get_compute_cost(virtual_mesh,
         print(f"- Profiling for submesh {mesh_id} {submesh}:")
         num_hosts, num_devices = submesh
         tic = time()
-        if distributed_profile:
-            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
-                num_hosts, num_devices)
-            mesh_compute_cost = distributed_profile_on_mesh(
-                sliced_virtual_meshes, layers, donation_mapping, global_outvars,
-                num_micro_batches)
-        else:
-            sliced_virtual_mesh = virtual_mesh.slice_2d(
-                list(range(num_hosts)),
-                [list(range(num_devices)) for _ in range(num_hosts)])
-            mesh_compute_cost = profile_on_mesh(sliced_virtual_mesh, layers,
-                                                donation_mapping,
-                                                global_outvars)
+        sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+            num_hosts, num_devices)
+        mesh_compute_cost = distributed_profile_on_mesh(
+            sliced_virtual_meshes, layers, donation_mapping, global_outvars,
+            num_micro_batches)
 
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         toc = time()

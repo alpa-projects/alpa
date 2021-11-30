@@ -97,12 +97,12 @@ if __name__ == "__main__":
     for case in suite:
         result = benchmark_one_case(args.model, case, args.niter, args.local,
                                     args.use_separate_process)
-        param_count, ilp_objective, alloc_mem, latencies, tflops = result
+        param_count, ilp_objective, peak_mem, latencies, tflops = result
 
         # Log results
         heads = ["Model", "Model Config", "Parallel Config", "Param Count",
-                 "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
+                 "Peak Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
         values = [args.model, case[:-6], case[-6:],
-                  f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{ilp_objective:.2f}",
+                  f"{param_count/1e9:.3f}", f"{peak_mem/GB:.3f}", f"{ilp_objective:.2f}",
                   f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
         write_tsv(heads, values, f"result_{args.model}.tsv")

@@ -860,6 +860,20 @@ class PhysicalDeviceMesh:
                 device.clear_memory_stats()
 
     ##### Other Functions #####
+    def get_memory_allocated(self):
+        self.sync_workers()
+        if self.is_distributed:
+            return max(ray.get([w.get_memory_allocated.remote() for w in self.workers]))
+        else:
+            return max([d.memory_allocated() for d in self.local_devices])
+
+    def get_max_memory_allocated(self):
+        self.sync_workers()
+        if self.is_distributed:
+            return max(ray.get([w.get_max_memory_allocated.remote() for w in self.workers]))
+        else:
+            return max([d.max_memory_allocated() for d in self.local_devices])
+
     def sync_workers(self):
         """Sync all device activities on workers."""
         if self.is_distributed:

@@ -105,7 +105,7 @@ class GradAccumulationTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(accumulate_grad)
-            assert n_total == n_reduce_scatter == 1
+            assert n_total == n_all_reduce + n_reduce_scatter == 1
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
                 count_communication_primitives(apply_grad)

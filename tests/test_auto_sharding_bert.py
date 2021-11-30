@@ -243,7 +243,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         assert_close(objective, expected)
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-            count_communication_primitives(hlo_ir)
+            count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
             assert n_reduce_scatter == 2

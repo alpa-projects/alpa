@@ -168,7 +168,7 @@ class ProfileWorker:
         peak_memory = self.mesh.get_remote_memory_peak()
         available_memory = self.mesh.get_remote_memory_available()
         self.mesh.reset_remote_memory_stats()
-        max_stage = int((available_memory - peak_memory) // intermediate_size)
+        max_stage = int((available_memory - peak_memory) // intermediate_size) - 1
         if np.mean(cost) == np.inf:
             max_stage = -1
         return cost, max_stage, (peak_memory, available_memory, intermediate_size)

@@ -1,3 +1,4 @@
+import numpy as np
 import jax
 import jax.numpy as jnp
 import unittest
@@ -52,6 +53,8 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                                manual_pipeline_layer=manual_pipeline_layer)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_dummy_train_state(rngkey, model, [x, attention_mask])
+        param_count = sum([np.prod(param.shape) for param in jax.tree_flatten(state.params)[0]])
+        print("#Parameters =", param_count)
 
         global_config.num_micro_batches = 2
         parallel_train_step = parallelize(train_step)

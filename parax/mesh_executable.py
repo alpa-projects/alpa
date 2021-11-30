@@ -707,7 +707,8 @@ class GradAccMeshDriverExecutable:
             return ray.get(self.physical_mesh.workers[0].\
                 get_exec_total_allocation_size.remote(self.exec_uuid))
         else:
-            return self.accumulate_grad.total_allocation_size()
+            return max(self.accumulate_grad.total_allocation_size(),
+                       self.apply_grad.total_allocation_size())
 
     def get_hlo_text(self):
         return self.hlo_text
@@ -820,7 +821,8 @@ class GradAccMeshWorkerExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return self.accumulate_grad.total_allocation_size()
+        return max(self.accumulate_grad.total_allocation_size(),
+                   self.apply_grad.total_allocation_size())
 
     def __del__(self):
         self.accumulate_grad.delete()

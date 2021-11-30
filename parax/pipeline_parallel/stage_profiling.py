@@ -124,7 +124,8 @@ class CompileWorkerPool:
             worker_cls.remote(global_config_backup) for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)
-        self.local_worker = CompileWorker(global_config_backup) if debug_mode else None
+        self.local_worker = CompileWorker(
+            global_config_backup) if debug_mode else None
 
     def local_get(self, fn, *value):
         return fn(self.local_worker, value)

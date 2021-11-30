@@ -382,7 +382,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     inter_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
     combined_eqns.append(
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p,
-                      {"mark_type": "end"}, None))
+            {"mark_type": "end", "name": "grad_acc_boundary"}, None))
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars

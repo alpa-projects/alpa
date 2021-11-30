@@ -17,6 +17,8 @@ from parax.pipeline_parallel.stage_profiling import (
     ProfileWorkerPool)
 from parax.util import OrderedSet
 
+GB = 1024 * 1024 * 1024
+
 
 @numba.jit(nopython=True)
 def old_forward_dp_impl(num_layers, num_devices, num_microbatches,
@@ -228,8 +230,9 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
         max_n_succ_stages[start, end] = max_stage
         pbar.write(f"cost[{start}, {end}]={compute_cost[start, end]},"
                    f" max_n_succ_stage={max_stage},"
-                   f" Mem: peak={peak_memory}, avail={available_memory},"
-                   f" intermediate={intermediate_size}")
+                   f" Mem: peak={peak_memory / GB:.3f}GB,"
+                   f" avail={available_memory / GB:.3f}GB,"
+                   f" intermediate={intermediate_size / GB:.3f}GB")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 

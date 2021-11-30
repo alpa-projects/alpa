@@ -31,6 +31,7 @@ from megatron.model import GPT2Model
 from megatron.training import pretrain
 from megatron.utils import get_ltor_masks_and_position_ids
 from megatron.utils import reduce_losses, get_parameters_in_billions
+from benchmark.deepspeed.pretrain_gpt2_moe import moe_parser
 
 
 import deepspeed
@@ -142,7 +143,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 if __name__ == "__main__":
     pretrain(train_valid_test_datasets_provider, model_provider, forward_step,
-             args_defaults={'tokenizer_type': 'GPT2BPETokenizer'})
+             args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
+             extra_args_provider=moe_parser)
 
     if torch.distributed.get_rank() == 0:
         import numpy as np

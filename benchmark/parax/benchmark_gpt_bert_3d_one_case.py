@@ -44,7 +44,7 @@ def create_train_state(rngkey, model, batch, dtype):
 
 def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer=False):
 
-    add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size > 1))
+    add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size >= 1))
 
     @parallelize
     def train_step(state, batch, rng_key):

@@ -18,12 +18,18 @@ GB = 1 << 30
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
     # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (16,  512,  1024, 10, 1024//64,  25600, 1,  1,  1,  False, False, False),
-    (8,  1024,  1536, 10, 1536//96,  25600, 1,  1,  1,  False, False, True),
+    (8,  1024,  1024,  4,    32,   51200,  1,   1,  1,    True,  False, True),
 ],
 
 4: [
     # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
+    (8,  1024,  1024,  2,    32,   51200,  1,   1,  1,    True,  False, True),
+    (8,  1024,  1024,  4,    32,   51200,  1,   1,  1,    True,  False, True),
+    (8,  1024,  1024,  8,    32,   51200,  1,   1,   1,    True,  False, True),
+    (8,  1024,  1024,  16,    32,   51200,  1,   1,  1,    True,  False, True),
+    (8,  1024,  1024,  24,    32,   51200,  1,   1,   1,    True,  False, True),
+    (8,  1024,  1024,  32,    32,   51200,  1,   1,   1,    True,  False, True),
+    (8,  1024,  1024,  48,    32,   51200,  1,   1,   1,    True,  False, True),
 ],
 
 8: [
@@ -72,7 +78,6 @@ if __name__ == "__main__":
         help="Launch separate processes for benchmark to isolate errors."
               "Erros in a single case will not terminate this script.")
     args = parser.parse_args()
-
     # Get benchmark suite and run all cases
     if args.local:
         num_gpus = list_gpu_info().count("UUID")

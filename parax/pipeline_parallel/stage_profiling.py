@@ -124,7 +124,8 @@ class CompileWorkerPool:
             worker_cls.remote(global_config_backup) for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)
-        self.local_worker = CompileWorker(global_config_backup) if debug_mode else None
+        self.local_worker = CompileWorker(
+            global_config_backup) if debug_mode else None
 
     def local_get(self, fn, *value):
         return fn(self.local_worker, value)
@@ -167,7 +168,9 @@ class ProfileWorker:
         peak_memory = self.mesh.get_remote_memory_peak()
         available_memory = self.mesh.get_remote_memory_available()
         self.mesh.reset_remote_memory_stats()
-        max_stage = (available_memory - peak_memory) // intermediate_size
+        max_stage = int((available_memory - peak_memory) // intermediate_size)
+        if np.mean(cost) == np.inf:
+            max_stage = -1
         return cost, max_stage
 
 

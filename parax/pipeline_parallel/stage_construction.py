@@ -10,7 +10,7 @@ import ray
 
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
-from parax.device_mesh import VirtualMesh
+from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compile_and_profile_stage_compute_cost, compute_intermediate_size,
     split_global_use_and_donate, generate_stage_info, compile_all,
@@ -155,7 +155,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost,
     return best_cost, best_solution
 
 
-def get_submesh_choices(mesh: VirtualMesh):
+def get_submesh_choices(mesh: VirtualPhysicalMesh):
     num_hosts = mesh.num_hosts
     num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []
@@ -418,7 +418,7 @@ def cluster_layers_and_slice_mesh(layers,
 
     Args:
         layers (Sequence[JaxPipelineComputation]): All the layers.
-        mesh (VirtualMesh): The cluser device mesh.
+        mesh (VirtualPhysicalMesh): The cluser device mesh.
         donation_mapping: The donation_mapping for the layers.
         global_outvars: Global outvars of the layers.
         num_micro_batches: Number of microbatches for GPipe.
@@ -429,7 +429,7 @@ def cluster_layers_and_slice_mesh(layers,
 
     Returns:
         stage_layer_ids (List[List[int]]): The layer IDs of each stage.
-        sliced_meshes (List[VirtualMesh]): The shapes of all submeshes.
+        sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
     # For mesh-slicing's profiling, we can use the create_donation_mapping
     # to get a sketchy donation_mapping: only accumulate grad, no applygrad

@@ -37,7 +37,7 @@ class VirtualDistributedArray:
     (2) its device_mesh attribute is a virtual mesh (not physical).
 
     Args:
-        device_mesh (VirtualMesh): the virtual mesh this VDA locates on.
+        device_mesh (VirtualPhysicalMesh): the virtual mesh this VDA locates on.
         aval (aval): shape information about the array.
         sharding_spec (ShardingSpec): sharding spec of this array.
     """

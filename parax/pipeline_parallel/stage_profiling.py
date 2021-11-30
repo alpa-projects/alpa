@@ -171,7 +171,7 @@ class ProfileWorker:
         max_stage = int((available_memory - peak_memory) // intermediate_size)
         if np.mean(cost) == np.inf:
             max_stage = -1
-        return cost, max_stage
+        return cost, max_stage, (peak_memory, available_memory, intermediate_size)
 
 
 class ProfileWorkerPool:

@@ -222,11 +222,14 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     print("- Profile all stages")
     pbar = tqdm.tqdm(stage_indices)
     for start, end in pbar:
-        cost, max_stage = profile_workers.get_next()
+        cost, max_stage, debug_info = profile_workers.get_next()
+        peak_memory, available_memory, intermediate_size = debug_info
         compute_cost[start, end] = np.mean(cost)
         max_n_succ_stages[start, end] = max_stage
-        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]},"
-                   f" max_n_succ_stage = {max_stage}")
+        pbar.write(f"cost[{start}, {end}]={compute_cost[start, end]},"
+                   f" max_n_succ_stage={max_stage},"
+                   f" Mem: peak={peak_memory}, avail={available_memory},"
+                   f" intermediate={intermediate_size}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 

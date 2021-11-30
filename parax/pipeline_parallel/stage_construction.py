@@ -85,14 +85,13 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
                 for k in range(num_layers, i, -1):
                     for m, submesh in enumerate(submesh_choices):
                         n_submesh_devices = np.prod(np.array(submesh))
-                        if (s - 1 <= max_n_succ_stages[
-                                i, k - 1, m] and n_submesh_devices <= j):
+                        if (s - 1 <= max_n_succ_stages[i, k - 1, m] and
+                                n_submesh_devices <= j):
                             stage_cost = compute_cost[i, k - 1, m]
                             new_cost = f[s - 1, k,
                                          j - n_submesh_devices] + stage_cost
-                            if (stage_cost <= max_stage_cost and new_cost < f[s,
-                                                                             i,
-                                                                             j]):
+                            if (stage_cost <= max_stage_cost and
+                                    new_cost < f[s, i, j]):
                                 f[s, i, j] = new_cost
                                 f_stage_max[s, i, j] = max(
                                     f_stage_max[s - 1, k,
@@ -125,7 +124,8 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
         current_s -= 1
         current_layer = next_start_layer
         current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
-    assert (current_s == 0 and current_layer == num_layers and current_devices == 0)
+    assert (current_s == 0 and current_layer == num_layers and
+            current_devices == 0)
 
     return total_cost, res
 
@@ -225,10 +225,8 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
         cost, max_stage = profile_workers.get_next()
         compute_cost[start, end] = np.mean(cost)
         max_n_succ_stages[start, end] = max_stage
-        pbar.write(
-            f"cost[{start}, {end}] = {compute_cost[start, end]},"
-            f" max_n_succ_stage = {max_stage}"
-        )
+        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]},"
+                   f" max_n_succ_stage = {max_stage}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 

@@ -370,9 +370,9 @@ def generate_stage_info(all_layers,
     apply_info = None, None
 
     if apply_grad_info is not None:
-        apply_info = (merged_apply.jaxpr.invars,
-                      OrderedSet(
-                          merged_apply.jaxpr.invars).difference(new_invars))
+        only_for_apply = OrderedSet(merged_apply.jaxpr.invars).difference(
+                          new_invars).difference(new_outvars)
+        apply_info = (merged_apply.jaxpr.invars, only_for_apply)
         new_eqns = []
         gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
         for idx, closed_jaxpr in enumerate([merged, merged_apply]):
@@ -578,6 +578,8 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
 
     avals = [v.aval for v in invars]
+    # print("apply grad invars",
+    #       [(var.aval.shape, var in selected_invars) for var in invars])
     if np.prod(logical_mesh_shape) == 1:
         tot = sum([
             get_byte(aval)
@@ -595,9 +597,10 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
         get_shard_shape(aval, spec)
         for aval, spec in zip(avals, sharding_specs)
     ]
-    tot = sum([
+    selected_sharded_bytes = [
         np.prod(shape) * np.dtype(aval.dtype).itemsize
         for var, shape, aval in zip(invars, sharded_shapes, avals)
         if var in selected_invars
-    ])
+    ]
+    tot = sum(selected_sharded_bytes)
     return tot

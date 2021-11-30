@@ -1,5 +1,6 @@
 import gc
-from typing import Dict, Sequence, Tuple
+from typing import Dict, OrderedDict, Sequence, Tuple
+from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 
 import tqdm
 import numpy as np
@@ -7,7 +8,8 @@ import ray
 from ray.util import ActorPool
 
 import jax.numpy as jnp
-from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
+from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, jaxpr_as_fun,
+                      new_jaxpr_eqn, named_call_p)
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
@@ -18,7 +20,7 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
     as VDA)
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
-    merge_computation_jaxprs)
+    merge_computation_jaxprs, rearrange_vars)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
@@ -80,7 +82,8 @@ class CompileWorker:
         }
         protos, hooked_proto, strategy_config = self.compile_with_config(
             proto, jaxpr_config, mesh_config, multiple_stage_config)
-        assert len(protos) == 1, "Can only compile one stage"
+        assert len(
+            protos) == 2, "Can only compile exactly two stages (compute+apply)"
         sharded_proto = protos[0]
         sharding_annotated_computation = xla_client.XlaComputation(
             sharded_proto)
@@ -171,7 +174,8 @@ class ProfileWorker:
         max_stage = int((available_memory - peak_memory) // intermediate_size) - 1
         if np.mean(cost) == np.inf:
             max_stage = -1
-        return cost, max_stage, (peak_memory, available_memory, intermediate_size)
+        return cost, max_stage, (peak_memory, available_memory,
+                                 intermediate_size)
 
 
 class ProfileWorkerPool:
@@ -310,7 +314,8 @@ def generate_stage_info(all_layers,
                         donation_mapping,
                         global_outvars,
                         name,
-                        insert_hook_after=None):
+                        insert_hook_after=None,
+                        apply_grad_info=None):
     """Combine selected layers together for profiling"""
     backend = xla_bridge.get_backend("gpu")
 
@@ -323,14 +328,79 @@ def generate_stage_info(all_layers,
     merged, hook = merge_computation_jaxprs(jaxprs, used_outside, "0",
                                             selected_donation_mapping,
                                             insert_hook_after)
+    if apply_grad_info is not None:
+        apply_grad_layers, apply_grad_donation = apply_grad_info
+        merged_apply = merge_computation_jaxprs(
+            [l.closed_jaxpr() for l in apply_grad_layers], global_outvars,
+            "0_apply", apply_grad_donation)
+
     outvars = OrderedSet(merged.jaxpr.outvars)
-    avals = [var.aval for var in merged.jaxpr.invars]
-    out_avals = [var.aval for var in merged.jaxpr.outvars]
     tot_donation = [
         invar in selected_donation_mapping and
         selected_donation_mapping[invar] in outvars
         for invar in merged.jaxpr.invars
     ]
+    new_invars = rearrange_vars(merged.jaxpr.invars, tot_donation)
+    new_outvars = rearrange_vars(
+        merged.jaxpr.outvars,
+        [selected_donation_mapping[v] for v in tot_donation])
+    merged = ClosedJaxpr(
+        Jaxpr(merged.jaxpr.constvars, new_invars, new_outvars,
+              merged.jaxpr.eqns), merged.consts)
+    avals = [var.aval for var in merged.jaxpr.invars]
+    out_avals = [var.aval for var in merged.jaxpr.outvars]
+
+    if apply_grad_info is not None:
+        new_eqns = []
+        gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
+        for idx, closed_jaxpr in enumerate([merged, merged_apply]):
+            mapped_invars = [
+                gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.invars
+            ]
+            mapped_outvars = [
+                gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.outvars
+            ]
+            new_eqns.append(
+                mark_pipeline_jaxpreqn(closed_jaxpr.jaxpr.invars,
+                                       mapped_invars,
+                                       name=str(idx),
+                                       mark_type="start"))
+            new_eqns.append(
+                new_jaxpr_eqn(mapped_invars,
+                              mapped_outvars,
+                              named_call_p,
+                              params=dict(name="compute",
+                                          called_jaxpr=closed_jaxpr)))
+            new_eqns.append(
+                mark_pipeline_jaxpreqn(mapped_outvars,
+                                       closed_jaxpr.jaxpr.outvars,
+                                       name=str(idx),
+                                       mark_type="start"))
+
+        all_invars = OrderedSet(new_invars)
+        all_invars.update(merged_apply.jaxpr.invars)
+        all_invars.difference_update(new_outvars)
+        all_outvars = OrderedSet(new_outvars).update(merged_apply.jaxpr.outvars)
+        all_invars = list(all_invars)
+        all_outvars = list(all_outvars)
+
+        apply_grad_donated_invars = list(
+            OrderedSet(merged_apply.jaxpr.invars).intersection(
+                apply_grad_donation.keys()))
+        all_donated_invars = tot_donation + apply_grad_donated_invars
+        all_donated_outvars = [
+            selected_donation_mapping[v] for v in tot_donation
+        ] + [apply_grad_donation[v] for v in apply_grad_donated_invars]
+        all_invars = rearrange_vars(all_invars, all_donated_invars)
+        all_outvars = rearrange_vars(all_outvars, all_donated_outvars)
+        all_const_dict = OrderedDict(zip(merged.jaxpr.constvars,
+                                         merged.consts)).update(
+                                             zip(merged_apply.jaxpr.constvars,
+                                                 merged_apply.consts))
+        merged = ClosedJaxpr(
+            Jaxpr(list(all_const_dict.keys()), all_invars, all_outvars,
+                  new_eqns), list(all_const_dict.values()))
+        tot_donation = all_donated_invars
 
     built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
     proto = built.as_serialized_hlo_module_proto()

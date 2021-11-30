@@ -179,7 +179,8 @@ def get_submesh_choices(mesh: VirtualMesh):
 
 
 def distributed_profile_on_mesh(meshes, layers, donation_mapping,
-                                global_outvars):
+                                global_outvars, apply_grad_layers,
+                                apply_grad_donation):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
@@ -196,11 +197,19 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
+            selected_apply_grad_layers = [
+                apply_grad_layers[idx] for idx in indices[start:end + 1]
+            ]
             stage_name = "stage_{}_{}".format(start, end)
-            stage_info, hook = generate_stage_info(layers, layer_indices,
-                                                   donation_mapping,
-                                                   global_outvars, stage_name,
-                                                   end - start)
+            stage_info, hook = generate_stage_info(
+                layers,
+                layer_indices,
+                donation_mapping,
+                global_outvars,
+                stage_name,
+                insert_hook_after=end - start,
+                apply_grad_info=(selected_apply_grad_layers,
+                                  apply_grad_donation))
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
             stage_hooks.append(hook)
@@ -238,7 +247,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
 
 
 def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars):
+                     global_outvars, apply_grad_layers, apply_grad_donation):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -257,7 +266,8 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
             num_hosts, num_devices)
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
-            sliced_virtual_meshes, layers, donation_mapping, global_outvars)
+            sliced_virtual_meshes, layers, donation_mapping, global_outvars,
+            apply_grad_layers, apply_grad_donation)
 
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id] = mesh_max_n_succ_stages
@@ -412,6 +422,8 @@ def cluster_layers_and_slice_mesh(layers,
                                   donation_mapping,
                                   global_outvars,
                                   num_micro_batches,
+                                  jax_apply_layers=None,
+                                  apply_grad_donation=None,
                                   pipeline_stage_mode="uniform_layer_gpipe",
                                   cache_compute_cost=None,
                                   forward_stage_layer_ids=None,
@@ -453,7 +465,7 @@ def cluster_layers_and_slice_mesh(layers,
             else:
                 compute_cost, max_n_succ_stages = get_compute_cost(
                     mesh, submesh_choices, layers, donation_mapping,
-                    global_outvars)
+                    global_outvars, jax_apply_layers, apply_grad_donation)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,
                                 compute_cost, max_n_succ_stages)

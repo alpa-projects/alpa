@@ -839,7 +839,7 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
 
 def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
     """Infer donation of global invar-outvars."""
-    donation_mapping = initial_mapping
+    donation_mapping = dict(initial_mapping)
     donated_outvars = OrderedSet()
 
     for donate, invar in zip(donated_invars, invars):

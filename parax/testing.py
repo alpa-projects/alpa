@@ -12,7 +12,7 @@ import numpy as np
 import optax
 import ray
 
-from parax.api import grad, parallelize
+from parax.api import parallelize, grad
 from parax.device_mesh import DeviceCluster
 from parax.global_env import set_parallelize_options, global_config
 from parax.model.bert_model import BertConfig, FlaxBertLayer
@@ -103,18 +103,6 @@ def create_train_state(rngkey, model, params):
     return state
 
 
-def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
-    params = model.init_dummy(rngkey, *params)
-    tx = optax.adam(learning_rate=1e-2)
-    mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create(apply_fn=model.apply,
-                              params=params,
-                              tx=tx,
-                              mixed_precision=mixed_precision,
-                              dynamic_scale=None)
-    return state
-
-
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
         if use_remat:
@@ -126,7 +114,7 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
                                    use_remat=use_remat)
 
 
-def get_mlp_train_step(manual_pipeline_layer, test_remat):
+def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):
 
     def train_step(state, batch):
 
@@ -137,17 +125,23 @@ def get_mlp_train_step(manual_pipeline_layer, test_remat):
                 mark_pipeline(name='2', mark_type='end')
             return loss
 
-        loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
-                                     test_remat, 2)
+        if use_parallel:
+            loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                         test_remat, 2)
+            grads = grad(loss_func)(state.params)
+        else:
+            grads = jax.grad(loss_func)(state.params)
 
-        param_grad = grad(loss_func)(state.params)
-        new_state = state.apply_gradients(grads=param_grad)
+        new_state = state.apply_gradients(grads=grads)
         return new_state
 
-    return train_step
+    if use_parallel:
+        return parallelize(train_step)
+    else:
+        return train_step
 
 
-def get_bert_layer_train_step(manual_pipeline_layer, test_remat, num_layers):
+def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat, num_layers):
 
     def train_step(state, batch):
 
@@ -158,14 +152,20 @@ def get_bert_layer_train_step(manual_pipeline_layer, test_remat, num_layers):
                 mark_pipeline(name=str(num_layers - 1), mark_type='end')
             return loss
 
-        loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
-                                     test_remat, num_layers)
+        if use_parallel:
+            loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
+                                         test_remat, num_layers)
+            grads = grad(loss_func)(state.params)
+        else:
+            grads = jax.grad(loss_func)(state.params)
 
-        grad_param = grad(loss_func)(state.params)
-        new_state = state.apply_gradients(grads=grad_param)
+        new_state = state.apply_gradients(grads=grads)
         return new_state
 
-    return train_step
+    if use_parallel:
+        return parallelize(train_step)
+    else:
+        return train_step
 
 
 class PipelineBasicTest(unittest.TestCase):
@@ -193,6 +193,8 @@ class PipelineBasicTest(unittest.TestCase):
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
+
+        # Init model and optimizer
         batch_size = 64
         hidden_dim = 16
         input_dim = output_dim = hidden_dim
@@ -206,21 +208,20 @@ class PipelineBasicTest(unittest.TestCase):
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
-        train_step = get_mlp_train_step(manual_pipeline_layer, test_remat)
-
-        global_config.num_micro_batches = 4
-
-        nstep = 3
-        parallel_train_step = parallelize(train_step)
+        # Compile
+        global_config.num_micro_batches = 2
+        serial_train_step = get_mlp_train_step(False, None, None)
+        parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer, test_remat)
         executable = parallel_train_step.get_executable(state, batch)
 
+        # Run correctnesss test
         if do_numerical_test:
             expected_new_state = None
             actual_new_state = None
-            for i in range(nstep):
+            for i in range(3):
                 if i > 0:
                     state = expected_new_state
-                expected_new_state = train_step(state, batch)
+                expected_new_state = serial_train_step(state, batch)
                 if i > 0:
                     state = actual_new_state
                 actual_new_state = parallel_train_step(state, batch)
@@ -252,17 +253,13 @@ class PipelineBasicTest(unittest.TestCase):
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
 
-        train_step = get_bert_layer_train_step(manual_pipeline_layer,
-                                               test_remat, n_layers)
-
+        # Init model and optimizer
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
         y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
-
-        # Init model and optimizer
         model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
                                                  intermediate_size=hidden_size *
                                                  4,
@@ -272,17 +269,23 @@ class PipelineBasicTest(unittest.TestCase):
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
 
+        # Compile
         global_config.num_micro_batches = 2
-        parallel_train_step = parallelize(train_step)
+        serial_train_step = get_bert_layer_train_step(False, None, None,
+                                                      n_layers)
+        parallel_train_step = get_bert_layer_train_step(True,
+                                                        manual_pipeline_layer,
+                                                        test_remat, n_layers)
         executable = parallel_train_step.get_executable(state, batch)
-        expected_new_state = None
-        actual_new_state = None
 
+        # Run correctnesss test
         if do_numerical_test:
-            for i in range(3):
+            expected_new_state = None
+            actual_new_state = None
+            for i in range(1):
                 if i > 0:
                     state = expected_new_state
-                expected_new_state = train_step(state, batch)
+                expected_new_state = serial_train_step(state, batch)
                 if i > 0:
                     state = actual_new_state
                 actual_new_state = parallel_train_step(state, batch)

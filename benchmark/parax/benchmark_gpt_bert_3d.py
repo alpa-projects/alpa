@@ -17,7 +17,7 @@ GB = 1024 ** 3
 
 # yapf: disable
 
-sanity_check_suite = {
+default_suite = {
 4: [
     # B,   S,     H,    L,  #head,    V      LD0, LD1, PD0, PD1, PP, NB,  FD,    Remat, auto-layer, auto-stage
     (32,   1024,  1024, 4, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False),
@@ -36,7 +36,7 @@ sanity_check_suite = {
 # yapf: enable
 
 benchmark_suites = {
-    "sanity_check": sanity_check_suite,
+    "default": default_suite,
     "paper_gpt": paper_gpt_suite,
     "test_gpt": test_gpt_suite,
 }
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=7)  # 2 warmup + 5 actual run.
-    parser.add_argument("--suite", choices=["sanity_check", "paper_gpt", "test_gpt"],
+    parser.add_argument("--suite", choices=["default", "paper_gpt", "test_gpt"],
                         default="paper_gpt")
     parser.add_argument("--no-separate-process", action='store_false',
                         help="Do not launch separate processes for benchmark."

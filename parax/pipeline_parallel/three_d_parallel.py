@@ -93,6 +93,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   dummy_donated_invars,
                                                   global_invars, global_outvars)
+    apply_grad_global_info = apply_grad_donation, global_outvars
 
     # Construct pipeline stages by merging layers
     virtual_mesh = devices
@@ -104,7 +105,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             acc_grad_outvars,
             num_micro_batches,
             jax_apply_layers=jax_apply_layers,
-            apply_grad_donation=apply_grad_donation,
+            apply_grad_global_info=apply_grad_global_info,
             pipeline_stage_mode=global_config.pipeline_stage_mode,
             cache_compute_cost=global_config.cache_compute_cost,
             forward_stage_layer_ids=global_config.forward_stage_layer_ids,

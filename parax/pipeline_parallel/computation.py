@@ -751,7 +751,7 @@ def rewrite_hook(eqns, gensym_fn):
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                              used: OrderedSet[Var],
-                             new_marker_name,
+                             new_marker_name=None,
                              donation_mapping=None,
                              insert_hook_after=None) -> ClosedJaxpr:
     """
@@ -822,18 +822,22 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
-    new_pipe_start = mark_pipeline_jaxpreqn(
-        new_invars, [new_invars_dict[v] for v in new_invars], new_marker_name,
-        "start")
-    new_pipe_end = mark_pipeline_jaxpreqn(
-        [new_outvars_dict[v] for v in new_outvars], new_outvars,
-        new_marker_name, "end")
-    new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
+    if new_marker_name != None:
+        new_pipe_start = mark_pipeline_jaxpreqn(
+            new_invars, [new_invars_dict[v] for v in new_invars],
+            new_marker_name, "start")
+        new_pipe_end = mark_pipeline_jaxpreqn(
+            [new_outvars_dict[v] for v in new_outvars], new_outvars,
+            new_marker_name, "end")
+        new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
+    else:
+        new_invars = [new_invars_dict[v] for v in new_invars]
+        new_outvars = [new_outvars_dict[v] for v in new_outvars]
     new_jaxpr = ClosedJaxpr(
         Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
         list(new_constvars.values()))
     if insert_hook_after is not None:
-        return new_jaxpr, new_hook
+        return new_jaxpr, new_hook.invars
     return new_jaxpr
 
 

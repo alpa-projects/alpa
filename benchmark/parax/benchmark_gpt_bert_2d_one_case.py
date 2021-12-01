@@ -191,11 +191,12 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
                                 physical_mesh.total_devices,
                                 np.mean(latencies), use_remat)
     param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
+    peak_mem = physical_mesh.get_max_memory_allocated()
 
     # Restore global config
     global_config.restore(backup)
 
-    return param_count, ilp_objective, alloc_mem, latencies, tflops
+    return param_count, ilp_objective, peak_mem, latencies, tflops
 
 
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"

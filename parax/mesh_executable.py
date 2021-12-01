@@ -24,7 +24,7 @@ from parax.measure_record import StrategyConfig
 from parax.timer import timers
 from parax.util import (compile_allocate_zero_buffers,
                         compile_memset_zero_buffers, get_shard_shape,
-                        profile_xla_executable, profile_pipeline_xla_executable)
+                        profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -707,7 +707,8 @@ class GradAccMeshDriverExecutable:
             return ray.get(self.physical_mesh.workers[0].\
                 get_exec_total_allocation_size.remote(self.exec_uuid))
         else:
-            return self.accumulate_grad.total_allocation_size()
+            return max(self.accumulate_grad.total_allocation_size(),
+                       self.apply_grad.total_allocation_size())
 
     def get_hlo_text(self):
         return self.hlo_text
@@ -820,7 +821,8 @@ class GradAccMeshWorkerExecutable:
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        return self.accumulate_grad.total_allocation_size()
+        return max(self.accumulate_grad.total_allocation_size(),
+                   self.apply_grad.total_allocation_size())
 
     def __del__(self):
         self.accumulate_grad.delete()
@@ -909,18 +911,6 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         return super(PartialGradAccMeshWorkerExecutable,
                      self).execute_on_worker(input_uuids, output_uuids,
                                              **kwargs)
-
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
-        """Profile the time cost of this executable with dummy inputs."""
-        key = "intermediates"
-        passed_kwargs = dict()
-        if key in kwargs:
-            value = kwargs.pop(key)
-            passed_kwargs[key] = value
-        if len(kwargs):
-            logger.warning(f"kwargs {list(kwargs.keys())} are ignored")
-        return profile_pipeline_xla_executable(self.compiled, backend,
-                                               local_devices, **passed_kwargs)
 
 
 class AllocZeroBufferDriverExecutable:

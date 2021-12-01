@@ -85,7 +85,7 @@ if __name__ == "__main__":
         print("Working on case: {}".format(str(case)))
         result = benchmark_one_case(args.model, case, args.niter, args.local,
                                     args.use_separate_process)
-        param_count, ilp_objective, alloc_mem, latencies, tflops = result
+        param_count, ilp_objective, peak_mem, latencies, tflops = result
 
         # Log results
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
@@ -97,5 +97,5 @@ if __name__ == "__main__":
                   str(case[11]), str(case[12]), str(case[13]), str(case[14]),
                   f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",
-                  f"{alloc_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]
+                  f"{peak_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]
         write_tsv(heads, values, output_name)

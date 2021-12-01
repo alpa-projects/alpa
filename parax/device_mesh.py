@@ -121,6 +121,15 @@ class MeshHostWorker:
         self.sync()
         return max(d.max_memory_allocated() for d in self.local_devices)
 
+    def get_available_memory(self):
+        self.sync()
+        return min(d.available_memory() for d in self.local_devices)
+
+    def reset_memory_stats(self):
+        self.sync()
+        for device in self.local_devices:
+            device.clear_memory_stats()
+
     ##### Executable Related Functions #####
     def put_executable(self, uuid: int, executable_class, *args):
         self.executables[uuid] = executable_class(self, uuid, *args)
@@ -829,7 +838,42 @@ class PhysicalDeviceMesh:
         else:
             timers(timer_name).reset()
 
+    def get_remote_memory_peak(self):
+        if self.is_distributed:
+            return ray.get(self.workers[0].get_max_memory_allocated.remote())
+        else:
+            return max(
+                [device.max_memory_allocated() for device in self.devices])
+
+    def get_remote_memory_available(self):
+        if self.is_distributed:
+            return ray.get(self.workers[0].get_available_memory.remote())
+        else:
+            return min([device.available_memory for device in self.devices])
+
+    def reset_remote_memory_stats(self):
+        if self.is_distributed:
+            for worker in self.workers:
+                ray.get(worker.reset_memory_stats.remote())
+        else:
+            for device in self.devices:
+                device.clear_memory_stats()
+
     ##### Other Functions #####
+    def get_memory_allocated(self):
+        self.sync_workers()
+        if self.is_distributed:
+            return max(ray.get([w.get_memory_allocated.remote() for w in self.workers]))
+        else:
+            return max([d.memory_allocated() for d in self.local_devices])
+
+    def get_max_memory_allocated(self):
+        self.sync_workers()
+        if self.is_distributed:
+            return max(ray.get([w.get_max_memory_allocated.remote() for w in self.workers]))
+        else:
+            return max([d.max_memory_allocated() for d in self.local_devices])
+
     def sync_workers(self):
         """Sync all device activities on workers."""
         if self.is_distributed:

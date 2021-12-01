@@ -10,7 +10,6 @@ from benchmark_gpt_bert_2d_one_case import benchmark_one_case
 
 GB = 1 << 30
 
-
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1,
 # NB = num_micro_batches, FD = force_data_parallel,
@@ -88,7 +87,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=10,
+    parser.add_argument("--niter", type=int, default=5,
         help="Number of benchmark iteration")
     args = parser.parse_args()
 
@@ -105,15 +104,15 @@ if __name__ == "__main__":
 
     # Run all cases
     for case in suite:
-        result = benchmark_one_case(case, args.model, args.niter,
+        result = benchmark_one_case(args.model, case, args.niter,
                                     local=False,
                                     use_separate_process=True)
-        param_count, ilp_objective, alloc_mem, latencies, tflops = result
+        param_count, ilp_objective, peak_mem, latencies, tflops = result
 
         # Log results
         heads = ["Model", "Model Config", "Parallel Config", "Param Count",
-                 "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
+                 "Peak Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
         values = [args.model, case[:-6], case[-6:],
-                  f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{ilp_objective:.2f}",
+                  f"{param_count/1e9:.3f}", f"{peak_mem/GB:.3f}", f"{ilp_objective:.2f}",
                   f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
         write_tsv(heads, values, f"result_{args.model}.tsv")

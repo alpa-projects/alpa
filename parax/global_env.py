@@ -46,8 +46,6 @@ class GlobalConfig:
         self.force_zero_stage_3_all_gather_threshold = 1 << 26  # The threshold of all-gather combiner
         # if force_zero_stage_3 is true.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
-        self.reduce_scatter_grad_acc_friendly = False  # Generate a gradient-accumulation friendly
-        # variant of reduce-scatter
         self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 

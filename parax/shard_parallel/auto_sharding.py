@@ -100,7 +100,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             prefer_reduce_scatter = global_config.prefer_reduce_scatter
             reduce_scatter_aggresive_partition = False
             all_gather_threshold = 1 << 60
-        reduce_scatter_grad_acc_friendly = global_config.reduce_scatter_grad_acc_friendly
 
         # Set configs for force_data_parallel
         if force_data_parallel:
@@ -126,6 +125,12 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 force_batch_dim_to_mesh_dim = 0
             else:
                 force_batch_dim_to_mesh_dim = -1
+
+        # Set configs for reduce-scatter
+        if global_config.num_micro_batches is not None and global_config.num_micro_batches > 1:
+            reduce_scatter_grad_acc_friendly = True
+        else:
+            reduce_scatter_grad_acc_friendly = False
 
         grad_acc_num_micro_batches = None
 

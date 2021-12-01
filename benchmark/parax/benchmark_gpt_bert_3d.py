@@ -41,7 +41,7 @@ benchmark_suites = {
     "paper_gpt": paper_gpt_suite,
     "test_gpt": test_gpt_suite,
     "paper_auto_gpt": paper_auto_gpt_suite,
-    "test_auto_gpt_suite": test_auto_gpt_suite,
+    "test_auto_gpt": test_auto_gpt_suite,
 }
 
 

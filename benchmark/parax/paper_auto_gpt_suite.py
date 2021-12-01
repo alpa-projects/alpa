@@ -14,28 +14,29 @@ gpt_specs = {
 "76B":  (1024,  10240, 60,    80,   51200, ),
 }
 
-dummy_arguments = (0, 0, 0, 0, 0) # LD0, LD1, PD0, PD1, PP, not used for auto
+dummy_arguments = (0, 0, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
 fixed_params = (False, True, True, True) # FD,  Remat, RS, Auto layer & stage
 max_global_batch_size = 1024
 
 
-def get_auto_test_case(model_name, n_microbatches):
+def get_auto_test_case(model_name, n_microbatches, num_layers):
     return [(max_global_batch_size, *gpt_specs[model_name],
-             *dummy_arguments, n_microbatch, *fixed_params)
-            for n_microbatch in n_microbatches]
+             *dummy_arguments, num_layer, n_microbatch, *fixed_params)
+            for n_microbatch in n_microbatches
+            for num_layer in num_layers]
 
 
 paper_auto_gpt_suite = {
-1: (get_auto_test_case("125M", [16, 32, 64, 128, 256]) +
-    get_auto_test_case("350M", [32, 64, 128, 256, 512])),
-2: (get_auto_test_case("350M", [16, 32, 64, 128, 256]) +
-    get_auto_test_case("760M", [32, 64, 128, 256, 512])),
-4: (get_auto_test_case("760M", [16, 32, 64, 128, 256]) +
-    get_auto_test_case("1.3B", [32, 64, 128, 256, 512])),
-8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256]) +
-    get_auto_test_case("2.7B", [32, 64, 128, 256, 512])),
+1: (get_auto_test_case("125M", [16, 32, 64, 128, 256], [12]) +
+    get_auto_test_case("350M", [32, 64, 128, 256, 512], [12])),
+2: (get_auto_test_case("350M", [16, 32, 64, 128, 256], [24]) +
+    get_auto_test_case("760M", [32, 64, 128, 256, 512], [24])),
+4: (get_auto_test_case("760M", [16, 32, 64, 128, 256], [24]) +
+    get_auto_test_case("1.3B", [32, 64, 128, 256, 512], [24])),
+8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256], [24]) +
+    get_auto_test_case("2.7B", [32, 64, 128, 256, 512], [32])),
 }
 
 test_auto_gpt_suite = {
-2: get_auto_test_case("350M", [64]),
+2: get_auto_test_case("350M", [64], [12]),
 }

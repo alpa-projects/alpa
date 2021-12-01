@@ -8,6 +8,7 @@ from parax.util import write_tsv, run_cmd
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite
+from parax.pipeline_parallel.stage_construction import get_last_dp_result
 
 GB = 1024 ** 3
 
@@ -86,14 +87,31 @@ if __name__ == "__main__":
                                     use_separate_process=args.use_separate_process)
         parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt = result
 
-        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                 "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
-                 "Mean Time", "Std Time", "#Params", "TFLOPs",
-                 "TFLOPs (ckpt)", "Peak Mem",]
-        parallel_config = (dp, mp, pp)
-        values = [args.model, str(case[:6]), str(parallel_config), str(case[8:10]),
-                  str(case[11]), str(case[12]), str(case[13]), str(case[14]),
-                  f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
-                  f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                  f"{max_mem_allocated/GB:.3f}G"]
-        write_tsv(heads, values, output_name)
+        if not auto_layer_and_stage:
+            heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
+                     "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
+                     "Mean Time", "Std Time", "#Params", "TFLOPs",
+                     "TFLOPs (ckpt)", "Peak Mem",]
+            parallel_config = (dp, mp, pp)
+            values = [args.model, str(case[:6]), str(parallel_config), str(case[8:10]),
+                      str(case[11]), str(case[12]), str(case[13]), str(case[14]),
+                      f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                      f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                      f"{max_mem_allocated/GB:.3f}G"]
+            write_tsv(heads, values, output_name)
+        else:
+            heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)"
+                     "#Microbatch", "Remat", "Reduce-scatter",
+                     "Mean Time", "Std Time", "#Params", "TFLOPs",
+                     "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
+                     "Layer->Stage Mapping", "Submesh Shapes"]
+            (compute_cost_file_name, forward_stage_layer_ids,
+             submesh_shapes) = get_last_dp_result()
+            values = [args.model + "-auto", str(case[:6]), num_gpus, pp,
+                      str(case[11]), str(case[13]), str(case[14]),
+                      f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                      f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                      f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
+                      str(forward_stage_layer_ids), str(submesh_shapes)]
+            write_tsv(heads, values, output_name)
+

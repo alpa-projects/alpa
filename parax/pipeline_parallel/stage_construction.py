@@ -18,6 +18,16 @@ from parax.pipeline_parallel.stage_profiling import (
 from parax.util import OrderedSet
 
 GB = 1024 * 1024 * 1024
+last_compute_cost_file_name = None
+last_forward_stage_layer_ids = None
+last_submesh_shapes = None
+
+
+def get_last_dp_result():
+    global last_compute_cost_file_name
+    global last_forward_stage_layer_ids, last_submesh_shapes
+    return (last_compute_cost_file_name, last_forward_stage_layer_ids,
+            last_submesh_shapes)
 
 
 @numba.jit(nopython=True)
@@ -293,6 +303,8 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
     np.save(compute_cost_file_name, (compute_cost, max_n_succ_stages))
+    global last_compute_cost_file_name
+    last_compute_cost_file_name = compute_cost_file_name
     print(f'Compute cost saved to: {compute_cost_file_name}')
     print("-" * 70)
     return compute_cost, max_n_succ_stages
@@ -488,6 +500,9 @@ def cluster_layers_and_slice_mesh(layers,
             submesh_shapes = [submesh_choices[i] for _, i in solution]
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
             print("Result meshes:", submesh_shapes)
+            global last_forward_stage_layer_ids, last_submesh_shapes
+            last_forward_stage_layer_ids = forward_stage_layer_ids
+            last_submesh_shapes = submesh_shapes
         elif pipeline_stage_mode == "manual_gpipe":
             # Manual-GPipe: use the user-provided solution
             # Sanity check that the user-provided solution is valid

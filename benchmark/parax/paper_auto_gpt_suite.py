@@ -27,16 +27,16 @@ def get_auto_test_case(model_name, n_microbatches, num_layers):
 
 
 paper_auto_gpt_suite = {
-1: (get_auto_test_case("125M", [16, 32, 64, 128, 256], [12]) +
-    get_auto_test_case("350M", [32, 64, 128, 256, 512], [12])),
-2: (get_auto_test_case("350M", [16, 32, 64, 128, 256], [24]) +
-    get_auto_test_case("760M", [32, 64, 128, 256, 512], [24])),
-4: (get_auto_test_case("760M", [16, 32, 64, 128, 256], [24]) +
-    get_auto_test_case("1.3B", [32, 64, 128, 256, 512], [24])),
-8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256], [24]) +
-    get_auto_test_case("2.7B", [32, 64, 128, 256, 512], [32])),
+1: (get_auto_test_case("125M", [16, 32, 64, 128, 256], [6]) +
+    get_auto_test_case("350M", [32, 64, 128, 256, 512], [6])),
+2: (get_auto_test_case("350M", [16, 32, 64, 128, 256], [6]) +
+    get_auto_test_case("760M", [32, 64, 128, 256, 512], [6])),
+4: (get_auto_test_case("760M", [16, 32, 64, 128, 256], [6]) +
+    get_auto_test_case("1.3B", [32, 64, 128, 256, 512], [6])),
+8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256], [6]) +
+    get_auto_test_case("2.7B", [32, 64, 128, 256, 512], [8])),
 }
 
 test_auto_gpt_suite = {
-2: get_auto_test_case("350M", [64], [12]),
+2: get_auto_test_case("350M", [64], [1]),
 }

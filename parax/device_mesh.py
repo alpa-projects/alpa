@@ -722,7 +722,7 @@ class PhysicalDeviceMesh:
                 ray.get([w.get_memory_allocated.remote() for w in self.workers
                         ]))
         else:
-            return max([d.memory_allocated() for d in self.local_devices])
+            return max([d.memory_allocated() for d in self.devices])
 
     def get_max_memory_allocated(self):
         self.sync_workers()
@@ -732,7 +732,7 @@ class PhysicalDeviceMesh:
                     w.get_max_memory_allocated.remote() for w in self.workers
                 ]))
         else:
-            return max([d.max_memory_allocated() for d in self.local_devices])
+            return max([d.max_memory_allocated() for d in self.devices])
 
     def get_available_memory(self):
         if self.is_distributed:

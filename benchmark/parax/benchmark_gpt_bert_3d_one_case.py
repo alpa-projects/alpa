@@ -87,8 +87,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel,
-     use_remat, auto_layer, auto_stage) = benchmark_case
+     use_remat, prefer_reduce_scatter, auto_stage) = benchmark_case
 
+    auto_layer = auto_stage
     dtype = jnp.float16
     tie_word_embeddings = False
 
@@ -96,7 +97,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     grad_func = parax.grad
 
     global_config.force_data_parallel = force_data_parallel
-    global_config.prefer_reduce_scatter = False
+    global_config.prefer_reduce_scatter = prefer_reduce_scatter
+    global_config.reduce_scatter_grad_acc_friendly = False
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh()

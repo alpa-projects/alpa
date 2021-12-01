@@ -752,7 +752,7 @@ class PhysicalDeviceMesh:
                         self.workers[0].get_max_memory_allocated.remote())
                     actual = after_memory_usage - before_memory_usage
                     # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
-                    #     expected, actual, before_memory_usage, after_memory_usage
+                    #     expected, actual, before_memory_usage/1024**3, after_memory_usage/1024**3
                     # ))
 
             return input_bufs

@@ -70,24 +70,26 @@ if __name__ == "__main__":
 
     # Run all cases
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{args.model}_parax_{args.exp_name}-{date_str}.tsv"
+    output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
     for case in suite:
         dp, mp, pp = case[6], case[7], case[10]
         if pp <= 1:
-            print(f"Skipping the case: {str(case)}, because PP <= 1. Lianmin will test it.")
+            print(f"Skipping the case: {str(case)}, because PP <= 1. Please use `benchmark_gpt_bert_2d.py` "
+                  f"since 3d will have a small overhead.")
             continue
-
+        print("Working on case: {}".format(str(case)))
         result = benchmark_one_case(args.model, case, args.niter,
                                     use_separate_process=args.use_separate_process)
         parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt = result
 
-        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs",
+        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
+                 "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
+                 "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem",]
-        paralell_config = (dp, mp, pp)
-        values = [args.model, str(case[:5]), str(paralell_config), str(case[8:10]),
-                  str(case[11]), str(case[12]), str(case[13]),
-                  f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-                  f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                  f"{max_mem_allocated/GB:.3f}"]
+        parallel_config = (dp, mp, pp)
+        values = [args.model, str(case[:6]), str(parallel_config), str(case[8:10]),
+                  str(case[11]), str(case[12]), str(case[13]), str(case[14]),
+                  f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                  f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                  f"{max_mem_allocated/GB:.3f}G"]
         write_tsv(heads, values, output_name)

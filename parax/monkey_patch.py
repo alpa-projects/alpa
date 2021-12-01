@@ -12,7 +12,6 @@ from jax.lib.xla_bridge import get_backend as default_get_backend
 
 from parax.pipeline_parallel.primitive_def import xla_identity
 
-
 ########################################
 ##### Monkey patch the backend
 ########################################

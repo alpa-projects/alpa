@@ -274,7 +274,8 @@ class MeshHostWorker:
     ##### Profiling Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any]):
         num_devices = self.num_hosts * len(self.local_devices)
-        return mesh_profiling.profile_hlo_ops(self.backend, self.local_devices, num_devices, op_infos)
+        return mesh_profiling.profile_hlo_ops(self.backend, self.local_devices,
+                                              num_devices, op_infos)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
@@ -736,9 +737,8 @@ class PhysicalDeviceMesh:
     def get_memory_available(self):
         if self.is_distributed:
             return min(
-                ray.get([
-                    w.get_available_memory.remote() for w in self.workers
-                ]))
+                ray.get([w.get_available_memory.remote() for w in self.workers
+                        ]))
         else:
             return min([device.available_memory for device in self.devices])
 

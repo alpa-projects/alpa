@@ -79,7 +79,8 @@ class CompileWorker:
             "bypass_device_assignment_check": True
         }
         protos, hooked_proto, strategy_config = self.compile_with_config(
-            global_config_dict, proto, jaxpr_config, mesh_config, multiple_stage_config)
+            global_config_dict, proto, jaxpr_config, mesh_config,
+            multiple_stage_config)
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
         if len(protos) > 1 and logical_mesh.total_devices > 1:
@@ -110,8 +111,8 @@ class CompileWorker:
                 output_sharding_proto, hooked_proto,
                 apply_grad_input_sharding_protos)
 
-    def compile_with_config(self, global_config_dict, proto, jaxpr_config, mesh_config,
-                            multiple_stage_config):
+    def compile_with_config(self, global_config_dict, proto, jaxpr_config,
+                            mesh_config, multiple_stage_config):
         global_config.restore(global_config_dict)
         built = xla_client.XlaComputation(proto)
         return compile_with_search(self.backend, built, *jaxpr_config,
@@ -121,15 +122,10 @@ class CompileWorker:
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 
-    def __init__(self,
-                 num_cpus,
-                 num_gpus,
-                 debug_mode=False):
+    def __init__(self, num_cpus, num_gpus, debug_mode=False):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
-        self.actors = [
-            worker_cls.remote() for _ in range(num_cpus)
-        ]
+        self.actors = [worker_cls.remote() for _ in range(num_cpus)]
         self.pool = ActorPool(self.actors)
         self.local_worker = CompileWorker() if debug_mode else None
 
@@ -172,8 +168,8 @@ class ProfileWorker:
         self.mesh.reset_remote_memory_stats()
         cost = executable.profile_with_dummy_inputs()
         del executable
-        peak_memory = self.mesh.get_remote_memory_peak()
-        available_memory = self.mesh.get_remote_memory_available()
+        peak_memory = self.mesh.get_max_memory_allocated()
+        available_memory = self.mesh.get_available_memory()
         self.mesh.reset_remote_memory_stats()
         max_stage = int((available_memory - peak_memory - initial_size) //
                         intermediate_size) - 1

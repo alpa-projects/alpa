@@ -12,9 +12,9 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compute_apply_grad_invar_size,
-    compute_intermediate_size, split_global_use_and_donate, generate_stage_info,
-    compile_all, ProfileWorkerPool)
+    compute_apply_grad_invar_size, compute_intermediate_size,
+    split_global_use_and_donate, generate_stage_info, compile_all,
+    ProfileWorkerPool)
 from parax.util import OrderedSet
 
 GB = 1024 * 1024 * 1024

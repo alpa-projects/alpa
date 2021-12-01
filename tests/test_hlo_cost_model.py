@@ -87,7 +87,7 @@ class HloCostModelTest(unittest.TestCase):
 
         device_mesh = DeviceCluster().get_physical_mesh()
         hlo_module = self.run_n_layer_mlp(num_layers, batch_size, hidden_dim,
-                hidden_dim, hidden_dim, device_mesh)
+                                          hidden_dim, hidden_dim, device_mesh)
         print(hlo_module)
 
 

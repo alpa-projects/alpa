@@ -7,7 +7,7 @@ import ray
 from parax.util import write_tsv, run_cmd
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
-from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite
+from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite
 
 GB = 1024 ** 3
 
@@ -41,6 +41,7 @@ benchmark_suites = {
     "paper_gpt": paper_gpt_suite,
     "test_gpt": test_gpt_suite,
     "paper_auto_gpt": paper_auto_gpt_suite,
+    "test_auto_gpt_suite": test_auto_gpt_suite,
 }
 
 

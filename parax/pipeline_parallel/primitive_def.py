@@ -5,7 +5,6 @@ from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
-from parax.monkey_patch import xla_identity
 
 from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
 
@@ -63,6 +62,34 @@ def mark_hook_jaxpreqn(invars, outvars):
     })
 
 
+def xla_identity(c, *args, opaque=b'', op_type=None):
+
+    def all_index(shape, cur):
+        out = []
+        if shape.is_tuple():
+            for i, subshape in enumerate(shape.tuple_shapes()):
+                out.extend(all_index(subshape, cur + [i]))
+        elif shape.is_array():
+            out.append(xc.ShapeIndex(cur))
+        return out
+
+    input_params = xc.ops.Tuple(c, args)
+    input_shape = c.get_shape(input_params)
+    aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
+    if op_type:
+        op_metadata = xc.OpMetadata(op_type=op_type)
+        c.set_op_metadata(op_metadata)
+    output_tuple = xc.ops.CustomCallWithOnlyAliasing(
+        c,
+        b'identity',
+        operands=(input_params,),
+        shape=input_shape,
+        output_operand_aliasing=aliasing,
+        opaque=opaque)
+    c.clear_op_metadata()
+    return output_tuple
+
+
 ########## Internal Registration ##########
 
 
@@ -81,10 +108,13 @@ def flatten_shape_byte_sizes(shape):
     return np.array(res, dtype=np.int64)
 
 
-def mark_pipeline_xla(c, *args):
+def mark_pipeline_xla(c, *args, **kwargs):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
+    op_metadata = xc.OpMetadata(op_type=kwargs["mark_type"],
+                                op_name=kwargs.get("name", ""))
+    c.set_op_metadata(op_metadata)
     output_tuple = xc.ops.CustomCallWithLayout(
         c,
         b'xla_pipeline_marker',
@@ -92,6 +122,7 @@ def mark_pipeline_xla(c, *args):
         shape_with_layout=input_shape,
         operand_shapes_with_layout=(input_shape,),
         opaque=flattened_byte_sizes.tobytes())
+    c.clear_op_metadata()
     return output_tuple
 
 
@@ -108,7 +139,7 @@ def _pipeline_xla_translation(c, *args, **kwargs):
     # TODO(yonghao): separate identity and marker in JAX
     if kwargs["mark_type"] == "hook":
         return xla_identity(c, *args, opaque=b"hook")
-    return mark_pipeline_xla(c, *args)
+    return mark_pipeline_xla(c, *args, **kwargs)
 
 
 def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):

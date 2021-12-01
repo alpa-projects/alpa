@@ -35,12 +35,9 @@ class CompileWorker:
     To activaite the worker, a gpu resource is required.
     """
 
-    def __init__(self, global_config_backup):
+    def __init__(self):
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
-        # FIXME: global_config_backup is conflict with new_global_config
-        #        in compile_stage_with_search.
-        global_config.restore(global_config_backup)
 
     def _get_input_output_sharding(self, sharding_annotated_proto):
         sharding_annotated_computation = xla_client.XlaComputation(
@@ -55,12 +52,12 @@ class CompileWorker:
         output_sharding_proto = output_sharding.proto_tuple()
         return input_sharding_protos, output_sharding_proto
 
-    def compile_stage_with_search(self, new_global_config, logical_mesh, proto,
+    def compile_stage_with_search(self, global_config_dict, logical_mesh, proto,
                                   avals, out_avals, donate_invars):
         """
         Compile a single stage with auto sharding.
         Args:
-            new_global_config: the global config for compilation setting.
+            global_config_dict: the global config dictionary for compilation setting.
             logical_mesh: the logical mesh for compilation.
             proto: the proto of XlaComputation to be compiled
             avals: input avals
@@ -70,7 +67,6 @@ class CompileWorker:
             proto: The proto of compiled executable
             strategy_config: The sharding strategy from auto sharding
         """
-        global_config.restore(new_global_config)
         self.cnt += 1
 
         jaxpr_config = (avals, out_avals, donate_invars)
@@ -83,7 +79,8 @@ class CompileWorker:
             "bypass_device_assignment_check": True
         }
         protos, hooked_proto, strategy_config = self.compile_with_config(
-            proto, jaxpr_config, mesh_config, multiple_stage_config)
+            global_config_dict, proto, jaxpr_config, mesh_config,
+            multiple_stage_config)
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
         if len(protos) > 1 and logical_mesh.total_devices > 1:
@@ -114,8 +111,9 @@ class CompileWorker:
                 output_sharding_proto, hooked_proto,
                 apply_grad_input_sharding_protos)
 
-    def compile_with_config(self, proto, jaxpr_config, mesh_config,
-                            multiple_stage_config):
+    def compile_with_config(self, global_config_dict, proto, jaxpr_config,
+                            mesh_config, multiple_stage_config):
+        global_config.restore(global_config_dict)
         built = xla_client.XlaComputation(proto)
         return compile_with_search(self.backend, built, *jaxpr_config,
                                    *mesh_config, **multiple_stage_config)
@@ -124,20 +122,12 @@ class CompileWorker:
 class CompileWorkerPool:
     """wrapped ray.util.ActorPool"""
 
-    def __init__(self,
-                 num_cpus,
-                 num_gpus,
-                 global_config_backup,
-                 debug_mode=False):
+    def __init__(self, num_cpus, num_gpus, debug_mode=False):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
-        global_config_backup.pop("devices")
-        self.actors = [
-            worker_cls.remote(global_config_backup) for _ in range(num_cpus)
-        ]
+        self.actors = [worker_cls.remote() for _ in range(num_cpus)]
         self.pool = ActorPool(self.actors)
-        self.local_worker = CompileWorker(
-            global_config_backup) if debug_mode else None
+        self.local_worker = CompileWorker() if debug_mode else None
 
     def local_get(self, fn, *value):
         return fn(self.local_worker, value)
@@ -178,8 +168,8 @@ class ProfileWorker:
         self.mesh.reset_remote_memory_stats()
         cost = executable.profile_with_dummy_inputs()
         del executable
-        peak_memory = self.mesh.get_remote_memory_peak()
-        available_memory = self.mesh.get_remote_memory_available()
+        peak_memory = self.mesh.get_max_memory_allocated()
+        available_memory = self.mesh.get_available_memory()
         self.mesh.reset_remote_memory_stats()
         max_stage = int((available_memory - peak_memory - initial_size) //
                         intermediate_size) - 1
@@ -275,49 +265,6 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
         layer_out_sharding_specs.append(
             [out_sharding_dict.get(var, None) for var in layer.outvars])
     return layer_in_sharding_specs, layer_out_sharding_specs
-
-
-def compile_and_profile_stage_compute_cost(
-        layers: Sequence[JaxPipelineComputation], mesh: PhysicalDeviceMesh,
-        donation_mapping: Dict[Var, Var], global_used: OrderedSet[Var]):
-    """
-    Args:
-        layers (Sequence[JaxPipelineComputation]): forward and corresponding backward
-        mesh (PhysicalDeviceMesh): the assigned mesh
-        donation_mapping (Dict[Var, Var]): donation mapping of all selected layers
-        global_used_list (OrderedSet[Var]): for each layer, record if each
-            outvar is used outside the compiled layers
-    """
-    backup_config = global_config.backup()
-
-    global_config.num_micro_batches = None
-    global_config.devices = mesh
-    global_config.strategy = "shard_parallel"
-    global_config.use_dummy_value_for_benchmarking = True
-
-    jaxprs = [layer.closed_jaxpr() for layer in layers]
-
-    mixed_jaxpr = merge_computation_jaxprs(jaxprs, global_used, "profile_tmp",
-                                           donation_mapping)
-    donate_argnums = [
-        idx for idx, var in enumerate(mixed_jaxpr.jaxpr.invars)
-        if var in donation_mapping
-    ]
-
-    fn = jaxpr_as_fun(mixed_jaxpr)
-    args = [
-        jnp.zeros(v.aval.shape, v.aval.dtype) for v in mixed_jaxpr.jaxpr.invars
-    ]
-    from parax.api import parallelize
-    executable = parallelize(
-        fn, donate_argnums=donate_argnums).get_executable(*args)
-    ret = executable.profile_with_dummy_inputs()
-
-    global_config.restore(backup_config)
-    split_in_specs, split_out_specs = split_sharding_specs(
-        layers, mixed_jaxpr, executable.input_sharding_specs,
-        executable.output_sharding_specs)
-    return ret, split_in_specs, split_out_specs
 
 
 def generate_stage_info(all_layers,
@@ -439,13 +386,9 @@ def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
         stage_info_list: List of info for compilation. Each info is a tuple with:
             (proto, in_avals, out_avals, donate_invars)
     """
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus,
-                                        global_config.backup())
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     backup_config = global_config.backup()
-    global_config.num_micro_batches = None
     global_config.devices = logical_mesh
-    global_config.strategy = "shard_parallel"
-    global_config.use_dummy_value_for_benchmarking = True
     compile_config = global_config.backup()
     for stage_info in stage_info_list:
         proto, avals, out_avals, donate_invars = stage_info

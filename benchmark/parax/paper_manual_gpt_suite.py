@@ -12,6 +12,8 @@ gpt_specs = {
 "15B":  (1024,  5120,  48,    40,   51200, ),
 "39B":  (1024,  8192,  48,    64,   51200, ),
 "76B":  (1024,  10240, 60,    80,   51200, ),
+
+"6.7B-half": (1024,  4096,  16,    32,   51200, ),
 }
 
 
@@ -27,8 +29,11 @@ test_gpt_suite = {
 ],
 
 8: [
-    # 3D performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
-    (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
+    # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
+    #(32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
+
+    # 142 performance case.
+    (16,  *gpt_specs["6.7B-half"],  1,   4,   1,   4,   2,  1,    False,  *fixed_params),
 ],
 
 16: [

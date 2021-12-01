@@ -215,6 +215,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1, global_config.backup())
+    global_config_backup = global_config.backup()
     compile_fn = lambda w, v: w.compile_with_config.remote(*v)
     compile_intermediate = [None] * num_meshes
     total_flops = 0
@@ -247,9 +248,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "bypass_device_assignment_check": True
             }
 
-            compile_workers.submit(
-                compile_fn,
-                (proto, jaxpr_config, mesh_config, multiple_stage_config))
+            compile_workers.submit(compile_fn,
+                                   (global_config_backup, proto, jaxpr_config,
+                                    mesh_config, multiple_stage_config))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops

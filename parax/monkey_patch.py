@@ -10,6 +10,8 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
 from jax.lib import xla_client as xc
 from jax.lib.xla_bridge import get_backend as default_get_backend
 
+from parax.pipeline_parallel.primitive_def import xla_identity
+
 ########################################
 ##### Monkey patch the backend
 ########################################
@@ -56,34 +58,6 @@ jax._src.random.uniform = fast_uniform
 jax.random.uniform = fast_uniform
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
-
-
-def xla_identity(c, *args, opaque=b'', op_type=None):
-
-    def all_index(shape, cur):
-        out = []
-        if shape.is_tuple():
-            for i, subshape in enumerate(shape.tuple_shapes()):
-                out.extend(all_index(subshape, cur + [i]))
-        elif shape.is_array():
-            out.append(xc.ShapeIndex(cur))
-        return out
-
-    input_params = xc.ops.Tuple(c, args)
-    input_shape = c.get_shape(input_params)
-    aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
-    if op_type:
-        op_metadata = xc.OpMetadata(op_type=op_type)
-        c.set_op_metadata(op_metadata)
-    output_tuple = xc.ops.CustomCallWithOnlyAliasing(
-        c,
-        b'identity',
-        operands=(input_params,),
-        shape=input_shape,
-        output_operand_aliasing=aliasing,
-        opaque=opaque)
-    c.clear_op_metadata()
-    return output_tuple
 
 
 def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,

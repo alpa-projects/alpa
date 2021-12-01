@@ -12,9 +12,9 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, compute_apply_grad_invar_size,
-    compute_intermediate_size, split_global_use_and_donate, generate_stage_info,
-    compile_all, ProfileWorkerPool)
+    compute_apply_grad_invar_size, compute_intermediate_size,
+    split_global_use_and_donate, generate_stage_info, compile_all,
+    ProfileWorkerPool)
 from parax.util import OrderedSet
 
 GB = 1024 * 1024 * 1024
@@ -193,7 +193,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     apply_grad_infos = []
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
-    # TODO(yonghao): only generate these info once for all mesh shape
+    # TODO(yonghao): only generate these info once for all mesh shapes
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             layer_indices = (

@@ -552,6 +552,8 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
+    if len(intermediate_vars) == 0:
+        return 0
 
     avals = [v.aval for v in intermediate_vars]
     if np.prod(logical_mesh_shape) == 1:

@@ -1,3 +1,4 @@
+import numpy as np
 import jax
 import jax.numpy as jnp
 import unittest
@@ -33,9 +34,6 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
 
-        train_step = get_bert_layer_train_step(manual_pipeline_layer,
-                                               test_remat, n_layers)
-
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
@@ -44,17 +42,27 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
         attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
 
         # Init model and optimizer
+        dtype = jnp.float16
         model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
                                                  intermediate_size=hidden_size *
                                                  4,
                                                  num_attention_heads=num_heads,
                                                  num_hidden_layers=n_layers),
+                               dtype=dtype,
                                manual_pipeline_layer=manual_pipeline_layer)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
-        state = create_dummy_train_state(rngkey, model, [x, attention_mask])
+        state = create_dummy_train_state(rngkey,
+                                         model, [x, attention_mask],
+                                         dtype=dtype)
+        param_count = sum([
+            np.prod(param.shape) for param in jax.tree_flatten(state.params)[0]
+        ])
+        print("#Parameters =", param_count)
 
         global_config.num_micro_batches = 2
-        parallel_train_step = parallelize(train_step)
+        parallel_train_step = get_bert_layer_train_step(True,
+                                                        manual_pipeline_layer,
+                                                        test_remat, n_layers)
         executable = parallel_train_step.get_executable(state, batch)
         new_state = parallel_train_step(state, batch)
 

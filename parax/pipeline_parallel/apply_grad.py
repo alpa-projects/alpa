@@ -228,7 +228,6 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
     dependency = gen_dependency_with_stages(jax_pipeline_stages,
                                             len(sliced_apply_grad), apply_deps)
-    jax_all_stages = jax_pipeline_stages + sliced_apply_grad
 
     used_simultaneously = OrderedSet()
     used = OrderedSet()
@@ -242,7 +241,7 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
             logger.warning(f"Cannot donate {invar} (shape: {invar.aval.shape})")
             donated_invars[idx] = False
 
-    return jax_all_stages, n_stages, dependency, apply_grad_placement,\
+    return sliced_apply_grad, n_stages, dependency, apply_grad_placement,\
             global_outvars, donated_invars
 
 

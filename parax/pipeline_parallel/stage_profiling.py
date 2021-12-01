@@ -1,5 +1,6 @@
 import gc
-from typing import Dict, Sequence, Tuple
+from typing import Dict, OrderedDict, Sequence, Tuple
+from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 
 import tqdm
 import numpy as np
@@ -7,7 +8,8 @@ import ray
 from ray.util import ActorPool
 
 import jax.numpy as jnp
-from jax.core import ClosedJaxpr, Var, gensym, jaxpr_as_fun
+from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, jaxpr_as_fun,
+                      new_jaxpr_eqn, named_call_p)
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
@@ -18,7 +20,7 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
     as VDA)
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
-    merge_computation_jaxprs)
+    merge_computation_jaxprs, rearrange_vars)
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
@@ -40,7 +42,9 @@ class CompileWorker:
         #        in compile_stage_with_search.
         global_config.restore(global_config_backup)
 
-    def _get_input_output_sharding(self, sharding_annotated_computation):
+    def _get_input_output_sharding(self, sharding_annotated_proto):
+        sharding_annotated_computation = xla_client.XlaComputation(
+            sharding_annotated_proto)
         hlo_module = sharding_annotated_computation.as_hlo_module()
         hlo_module.infer_spmd_shardings()
         input_shardings = hlo_module.spmd_parameters_shardings()
@@ -80,13 +84,20 @@ class CompileWorker:
         }
         protos, hooked_proto, strategy_config = self.compile_with_config(
             proto, jaxpr_config, mesh_config, multiple_stage_config)
-        assert len(protos) == 1, "Can only compile one stage"
+        assert (len(protos) <=
+                2), "Can only compile no more than two stages (compute+(apply))"
+        if len(protos) > 1 and logical_mesh.total_devices > 1:
+            apply_grad_proto = protos[1]
+            (apply_grad_input_sharding_protos,
+             _) = self._get_input_output_sharding(apply_grad_proto)
+        else:
+            apply_grad_input_sharding_protos = None
         sharded_proto = protos[0]
         sharding_annotated_computation = xla_client.XlaComputation(
             sharded_proto)
         if logical_mesh.total_devices > 1:
             (input_sharding_protos, output_sharding_proto
-            ) = self._get_input_output_sharding(sharding_annotated_computation)
+            ) = self._get_input_output_sharding(sharded_proto)
         else:
             input_sharding_protos = None
             output_sharding_proto = None
@@ -100,7 +111,8 @@ class CompileWorker:
         optimized_proto = compiled.hlo_modules(
         )[0].as_serialized_hlo_module_proto()
         return (optimized_proto, strategy_config, input_sharding_protos,
-                output_sharding_proto, hooked_proto)
+                output_sharding_proto, hooked_proto,
+                apply_grad_input_sharding_protos)
 
     def compile_with_config(self, proto, jaxpr_config, mesh_config,
                             multiple_stage_config):
@@ -150,9 +162,10 @@ class ProfileWorker:
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
-    def profile(self, compiled_output, stage_info, intermediate_size):
-        _, avals, out_avals, tot_donation = stage_info
-        proto, config, in_shardings, out_shardings, _ = compiled_output
+    def profile(self, compiled_output, stage_info, intermediate_size,
+                initial_size):
+        avals, out_avals, tot_donation = stage_info
+        proto, config, in_shardings, out_shardings, _, _ = compiled_output
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
                                     output_shardings=out_shardings)
@@ -168,10 +181,12 @@ class ProfileWorker:
         peak_memory = self.mesh.get_remote_memory_peak()
         available_memory = self.mesh.get_remote_memory_available()
         self.mesh.reset_remote_memory_stats()
-        max_stage = int((available_memory - peak_memory) // intermediate_size)
+        max_stage = int((available_memory - peak_memory - initial_size) //
+                        intermediate_size) - 1
         if np.mean(cost) == np.inf:
             max_stage = -1
-        return cost, max_stage
+        return cost, max_stage, (peak_memory, available_memory,
+                                 intermediate_size, initial_size)
 
 
 class ProfileWorkerPool:
@@ -310,31 +325,111 @@ def generate_stage_info(all_layers,
                         donation_mapping,
                         global_outvars,
                         name,
-                        insert_hook_after=None):
+                        insert_hook_after=None,
+                        apply_grad_info=None):
     """Combine selected layers together for profiling"""
     backend = xla_bridge.get_backend("gpu")
 
     # TODO(yonghao): infer used_outside etc. in batches
+    # TODO(yonghao): clean up code here
     selected_donation_mapping, used_outside, layers = split_global_use_and_donate(
         all_layers, selected_indices, donation_mapping, global_outvars)
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    merged, hook = merge_computation_jaxprs(jaxprs, used_outside, "0",
-                                            selected_donation_mapping,
-                                            insert_hook_after)
+    merged, intermediate_vars = merge_computation_jaxprs(
+        jaxprs, used_outside, None, selected_donation_mapping,
+        insert_hook_after)
+    if apply_grad_info is not None:
+        (apply_grad_layers, apply_grad_donation,
+         apply_grad_outvars) = apply_grad_info
+        merged_apply = merge_computation_jaxprs(
+            [l.closed_jaxpr() for l in apply_grad_layers], apply_grad_outvars,
+            None, apply_grad_donation)
+
     outvars = OrderedSet(merged.jaxpr.outvars)
-    avals = [var.aval for var in merged.jaxpr.invars]
-    out_avals = [var.aval for var in merged.jaxpr.outvars]
     tot_donation = [
         invar in selected_donation_mapping and
         selected_donation_mapping[invar] in outvars
         for invar in merged.jaxpr.invars
     ]
+    donated_invars = [
+        invar for d, invar in zip(tot_donation, merged.jaxpr.invars) if d
+    ]
+    new_invars = rearrange_vars(merged.jaxpr.invars, donated_invars)
+    new_outvars = rearrange_vars(
+        merged.jaxpr.outvars,
+        [selected_donation_mapping[v] for v in donated_invars])
+    merged = ClosedJaxpr(
+        Jaxpr(merged.jaxpr.constvars, new_invars, new_outvars,
+              merged.jaxpr.eqns), merged.consts)
+    compute_avals = [var.aval for var in merged.jaxpr.invars]
+    compute_out_avals = [var.aval for var in merged.jaxpr.outvars]
+    profile_info = (compute_avals, compute_out_avals, list(tot_donation))
+
+    apply_info = None, None
+
+    if apply_grad_info is not None:
+        only_for_apply = OrderedSet(merged_apply.jaxpr.invars).difference(
+            new_invars).difference(new_outvars)
+        apply_info = (merged_apply.jaxpr.invars, only_for_apply)
+        new_eqns = []
+        gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
+        for idx, closed_jaxpr in enumerate([merged, merged_apply]):
+            mapped_invars = [
+                gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.invars
+            ]
+            mapped_outvars = [
+                gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.outvars
+            ]
+            new_eqns.append(
+                mark_pipeline_jaxpreqn(closed_jaxpr.jaxpr.invars,
+                                       mapped_invars,
+                                       name=str(idx),
+                                       mark_type="start"))
+            new_eqns.append(
+                new_jaxpr_eqn(mapped_invars,
+                              mapped_outvars,
+                              named_call_p,
+                              params=dict(name=str(idx),
+                                          call_jaxpr=closed_jaxpr.jaxpr)))
+            new_eqns.append(
+                mark_pipeline_jaxpreqn(mapped_outvars,
+                                       closed_jaxpr.jaxpr.outvars,
+                                       name=str(idx),
+                                       mark_type="end"))
+
+        all_invars = OrderedSet(new_invars).union(
+            merged_apply.jaxpr.invars).difference(new_outvars)
+        all_outvars = OrderedSet(new_outvars).union(merged_apply.jaxpr.outvars)
+        all_invars = list(all_invars)
+        all_outvars = list(all_outvars)
+
+        apply_grad_donated_invars = list(
+            OrderedSet(merged_apply.jaxpr.invars).intersection(
+                apply_grad_donation.keys()))
+        all_donated_invars = donated_invars + apply_grad_donated_invars
+        all_donated_outvars = [
+            selected_donation_mapping[v] for v in donated_invars
+        ] + [apply_grad_donation[v] for v in apply_grad_donated_invars]
+        all_invars = rearrange_vars(all_invars, all_donated_invars)
+        all_outvars = rearrange_vars(all_outvars, all_donated_outvars)
+        all_const_dict = OrderedDict(zip(merged.jaxpr.constvars, merged.consts))
+        all_const_dict.update(
+            zip(merged_apply.jaxpr.constvars, merged_apply.consts))
+        merged = ClosedJaxpr(
+            Jaxpr(list(all_const_dict.keys()), all_invars, all_outvars,
+                  new_eqns), list(all_const_dict.values()))
+        tot_donation = [True] * len(all_donated_invars) + [False] * (
+            len(all_invars) - len(all_donated_invars))
+
+    avals = [var.aval for var in merged.jaxpr.invars]
+    out_avals = [var.aval for var in merged.jaxpr.outvars]
 
     built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
     proto = built.as_serialized_hlo_module_proto()
-    return (proto, avals, out_avals, tot_donation), hook
+    compile_info = (proto, avals, out_avals, tot_donation)
+    return compile_info, intermediate_vars, profile_info, apply_info
 
 
 def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
@@ -451,19 +546,19 @@ def profile_layer_communication_cost(
     return tot_cost
 
 
-def compute_intermediate_size(serialized_proto, hook, config):
+def compute_intermediate_size(serialized_proto, intermediate_vars,
+                              logical_mesh_shape):
     """Compute bytes of serialized proto"""
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
 
-    avals = [v.aval for v in hook.invars]
-    logical_mesh_shape = config.logical_mesh_shape
+    avals = [v.aval for v in intermediate_vars]
     if np.prod(logical_mesh_shape) == 1:
         tot = sum([get_byte(aval) for aval in avals])
         return tot
     hlo_sharding = _xla.HloSharding(serialized_proto[0]).proto_tuple()
-    assert len(hlo_sharding[3]) == len(hook.invars), hlo_sharding
+    assert len(hlo_sharding[3]) == len(intermediate_vars), hlo_sharding
     sharding_specs = sharding_proto_to_sharding_spec(hlo_sharding, avals,
                                                      logical_mesh_shape)
     sharded_shapes = [
@@ -474,4 +569,39 @@ def compute_intermediate_size(serialized_proto, hook, config):
         np.prod(shape) * np.dtype(aval.dtype).itemsize
         for shape, aval in zip(sharded_shapes, avals)
     ])
+    return tot
+
+
+def compute_apply_grad_invar_size(input_sharding_protos, invars,
+                                  selected_invars, logical_mesh_shape):
+
+    def get_byte(aval):
+        return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
+
+    avals = [v.aval for v in invars]
+    # print("apply grad invars",
+    #       [(var.aval.shape, var in selected_invars) for var in invars])
+    if np.prod(logical_mesh_shape) == 1:
+        tot = sum([
+            get_byte(aval)
+            for (var, aval) in zip(invars, avals)
+            if var in selected_invars
+        ])
+        return tot
+    assert len(input_sharding_protos) == len(invars), input_sharding_protos
+    sharding_specs = [
+        sharding_proto_to_sharding_spec(sharding_proto, aval,
+                                        logical_mesh_shape)
+        for sharding_proto, aval in zip(input_sharding_protos, avals)
+    ]
+    sharded_shapes = [
+        get_shard_shape(aval, spec)
+        for aval, spec in zip(avals, sharding_specs)
+    ]
+    selected_sharded_bytes = [
+        np.prod(shape) * np.dtype(aval.dtype).itemsize
+        for var, shape, aval in zip(invars, sharded_shapes, avals)
+        if var in selected_invars
+    ]
+    tot = sum(selected_sharded_bytes)
     return tot

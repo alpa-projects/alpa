@@ -12,10 +12,12 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all,
-    ProfileWorkerPool)
+    compile_and_profile_stage_compute_cost, compute_apply_grad_invar_size,
+    compute_intermediate_size, split_global_use_and_donate, generate_stage_info,
+    compile_all, ProfileWorkerPool)
 from parax.util import OrderedSet
+
+GB = 1024 * 1024 * 1024
 
 
 @numba.jit(nopython=True)
@@ -177,7 +179,8 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
 
 
 def distributed_profile_on_mesh(meshes, layers, donation_mapping,
-                                global_outvars):
+                                global_outvars, apply_grad_layers,
+                                apply_grad_global_info):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     indices = list(range(2 * num_layers))
@@ -185,7 +188,9 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     max_n_succ_stages = np.full((num_layers, num_layers), -1)
     stage_infos = []
     stage_indices = []
-    stage_hooks = []
+    stage_intermediate_vars = []
+    profile_infos = []
+    apply_grad_infos = []
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shape
@@ -194,14 +199,25 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
+            selected_apply_grad_layers = [
+                apply_grad_layers[idx] for idx in indices[start:end + 1]
+            ]
             stage_name = "stage_{}_{}".format(start, end)
-            stage_info, hook = generate_stage_info(layers, layer_indices,
-                                                   donation_mapping,
-                                                   global_outvars, stage_name,
-                                                   end - start)
+            (stage_info, intermediate_vars, profile_info,
+             apply_info) = generate_stage_info(
+                 layers,
+                 layer_indices,
+                 donation_mapping,
+                 global_outvars,
+                 stage_name,
+                 insert_hook_after=end - start,
+                 apply_grad_info=(selected_apply_grad_layers,
+                                  *apply_grad_global_info))
             stage_infos.append(stage_info)
             stage_indices.append((start, end))
-            stage_hooks.append(hook)
+            stage_intermediate_vars.append(intermediate_vars)
+            profile_infos.append(profile_info)
+            apply_grad_infos.append(apply_info)
 
     print("- Compile all stages")
     # TODO(zhuohan): set the number of workers as a tunable parameter
@@ -211,28 +227,39 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
 
     print("- Start all profiling tasks")
     profile_workers = ProfileWorkerPool(meshes)
-    for compiled_output, stage_info, hook in zip(compiled_outputs, stage_infos,
-                                                 stage_hooks):
-        proto, config, in_shardings, out_shardings, hooked_proto = compiled_output
-        intermediate_size = compute_intermediate_size(hooked_proto, hook,
-                                                      config)
+    for (compiled_output, stage_info, intermediate_vars,
+         apply_info) in zip(compiled_outputs, profile_infos,
+                            stage_intermediate_vars, apply_grad_infos):
+        (proto, config, in_shardings, out_shardings, hooked_proto,
+         apply_in_shardings) = compiled_output
+        intermediate_size = compute_intermediate_size(hooked_proto,
+                                                      intermediate_vars,
+                                                      config.logical_mesh_shape)
+        apply_grad_input_size = compute_apply_grad_invar_size(
+            apply_in_shardings, *apply_info, config.logical_mesh_shape)
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, stage_info, intermediate_size))
+                               (compiled_output, stage_info, intermediate_size,
+                                apply_grad_input_size))
 
     print("- Profile all stages")
     pbar = tqdm.tqdm(stage_indices)
     for start, end in pbar:
-        cost, max_stage = profile_workers.get_next()
+        cost, max_stage, debug_info = profile_workers.get_next()
+        peak_memory, available_memory, intermediate_size, initial_size = debug_info
         compute_cost[start, end] = np.mean(cost)
         max_n_succ_stages[start, end] = max_stage
-        pbar.write(f"cost[{start}, {end}] = {compute_cost[start, end]},"
-                   f" max_n_succ_stage = {max_stage}")
+        pbar.write(f"cost[{start}, {end}]={compute_cost[start, end]},"
+                   f" max_n_succ_stage={max_stage},"
+                   f" Mem: peak={peak_memory / GB:.3f}GB,"
+                   f" avail={available_memory / GB:.3f}GB,"
+                   f" intermediate={intermediate_size / GB:.3f}GB,"
+                   f" initial={initial_size / GB:.3f}GB")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 
 
 def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars):
+                     global_outvars, apply_grad_layers, apply_grad_global_info):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -251,7 +278,8 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
             num_hosts, num_devices)
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
-            sliced_virtual_meshes, layers, donation_mapping, global_outvars)
+            sliced_virtual_meshes, layers, donation_mapping, global_outvars,
+            apply_grad_layers, apply_grad_global_info)
 
         compute_cost[:, :, mesh_id] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id] = mesh_max_n_succ_stages
@@ -406,6 +434,8 @@ def cluster_layers_and_slice_mesh(layers,
                                   donation_mapping,
                                   global_outvars,
                                   num_micro_batches,
+                                  jax_apply_layers=None,
+                                  apply_grad_global_info=None,
                                   pipeline_stage_mode="uniform_layer_gpipe",
                                   cache_compute_cost=None,
                                   forward_stage_layer_ids=None,
@@ -447,7 +477,7 @@ def cluster_layers_and_slice_mesh(layers,
             else:
                 compute_cost, max_n_succ_stages = get_compute_cost(
                     mesh, submesh_choices, layers, donation_mapping,
-                    global_outvars)
+                    global_outvars, jax_apply_layers, apply_grad_global_info)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,
                                 compute_cost, max_n_succ_stages)

@@ -81,6 +81,20 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     else:
         donation_mapping = dict()
 
+    num_forward_layers = len(jax_pipeline_layers) // 2
+    layer_to_dummy_mesh = (list(range(num_forward_layers)) +
+                           list(reversed(range(num_forward_layers))))
+    # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
+    jax_apply_layers, _, _, _, dummy_global_outvars, dummy_donated_invars =\
+            process_apply_gradient(apply_grad_jaxpr,
+                barrier, acc_grad_dict, jax_pipeline_layers, layer_to_dummy_mesh,
+                gensym_func, num_micro_batches, len(jax_pipeline_layers) // 2,
+                global_invars, global_outvars, donated_invars)
+    apply_grad_donation = create_donation_mapping(donation_mapping,
+                                                  dummy_donated_invars,
+                                                  global_invars, global_outvars)
+    apply_grad_global_info = apply_grad_donation, global_outvars
+
     # Construct pipeline stages by merging layers
     virtual_mesh = devices
     jax_pipeline_stages, stage_to_mesh, sliced_meshes = (
@@ -90,6 +104,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             donation_mapping,
             acc_grad_outvars,
             num_micro_batches,
+            jax_apply_layers=jax_apply_layers,
+            apply_grad_global_info=apply_grad_global_info,
             pipeline_stage_mode=global_config.pipeline_stage_mode,
             cache_compute_cost=global_config.cache_compute_cost,
             forward_stage_layer_ids=global_config.forward_stage_layer_ids,
@@ -98,11 +114,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Process apply_gradient and donation
     if have_apply_grad:
-        jax_all_stages, n_stages, dependency, apply_grad_placement, global_outvars, donated_invars =\
+        sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement, global_outvars, donated_invars =\
             process_apply_gradient(apply_grad_jaxpr,
                 barrier, acc_grad_dict, jax_pipeline_stages, stage_to_mesh,
                 gensym_func, num_micro_batches, num_meshes,
                 global_invars, global_outvars, donated_invars)
+        jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
     else:
         jax_all_stages = jax_pipeline_stages
         n_stages = len(jax_pipeline_stages)

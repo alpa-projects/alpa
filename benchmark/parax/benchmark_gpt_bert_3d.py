@@ -100,14 +100,14 @@ if __name__ == "__main__":
                       f"{max_mem_allocated/GB:.3f}G"]
             write_tsv(heads, values, output_name)
         else:
-            heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)"
+            heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)",
                      "#Microbatch", "Remat", "Reduce-scatter",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
                      "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
                      "Layer->Stage Mapping", "Submesh Shapes"]
             (compute_cost_file_name, forward_stage_layer_ids,
              submesh_shapes) = get_last_dp_result()
-            values = [args.model + "-auto", str(case[:6]), num_gpus, pp,
+            values = [args.model + "-auto", str(case[:6]), str(num_gpus), str(pp),
                       str(case[11]), str(case[13]), str(case[14]),
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",

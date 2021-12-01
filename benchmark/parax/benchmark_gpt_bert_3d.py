@@ -75,7 +75,8 @@ if __name__ == "__main__":
     output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
     for case in suite:
         dp, mp, pp = case[6], case[7], case[10]
-        if pp <= 1:
+        auto_layer_and_stage = case[15]
+        if pp <= 1 and not auto_layer_and_stage:
             print(f"Skipping the case: {str(case)}, because PP <= 1. Please use `benchmark_gpt_bert_2d.py` "
                   f"since 3d will have a small overhead.")
             continue

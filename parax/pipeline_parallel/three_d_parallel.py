@@ -113,10 +113,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                global_invars, global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
         donation_mapping, jax_all_stages)
-    # Print jaxpr for debugging
-    #for i in range(len(jax_all_stages)):
-    #    with open(f"tmp/stage_{i}.jaxpr", "w") as fout:
-    #        fout.write(str(jax_all_stages[i].closed_jaxpr()))
 
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":

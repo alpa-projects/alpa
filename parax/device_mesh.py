@@ -24,8 +24,8 @@ import jax.numpy as jnp
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
+from parax.mesh_profiling import profile_collective_one_config, ProfilingResult
 from parax.monkey_patch import set_override_backend
-from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
@@ -1371,6 +1371,12 @@ class DeviceCluster:
                                    host_info=host_info,
                                    num_devices_per_host=num_devices_per_host,
                                    head_ip=self.head_ip)
+
+    def profile_all(self):
+        # Profile compute cost
+
+        # Profile communication cost
+        pass
 
 
 ########################################

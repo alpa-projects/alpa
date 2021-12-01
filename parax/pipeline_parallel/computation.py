@@ -572,9 +572,19 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
     return new_computations
 
 
+# TODO(yonghao): make it a pure function
 def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation]):
 
-    # TODO(yonghao): pure function
+    def only_create_consts(jaxpr: Jaxpr):
+        const_vars = OrderedSet()
+        for eqn in jaxpr.eqns:
+            for var in eqn.invars:
+                if isinstance(var, Var) and var not in const_vars:
+                    return False
+            const_vars.update(
+                [v for v in eqn.outvars if not isinstance(v, DropVar)])
+        return True
+
     def task_offloader(forward_stage: JaxPipelineComputation,
                        backward_stage: JaxPipelineComputation):
         from jax.interpreters.partial_eval import remat_call_p
@@ -586,26 +596,23 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation]):
                 return 0
             return np.prod(var.aval.shape) * np.dtype(var.aval.dtype).itemsize
 
-        used = set()
         offloaded_eqns = list()
         mapping = dict()
         for eqn in reversed(forward_stage.eqns):
             if eqn.primitive == pipeline_p:
                 continue
             if (eqn.primitive == remat_call_p and
-                    len(used.intersection(eqn.outvars)) == 0):
+                    only_create_consts(eqn.params["call_jaxpr"])):
                 invar_shapes = sum([get_size(var) for var in eqn.invars])
                 if invar_shapes == 0:
                     offloaded_eqns.append(eqn)
-            used.update([
-                var for var in eqn.invars
-                if isinstance(var, Var) and not isinstance(var, DropVar)
-            ])
         # remove outvars from forward stage
-        assert len(offloaded_eqns)
+        # assert len(offloaded_eqns)#, forward_stage.closed_jaxpr()
         removed_outvars = set()
         for eqn in offloaded_eqns:
-            not_dropped = [var for var in eqn.outvars if not isinstance(var, DropVar)]
+            not_dropped = [
+                var for var in eqn.outvars if not isinstance(var, DropVar)
+            ]
             removed_outvars.update(not_dropped)
         previous_end = forward_stage.eqns[-1]
         new_invars = []

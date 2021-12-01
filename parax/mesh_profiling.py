@@ -5,9 +5,9 @@ import time
 
 import numpy as np
 
-from jax.lib import xla_client, xla_bridge
+from jax.lib import xla_client, xla_bridge, xla_extension
 
-from parax.util import GB, print_used_time
+from parax.util import GB, print_used_time, XlaPassContext
 
 ops = xla_client.ops
 
@@ -33,14 +33,6 @@ class ProfilingResult:
         # Cost dictionary for specific operators
         # Dict[op_info] -> double
         self.op_cost_dict = []
-
-    def record_all_reduce(self, group, size, dtype, time_cost):
-        key = (group, dtype)
-        self.all_reduce_cost_dict[key].append((size, time_cost))
-
-    def record_all_gather(self, group, size, dtype, time_cost):
-        key = (group, dtype)
-        self.all_gather_cost_dict[key].append((size, time_cost))
 
     def estimate_all_reduce(self, group, size, dtype):
         ret = self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -\
@@ -288,6 +280,8 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                       ((size // len(replica_groups[0]),), dtype)]
 
             def op_func(operands):
+                if shapes[1][0][0] == 0:
+                    return
                 channel_id = backend.create_channel_handle()
                 out = _op_reduce_scatter(operands[0], dtype, "add",
                                          replica_groups, channel_id)
@@ -304,7 +298,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                       ((size,), dtype)]
 
             def op_func(operands):
-                if size == 0:
+                if shapes[0][0][0] == 0:
                     return
                 channel_id = backend.create_channel_handle()
                 out = _op_all_gather(operands[0], replica_groups, channel_id)
@@ -321,7 +315,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                       ((size // len(replica_groups[0]),), dtype)]
 
             def op_func(operands):
-                if size == 0:
+                if shapes[0][0][0] // len(replica_groups[0]) == 0:
                     return
                 channel_id = backend.create_channel_handle()
                 out = _op_all_to_all(operands[0], replica_groups, channel_id)
@@ -446,17 +440,18 @@ def profile_all(device_cluster):
     ##### Profile communication cost
 
     # Enumerate all size configs
-    size_configs = [(1 << 28, "float32")]
-    #size_configs = [(0, "float32"), (0, "float16")]
-    #for i in range(0, 28):
-    #    size_configs.append((1 << i, "float32"))
-    #    size_configs.append((1 << i, "float16"))
+    #size_configs = [(1 << 28, "float32")]
+    size_configs = [(0, "float32"), (0, "float16")]
+    for i in range(0, 29):
+        size_configs.append((1 << i, "float32"))
+        size_configs.append((1 << i, "float16"))
 
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     submesh_choices = get_submesh_choices(virtual_mesh)
 
     submesh_choices = ((1, 8),)
 
+    prof_dict = {}
     for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
         print(f"Mesh {(num_hosts, num_devices_per_host)}")
 
@@ -469,9 +464,8 @@ def profile_all(device_cluster):
                                                   size_configs)
 
         op_infos = []
-        for op_type in [
-                "all-reduce", "all-gather", "reduce-scatter", "all-to-all"
-        ]:
+        #for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
+        for op_type in ["all-to-all"]:
             for spec in all_specs:
                 op_infos.append((op_type, spec))
 
@@ -504,4 +498,21 @@ def profile_all(device_cluster):
             print(f"Op: {op_infos[i]}, Bandwidth: {bandwidth / GB} GB/s")
 
         physical_mesh.shutdown()
+
+        profile_res = ProfilingResult()
+        profile_res.matmul_cost_dict = matmul_cost_dict
+        profile_res.all_reduce_cost_dict = all_reduce_cost_dict
+        profile_res.all_gather_cost_dict = all_gather_cost_dict
+        profile_res.reduce_scatter_cost_dict = reduce_scatter_cost_dict
+        profile_res.all_to_all_cost_dict = all_to_all_cost_dict
+        prof_dict[(num_host, num_devices_per_host)] = profile_res
+
     print_used_time("Profile communication")
+    return prof_dict
+
+
+def estimate_hlo_module_cost(hlo_module, profile_results):
+    with XlaPassContext({
+        "hlo_cost_model::profile_results": profile_results,
+    }):
+        return xla_extension.estimate_hlo_module_cost(hlo_module)

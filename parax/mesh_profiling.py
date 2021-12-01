@@ -16,11 +16,23 @@ class ProfilingResult:
     """Store the profiling result."""
 
     def __init__(self):
+        # Cost dictionary for communication primitives
         # Dict[Tuple(group, dtype) -> List[Tuple(size, time)]]
-        # assume the elements in the list is sorted according to the size (ascending).
+        # The elements in the list is sorted according to the size (ascending).
         self.all_reduce_cost_dict = defaultdict(list)
         self.all_gather_cost_dict = defaultdict(list)
         self.reduce_scatter_cost_dict = defaultdict(list)
+        self.all_to_all_cost_dict = defaultdict(list)
+
+        # Cost dictionary for computation primitives
+        # Dict[dtype] -> List[Tuple(flop_count, flop_per_second)]
+        # The elements in the list is sorted according to the size (ascending).
+        self.matmul_cost_dict = []
+        self.conv_cost_dict = []
+
+        # Cost dictionary for specific operators
+        # Dict[op_info] -> double
+        self.op_cost_dict = []
 
     def record_all_reduce(self, group, size, dtype, time_cost):
         key = (group, dtype)
@@ -118,6 +130,7 @@ class ProfilingResult:
             bandwidth_str = ", ".join(f"{x:.2f}" for x in bandwidth)
             ret += f"Key: {key}\nBandwidth: {bandwidth_str}\n"
         return ret
+
 
 
 def _op_parameter(builder, num, shape, dtype):
@@ -245,7 +258,6 @@ def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype,
     return in_shape, out_shape, backend.compile(loop_computation,
                                                 compile_options)
 
-
 def profile_collective_one_config(shape,
                                   dtype,
                                   replica_groups,
@@ -295,3 +307,132 @@ def profile_collective_one_config(shape,
     toc = time.time()
 
     return (toc - tic) / number
+
+
+def compile_profiling_executable(backend, shapes, op_func, num_devices):
+    in_tuple_shape = xla_client.Shape.tuple_shape(
+        [xla_client.Shape.array_shape(np.dtype(np.int32), ())] +
+        [xla_client.Shape.array_shape(np.dtype(dtype), shape) for shape, dtype in shapes])
+
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    sharding.tile_assignment_dimensions.extend([1])
+    sharding.tile_assignment_devices.extend([0])
+
+    # body
+    body = xla_client.XlaBuilder("body")
+    body.set_sharding(sharding)
+    in_tuple = ops.Parameter(body, 0, in_tuple_shape)
+    counter = ops.GetTupleElement(in_tuple, 0)
+    counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
+
+    operands = [ops.GetTupleElement(in_tuple, i + 1) for i in range(len(shapes))]
+    operands = op_func(operands)
+    body.clear_sharding()
+    ops.Tuple(body, [counter] + operands)
+    body_computation = body.build()
+
+    # condition
+    cond = xla_client.XlaBuilder("condition")
+    in_tuple = ops.Parameter(cond, 0, in_tuple_shape)
+    counter = ops.GetTupleElement(in_tuple, 0)
+    ops.Gt(counter, ops.Constant(cond, np.int32(0)))
+    cond_computation = cond.Build()
+
+    # while loop
+    loop = xla_client.XlaBuilder("loop")
+    counter = _op_parameter(loop, 0, (), np.int32)
+    operands = [_op_parameter(loop, i + 1, shape, dtype) for i, (shape, dtype) in enumerate(shapes)]
+    while_init = ops.Tuple(loop, [counter] + operands)
+    ops.While(cond_computation, body_computation, while_init)
+    for i in range(len(shapes) + 1):
+        loop.setup_alias((i,), i, ())
+    loop_computation = loop.Build()
+
+    compile_options = xla_bridge.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    shapes = [(1, np.int32)] + shapes
+    return shapes, backend.compile(loop_computation, compile_options)
+
+
+def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
+    results = []
+    for op_info in op_infos:
+        if op_info[0] == "matmul":
+            n, m, k, dtype = op_info[1]
+
+            shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
+            def op_func(operands):
+                lhs, rhs, _ = operands
+                dim_numbers = (((1,), (0,)), ((), ()))
+                dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
+                out = ops.DotGeneral(lhs, rhs, dim_numbers)
+                operands[-1] = out
+                return operands
+
+            shapes, compiled = compile_profiling_executable(backend, shapes, op_func, num_devices)
+            warmup = 2
+            number = 10
+        else:
+            raise NotImplementedError(f"Invalid op: {op_info[0]}")
+
+        # Warm up
+        device_inputs = []
+        for i, (shape, dtype) in enumerate(shapes):
+            if i == 0:
+                device_inputs.append([
+                    backend.buffer_from_pyval(np.int32(warmup),
+                                             local_devices[i])
+                    for i in range(len(local_devices))
+                ])
+            else:
+                device_inputs.append([
+                    backend.buffer_from_pyval(np.empty(shape, dtype),
+                                              local_devices[i])
+                    for i in range(len(local_devices))
+                ])
+        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+        # Run profiling
+        device_inputs[0] = \
+            [backend.buffer_from_pyval(np.int32(number), local_devices[i])
+                for i in range(len(local_devices))]
+
+        [d.synchronize_all_activity() for d in local_devices]
+        tic = time.time()
+        compiled.execute_sharded_on_local_devices(device_inputs)
+        [d.synchronize_all_activity() for d in local_devices]
+        toc = time.time()
+
+        results.append((toc - tic) / number)
+
+    return np.array(results)
+
+
+def profile_all(device_cluster):
+    ##### Profile compute cost
+    physical_mesh = device_cluster.get_physical_mesh(host_ids=[0], num_devices_per_host=1)
+
+    # Profile matmul
+    op_infos = []
+    for dtype in [np.float16, np.float32]:
+        for i in range(1, 48):
+            n = 128 * i
+            op_infos.append(("matmul", (n, n, n, dtype)))
+    results = physical_mesh.profile_hlo_ops(op_infos)
+
+    matmul_cost_dict = {}
+    matmul_cost_dict[np.float16] = []
+    matmul_cost_dict[np.float32] = []
+    for i in range(len(op_infos)):
+        _, (n, m, k, dtype) = op_infos[i]
+        flop_count = 2 * n * m * k
+        matmul_cost_dict[dtype].append((flop_count, flop_count / results[i]))
+        print(f"Matmul: {(n, m, k, np.dtype(dtype))}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}")
+
+    ##### Profile communication cost
+

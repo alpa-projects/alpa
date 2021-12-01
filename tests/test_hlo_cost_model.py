@@ -78,6 +78,7 @@ class HloCostModelTest(unittest.TestCase):
 
     def test_cluster_profling(self):
         cluster = DeviceCluster()
+        cluster.profile_all()
 
     def test_n_layer_mlp(self):
         num_layers = 4

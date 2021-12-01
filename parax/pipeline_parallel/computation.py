@@ -571,6 +571,88 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
     return new_computations
 
 
+def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation]):
+
+    # TODO(yonghao): pure function
+    def task_offloader(forward_stage: JaxPipelineComputation,
+                       backward_stage: JaxPipelineComputation):
+        from jax.interpreters.partial_eval import remat_call_p
+
+        def get_size(var):
+            if not isinstance(var, Var):
+                return 0
+            if isinstance(var, DropVar):
+                return 0
+            return np.prod(var.aval.shape) * np.dtype(var.aval.dtype).itemsize
+
+        used = set()
+        offloaded_eqns = list()
+        mapping = dict()
+        for eqn in reversed(forward_stage.eqns):
+            if eqn.primitive == pipeline_p:
+                continue
+            if (eqn.primitive == remat_call_p and
+                    len(used.intersection(eqn.outvars)) == 0):
+                invar_shapes = sum([get_size(var) for var in eqn.invars])
+                if invar_shapes == 0:
+                    offloaded_eqns.append(eqn)
+            used.update([
+                var for var in eqn.invars
+                if isinstance(var, Var) and not isinstance(var, DropVar)
+            ])
+        # remove outvars from forward stage
+        assert len(offloaded_eqns)
+        removed_outvars = set()
+        for eqn in offloaded_eqns:
+            not_dropped = [var for var in eqn.outvars if not isinstance(var, DropVar)]
+            removed_outvars.update(not_dropped)
+        previous_end = forward_stage.eqns[-1]
+        new_invars = []
+        new_outvars = []
+        removed_after_end_marker = set()
+        for i, o in zip(previous_end.invars, previous_end.outvars):
+            if i in removed_outvars:
+                removed_after_end_marker.add(o)
+                mapping[i] = o
+                continue
+            new_invars.append(i)
+            new_outvars.append(o)
+            forward_stage.outvars.append(o)
+        forward_stage.eqns[-1] = mark_pipeline_jaxpreqn(
+            new_invars, new_outvars, previous_end.params["name"], "end")
+        forward_stage.outvars.clear()
+        forward_stage.outvars.extend(new_outvars)
+        # add invars and eqn into backward stage
+        previous_start = backward_stage.eqns[0]
+        new_invars = []
+        new_outvars = []
+        for i, o in zip(previous_start.invars, previous_start.outvars):
+            if i in removed_after_end_marker:
+                mapping[i] = o
+                continue
+            new_invars.append(i)
+            new_outvars.append(o)
+            backward_stage.invars.append(i)
+        backward_stage.eqns[0] = mark_pipeline_jaxpreqn(
+            new_invars, new_outvars, previous_start.params["name"], "start")
+        backward_stage.invars.clear()
+        backward_stage.invars.extend(new_invars)
+        for eqn in offloaded_eqns:
+            mapped_outvars = [
+                mapping[mapping[var]] if var in mapping else var
+                for var in eqn.outvars
+            ]
+            mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars,
+                                       eqn.primitive, eqn.params,
+                                       eqn.source_info)
+            backward_stage.eqns.insert(1, mapped_eqn)
+
+    num_layers = len(jax_pipeline_computations) // 2
+    for i in range(num_layers):
+        task_offloader(jax_pipeline_computations[i],
+                       jax_pipeline_computations[-i - 1])
+
+
 def rearrange_vars(vars,
                    selected: Sequence[Var],
                    pipe_marker=None,

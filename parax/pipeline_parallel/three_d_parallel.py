@@ -17,7 +17,8 @@ from parax.pipeline_parallel.computation import (
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_compile_config,
     get_donatable_intermediate,
-    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    mark_missing_vars_in_backward_computation_pipeline_marks, 
+    offload_remat, pipeline_dce,
     slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars)
 from parax.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
@@ -72,6 +73,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_layers, acc_grad_invars, acc_grad_outvars)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
+    offload_remat(jax_pipeline_layers)
 
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars

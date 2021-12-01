@@ -439,7 +439,7 @@ def profile_all(device_cluster):
     from parax.pipeline_parallel.stage_construction import get_submesh_choices
 
     ##### Profile compute cost
-    #profile_matmul()
+    matmul_cost_dict = profile_matmul(device_cluster)
 
     ##### Profile communication cost
 
@@ -467,8 +467,7 @@ def profile_all(device_cluster):
                                                   size_configs)
 
         op_infos = []
-        #for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
-        for op_type in ["reduce-scatter"]:
+        for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
             for spec in all_specs:
                 op_infos.append((op_type, spec))
 

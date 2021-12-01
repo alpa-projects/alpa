@@ -740,7 +740,7 @@ class PhysicalDeviceMesh:
                 ray.get([w.get_available_memory.remote() for w in self.workers
                         ]))
         else:
-            return min([device.available_memory for device in self.devices])
+            return min([device.available_memory() for device in self.devices])
 
     def reset_remote_memory_stats(self):
         if self.is_distributed:

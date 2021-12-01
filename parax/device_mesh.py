@@ -734,7 +734,7 @@ class PhysicalDeviceMesh:
         else:
             return max([d.max_memory_allocated() for d in self.local_devices])
 
-    def get_memory_available(self):
+    def get_available_memory(self):
         if self.is_distributed:
             return min(
                 ray.get([w.get_available_memory.remote() for w in self.workers

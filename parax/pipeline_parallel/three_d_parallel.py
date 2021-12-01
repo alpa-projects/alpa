@@ -137,7 +137,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if logger.level == logging.DEBUG:
         logger.debug(schedule.pprint_schedule(print=False))
 
-
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(jax_all_stages, sliced_meshes,
                                                schedule, n_stages, num_meshes,

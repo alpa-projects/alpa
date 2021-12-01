@@ -337,7 +337,8 @@ def generate_stage_info(all_layers,
     return (proto, avals, out_avals, tot_donation), hook
 
 
-def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus, num_gpus):
+def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
+                num_gpus):
     """
     Args:
         stage_info_list: List of info for compilation. Each info is a tuple with:

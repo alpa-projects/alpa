@@ -1136,6 +1136,7 @@ core.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
 xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
 xla.canonicalize_dtype_handlers[ReplicatedDistributedArray] = lambda x: x
 
+
 class VirtualPhysicalMesh:
     """
     A virtual physical mesh used for pipeline parallel compilation.
@@ -1195,10 +1196,11 @@ class VirtualPhysicalMesh:
             # slicing along the host dimension
             host_ids = [self.host_ids[x] for x in indices]
             host_info = [self.host_info[x] for x in host_ids]
-            return VirtualPhysicalMesh(host_ids=host_ids,
-                                       host_info=host_info,
-                                       head_ip=self.head_ip,
-                                       num_devices_per_host=self.num_devices_per_host)
+            return VirtualPhysicalMesh(
+                host_ids=host_ids,
+                host_info=host_info,
+                head_ip=self.head_ip,
+                num_devices_per_host=self.num_devices_per_host)
         else:
             # slicing along the device dimension
             return VirtualPhysicalMesh(host_ids=self.host_ids,
@@ -1348,7 +1350,9 @@ class DeviceCluster:
                                   head_ip=self.head_ip,
                                   use_ray=True)
 
-    def get_virtual_physical_mesh(self, host_ids=None, num_devices_per_host=None):
+    def get_virtual_physical_mesh(self,
+                                  host_ids=None,
+                                  num_devices_per_host=None):
         """
         Slice a subset of hosts and devices to form a virtual physical mesh.
 

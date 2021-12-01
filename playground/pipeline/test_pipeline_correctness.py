@@ -93,7 +93,7 @@ class PipelineCorrectnessTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         ray.init(address='auto')
         device_cluster = DeviceCluster()
-        mesh = device_cluster.get_virtual_mesh()
+        mesh = device_cluster.get_virtual_physical_mesh()
         self.devices = mesh
 
     def tearDown(self):

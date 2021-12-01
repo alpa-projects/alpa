@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import ray
 
 from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
-from parax.device_mesh import VirtualMesh
+from parax.device_mesh import VirtualPhysicalMesh
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
@@ -16,7 +16,7 @@ from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, 
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
-virtual_mesh = DeviceCluster().get_virtual_mesh()
+virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
 
 
 N = 10
@@ -85,7 +85,7 @@ all_invars = [set(stage.invars) for stage in stages]
 print(compute_jaxpr)
 print(all_invars)
 
-virtual_mesh = DeviceCluster().get_virtual_mesh()
+virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
 
 submesh_choices = get_submesh_choices(virtual_mesh)
 

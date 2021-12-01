@@ -21,7 +21,7 @@ class PipelineBERTTest(unittest.TestCase):
 
         ray.init(address='auto')
         device_cluster = DeviceCluster()
-        mesh = device_cluster.get_virtual_mesh()
+        mesh = device_cluster.get_virtual_physical_mesh()
         self.devices = mesh
 
     def tearDown(self):

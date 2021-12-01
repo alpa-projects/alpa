@@ -6,7 +6,7 @@ from jax import linear_util as lu
 from jax.core import ClosedJaxpr, gensym
 import numpy as np
 
-from parax.device_mesh import VirtualMesh
+from parax.device_mesh import VirtualPhysicalMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
@@ -36,10 +36,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
 
-    if not isinstance(devices, VirtualMesh):
+    if not isinstance(devices, VirtualPhysicalMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
                            "expected type: {}.".format(type(devices),
-                                                       "VirtualMesh"))
+                                                       "VirtualPhysicalMesh"))
 
     # Trace the function to get the jaxpr
     num_micro_batches = global_config.num_micro_batches
@@ -113,10 +113,6 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                                global_invars, global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
         donation_mapping, jax_all_stages)
-    # Print jaxpr for debugging
-    #for i in range(len(jax_all_stages)):
-    #    with open(f"tmp/stage_{i}.jaxpr", "w") as fout:
-    #        fout.write(str(jax_all_stages[i].closed_jaxpr()))
 
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":
@@ -137,12 +133,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if logger.level == logging.DEBUG:
         logger.debug(schedule.pprint_schedule(print=False))
 
-    physical_meshes = []
-    for i, mesh in enumerate(schedule.meshes):
-        physical_meshes.append(mesh.get_physical_mesh(skip_launch=True))
-
     # Call auto-sharding pass to shard each stage
-    xla_stages, total_flops = shard_each_stage(jax_all_stages, physical_meshes,
+    xla_stages, total_flops = shard_each_stage(jax_all_stages, sliced_meshes,
                                                schedule, n_stages, num_meshes,
                                                grad_in_to_out, global_invars,
                                                acc_grad_outvars,
@@ -151,10 +143,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     total_flops *= num_micro_batches
 
     # Wrap all things into a distributed runtime
-    for i, physical_mesh in enumerate(physical_meshes):
-        physical_mesh.launch_xla_servers()
+    physical_meshes = [mesh.get_physical_mesh() for mesh in sliced_meshes]
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-
     jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
                                          global_invars=global_invars,
                                          grad_dummy_invars=grad_in_to_out,
@@ -173,7 +163,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     return ret_func  # pylint: disable=unnecessary-lambda
 
 
-def shard_each_stage(jax_all_stages, physical_meshes, schedule, n_stages,
+def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict,
                      memory_budget_per_device):
@@ -212,16 +202,16 @@ def shard_each_stage(jax_all_stages, physical_meshes, schedule, n_stages,
     compile_intermediate = [None] * num_meshes
     total_flops = 0
     for mesh_idx in range(num_meshes):
-        physical_mesh = physical_meshes[mesh_idx]
+        virtual_mesh = virtual_meshes[mesh_idx]
         if slms[mesh_idx]:
             # set to a user-required logical mesh shape
             # e.g. [1, 4] physical mesh could produce a [2, 2] logical mesh
             logical_mesh_choices = [
-                physical_mesh.get_logical_mesh(slms[mesh_idx])
+                virtual_mesh.get_logical_mesh(slms[mesh_idx])
             ]
         else:
             # logical mesh shape == physical mesh shape
-            logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+            logical_mesh_choices = [virtual_mesh.get_default_logical_mesh()]
         logical_mesh_search_mode = "cost_model"
         stage_donate_invars = [
             donate_invars_dict[stage_idx]
@@ -249,7 +239,7 @@ def shard_each_stage(jax_all_stages, physical_meshes, schedule, n_stages,
         else:
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
-                physical_mesh, logical_mesh_choices, logical_mesh_search_mode,
+                virtual_mesh, logical_mesh_choices, logical_mesh_search_mode,
                 memory_budget_per_device, acc_grad_outvars,
                 donatable_dict[mesh_idx], search_task, record_file)
             total_flops += flops

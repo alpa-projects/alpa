@@ -101,7 +101,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     global_config.reduce_scatter_grad_acc_friendly = False
 
     device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_mesh()
+    virtual_mesh = device_cluster.get_virtual_physical_mesh()
     if not auto_stage:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",

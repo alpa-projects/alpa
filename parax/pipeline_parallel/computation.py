@@ -684,7 +684,7 @@ def generate_computations_from_protos(jax_computations, acc_grad_outvars,
 
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars, physical_mesh, logical_mesh_choices,
+        computation_donate_invars, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
         donatable_lists, search_task, record_file):
     proto, jaxpr_config, flops = generate_sharded_xla_computations_compile_config(
@@ -700,7 +700,7 @@ def generate_sharded_xla_computations(
         in_avals,
         out_avals,
         donated_invars,
-        physical_mesh,
+        None,
         logical_mesh_choices,
         logical_mesh_search_mode,
         memory_budget_per_device,
@@ -708,7 +708,7 @@ def generate_sharded_xla_computations(
         record_file,
         multiple_stages=True,
         grad_acc_num_micro_batches=None,
-        bypass_device_assignment_check=physical_mesh.is_distributed)
+        bypass_device_assignment_check=True)
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,

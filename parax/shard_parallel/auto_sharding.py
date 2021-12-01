@@ -20,6 +20,8 @@ from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tu
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+INFINITY_COST = 1e15
+
 
 class HloProtoStatus(enum.IntEnum):
     """The status of a HLO protobuf."""
@@ -100,7 +102,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             prefer_reduce_scatter = global_config.prefer_reduce_scatter
             reduce_scatter_aggresive_partition = False
             all_gather_threshold = 1 << 60
-        reduce_scatter_grad_acc_friendly = global_config.reduce_scatter_grad_acc_friendly
 
         # Set configs for force_data_parallel
         if force_data_parallel:
@@ -127,6 +128,12 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             else:
                 force_batch_dim_to_mesh_dim = -1
 
+        # Set configs for reduce-scatter
+        if global_config.num_micro_batches is not None and global_config.num_micro_batches > 1:
+            reduce_scatter_grad_acc_friendly = True
+        else:
+            reduce_scatter_grad_acc_friendly = False
+
         grad_acc_num_micro_batches = None
 
         with XlaPassContext({
@@ -139,9 +146,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::enable": True,
                 "auto_sharding::memory_budget_per_device": memory_budget_per_device,
                 "auto_sharding::force_all_gather_cost": not allow_all_gather,
-                "auto_sharding::all_gather_cost": 1e10,
+                "auto_sharding::all_gather_cost": INFINITY_COST,
                 "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
-                "auto_sharding::all_to_all_cost": 1e10,
+                "auto_sharding::all_to_all_cost": INFINITY_COST,
                 "auto_sharding::allow_replicated_parameters":
                     global_config.allow_replicated_parameters,
                 "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
@@ -754,7 +761,7 @@ def _call_solver_serialized_args(
     last_objective = objective
     last_s_val = s_val
 
-    if objective > 1e10:
+    if objective > INFINITY_COST:
         warn("Detect unexpected behaviors in the auto-sharding pass.")
 
     return s_val, e_val, objective, status

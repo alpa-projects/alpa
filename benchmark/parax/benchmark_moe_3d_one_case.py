@@ -72,7 +72,7 @@ def benchmark_moe_internal(benchmark_case, niter):
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_mesh()
+    virtual_mesh = device_cluster.get_virtual_physical_mesh()
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches,

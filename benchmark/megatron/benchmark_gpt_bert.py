@@ -3,7 +3,9 @@ from datetime import datetime
 
 from util import run_cmd
 
-from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
+from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite, gpt_specs
+
+_ = None
 
 # B = global_batch_size, S = seq_len,
 # H = hidden_size, L = num_layers, V = vocab_size, #head = num_heads,
@@ -12,75 +14,118 @@ from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_sui
 # DI = ddp_implementation, CK = checkpoint_activations
 
 default_benchmark_suite = {
+1 : [
+    # B,       model,         LD0, LD1, PD0, PD1, PP, NB, FD,  Remat, Auto-layer, Auto-stage
+    (32,  *gpt_specs["125M"], 1,   1,   _,   _,   1,  1,  _,   True,  _, _),
+    (40,  *gpt_specs["125M"], 1,   1,   _,   _,   1,  1,  _,   True,  _, _),
 
-1: [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
-    (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  1,  1,  1,  0),
-    (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  1,  1,  1,  0),
+    (24,  *gpt_specs["350M"], 1,   1,   _,   _,   1,  1,  _,   True,  _, _),
+    (32,  *gpt_specs["350M"], 1,   1,   _,   _,   1,  1,  _,   True,  _, _),
+
+    # with acc
+    (512, *gpt_specs["125M"], 1,   1,   _,   _,   1,  16, _,   True,  _, _),
+    (504, *gpt_specs["350M"], 1,   1,   _,   _,   1,  21, _,   True,  _, _),
+],
+
+2 : [
+    # B,       model,         LD0, LD1, PD0, PD1, PP, NB, FD,  Remat, Auto-layer, Auto-stage
+    (32,  *gpt_specs["350M"], 2,   1,   _,   _,   1,  1,  _,   True, _, _),
+    (40,  *gpt_specs["350M"], 2,   1,   _,   _,   1,  1,  _,   True, _, _),
+
+    (24,  *gpt_specs["350M"], 1,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (32,  *gpt_specs["350M"], 1,   2,   _,   _,   1,  1,  _,   True, _, _),
+
+    (2,   *gpt_specs["760M"], 2,   1,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["760M"], 1,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (24,  *gpt_specs["760M"], 1,   2,   _,   _,   1,  1,  _,   True, _, _),
+
+    # with acc
+    (512, *gpt_specs["350M"], 2,   1,   _,   _,   1,  16, _,   True, _, _),
+    (504, *gpt_specs["350M"], 1,   2,   _,   _,   1,  21, _,   True, _, _),
+    (512, *gpt_specs["350M"], 1,   1,   _,   _,   2,  32, _,   True, _, _),
+
+    (512, *gpt_specs["760M"], 1,   2,   _,   _,   1,  32, _,   True, _, _),
+    (512, *gpt_specs["760M"], 1,   1,   _,   _,   2,  32, _,   True, _, _),
 ],
 
 4: [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
-    # (8,   1024, 1536, 16, 1536//96,  32000, 1,  1,  1,  1,  1,  0),
-    # (16,  512,  1024, 24, 1024//64,  32000, 1,  1,  1,  1,  1,  0),
-    # (32,  512,  1024, 24, 1024//64,  32000, 4,  1,  1,  1,  1,  0),
-    # (32,  512,  1024, 24, 1024//64,  32000, 1,  4,  1,  1,  1,  0),
-    (8,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  1,  True, False),
-    # # smaller
-    # (32,  512,  1024, 24, 1024//64,  32000, 2,  2,  1,  1,  1,  0),
-    # (32,  512,  1024, 24, 1024//64,  32000, 2,  1,  2,  1,  1,  0),
-    # (32,  512,  1024, 24, 1024//64,  32000, 1,  2,  2,  1,  1,  0),
-    #
-    # # V=32000, others are GPT-2
-    # (32,  1024,  1024, 24, 1024//64,  32000, 1,  1,  4,  1,  1,  0),
-    #
-    # (32,  1024,  1024, 24, 1024//64,  32000, 1,  1,  4,  1,  1,  0),
-    #
-    # # (32,   1024, 1536, 16, 1536//96,  32000, 1,  1,  1,  1,  1,  0),
-    #
-    # (32,  1024,  1024, 24, 1024//64,  51200, 1,  1,  4,  1,  1,  0),
+    # B,       model,         LD0, LD1, PD0, PD1, PP, NB, FD,  Remat, Auto-layer, Auto-stage
+    (40,  *gpt_specs["760M"], 2,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (48,  *gpt_specs["760M"], 2,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (32,  *gpt_specs["760M"], 1,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (40,  *gpt_specs["760M"], 1,   4,   _,   _,   1,  1,  _,   True, _, _),
 
+    (8,   *gpt_specs["1.3B"], 2,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["1.3B"], 2,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["1.3B"], 1,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (32,  *gpt_specs["1.3B"], 1,   4,   _,   _,   1,  1,  _,   True, _, _),
+
+    # with acc
+    (520, *gpt_specs["760M"], 2,   2,   _,   _,   1,  13, _,   True, _, _),
+    (512, *gpt_specs["760M"], 1,   4,   _,   _,   1,  16, _,   True, _, _),
+    (504, *gpt_specs["760M"], 1,   1,   _,   _,   4,  21, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 2,   2,   _,   _,   1,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   4,   _,   _,   1,  32, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   1,   _,   _,   4,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 2,   1,   _,   _,   2,  64, _,   True, _, _),
 ],
 
 8: [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
-    # (128, 512,  1024, 24, 1024//64,  32000, 8,  1,  1,  1,  1,  0),
-    # (256, 512,  1024, 24, 1024//64,  32000, 8,  1,  1,  2,  1,  0),
-    # (8,   1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  1,  1,  0),
-    # (16,  1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  2,  1,  0),
-    # (256, 1024, 4096, 20, 4096//128, 32000, 1,  8,  1,  32, 1,  0),
-    # (8,  1024,  1024, 24, 1024//64,  51200, 1,  1,  8,  1,  True, False),
-    # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   2,   8,  True, True),
-    # (2048,  1024,  1024, 24, 1024//64, 51200, 4,   1,   2,   128,  True, True), # 30 TFLOPs
-    # (2048,  1024,  1024, 24, 1024//64, 51200, 1,   4,   2,   128,  True, True), # 21 TFLOPs
-    # 0.587
-    # (32,  1024,  1024, 24, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, True, False),
-    # 0.666
-    # (32,  1024,  1024, 24, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   True, True, False, False),
-    # (32,  1024,  1024, 6, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False), # 0.198
-    # (32,  1024,  1024, 6, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   True, True, False, False), # 0.221
-    # (32,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  8,   True, True, False, False), # 0.323
-    # (32,  1024,  1024, 12, 1024//64, 51200, 1,   4,   1,   4,   2,  8,   True, True, False, False), # 0.380
-    (64,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,   True, True, False, False), # 0.323
-    (64,  1024,  1024, 12, 1024//64, 51200, 1,   4,   1,   4,   2,  16,   True, True, False, False), # 0.380
-],
+    # B,       model,         LD0, LD1, PD0, PD1, PP, NB, FD,  Remat, Auto-layer, Auto-stage
+    (24,  *gpt_specs["1.3B"], 4,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (32,  *gpt_specs["1.3B"], 4,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (40,  *gpt_specs["1.3B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (48,  *gpt_specs["1.3B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (32,  *gpt_specs["1.3B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
+    (40,  *gpt_specs["1.3B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
 
-16: [
-    # B,  S,    H,    L,  #head,     V,     DP, TP, PP, NB, DI, CK
-    (256, 512,  1024, 24, 1024//64,  32000, 16, 1,  1,  1,  1,  0),
-    (512, 512,  1024, 24, 1024//64,  32000, 16, 1,  1,  2,  1,  0),
-    (16,  1024, 4096, 20, 4096//128, 32000, 2,  8,  1,  1,  1,  0),
-    (256, 1024, 4096, 20, 4096//128, 32000, 2,  8,  1,  16, 1,  0),
+    (4,   *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (8,   *gpt_specs["2.7B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["2.7B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
+    (24,  *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
+
+    # with acc
+    (504, *gpt_specs["1.3B"], 4,   2,   _,   _,   1,  21, _,   True, _, _),
+    (520, *gpt_specs["1.3B"], 2,   4,   _,   _,   1,  13, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   8,   _,   _,   1,  16, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 1,   1,   _,   _,   8,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   1,   _,   _,   8,  32, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 2,   1,   _,   _,   4,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 2,   1,   _,   _,   4,  32, _,   True, _, _),
+    (504, *gpt_specs["1.3B"], 2,   1,   _,   _,   4,  21, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 2,   1,   _,   _,   4,  16, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 1,   2,   _,   _,   4,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   2,   _,   _,   4,  32, _,   True, _, _),
+    (504, *gpt_specs["1.3B"], 1,   2,   _,   _,   4,  21, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   2,   _,   _,   4,  16, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 4,   1,   _,   _,   2,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 4,   1,   _,   _,   2,  32, _,   True, _, _),
+    (504, *gpt_specs["1.3B"], 4,   1,   _,   _,   2,  21, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 4,   1,   _,   _,   2,  16, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 1,   4,   _,   _,   2,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   4,   _,   _,   2,  32, _,   True, _, _),
+    (504, *gpt_specs["1.3B"], 1,   4,   _,   _,   2,  21, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 1,   4,   _,   _,   2,  16, _,   True, _, _),
+
+    (512, *gpt_specs["1.3B"], 2,   2,   _,   _,   2,  64, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 2,   2,   _,   _,   2,  32, _,   True, _, _),
+    (504, *gpt_specs["1.3B"], 2,   2,   _,   _,   2,  21, _,   True, _, _),
+    (512, *gpt_specs["1.3B"], 2,   2,   _,   _,   2,  16, _,   True, _, _),
 ]
-
 }
 
 benchmark_suites = {
-"default": default_benchmark_suite,
-"paper_gpt": paper_gpt_suite,
-"test_gpt": test_gpt_suite,
+    "default": default_benchmark_suite,
+    "paper_gpt": paper_gpt_suite,
+    "test_gpt": test_gpt_suite,
 }
-
 
 def benchmark_all(args):
     num_gpus = args.nproc_per_node * args.nnodes

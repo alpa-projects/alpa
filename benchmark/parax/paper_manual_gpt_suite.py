@@ -19,62 +19,16 @@ fixed_params = (True, False, False)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
-    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie, Auto-layer-slicing
-
-
+    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Auto-layer, Auto-stage
 1: [
-    (8,  1024,  1024,  4,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
-    (8,  1024,  1024,  8,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
-    (8,  1024,  1024,  16,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
-    (8,  1024,  1024,  24,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
-    (8,  1024,  1024,  32,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
-    (8,  1024,  1024,  48,    32,   51200,  1,   1,   1,   1,   1,  1,    True,  *fixed_params),
 ],
 
 4: [
-    # Increase hidden size.
-    (32,  1024,  1024,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  2048,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  3072,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  4096,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  4608,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-
-    # Increase #layers
-    (32,  1024,  1024,  2,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  4,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  8,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  16,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  24,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  32,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  48,    32,   51200,  2,   1,   1,   2,   2,  4,    True,  *fixed_params),
-
-    # Increase #layers
-    (32,  1024,  1024,  2,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  4,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  8,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  16,    32,   51200,  4,   1,   1,   4,  1,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  24,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  32,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  48,    32,   51200,  4,   1,   1,   4,   1,  4,    True,  *fixed_params),
-
-    (32,  1024,  1024,  2,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  4,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  8,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  16,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  24,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  32,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
-    (32,  1024,  1024,  48,    32,   51200,  1,   1,   1,   1,   4,  4,    True,  *fixed_params),
 ],
 
 8: [
-    # 3D performance case: we lose 1 tflops.
+    # 3D performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
     (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
-
-    # memory case. the case below should use peak memory 9.4Gb in Megatron.
-    (16,  1024,  1536 * 2,  6,    32,   51200,  4,   1,   1,   4,   2,  1,    True,  *fixed_params),
-
-    # pure pipeline case, we lose 2 GB memory
-    (8,   *gpt_specs["2.7B"],  1,   1,   1,   1,   8,  1,    False,  *fixed_params),
 ],
 
 16: [
@@ -87,7 +41,7 @@ test_gpt_suite = {
 
 
 paper_gpt_suite = {
-    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Tie, Auto-layer-slicing
+    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Auto-layer, Auto-stage
 1: [
     # 125M
     (2,   *gpt_specs["125M"],  1,   1,   1,   1,   1,  1,    1,  *fixed_params),

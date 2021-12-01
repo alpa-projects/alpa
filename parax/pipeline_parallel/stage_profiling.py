@@ -13,7 +13,7 @@ from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, jaxpr_as_fun,
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
-from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualMesh, _shard_device_array
+from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
@@ -159,7 +159,7 @@ class CompileWorkerPool:
 
 class ProfileWorker:
 
-    def __init__(self, virtual_mesh: VirtualMesh):
+    def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
     def profile(self, compiled_output, stage_info, intermediate_size,
@@ -432,7 +432,8 @@ def generate_stage_info(all_layers,
     return compile_info, intermediate_vars, profile_info, apply_info
 
 
-def compile_all(stage_info_list, logical_mesh: VirtualMesh, num_cpus, num_gpus):
+def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
+                num_gpus):
     """
     Args:
         stage_info_list: List of info for compilation. Each info is a tuple with:
@@ -498,7 +499,7 @@ def dummy_resharding_strategy(spec: ReshardingTaskSpec):
 def profile_layer_communication_cost(
         src: JaxPipelineComputation, dst: JaxPipelineComputation,
         src_outvar_sharding_spec, dst_invar_sharding_spec,
-        src_mesh: VirtualMesh, dst_mesh: VirtualMesh,
+        src_mesh: VirtualPhysicalMesh, dst_mesh: VirtualPhysicalMesh,
         collective_group: CollectiveGroup):
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
     tot_cost = 0

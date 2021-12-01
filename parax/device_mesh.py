@@ -381,7 +381,7 @@ class PhysicalDeviceMesh:
 
         if use_ray:
             self.device_strs = []
-            if devices:
+            if devices is not None:
                 if len(devices) != len(host_ids):
                     raise RuntimeError(
                         "Please specify the gpu IDs used on each host.")
@@ -1031,7 +1031,7 @@ class VirtualPhysicalMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
 
-        if devices:
+        if devices is not None:
             if len(devices) != len(host_ids):
                 raise RuntimeError(
                     "Please specify the gpu IDs used on each host.")

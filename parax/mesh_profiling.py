@@ -142,7 +142,7 @@ def _op_parameter(builder, num, shape, dtype):
                          replicated)
 
 
-def _op_all_reduce(builder, operand, dtype, reduce_op, replica_groups,
+def _op_all_reduce(operand, dtype, reduce_op, replica_groups,
                    channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     if reduce_op == 'add':
@@ -159,157 +159,43 @@ def _op_all_reduce(builder, operand, dtype, reduce_op, replica_groups,
     return ret
 
 
-def _op_all_gather(builder, operand, replica_groups, channel_id):
+def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups,
+                       channel_id):
+    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    if reduce_op == 'add':
+        rc = xla_client.XlaBuilder("reduce_" + reduce_op)
+        x = _op_parameter(rc, 0, (), dtype)
+        y = _op_parameter(rc, 1, (), dtype)
+        z = ops.Add(x, y)
+        rc = rc.build(z)
+    else:
+        raise NotImplementedError
+
+    ret = ops.ReduceScatter(operand, rc, 0, len(replica_groups[0]),
+                            replica_groups_protos, channel_id, None, True)
+    return ret
+
+
+def _op_all_gather(operand, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     ret = ops.AllGather(operand, 0, len(replica_groups[0]),
                         replica_groups_protos, channel_id, None, True)
     return ret
 
 
-def _op_all_to_all(builder, operand, replica_groups, channel_id):
+def _op_all_to_all(operand, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     ret = ops.AllToAll(operand, 0, 0, len(replica_groups[0]),
                        replica_groups_protos, channel_id, None, True)
     return ret
 
 
-def compile_collective_hlo(backend, num_devices, replica_groups, shape, dtype,
-                           primitive_name):
-    """
-    Compile a xla executable for benchmarking collective communication primitives.
-
-    It is a while loop that calls the collective primitive for multiple times.
-    """
-    if primitive_name == "all-reduce":
-        in_shape = out_shape = shape
-    elif primitive_name == "all-gather":
-        in_shape = (shape[0] // len(replica_groups[0]),)
-        out_shape = shape
-    elif primitive_name == "all-to-all":
-        in_shape = (shape[0] // len(replica_groups[0]),)
-        out_shape = in_shape
-    else:
-        raise ValueError("Invalid primitive: " + primitive_name)
-
-    in_tuple_shape = xla_client.Shape.tuple_shape([
-        xla_client.Shape.array_shape(np.dtype(dtype), in_shape),
-        xla_client.Shape.array_shape(np.dtype(dtype), out_shape),
-        xla_client.Shape.array_shape(np.dtype(np.int32), ()),
-    ])
-
-    sharding = xla_client.OpSharding()
-    sharding.type = sharding.type.REPLICATED
-    sharding.tile_assignment_dimensions.extend([1])
-    sharding.tile_assignment_devices.extend([0])
-
-    # body
-    body = xla_client.XlaBuilder("body")
-    in_tuple = ops.Parameter(body, 0, in_tuple_shape)
-    in_buf = ops.GetTupleElement(in_tuple, 0)
-    out_buf = ops.GetTupleElement(in_tuple, 1)
-    counter = ops.GetTupleElement(in_tuple, 2)
-    channel_id = backend.create_channel_handle()
-    body.set_sharding(sharding)
-    if primitive_name == "all-reduce":
-        out_buf = _op_all_reduce(body, in_buf, dtype, "add", replica_groups,
-                                 channel_id)
-    elif primitive_name == "all-gather":
-        if in_shape[0] == 0 or out_shape[0] == 0:
-            pass
-        else:
-            out_buf = _op_all_gather(body, in_buf, replica_groups, channel_id)
-    elif primitive_name == "all-to-all":
-        if in_shape[0] == 0 or out_shape[0] == 0:
-            pass
-        else:
-            out_buf = _op_all_to_all(body, in_buf, replica_groups, channel_id)
-    else:
-        raise ValueError("Invalid primitive: " + primitive_name)
-    counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
-    body.clear_sharding()
-    ops.Tuple(body, [in_buf, out_buf, counter])
-    body_computation = body.build()
-
-    # condition
-    cond = xla_client.XlaBuilder("condition")
-    in_tuple = ops.Parameter(cond, 0, in_tuple_shape)
-    counter = ops.GetTupleElement(in_tuple, 2)
-    ops.Gt(counter, ops.Constant(cond, np.int32(0)))
-    cond_computation = cond.Build()
-
-    # while loop
-    loop = xla_client.XlaBuilder("loop")
-    in_buf = _op_parameter(loop, 0, in_shape, dtype)
-    out_buf = _op_parameter(loop, 1, out_shape, dtype)
-    counter = _op_parameter(loop, 2, (), np.int32)
-    while_init = ops.Tuple(loop, [in_buf, out_buf, counter])
-    ops.While(cond_computation, body_computation, while_init)
-    loop.setup_alias((0,), 0, ())
-    loop.setup_alias((1,), 1, ())
-    loop_computation = loop.Build()
-
-    compile_options = xla_bridge.get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-    )
-
-    return in_shape, out_shape, backend.compile(loop_computation,
-                                                compile_options)
-
-def profile_collective_one_config(shape,
-                                  dtype,
-                                  replica_groups,
-                                  primitive_name,
-                                  backend,
-                                  num_devices,
-                                  local_devices,
-                                  distributed_client,
-                                  host_id,
-                                  sync_func,
-                                  number=10,
-                                  warmup=2):
-    """Profile the time cost of a collective communication primitive."""
-    in_shape, out_shape, compiled = compile_collective_hlo(
-        backend, num_devices, replica_groups, shape, dtype, primitive_name)
-
-    #real_mem = compiled.total_allocation_size()
-    #print(compiled.hlo_modules()[0].to_string())
-    #print(f"{real_mem / GB:.3f} GB")
-
-    # Warm up
-    device_inputs = [[
-        backend.buffer_from_pyval(np.empty(in_shape, dtype), local_devices[i])
-        for i in range(len(local_devices))
-    ],
-                     [
-                         backend.buffer_from_pyval(np.empty(out_shape, dtype),
-                                                   local_devices[i])
-                         for i in range(len(local_devices))
-                     ],
-                     [
-                         backend.buffer_from_pyval(np.int32(warmup),
-                                                   local_devices[i])
-                         for i in range(len(local_devices))
-                     ]]
-    device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
-
-    # Run profiling
-    device_inputs[2] = \
-        [backend.buffer_from_pyval(np.int32(number), local_devices[i])
-            for i in range(len(local_devices))]
-
-    sync_func()
-    tic = time.time()
-    compiled.execute_sharded_on_local_devices(device_inputs)
-    sync_func()
-    toc = time.time()
-
-    return (toc - tic) / number
-
-
 def compile_profiling_executable(backend, shapes, op_func, num_devices):
+    """
+    Compile a xla executable for benchmarking operators.
+    It is a while loop that calls the operator for multiple times.
+    """
+
     in_tuple_shape = xla_client.Shape.tuple_shape(
         [xla_client.Shape.array_shape(np.dtype(np.int32), ())] +
         [xla_client.Shape.array_shape(np.dtype(dtype), shape) for shape, dtype in shapes])
@@ -321,13 +207,13 @@ def compile_profiling_executable(backend, shapes, op_func, num_devices):
 
     # body
     body = xla_client.XlaBuilder("body")
-    body.set_sharding(sharding)
     in_tuple = ops.Parameter(body, 0, in_tuple_shape)
     counter = ops.GetTupleElement(in_tuple, 0)
     counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
 
     operands = [ops.GetTupleElement(in_tuple, i + 1) for i in range(len(shapes))]
-    operands = op_func(operands)
+    body.set_sharding(sharding)
+    op_func(operands)
     body.clear_sharding()
     ops.Tuple(body, [counter] + operands)
     body_computation = body.build()
@@ -362,23 +248,74 @@ def compile_profiling_executable(backend, shapes, op_func, num_devices):
 def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
     results = []
     for op_info in op_infos:
+        print(f"Profiling {op_info}")
+
         if op_info[0] == "matmul":
             n, m, k, dtype = op_info[1]
-
             shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
+
             def op_func(operands):
                 lhs, rhs, _ = operands
                 dim_numbers = (((1,), (0,)), ((), ()))
                 dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
                 out = ops.DotGeneral(lhs, rhs, dim_numbers)
                 operands[-1] = out
-                return operands
 
-            shapes, compiled = compile_profiling_executable(backend, shapes, op_func, num_devices)
             warmup = 2
             number = 10
+        elif op_info[0] == "all-reduce":
+            replica_groups, dtype, size = op_info[1]
+            shapes = [((size,), dtype), ((size,), dtype)]
+
+            def op_func(operands):
+                channel_id = backend.create_channel_handle()
+                out = _op_all_reduce(operands[0], dtype, "add", replica_groups, channel_id)
+                operands[-1] = out
+
+            warmup = 2
+            number = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))), 1 << 13)
+        elif op_info[0] == "reduce-scatter":
+            replica_groups, dtype, size = op_info[1]
+            shapes = [((size,), dtype), ((size // len(replica_groups[0]),), dtype)]
+
+            def op_func(operands):
+                channel_id = backend.create_channel_handle()
+                out = _op_reduce_scatter(operands[0], dtype, "add", replica_groups, channel_id)
+                operands[-1] = out
+
+            warmup = 2
+            number = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))), 1 << 13)
+        elif op_info[0] == "all-gather":
+            replica_groups, dtype, size = op_info[1]
+            shapes = [((size // len(replica_groups[0]),), dtype), ((size,), dtype)]
+
+            def op_func(operands):
+                if size == 0:
+                    return
+                channel_id = backend.create_channel_handle()
+                out = _op_all_gather(operands[0], replica_groups, channel_id)
+                operands[-1] = out
+
+            warmup = 2
+            number = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))), 1 << 13)
+        elif op_info[0] == "all-to-all":
+            replica_groups, dtype, size = op_info[1]
+            shapes = [((size // len(replica_groups[0]),), dtype), ((size // len(replica_groups[0]),), dtype)]
+
+            def op_func(operands):
+                if size == 0:
+                    return
+                channel_id = backend.create_channel_handle()
+                out = _op_all_to_all(operands[0], replica_groups, channel_id)
+                operands[-1] = out
+
+            warmup = 2
+            number = min(max(15, int((1 << 31) / (max(size, 1) * np.dtype(dtype).itemsize))), 1 << 13)
         else:
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
+
+        # Compile
+        shapes, compiled = compile_profiling_executable(backend, shapes, op_func, num_devices)
 
         # Warm up
         device_inputs = []
@@ -413,8 +350,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
     return np.array(results)
 
 
-def profile_all(device_cluster):
-    ##### Profile compute cost
+def profile_matmul(device_cluster):
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0], num_devices_per_host=1)
 
     # Profile matmul
@@ -429,10 +365,108 @@ def profile_all(device_cluster):
     matmul_cost_dict[np.float16] = []
     matmul_cost_dict[np.float32] = []
     for i in range(len(op_infos)):
-        _, (n, m, k, dtype) = op_infos[i]
+        n, m, k, dtype = op_infos[i][1]
         flop_count = 2 * n * m * k
         matmul_cost_dict[dtype].append((flop_count, flop_count / results[i]))
         print(f"Matmul: {(n, m, k, np.dtype(dtype))}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}")
 
+    return matmul_cost_dict
+
+
+def enumerate_all_collective_spec(num_hosts, num_devices_per_host, size_configs):
+    # Enumerate all possible logical meshes
+    logical_mesh_shapes = []
+    total_devices = num_hosts * num_devices_per_host
+    for i in range(1, total_devices + 1):
+        if total_devices % i == 0:
+            logical_mesh_shapes.append((total_devices // i, i))
+
+    # Enumerate all replica groups
+    all_specs = set()
+    for logical_mesh_shape in logical_mesh_shapes:
+        # dim 0
+        replica_groups = []
+        tmp_group = []
+        for i in range(logical_mesh_shape[0]):
+            tmp_group.append(
+                tuple(i * logical_mesh_shape[1] + j
+                      for j in range(logical_mesh_shape[1])))
+        replica_groups.append(tuple(tmp_group))
+
+        # dim 1
+        tmp_group = []
+        for j in range(logical_mesh_shape[1]):
+            tmp_group.append(
+                tuple(i * logical_mesh_shape[1] + j
+                      for i in range(logical_mesh_shape[0])))
+        replica_groups.append(tuple(tmp_group))
+
+        for replica_group in replica_groups:
+            for size, dtype in size_configs:
+                all_specs.add((replica_group, dtype, size))
+    all_specs = list(all_specs)
+    all_specs.sort()
+    return all_specs
+
+
+def profile_all(device_cluster):
+    from parax.pipeline_parallel.stage_construction import get_submesh_choices
+
+    ##### Profile compute cost
+    #profile_matmul()
+
     ##### Profile communication cost
 
+    # Enumerate all size configs
+    size_configs = [(1 << 28, "float32")]
+    #size_configs = [(0, "float32"), (0, "float16")]
+    #for i in range(0, 28):
+    #    size_configs.append((1 << i, "float32"))
+    #    size_configs.append((1 << i, "float16"))
+
+    virtual_mesh = device_cluster.get_virtual_physical_mesh()
+    submesh_choices = get_submesh_choices(virtual_mesh)
+
+    submesh_choices = ((1,8),)
+
+    for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
+        print(f"Mesh {(num_hosts, num_devices_per_host)}")
+
+        # Slice a mesh
+        tmp_mesh = virtual_mesh.slice_2d(list(range(num_hosts)),
+                                         np.arange(num_hosts * num_devices_per_host).\
+                                         reshape((num_hosts, num_devices_per_host)))
+        all_specs = enumerate_all_collective_spec(num_hosts, num_devices_per_host, size_configs)
+
+        op_infos = []
+        #for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
+        for op_type in ["reduce-scatter"]:
+            for spec in all_specs:
+                op_infos.append((op_type, spec))
+
+        physical_mesh = tmp_mesh.get_physical_mesh()
+        results = physical_mesh.profile_hlo_ops(op_infos)
+
+        all_reduce_cost_dict = defaultdict(list)
+        all_gather_cost_dict = defaultdict(list)
+        reduce_scatter_cost_dict = defaultdict(list)
+        all_to_all_cost_dict = defaultdict(list)
+
+        for i in range(len(op_infos)):
+            op_type, (replica_groups, dtype, size) = op_infos[i]
+            array_size = size * np.dtype(dtype).itemsize
+            num_devices = len(replica_groups[0])
+
+            if op_type == "all-reduce":
+                communication_size = 2 * array_size * (num_devices - 1) / num_devices
+            elif op_type == "all-gather" or op_type == "reduce-scatter":
+                communication_size = array_size * (num_devices - 1) / num_devices
+            elif op_type == "all-to-all":
+                communication_size = array_size * (num_devices - 1) / num_devices / num_devices
+            else:
+                raise ValueError(f"Invalid op: {op_type}")
+
+            bandwidth = communication_size / results[i]
+            print(f"Op: {op_infos[i]}, Bandwidth: {bandwidth / GB} GB/s")
+
+        physical_mesh.shutdown()

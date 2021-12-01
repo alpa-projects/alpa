@@ -2,7 +2,7 @@
 
 for i in 1 2 4 8
 do
-  echo i
+  echo "N_GPUs=${i}"
   ray stop
   ray start --head --num-gpus ${i}
   sleep 1

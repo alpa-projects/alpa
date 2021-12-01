@@ -18,124 +18,20 @@ dummy_arguments = (0, 0, 0, 0, 0) # LD0, LD1, PD0, PD1, PP, not used for auto
 fixed_params = (False, True, True, True) # FD,  Remat, RS, Auto layer & stage
 max_global_batch_size = 1024
 
+
+def get_auto_test_case(model_name, n_microbatches):
+    return [(max_global_batch_size, *gpt_specs[model_name],
+             *dummy_arguments, n_microbatch, *fixed_params)
+            for n_microbatch in n_microbatches]
+
+
 paper_auto_gpt_suite = {
-    # B,       model,         dummy,            NB(#microbatches)
-1: [
-    # 125M
-    (2,    *gpt_specs["125M"], *dummy_arguments, 1, *fixed_params),
-    (4,    *gpt_specs["125M"], *dummy_arguments, 1, *fixed_params),
-    (8,    *gpt_specs["125M"], *dummy_arguments, 1, *fixed_params),
-    (16,   *gpt_specs["125M"], *dummy_arguments, 1, *fixed_params),
-    (32,   *gpt_specs["125M"], *dummy_arguments, 1, *fixed_params),
-    (64,   *gpt_specs["125M"], *dummy_arguments, 2, *fixed_params),
-    (128,  *gpt_specs["125M"], *dummy_arguments, 4, *fixed_params),
-
-    # 350M
-    (2,    *gpt_specs["350M"], *dummy_arguments, 1, *fixed_params),
-    (4,    *gpt_specs["350M"], *dummy_arguments, 1, *fixed_params),
-    (8,    *gpt_specs["350M"], *dummy_arguments, 1, *fixed_params),
-    (16,   *gpt_specs["350M"], *dummy_arguments, 1, *fixed_params),
-    (32,   *gpt_specs["350M"], *dummy_arguments, 2, *fixed_params),
-    (64,   *gpt_specs["350M"], *dummy_arguments, 4, *fixed_params),
-    (128,  *gpt_specs["350M"], *dummy_arguments, 8, *fixed_params),
-],
-
-2: [
-    # 350M, max_bs = 8 per gpu (whole model)
-    (16,  *gpt_specs["350M"], *dummy_arguments, 1,   *fixed_params),
-    (32,  *gpt_specs["350M"], *dummy_arguments, 1,   *fixed_params),
-    (32,  *gpt_specs["350M"], *dummy_arguments, 2,   *fixed_params),
-    (64,  *gpt_specs["350M"], *dummy_arguments, 2,   *fixed_params),
-    (64,  *gpt_specs["350M"], *dummy_arguments, 4,   *fixed_params),
-    (128, *gpt_specs["350M"], *dummy_arguments, 4,   *fixed_params),
-    (128, *gpt_specs["350M"], *dummy_arguments, 8,   *fixed_params),
-    (256, *gpt_specs["350M"], *dummy_arguments, 4,   *fixed_params),
-    (256, *gpt_specs["350M"], *dummy_arguments, 8,   *fixed_params),
-    (256, *gpt_specs["350M"], *dummy_arguments, 16,  *fixed_params),
-    (256, *gpt_specs["350M"], *dummy_arguments, 32,  *fixed_params),
-    (256, *gpt_specs["350M"], *dummy_arguments, 64,  *fixed_params),
-    (256, *gpt_specs["350M"], *dummy_arguments, 128, *fixed_params),
-
-
-    # 760M, cannot train even with bs = 1 per gpu
-    (16,   *gpt_specs["760M"], *dummy_arguments, 1,   *fixed_params),
-    (32,   *gpt_specs["760M"], *dummy_arguments, 2,   *fixed_params),
-    (32,   *gpt_specs["760M"], *dummy_arguments, 4,   *fixed_params),
-    (64,   *gpt_specs["760M"], *dummy_arguments, 4,   *fixed_params),
-    (64,   *gpt_specs["760M"], *dummy_arguments, 8,   *fixed_params),
-    (128,  *gpt_specs["760M"], *dummy_arguments, 8,   *fixed_params),
-    (128,  *gpt_specs["760M"], *dummy_arguments, 16,  *fixed_params),
-    (256,  *gpt_specs["760M"], *dummy_arguments, 16,  *fixed_params),
-    (256,  *gpt_specs["760M"], *dummy_arguments, 32,  *fixed_params),
-    (512,  *gpt_specs["760M"], *dummy_arguments, 32,  *fixed_params),
-    (512,  *gpt_specs["760M"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["760M"], *dummy_arguments, 32,  *fixed_params),
-    (1024, *gpt_specs["760M"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["760M"], *dummy_arguments, 128, *fixed_params),
-],
-
-4: [
-    (32,   *gpt_specs["760M"], *dummy_arguments, 1,  *fixed_params),
-    (32,   *gpt_specs["760M"], *dummy_arguments, 2,  *fixed_params),
-    (64,   *gpt_specs["760M"], *dummy_arguments, 2,  *fixed_params),
-    (64,   *gpt_specs["760M"], *dummy_arguments, 4,  *fixed_params),
-    (128,  *gpt_specs["760M"], *dummy_arguments, 4,  *fixed_params),
-    (128,  *gpt_specs["760M"], *dummy_arguments, 8,  *fixed_params),
-    (256,  *gpt_specs["760M"], *dummy_arguments, 8,  *fixed_params),
-    (256,  *gpt_specs["760M"], *dummy_arguments, 16, *fixed_params),
-    (512,  *gpt_specs["760M"], *dummy_arguments, 16, *fixed_params),
-    (512,  *gpt_specs["760M"], *dummy_arguments, 32, *fixed_params),
-    (1024, *gpt_specs["760M"], *dummy_arguments, 16, *fixed_params),
-    (1024, *gpt_specs["760M"], *dummy_arguments, 32, *fixed_params),
-    (1024, *gpt_specs["760M"], *dummy_arguments, 64, *fixed_params),
-
-    (32,   *gpt_specs["1.3B"], *dummy_arguments, 2,   *fixed_params),
-    (32,   *gpt_specs["1.3B"], *dummy_arguments, 4,   *fixed_params),
-    (64,   *gpt_specs["1.3B"], *dummy_arguments, 4,   *fixed_params),
-    (64,   *gpt_specs["1.3B"], *dummy_arguments, 8,   *fixed_params),
-    (128,  *gpt_specs["1.3B"], *dummy_arguments, 8,   *fixed_params),
-    (128,  *gpt_specs["1.3B"], *dummy_arguments, 16,  *fixed_params),
-    (256,  *gpt_specs["1.3B"], *dummy_arguments, 16,  *fixed_params),
-    (256,  *gpt_specs["1.3B"], *dummy_arguments, 32,  *fixed_params),
-    (512,  *gpt_specs["1.3B"], *dummy_arguments, 32,  *fixed_params),
-    (512,  *gpt_specs["1.3B"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 32,  *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 128, *fixed_params),
-],
-
-8: [
-    (16,   *gpt_specs["1.3B"], *dummy_arguments, 1,   *fixed_params),
-    (32,   *gpt_specs["1.3B"], *dummy_arguments, 1,   *fixed_params),
-    (32,   *gpt_specs["1.3B"], *dummy_arguments, 2,   *fixed_params),
-    (64,   *gpt_specs["1.3B"], *dummy_arguments, 2,   *fixed_params),
-    (64,   *gpt_specs["1.3B"], *dummy_arguments, 4,   *fixed_params),
-    (128,  *gpt_specs["1.3B"], *dummy_arguments, 4,   *fixed_params),
-    (128,  *gpt_specs["1.3B"], *dummy_arguments, 8,   *fixed_params),
-    (256,  *gpt_specs["1.3B"], *dummy_arguments, 8,   *fixed_params),
-    (256,  *gpt_specs["1.3B"], *dummy_arguments, 16,  *fixed_params),
-    (512,  *gpt_specs["1.3B"], *dummy_arguments, 16,  *fixed_params),
-    (512,  *gpt_specs["1.3B"], *dummy_arguments, 32,  *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 8,   *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 32,  *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["1.3B"], *dummy_arguments, 128, *fixed_params),
-
-    (8,    *gpt_specs["2.7B"], *dummy_arguments, 1,   *fixed_params),
-    (16,   *gpt_specs["2.7B"], *dummy_arguments, 1,   *fixed_params),
-    (16,   *gpt_specs["2.7B"], *dummy_arguments, 2,   *fixed_params),
-    (32,   *gpt_specs["2.7B"], *dummy_arguments, 2,   *fixed_params),
-    (32,   *gpt_specs["2.7B"], *dummy_arguments, 4,   *fixed_params),
-    (64,   *gpt_specs["2.7B"], *dummy_arguments, 4,   *fixed_params),
-    (64,   *gpt_specs["2.7B"], *dummy_arguments, 8,   *fixed_params),
-    (128,  *gpt_specs["2.7B"], *dummy_arguments, 8,   *fixed_params),
-    (128,  *gpt_specs["2.7B"], *dummy_arguments, 16,  *fixed_params),
-    (256,  *gpt_specs["2.7B"], *dummy_arguments, 16,  *fixed_params),
-    (256,  *gpt_specs["2.7B"], *dummy_arguments, 32,  *fixed_params),
-    (512,  *gpt_specs["2.7B"], *dummy_arguments, 32,  *fixed_params),
-    (512,  *gpt_specs["2.7B"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["2.7B"], *dummy_arguments, 32,  *fixed_params),
-    (1024, *gpt_specs["2.7B"], *dummy_arguments, 64,  *fixed_params),
-    (1024, *gpt_specs["2.7B"], *dummy_arguments, 128, *fixed_params),
-],
+1: (get_auto_test_case("125M", [16, 32, 64, 128, 256]) +
+    get_auto_test_case("350M", [32, 64, 128, 256, 512])),
+2: (get_auto_test_case("350M", [16, 32, 64, 128, 256]) +
+    get_auto_test_case("760M", [32, 64, 128, 256, 512])),
+4: (get_auto_test_case("760M", [16, 32, 64, 128, 256]) +
+    get_auto_test_case("1.3B", [32, 64, 128, 256, 512])),
+8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256]) +
+    get_auto_test_case("2.7B", [32, 64, 128, 256, 512])),
 }

@@ -163,7 +163,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     print_used_time("Create train state")
 
     # compile executable
-    train_step = get_train_step(grad_func, num_layers, False, pipeline_mp_size, jnp.float16, auto_layer)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, jnp.float16, auto_layer)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

@@ -27,14 +27,8 @@ test_gpt_suite = {
 ],
 
 8: [
-    # 3D performance case: we lose 1 tflops.
+    # 3D performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
     (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
-
-    # memory case. the case below should use peak memory 9.4Gb in Megatron.
-    (16,  1024,  1536 * 2,  6,    32,   51200,  4,   1,   1,   4,   2,  1,    True,  *fixed_params),
-
-    # pure pipeline case, we lose 2 GB memory
-    (8,   *gpt_specs["2.7B"],  1,   1,   1,   1,   8,  1,    False,  *fixed_params),
 ],
 
 16: [

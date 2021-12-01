@@ -1,11 +1,11 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
-import logging
-import pickle
-import time
 from collections import defaultdict
 from collections.abc import Iterable
-from typing import List, Union, Sequence, Tuple
+import logging
 from operator import attrgetter
+import pickle
+import time
+from typing import List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
@@ -909,7 +909,7 @@ class LogicalDeviceMesh:
     """
     A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
 
-    A physical mesh can have multiple logical views. (e.g., a 2x8 phyiscal mesh can be viewed
+    A physical mesh can have multiple logical views. (e.g., a 2x8 physical mesh can be viewed
     as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
     We use alpha-beta model to model the communication cost.
     """
@@ -1137,12 +1137,14 @@ xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
 xla.canonicalize_dtype_handlers[ReplicatedDistributedArray] = lambda x: x
 
 
-# TODO (Hao): merge VirtualMesh into PhysicalMesh by adding a start_cluster attribute.
-class VirtualMesh:
+class VirtualPhysicalMesh:
     """
-    A virtual mesh used to instantiate a Physical Mesh in the future.
+    A virtual physical mesh used for pipeline parallel compilation.
 
-    To be deprecated.
+    VirtualPhysicalMesh is used for compilation. We don't allocate actual workers for it.
+    When compilation is finished, we instantiated it as a PhysicalDeviceMesh and launch workers.
+
+    A VirtualPhysicalMesh can also be sliced into multiple VirtualPhysicalMesh.
     """
 
     def __init__(self,
@@ -1194,26 +1196,27 @@ class VirtualMesh:
             # slicing along the host dimension
             host_ids = [self.host_ids[x] for x in indices]
             host_info = [self.host_info[x] for x in host_ids]
-            return VirtualMesh(host_ids=host_ids,
-                               host_info=host_info,
-                               head_ip=self.head_ip,
-                               num_devices_per_host=self.num_devices_per_host)
+            return VirtualPhysicalMesh(
+                host_ids=host_ids,
+                host_info=host_info,
+                head_ip=self.head_ip,
+                num_devices_per_host=self.num_devices_per_host)
         else:
             # slicing along the device dimension
-            return VirtualMesh(host_ids=self.host_ids,
-                               host_info=self.host_info,
-                               head_ip=self.head_ip,
-                               num_devices_per_host=len(indices[0]),
-                               devices=indices)
+            return VirtualPhysicalMesh(host_ids=self.host_ids,
+                                       host_info=self.host_info,
+                                       head_ip=self.head_ip,
+                                       num_devices_per_host=len(indices[0]),
+                                       devices=indices)
 
     def slice_2d(self, host_indices, device_indices):
         host_ids = [self.host_ids[x] for x in host_indices]
         host_info = [self.host_info[x] for x in host_indices]
-        return VirtualMesh(host_ids=host_ids,
-                           host_info=host_info,
-                           head_ip=self.head_ip,
-                           num_devices_per_host=len(device_indices[0]),
-                           devices=device_indices)
+        return VirtualPhysicalMesh(host_ids=host_ids,
+                                   host_info=host_info,
+                                   head_ip=self.head_ip,
+                                   num_devices_per_host=len(device_indices[0]),
+                                   devices=device_indices)
 
     def slice_profiling_submeshes(self, submesh_num_hosts,
                                   submesh_num_devices_per_host):
@@ -1347,9 +1350,11 @@ class DeviceCluster:
                                   head_ip=self.head_ip,
                                   use_ray=True)
 
-    def get_virtual_mesh(self, host_ids=None, num_devices_per_host=None):
+    def get_virtual_physical_mesh(self,
+                                  host_ids=None,
+                                  num_devices_per_host=None):
         """
-        Slice a subset of hosts and devices to form a virtual device mesh.
+        Slice a subset of hosts and devices to form a virtual physical mesh.
 
         The only difference between a virtual and a physical mesh is that a virtual
         mesh does not request cluster resources.
@@ -1362,10 +1367,10 @@ class DeviceCluster:
         for host_id in host_ids:
             assert self.num_devices[host_id] >= num_devices_per_host
 
-        return VirtualMesh(host_ids=host_ids,
-                           host_info=host_info,
-                           num_devices_per_host=num_devices_per_host,
-                           head_ip=self.head_ip)
+        return VirtualPhysicalMesh(host_ids=host_ids,
+                                   host_info=host_info,
+                                   num_devices_per_host=num_devices_per_host,
+                                   head_ip=self.head_ip)
 
 
 ########################################

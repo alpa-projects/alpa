@@ -59,7 +59,7 @@ class PipelineSchedule(metaclass=ABCMeta):
 
     Args:
         dependency (np.array): dependency adjacency matrix.
-        sliced_mesh (List[VirtualMesh]): a list of pre-sliced virtual meshes
+        sliced_mesh (List[VirtualPhysicalMesh]): a list of pre-sliced virtual meshes
             to assign stages on.
         apply_grad_placement (Dict[int, int]): A map from apply grad's stage idx
             to the worker it is assigned.

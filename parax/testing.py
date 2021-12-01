@@ -141,7 +141,8 @@ def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):
         return train_step
 
 
-def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat, num_layers):
+def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat,
+                              num_layers):
 
     def train_step(state, batch):
 
@@ -189,7 +190,7 @@ class PipelineBasicTest(unittest.TestCase):
                 test_remat=False,
                 pipeline_stage_mode="uniform_layer_gpipe",
                 do_numerical_test=True):
-        virtual_mesh = DeviceCluster().get_virtual_mesh()
+        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
@@ -211,7 +212,8 @@ class PipelineBasicTest(unittest.TestCase):
         # Compile
         global_config.num_micro_batches = 2
         serial_train_step = get_mlp_train_step(False, None, None)
-        parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer, test_remat)
+        parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer,
+                                                 test_remat)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -245,7 +247,7 @@ class PipelineBasicTest(unittest.TestCase):
                          num_heads=512 // 64,
                          submesh_shapes=None,
                          do_numerical_test=True):
-        virtual_mesh = DeviceCluster().get_virtual_mesh()
+        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,

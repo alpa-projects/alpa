@@ -116,7 +116,7 @@ def benchmark_transformer_one_case(benchmark_case):
     # Mesh configs
     # 3D parallel always run atop a Ray cluster.
     device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_mesh()
+    virtual_mesh = device_cluster.get_virtual_physical_mesh()
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches,

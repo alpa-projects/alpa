@@ -7,7 +7,7 @@ import numpy as np
 
 from jax.lib import xla_client, xla_bridge
 
-from parax.util import GB
+from parax.util import GB, print_used_time
 
 ops = xla_client.ops
 
@@ -437,9 +437,11 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
 def profile_all(device_cluster):
     from parax.pipeline_parallel.stage_construction import get_submesh_choices
+    print_used_time(None)
 
     ##### Profile compute cost
     matmul_cost_dict = profile_matmul(device_cluster)
+    print_used_time("Profile matmul")
 
     ##### Profile communication cost
 
@@ -500,3 +502,4 @@ def profile_all(device_cluster):
             print(f"Op: {op_infos[i]}, Bandwidth: {bandwidth / GB} GB/s")
 
         physical_mesh.shutdown()
+    print_used_time("Profile communication")

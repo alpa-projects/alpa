@@ -7,6 +7,7 @@ import ray
 from parax.util import write_tsv, run_cmd
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
+from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite
 
 GB = 1024 ** 3
 
@@ -39,6 +40,7 @@ benchmark_suites = {
     "default": default_suite,
     "paper_gpt": paper_gpt_suite,
     "test_gpt": test_gpt_suite,
+    "paper_auto_gpt": paper_auto_gpt_suite,
 }
 
 
@@ -46,7 +48,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=7)  # 2 warmup + 5 actual run.
-    parser.add_argument("--suite", choices=["default", "paper_gpt", "test_gpt"],
+    parser.add_argument("--suite", choices=list(benchmark_suites.keys()),
                         default="paper_gpt")
     parser.add_argument("--no-separate-process", action='store_false',
                         help="Do not launch separate processes for benchmark."

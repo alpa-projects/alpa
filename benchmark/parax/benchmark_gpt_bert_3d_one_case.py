@@ -72,7 +72,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
         elif auto_layer:
-            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True)
+            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True, use_remat=use_remat)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
@@ -138,7 +138,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat,
+            gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_slicing_marker,
         ), dtype=dtype)
@@ -151,7 +151,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat,
+            gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_slicing_marker,
         ), dtype=dtype)

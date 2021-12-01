@@ -29,7 +29,7 @@ class BertLayer_Model(nn.Module):
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
-virtual_mesh = DeviceCluster().get_virtual_mesh()
+virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
 
 
 def train_step(optimizer, batch, apply_fn):

@@ -201,7 +201,6 @@ class FlaxMoELayer(nn.Module):
                  deterministic: bool = True,
                  output_attentions: bool = False):
 
-
         if not isinstance(deterministic, bool):
             # A temporary hack to walkaround the bug in flax.nn.remat
             # Using `nn.remat(concrete=True)` works for regular use cases
@@ -243,10 +242,14 @@ class FlaxMoELayerCollection(nn.Module):
         for i in range(self.config.num_hidden_layers):
             if i % 2 == 0:
                 layers.append(
-                    trans_func(FlaxMoELayer)(self.config, name=str(i), dtype=self.dtype))
+                    trans_func(FlaxMoELayer)(self.config,
+                                             name=str(i),
+                                             dtype=self.dtype))
             else:
                 layers.append(
-                    trans_func(FlaxBertLayer)(self.config, name=str(i), dtype=self.dtype))
+                    trans_func(FlaxBertLayer)(self.config,
+                                              name=str(i),
+                                              dtype=self.dtype))
         self.layers = layers
 
         self.pipeline_mp_size = self.config.pipeline_mp_size

@@ -6,7 +6,8 @@ from typing import Sequence, Any, Dict
 
 from jax import jit
 from jax._src.util import partial, safe_map
-from jax.core import Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun, new_jaxpr_eqn, gensym
+from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
+                      jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p)
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib import xla_extension
@@ -766,7 +767,7 @@ def generate_computations_from_protos(jax_computations, acc_grad_outvars,
 
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars, physical_mesh, logical_mesh_choices,
+        computation_donate_invars, logical_mesh_choices,
         logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
         donatable_lists, search_task, record_file):
     proto, jaxpr_config, flops = generate_sharded_xla_computations_compile_config(
@@ -782,7 +783,7 @@ def generate_sharded_xla_computations(
         in_avals,
         out_avals,
         donated_invars,
-        physical_mesh,
+        None,
         logical_mesh_choices,
         logical_mesh_search_mode,
         memory_budget_per_device,
@@ -790,7 +791,7 @@ def generate_sharded_xla_computations(
         record_file,
         multiple_stages=True,
         grad_acc_num_micro_batches=None,
-        bypass_device_assignment_check=physical_mesh.is_distributed)
+        bypass_device_assignment_check=True)
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,
@@ -833,7 +834,7 @@ def rewrite_hook(eqns, gensym_fn):
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                              used: OrderedSet[Var],
-                             new_marker_name,
+                             new_marker_name=None,
                              donation_mapping=None,
                              insert_hook_after=None) -> ClosedJaxpr:
     """
@@ -904,24 +905,37 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
-    new_pipe_start = mark_pipeline_jaxpreqn(
-        new_invars, [new_invars_dict[v] for v in new_invars], new_marker_name,
-        "start")
-    new_pipe_end = mark_pipeline_jaxpreqn(
-        [new_outvars_dict[v] for v in new_outvars], new_outvars,
-        new_marker_name, "end")
-    new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
-    new_jaxpr = ClosedJaxpr(
-        Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, new_eqns),
-        list(new_constvars.values()))
+    if new_marker_name != None:
+        new_pipe_start = mark_pipeline_jaxpreqn(
+            new_invars, [new_invars_dict[v] for v in new_invars],
+            new_marker_name, "start")
+        new_pipe_end = mark_pipeline_jaxpreqn(
+            [new_outvars_dict[v] for v in new_outvars], new_outvars,
+            new_marker_name, "end")
+        new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
+        new_jaxpr = ClosedJaxpr(
+            Jaxpr(list(new_constvars.keys()), new_invars, new_outvars,
+                  new_eqns), list(new_constvars.values()))
+    else:
+        new_jaxpr = ClosedJaxpr(
+            Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, [
+                new_jaxpr_eqn(
+                    new_invars, new_outvars, named_call_p,
+                    dict(name="tmp",
+                         call_jaxpr=Jaxpr(
+                             list(new_constvars.keys()),
+                             [new_invars_dict[v] for v in new_invars],
+                             [new_outvars_dict[v] for v in new_outvars],
+                             new_eqns)))
+            ]), list(new_constvars.values()))
     if insert_hook_after is not None:
-        return new_jaxpr, new_hook
+        return new_jaxpr, new_hook.invars
     return new_jaxpr
 
 
 def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
     """Infer donation of global invar-outvars."""
-    donation_mapping = initial_mapping
+    donation_mapping = dict(initial_mapping)
     donated_outvars = OrderedSet()
 
     for donate, invar in zip(donated_invars, invars):

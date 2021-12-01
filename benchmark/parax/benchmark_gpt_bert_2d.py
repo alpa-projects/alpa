@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 
 import ray
 
@@ -7,6 +8,7 @@ import numpy as np
 from parax.util import list_gpu_info, write_tsv, run_cmd
 
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case
+from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 
 GB = 1 << 30
 
@@ -17,51 +19,27 @@ GB = 1 << 30
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    # B,  S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (8,  1024,  1024,  4,    32,   51200,  1,   1,  1,    True,  False, True),
+    # B,  S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB,  FD,   Remat, RS, Auto-layer-slicing
+    (8,  1024,  1024,  4,    32,   51200,  1,   1,   1,    1,   1,   1, True,  True, False, False),
 ],
 
 4: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (8,  1024,  1024,  2,    32,   51200,  1,   1,  1,    True,  False, True),
-    (8,  1024,  1024,  4,    32,   51200,  1,   1,  1,    True,  False, True),
-    (8,  1024,  1024,  8,    32,   51200,  1,   1,   1,    True,  False, True),
-    (8,  1024,  1024,  16,    32,   51200,  1,   1,  1,    True,  False, True),
-    (8,  1024,  1024,  24,    32,   51200,  1,   1,   1,    True,  False, True),
-    (8,  1024,  1024,  32,    32,   51200,  1,   1,   1,    True,  False, True),
-    (8,  1024,  1024,  48,    32,   51200,  1,   1,   1,    True,  False, True),
+    # B,  S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB,  FD,   Remat, RS, Auto-layer-slicing
 ],
 
 8: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    (256,  512,  1024, 10, 1024//64,  25600, 8,  1,  1,  False, True,  False),
-    (512,  512,  1024, 10, 1024//64,  25600, 8,  1,  2,  False, True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 8,  1,  1,  True,  True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 2,  4,  1,  False, True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  False),
-    (8,    1024, 4096, 10, 4096//128, 25600, 1,  8,  1,  False, True,  True),
+    # B,  S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB,  FD,   Remat, RS, Auto-layer-slicing
 ],
 
 16: [
-    # B,   S,    H,    L,  #head,     V,     D0, D1, NB, FD,    RS,    CK
-    #(512,  512,  1024, 10, 1024//64,  25600, 16, 1,  1,  False, True,  False),
-    #(2048, 512,  1024, 10, 1024//64,  25600, 16, 1,  4,  False, True,  False),
-    #(16,   1024, 4096, 10, 4096//128, 25600, 2,  8,  1,  False, True,  False),
-    #(64,   1024, 4096, 10, 4096//128, 25600, 2,  8,  4,  False, True,  False),
-    #(16,   1024, 4096, 10, 4096//128, 25600, 16, 1,  1,  False, True,  False),
-    #(64,   1024, 4096, 10, 4096//128, 25600, 16, 1,  4,  False, True,  False),
-
-    (16,    1024, 6144, 10, 6144//128, 25600, 2,  8,  1,  False, False, False),
-    (64,    1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, False, False),
-    (128,   1024, 6144, 10, 6144//128, 25600, 2,  8,  8,  False, False, False),
-    (16,    1024, 6144, 10, 6144//128, 25600, 2,  8,  1,  False, True,  False),
-    (64,    1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, True,  False),
-    (128,   1024, 6144, 10, 6144//128, 25600, 2,  8,  4,  False, True,  False),
+    # B,  S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB,  FD,   Remat, RS, Auto-layer-slicing
 ]
 }
 
 benchmark_suites = {
     "default": default_benchmark_suite,
+    "test_gpt": test_gpt_suite,
+    "paper_gpt": paper_gpt_suite,
 }
 
 
@@ -73,10 +51,11 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--suite", choices=["default"], default="default")
+    parser.add_argument("--suite", choices=["default", "paper_gpt", "test_gpt"], default="default")
     parser.add_argument("--use-separate-process", action="store_true",
         help="Launch separate processes for benchmark to isolate errors."
-              "Erros in a single case will not terminate this script.")
+              "Errors in a single case will not terminate this script.")
+    parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
     # Get benchmark suite and run all cases
     if args.local:
@@ -93,16 +72,30 @@ if __name__ == "__main__":
         exit()
     run_cmd("mkdir -p tmp")
 
+    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
+
     # Run all cases
     for case in suite:
+        dp, mp, pp = case[6], case[7], case[10]
+        if pp > 1:
+            print(f"Skipping the case: {str(case)}, because PP > 1. "
+                  f"Please use `benchmark_gpt_bert_3d.py`.")
+            continue
+        print("Working on case: {}".format(str(case)))
         result = benchmark_one_case(args.model, case, args.niter, args.local,
                                     args.use_separate_process)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
 
         # Log results
-        heads = ["Model", "Model Config", "Parallel Config", "Param Count",
-                 "Peak Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
-        values = [args.model, case[:-6], case[-6:],
-                  f"{param_count/1e9:.3f}", f"{peak_mem/GB:.3f}", f"{ilp_objective:.2f}",
-                  f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
-        write_tsv(heads, values, f"result_{args.model}.tsv")
+        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
+                 "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
+                 "Mean Time", "Std Time", "#Params", "TFLOPs",
+                 "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
+        parallel_config = (dp, mp, pp)
+        values = [args.model, case[:6], parallel_config, "N/A",
+                  str(case[11]), str(case[12]), str(case[13]), str(case[14]),
+                  f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                  f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",
+                  f"{peak_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]
+        write_tsv(heads, values, output_name)

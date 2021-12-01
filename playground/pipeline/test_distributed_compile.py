@@ -18,7 +18,7 @@ from parax.pipeline_parallel.three_d_parallel import (
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')
-virtual_mesh = DeviceCluster().get_virtual_mesh()
+virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
 
 N = 10
 

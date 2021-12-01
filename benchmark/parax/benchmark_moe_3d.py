@@ -52,10 +52,10 @@ if __name__ == "__main__":
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, \
         num_micro_batches, force_data_parallel, use_remat, tie_word_embeddings, \
         auto_layer, _ = case
-        if pipeline_mp_size < 1:
+        if pipeline_mp_size <= 1:
             print(f"Skipping the case: {str(case)}, because PP <= 1. Lianmin will test it.")
             continue
-
+        print(">>> Working on case: {}".format(str(case)))
         result = benchmark_one_case(case, args.niter,
                                     use_separate_process=args.use_separate_process)
         parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt = result

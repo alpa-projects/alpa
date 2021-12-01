@@ -60,12 +60,19 @@ def benchmark_moe_internal(benchmark_case, niter):
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size, \
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,\
-        num_micro_batches, force_data_parallel, use_remat, tie_word_embeddings, \
+        num_micro_batches, force_data_parallel, use_remat, prefer_reduce_scatter, \
         auto_layer, _ = benchmark_case
     dtype = jnp.float16
 
-    prefer_reduce_scatter = False
 
+    expected_expert_group_size = batch_size * seq_len // num_micro_batches \
+                                 // l_dim0 // 2
+    if expected_expert_group_size != expert_group_size:
+        print("- Expected expert group size should be {}, but got {}. Will reset it.".
+              format(expected_expert_group_size, expert_group_size))
+        expert_group_size = expected_expert_group_size
+
+    tie_word_embeddings = False
     # Parallel configs
     grad_func = parax.grad
     global_config.force_data_parallel = force_data_parallel

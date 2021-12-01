@@ -63,7 +63,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     expected_expert_group_size = batch_size * seq_len // num_micro_batches \
                         // mesh_dim0 // 2
     if expected_expert_group_size != expert_group_size:
-        print("- Expected expert group size should be {}, but got {}".
+        print("- Expected expert group size should be {}, but got {}. Will reset it".
               format(expected_expert_group_size, expert_group_size))
         expert_group_size = expected_expert_group_size
 

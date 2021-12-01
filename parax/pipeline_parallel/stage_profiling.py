@@ -371,7 +371,7 @@ def generate_stage_info(all_layers,
 
     if apply_grad_info is not None:
         only_for_apply = OrderedSet(merged_apply.jaxpr.invars).difference(
-                          new_invars).difference(new_outvars)
+            new_invars).difference(new_outvars)
         apply_info = (merged_apply.jaxpr.invars, only_for_apply)
         new_eqns = []
         gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])

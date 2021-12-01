@@ -103,6 +103,18 @@ def create_train_state(rngkey, model, params):
     return state
 
 
+def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
+    params = model.init_dummy(rngkey, *params)
+    tx = optax.adam(learning_rate=1e-2)
+    mixed_precision = (dtype == jnp.float16)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              mixed_precision=mixed_precision,
+                              dynamic_scale=None)
+    return state
+
+
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
         if use_remat:

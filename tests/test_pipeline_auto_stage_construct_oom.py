@@ -34,7 +34,7 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
 
-        train_step = get_bert_layer_train_step(manual_pipeline_layer,
+        train_step = get_bert_layer_train_step(True, manual_pipeline_layer,
                                                test_remat, n_layers)
 
         rngkey = jax.random.PRNGKey(0)

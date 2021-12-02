@@ -15,6 +15,7 @@ from parax import (parallelize, global_config, set_parallelize_options,
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
+from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.util import print_used_time, run_cmd
 
 GB = 1024 ** 3
@@ -213,6 +214,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         global_config.use_dummy_value_for_benchmarking = True
 
         result = benchmark_gpt_bert_internal(model, case, niter)
+        result = result + get_last_dp_result()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
@@ -225,7 +227,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, -1, -1, [-1], -1, -1
+            result = -1, -1, -1, [-1], -1, -1, None, None, None
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

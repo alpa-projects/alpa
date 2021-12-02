@@ -242,7 +242,8 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     for idx, invar in enumerate(global_invars):
         if invar in used_simultaneously and donated_invars[idx]:
             if len(invar.aval.shape) != 0:
-                logger.warning(f"Cannot donate {invar} (shape: {invar.aval.shape})")
+                logger.warning(
+                    f"Cannot donate {invar} (shape: {invar.aval.shape})")
             donated_invars[idx] = False
 
     return sliced_apply_grad, n_stages, dependency, apply_grad_placement,\

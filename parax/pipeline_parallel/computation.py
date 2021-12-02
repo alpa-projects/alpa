@@ -206,11 +206,9 @@ class XlaShardedPipelineComputation(PipelineComputation):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
-                                         logical_mesh_shape,
-                                         None)
-        compiled = compile_dummy_zero_constant(
-            backend, np.prod(logical_mesh_shape)
-        )
+                                         logical_mesh_shape, None)
+        compiled = compile_dummy_zero_constant(backend,
+                                               np.prod(logical_mesh_shape))
         hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
@@ -664,10 +662,8 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         #  slicing in XLA.
         if add_dummy_dependency_var:
             dummy_outvar = gensym_func(Literal(0).aval)
-            dummy_eqn = new_jaxpr_eqn([Literal(0), Literal(0)],
-                                      [dummy_outvar],
-                                      jax.lax.add_p,
-                                      {})
+            dummy_eqn = new_jaxpr_eqn([Literal(0), Literal(0)], [dummy_outvar],
+                                      jax.lax.add_p, {})
             forward_stage.eqns.insert(-1, dummy_eqn)
             new_invars.append(dummy_outvar)
             marked_dummy_outvar = gensym_func(dummy_outvar.aval)
@@ -711,8 +707,6 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
     for i in range(num_layers):
         task_offloader(jax_pipeline_computations[i],
                        jax_pipeline_computations[-i - 1])
-
-
 
 
 def rearrange_vars(vars,

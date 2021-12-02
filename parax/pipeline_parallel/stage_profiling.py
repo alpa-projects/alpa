@@ -189,7 +189,9 @@ class ProfileWorkerPool:
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
         total_devices = len(virtual_meshes) * len(virtual_meshes[0].devices)
-        self.actors = [worker_cls.remote(mesh, total_devices) for mesh in virtual_meshes]
+        self.actors = [
+            worker_cls.remote(mesh, total_devices) for mesh in virtual_meshes
+        ]
         self.pool = ActorPool(self.actors)
 
     def submit(self, fn, value):
@@ -500,6 +502,7 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
+
     if len(intermediate_vars) == 0:
         return 0
 

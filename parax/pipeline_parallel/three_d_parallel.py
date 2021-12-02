@@ -17,10 +17,9 @@ from parax.pipeline_parallel.computation import (
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_compile_config,
     get_donatable_intermediate,
-    mark_missing_vars_in_backward_computation_pipeline_marks, 
-    offload_remat, pipeline_dce,
-    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars,
-    XlaShardedPipelineComputation)
+    mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
+    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
+    split_donate_invars, XlaShardedPipelineComputation)
 from parax.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
@@ -154,13 +153,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         logger.debug(schedule.pprint_schedule(print=False))
 
     # Call auto-sharding pass to shard each stage
-    xla_stages, total_flops = shard_each_stage(jax_all_stages, sliced_meshes,
-                                               schedule, n_stages, num_meshes,
-                                               grad_in_to_out, global_invars,
-                                               acc_grad_outvars,
-                                               donate_invars_dict,
-                                               memory_budget_per_device,
-                                               gensym_func)
+    xla_stages, total_flops = shard_each_stage(
+        jax_all_stages, sliced_meshes, schedule, n_stages, num_meshes,
+        grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
+        memory_budget_per_device, gensym_func)
     total_flops *= num_micro_batches
 
     # Wrap all things into a distributed runtime

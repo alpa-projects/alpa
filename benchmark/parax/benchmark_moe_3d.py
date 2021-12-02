@@ -58,7 +58,9 @@ if __name__ == "__main__":
 
         result = benchmark_one_case(case, args.niter,
                                     use_separate_process=args.use_separate_process)
-        parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt = result
+        (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
+         tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
+         submesh_shapes) = result
 
 
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",

@@ -108,6 +108,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     # rewrite eqns
     new_eqns = []
     pipe_start = None
+    last_pipe_end = None
     pipe_eqns = []
     to_acc = []
     for eqn in compute_jaxpr.eqns:
@@ -146,6 +147,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                     eqn.invars + map(lambda x: grad_out_before_pipe[x], to_acc),
                     eqn.outvars + map(lambda x: grad_outs[x], to_acc),
                     eqn.params['name'], eqn.params['mark_type'])
+                last_pipe_end = new_pipe_end
                 new_eqns.append(new_pipe_end)
                 pipe_start = None
                 pipe_eqns = []
@@ -156,6 +158,7 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
             if not isinstance(outvar, DropVar) and outvar in gradients:
                 # collect gradients in this computation
                 to_acc.append(outvar)
+    last_pipe_end.params["name"] += "_grad_acc_boundary"
     jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
                   new_glob_outvars, new_eqns)
     new_closed_jaxpr = ClosedJaxpr(jaxpr, compute_jaxpr.consts)
@@ -238,7 +241,8 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     donated_invars = list(donated_invars)
     for idx, invar in enumerate(global_invars):
         if invar in used_simultaneously and donated_invars[idx]:
-            logger.warning(f"Cannot donate {invar} (shape: {invar.aval.shape})")
+            if len(invar.aval.shape) != 0:
+                logger.warning(f"Cannot donate {invar} (shape: {invar.aval.shape})")
             donated_invars[idx] = False
 
     return sliced_apply_grad, n_stages, dependency, apply_grad_placement,\

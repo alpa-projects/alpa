@@ -9,6 +9,7 @@ from parax.util import list_gpu_info, write_tsv, run_cmd
 
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
+from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite
 
 GB = 1 << 30
 
@@ -40,6 +41,7 @@ benchmark_suites = {
     "default": default_benchmark_suite,
     "test_gpt": test_gpt_suite,
     "paper_gpt": paper_gpt_suite,
+    "paper_auto_gpt": paper_auto_gpt_suite,
 }
 
 
@@ -51,7 +53,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-profiling", action="store_true")
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--suite", choices=["default", "paper_gpt", "test_gpt"], default="default")
+    parser.add_argument("--suite", choices=list(benchmark_suites.keys()), default="default")
     parser.add_argument("--use-separate-process", action="store_true",
         help="Launch separate processes for benchmark to isolate errors."
               "Errors in a single case will not terminate this script.")

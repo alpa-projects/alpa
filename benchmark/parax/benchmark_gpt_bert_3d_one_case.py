@@ -15,6 +15,7 @@ from parax import (parallelize, global_config, set_parallelize_options,
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
+from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.util import print_used_time, run_cmd
 
 GB = 1024 ** 3
@@ -72,7 +73,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
         elif auto_layer:
-            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True)
+            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True, use_remat=use_remat)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
@@ -138,7 +139,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat,
+            gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_slicing_marker,
         ), dtype=dtype)
@@ -151,7 +152,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat,
+            gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_slicing_marker,
         ), dtype=dtype)
@@ -163,7 +164,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     print_used_time("Create train state")
 
     # compile executable
-    train_step = get_train_step(grad_func, num_layers, False, pipeline_mp_size, jnp.float16, auto_layer)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, jnp.float16, auto_layer)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -213,6 +214,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         global_config.use_dummy_value_for_benchmarking = True
 
         result = benchmark_gpt_bert_internal(model, case, niter)
+        result = result + get_last_dp_result()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
@@ -225,7 +227,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, -1, -1, [-1], -1, -1
+            result = -1, -1, -1, [-1], -1, -1, None, None, None
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

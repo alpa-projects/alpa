@@ -30,7 +30,7 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
 from parax.global_env import global_config
 from parax.util import (OrderedSet, get_compile_options,
                         jaxpr_to_hlo_computation, setup_computation_alias,
-                        log_jaxpr, compile_allocate_zero_buffers)
+                        log_jaxpr, compile_dummy_zero_constant)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -207,10 +207,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         strategy_config = StrategyConfig(global_config.build_random_seed,
                                          logical_mesh_shape,
                                          None)
-        compiled = compile_allocate_zero_buffers(
-            backend, np.prod(logical_mesh_shape),
-            [xc.Shape.array_shape(np.dtype(np.int32), ())],
-            [np.dtype(np.int32)]
+        compiled = compile_dummy_zero_constant(
+            backend, np.prod(logical_mesh_shape)
         )
         hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))

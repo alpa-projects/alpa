@@ -381,7 +381,7 @@ def compile_dummy_zero_constant(backend, num_devices):
     c.set_sharding(sharding)
     zero = xc.ops.Constant(c, np.array(0, dtype=np.dtype(np.int32)))
     c.clear_sharding()
-    c = c.build(zero)
+    c = c.build(xc.ops.Tuple(c, [zero]))
 
     compile_options = xb.get_compile_options(
         num_replicas=1,

@@ -55,6 +55,9 @@ class GlobalConfig:
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
 
+        ########## Options for XLA compilation ##########
+        self.build_random_seed = 42
+
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.

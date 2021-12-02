@@ -5,7 +5,7 @@ import logging
 from operator import attrgetter
 import pickle
 import time
-from typing import List, Union, Sequence, Tuple
+from typing import Any, List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
@@ -24,8 +24,8 @@ import jax.numpy as jnp
 
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
+from parax import mesh_profiling
 from parax.monkey_patch import set_override_backend
-from parax.shard_parallel.profile_communication import profile_collective_one_config, ProfilingResult
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
@@ -272,108 +272,10 @@ class MeshHostWorker:
                                group_name=task['group_name'])
 
     ##### Profiling Related Functions #####
-    def profile_collective(self, primitive_name, size_range, replica_groups,
-                           number, verbose):
-        """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
-        # Generate all possible communication groups
-        prof_result = ProfilingResult()
-        size_configs = []
-        size_configs.append((0, "float32"))
-        for i in size_range or range(30):
-            size_configs.append((1 << i, "float32"))
-
-        logical_mesh_shapes = []
-        total_devices = self.num_hosts * len(self.local_devices)
-        for i in range(1, total_devices + 1):
-            if total_devices % i == 0:
-                logical_mesh_shapes.append((total_devices // i, i))
-
-        all_keys = OrderedSet()
-        if replica_groups is None:
-            for logical_mesh_shape in logical_mesh_shapes:
-                # dim 0
-                replica_groups = []
-                tmp_group = []
-                for i in range(logical_mesh_shape[0]):
-                    tmp_group.append(
-                        tuple(i * logical_mesh_shape[1] + j
-                              for j in range(logical_mesh_shape[1])))
-                replica_groups.append(tuple(tmp_group))
-
-                # dim 1
-                tmp_group = []
-                for j in range(logical_mesh_shape[1]):
-                    tmp_group.append(
-                        tuple(i * logical_mesh_shape[1] + j
-                              for i in range(logical_mesh_shape[0])))
-                replica_groups.append(tuple(tmp_group))
-
-                for replica_group in replica_groups:
-                    for size, dtype in size_configs:
-                        all_keys.add((replica_group, size, dtype))
-        else:
-            for replica_group in replica_groups:
-                for size, dtype in size_configs:
-                    all_keys.add((replica_group, size, dtype))
-        all_keys = list(all_keys)
-        all_keys.sort()
-
-        for replica_group, size, dtype in all_keys:
-            if number == "auto":
-                number_ = min(
-                    max(
-                        15,
-                        int((1 << 31) /
-                            (max(size, 1) * np.dtype(dtype).itemsize))),
-                    1 << 13)
-            else:
-                number_ = number
-
-            time_cost = profile_collective_one_config(
-                (size,), dtype, replica_group, primitive_name, self.backend,
-                self.num_hosts * len(self.local_devices), self.local_devices,
-                self.distributed_client, self.host_id, self.sync, number_)
-
-            num_devices = len(replica_group[0])
-            array_size = size * np.dtype(dtype).itemsize
-
-            if primitive_name == "all-reduce":
-                prof_result.record_all_reduce(replica_group, size, dtype,
-                                              time_cost)
-                communication_size = 2 * array_size * (num_devices -
-                                                       1) / num_devices
-            elif primitive_name == "all-gather":
-                prof_result.record_all_gather(replica_group, size, dtype,
-                                              time_cost)
-                communication_size = array_size * (num_devices -
-                                                   1) / num_devices
-            elif primitive_name == "all-to-all":
-                communication_size = array_size * (
-                    num_devices - 1) / num_devices / num_devices
-                penalty_factor = num_devices / 2.0
-                communication_size *= penalty_factor
-            else:
-                raise ValueError("Invalid primitive: " + primitive_name)
-
-            bandwidth = communication_size / time_cost
-
-            if self.host_id == 0 and verbose >= 1:
-                heads = [
-                    primitive_name, "Size (GB)", "Time", "Bandwidth (GB/s)"
-                ]
-                values = [
-                    str(replica_group), f"{array_size / GB:.5f}",
-                    f"{time_cost:.5f}", f"{bandwidth / GB:.2f}"
-                ]
-
-                line = ""
-                for head, value in zip(heads, values):
-                    line += head + ": " + value + "  "
-                print(line)
-
-        if self.host_id == 0:
-            return prof_result
-        return None
+    def profile_hlo_ops(self, op_infos: Sequence[Any]):
+        num_devices = self.num_hosts * len(self.local_devices)
+        return mesh_profiling.profile_hlo_ops(self.backend, self.local_devices,
+                                              num_devices, op_infos)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
@@ -460,7 +362,6 @@ class PhysicalDeviceMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
-        self.prof_result = ProfilingResult()
         self.launched = False
 
         # Do some argument check
@@ -481,7 +382,7 @@ class PhysicalDeviceMesh:
 
         if use_ray:
             self.device_strs = []
-            if devices:
+            if devices is not None:
                 if len(devices) != len(host_ids):
                     raise RuntimeError(
                         "Please specify the gpu IDs used on each host.")
@@ -794,36 +695,12 @@ class PhysicalDeviceMesh:
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
-    def profile_collective(self,
-                           primitive_name,
-                           size_range=None,
-                           replica_groups=None,
-                           number="auto",
-                           verbose=1):
-        """Profile the time cost of collective communication primitive (all-reduce, all-gather)."""
+    def profile_hlo_ops(self, op_infos: Sequence[Tuple]):
+        assert self.is_distributed
         tasks = []
-        for worker in self.workers:
-            tasks.append(
-                worker.profile_collective.remote(primitive_name, size_range,
-                                                 replica_groups, number,
-                                                 verbose))
-        prof_result = ray.get(tasks)[0]
-        if primitive_name == "all-reduce":
-            self.prof_result.all_reduce_cost_dict = prof_result.all_reduce_cost_dict
-        elif primitive_name == "all-gather":
-            self.prof_result.all_gather_cost_dict = prof_result.all_gather_cost_dict
-        elif primitive_name == "all-to-all":
-            pass
-        else:
-            raise ValueError("Invalid primitive_name: " + primitive_name)
-
-    def load_profiling_result(self, filename: str):
-        """Load profiling results from a file."""
-        self.prof_result = pickle.load(open(filename, "rb"))
-
-    def save_profiling_result(self, filename: str):
-        """Save profiling results to a file."""
-        pickle.dump(self.prof_result, open(filename, "wb"))
+        for w in self.workers:
+            tasks.append(w.profile_hlo_ops.remote(op_infos))
+        return ray.get(tasks)[0]
 
     def get_remote_timer(self, timer_name: str):
         if self.is_distributed:
@@ -838,18 +715,32 @@ class PhysicalDeviceMesh:
         else:
             timers(timer_name).reset()
 
-    def get_remote_memory_peak(self):
+    def get_memory_allocated(self):
+        self.sync_workers()
         if self.is_distributed:
-            return ray.get(self.workers[0].get_max_memory_allocated.remote())
-        else:
             return max(
-                [device.max_memory_allocated() for device in self.devices])
-
-    def get_remote_memory_available(self):
-        if self.is_distributed:
-            return ray.get(self.workers[0].get_available_memory.remote())
+                ray.get([w.get_memory_allocated.remote() for w in self.workers
+                        ]))
         else:
-            return min([device.available_memory for device in self.devices])
+            return max([d.memory_allocated() for d in self.devices])
+
+    def get_max_memory_allocated(self):
+        self.sync_workers()
+        if self.is_distributed:
+            return max(
+                ray.get([
+                    w.get_max_memory_allocated.remote() for w in self.workers
+                ]))
+        else:
+            return max([d.max_memory_allocated() for d in self.devices])
+
+    def get_available_memory(self):
+        if self.is_distributed:
+            return min(
+                ray.get([w.get_available_memory.remote() for w in self.workers
+                        ]))
+        else:
+            return min([device.available_memory() for device in self.devices])
 
     def reset_remote_memory_stats(self):
         if self.is_distributed:
@@ -860,25 +751,6 @@ class PhysicalDeviceMesh:
                 device.clear_memory_stats()
 
     ##### Other Functions #####
-    def get_memory_allocated(self):
-        self.sync_workers()
-        if self.is_distributed:
-            return max(
-                ray.get([w.get_memory_allocated.remote() for w in self.workers
-                        ]))
-        else:
-            return max([d.memory_allocated() for d in self.local_devices])
-
-    def get_max_memory_allocated(self):
-        self.sync_workers()
-        if self.is_distributed:
-            return max(
-                ray.get([
-                    w.get_max_memory_allocated.remote() for w in self.workers
-                ]))
-        else:
-            return max([d.max_memory_allocated() for d in self.local_devices])
-
     def sync_workers(self):
         """Sync all device activities on workers."""
         if self.is_distributed:
@@ -1159,7 +1031,7 @@ class VirtualPhysicalMesh:
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
 
-        if devices:
+        if devices is not None:
             if len(devices) != len(host_ids):
                 raise RuntimeError(
                     "Please specify the gpu IDs used on each host.")
@@ -1371,6 +1243,9 @@ class DeviceCluster:
                                    host_info=host_info,
                                    num_devices_per_host=num_devices_per_host,
                                    head_ip=self.head_ip)
+
+    def profile_all(self):
+        return mesh_profiling.profile_all(self)
 
 
 ########################################

@@ -12,12 +12,22 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
-    compile_and_profile_stage_compute_cost, compute_apply_grad_invar_size,
-    compute_intermediate_size, split_global_use_and_donate, generate_stage_info,
-    compile_all, ProfileWorkerPool)
+    compute_apply_grad_invar_size, compute_intermediate_size,
+    split_global_use_and_donate, generate_stage_info, compile_all,
+    ProfileWorkerPool)
 from parax.util import OrderedSet
 
 GB = 1024 * 1024 * 1024
+last_compute_cost_file_name = None
+last_forward_stage_layer_ids = None
+last_submesh_shapes = None
+
+
+def get_last_dp_result():
+    global last_compute_cost_file_name
+    global last_forward_stage_layer_ids, last_submesh_shapes
+    return (last_compute_cost_file_name, last_forward_stage_layer_ids,
+            last_submesh_shapes)
 
 
 @numba.jit(nopython=True)
@@ -193,7 +203,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
     apply_grad_infos = []
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
-    # TODO(yonghao): only generate these info once for all mesh shape
+    # TODO(yonghao): only generate these info once for all mesh shapes
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             layer_indices = (
@@ -293,6 +303,8 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
     np.save(compute_cost_file_name, (compute_cost, max_n_succ_stages))
+    global last_compute_cost_file_name
+    last_compute_cost_file_name = compute_cost_file_name
     print(f'Compute cost saved to: {compute_cost_file_name}')
     print("-" * 70)
     return compute_cost, max_n_succ_stages
@@ -488,6 +500,9 @@ def cluster_layers_and_slice_mesh(layers,
             submesh_shapes = [submesh_choices[i] for _, i in solution]
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
             print("Result meshes:", submesh_shapes)
+            global last_forward_stage_layer_ids, last_submesh_shapes
+            last_forward_stage_layer_ids = forward_stage_layer_ids
+            last_submesh_shapes = submesh_shapes
         elif pipeline_stage_mode == "manual_gpipe":
             # Manual-GPipe: use the user-provided solution
             # Sanity check that the user-provided solution is valid

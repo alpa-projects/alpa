@@ -60,8 +60,8 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         use_remat, prefer_reduce_scatter, _, _ = benchmark_case
     dtype = jnp.float16
 
-    expected_expert_group_size = batch_size * seq_len // num_micro_batches \
-                        // mesh_dim0 // 2
+    rang_factor = 2
+    expected_expert_group_size = min(seq_len * 2, batch_size * seq_len // num_micro_batches // mesh_dim0 // rang_factor)
     if expected_expert_group_size != expert_group_size:
         print("- Expected expert group size should be {}, but got {}. Will reset it".
               format(expected_expert_group_size, expert_group_size))

@@ -65,10 +65,10 @@ def benchmark_moe_internal(benchmark_case, niter):
     dtype = jnp.float16
 
 
-    expected_expert_group_size = batch_size * seq_len // num_micro_batches \
-                                 // l_dim0 // 2
+    rang_factor = 2
+    expected_expert_group_size = min(seq_len * 2, batch_size * seq_len // num_micro_batches // l_dim0 // rang_factor)
     if expected_expert_group_size != expert_group_size:
-        print("- Expected expert group size should be {}, but got {}. Will reset it.".
+        print("- Expected expert group size should be {}, but got {}. Will reset it".
               format(expected_expert_group_size, expert_group_size))
         expert_group_size = expected_expert_group_size
 
@@ -77,6 +77,7 @@ def benchmark_moe_internal(benchmark_case, niter):
     grad_func = parax.grad
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
+    global_config.allow_mixed_mesh_shape = True
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh()

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Sequence, Any, Dict
 
+import jax
 from jax import jit
 from jax._src.util import partial, safe_map
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
@@ -654,7 +655,24 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                 continue
             new_invars.append(i)
             new_outvars.append(o)
-            forward_stage.outvars.append(o)
+        add_dummy_dependency_var = (len(forward_stage.invars) != 0 or
+                                    len(forward_stage.outvars) != 0)
+
+        # TODO(zhuohan): Here we add a dummy byte from forward stage to
+        #  backward stage to add a dependency link from the forward stage to
+        #  the backward stage. Should not need this once we fixed the stage
+        #  slicing in XLA.
+        if add_dummy_dependency_var:
+            dummy_outvar = gensym_func(Literal(0).aval)
+            dummy_eqn = new_jaxpr_eqn([Literal(0), Literal(0)],
+                                      [dummy_outvar],
+                                      jax.lax.add_p,
+                                      {})
+            forward_stage.eqns.insert(-1, dummy_eqn)
+            new_invars.append(dummy_outvar)
+            marked_dummy_outvar = gensym_func(dummy_outvar.aval)
+            new_outvars.append(marked_dummy_outvar)
+
         forward_stage.eqns[-1] = mark_pipeline_jaxpreqn(
             new_invars, new_outvars, previous_end.params["name"], "end")
         forward_stage.outvars.clear()
@@ -670,6 +688,11 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
             new_invars.append(i)
             new_outvars.append(o)
             backward_stage.invars.append(i)
+
+        if add_dummy_dependency_var:
+            new_invars.append(marked_dummy_outvar)
+            new_outvars.append(gensym_func(marked_dummy_outvar.aval))
+
         backward_stage.eqns[0] = mark_pipeline_jaxpreqn(
             new_invars, new_outvars, previous_start.params["name"], "start")
         backward_stage.invars.clear()

@@ -745,7 +745,7 @@ paper_gpt_suite = {
     # (1024,  *gpt_specs["6.7B"],  4,   8,   1,   1,   1,  16,    False,  *fixed_params),
 
     # DP = 4, PP = 8
-    (64,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  2,    True,  *fixed_params),
+    (1024,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  32,    True,  *fixed_params),
 
     # DP = 4, mp = 4, pp = 2
     (64,  *gpt_specs["6.7B"],  4,   4,   2,   8,   2,  2,    True,  *fixed_params),

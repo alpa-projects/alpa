@@ -107,7 +107,6 @@ if __name__ == "__main__":
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
                      "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
                      "Layer->Stage Mapping", "Submesh Shapes"]
-            () = get_last_dp_result()
             values = [args.model + "-auto", str(case[:6]), str(num_gpus), str(pp),
                       str(case[11]), str(case[13]), str(case[14]),
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",

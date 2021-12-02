@@ -1047,7 +1047,7 @@ class MemzeroWorkerExecutable:
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, buffer_shard_shapes,
                  buffer_shard_dtypes):
-        num_devices = len(worker.local_devices)
+        num_devices = len(worker.backend.devices())
         self.memzero = compile_memset_zero_buffers(worker.backend, num_devices,
                                                    buffer_shard_shapes,
                                                    buffer_shard_dtypes)

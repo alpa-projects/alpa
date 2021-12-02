@@ -209,8 +209,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
                                          None)
         compiled = compile_allocate_zero_buffers(
             backend, np.prod(logical_mesh_shape),
-            xc.Shape.array_shape(np.dtype(np.int32), ()),
-            np.dtype(np.int32)
+            [xc.Shape.array_shape(np.dtype(np.int32), ())],
+            [np.dtype(np.int32)]
         )
         hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))

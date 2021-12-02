@@ -656,7 +656,7 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
             new_invars.append(i)
             new_outvars.append(o)
         add_dummy_dependency_var = (len(forward_stage.invars) != 0 or
-                                    len(forward_stage.outvars) != 0)
+                                    len(new_outvars) != 0)
 
         # TODO(zhuohan): Here we add a dummy byte from forward stage to
         #  backward stage to add a dependency link from the forward stage to

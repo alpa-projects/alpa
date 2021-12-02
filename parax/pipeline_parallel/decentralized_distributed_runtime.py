@@ -1160,10 +1160,15 @@ class PipelineMeshWorkerExecutable:
         return True
 
     def profile_with_dummy_inputs(self, *args, **kwargs):
-        return {
-            exec_id: self.worker.profile_executable_with_dummy_inputs(exec_id)
+        self.worker.reset_memory_stats()
+        ret = {
+            exec_id:
+            (np.mean(self.worker.profile_executable_with_dummy_inputs(exec_id)),
+             self.worker.get_exec_total_allocation_size(exec_id) / 1024**3)
             for exec_id in self.partial_grad_exec_uuids
         }
+        self.worker.reset_memory_stats()
+        return ret
 
     def __del__(self):
         self.worker.delete_executable(self.my_uuid)

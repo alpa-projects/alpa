@@ -149,8 +149,9 @@ class CompileWorkerPool:
 
 class ProfileWorker:
 
-    def __init__(self, virtual_mesh: VirtualPhysicalMesh):
+    def __init__(self, virtual_mesh: VirtualPhysicalMesh, max_stage):
         self.mesh = virtual_mesh.get_physical_mesh()
+        self.max_stage = max_stage
 
     def profile(self, compiled_output, stage_info, intermediate_size,
                 initial_size):
@@ -171,8 +172,11 @@ class ProfileWorker:
         peak_memory = self.mesh.get_max_memory_allocated()
         available_memory = self.mesh.get_available_memory()
         self.mesh.reset_remote_memory_stats()
-        max_stage = int((available_memory - peak_memory - initial_size) //
-                        intermediate_size) - 1
+        if intermediate_size > 0:
+            max_stage = int((available_memory - peak_memory - initial_size) //
+                            intermediate_size) - 1
+        else:
+            max_stage = self.max_stage
         if np.mean(cost) == np.inf:
             max_stage = -1
         return cost, max_stage, (peak_memory, available_memory,
@@ -184,7 +188,10 @@ class ProfileWorkerPool:
 
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
+        total_devices = len(virtual_meshes) * len(virtual_meshes[0].devices)
+        self.actors = [
+            worker_cls.remote(mesh, total_devices) for mesh in virtual_meshes
+        ]
         self.pool = ActorPool(self.actors)
 
     def submit(self, fn, value):
@@ -495,6 +502,9 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
+
+    if len(intermediate_vars) == 0:
+        return 0
 
     avals = [v.aval for v in intermediate_vars]
     if np.prod(logical_mesh_shape) == 1:

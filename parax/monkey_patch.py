@@ -69,7 +69,10 @@ def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
     outs = jaxpr_subcomp(
         c, call_jaxpr, backend, axis_env, (),
         extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
-    return xla_identity(c, *outs, op_type="remat_end")
+    # TODO: using an identity at the end can reduce little memory in 1 GPU,
+    # but there are still some bugs
+    # return xla_identity(c, *outs, op_type="remat_end")
+    return xc.ops.Tuple(c, outs)
 
 
 jax.xla._remat_using_while = _remat_using_identity

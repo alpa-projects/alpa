@@ -373,6 +373,26 @@ def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 
+def compile_dummy_zero_constant(backend, num_devices):
+    """Compile an XLA executable that returns a constant zero."""
+    c = xc.XlaBuilder("dummy_zero_constant")
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
+    zero = xc.ops.Constant(c, np.array(0, dtype=np.dtype(np.int32)))
+    c.clear_sharding()
+    c = c.build(xc.ops.Tuple(c, [zero]))
+
+    compile_options = xb.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    compiled = backend.compile(c, compile_options)
+    return compiled
+
+
 def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
     """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
     c = xc.XlaBuilder("allocate_zero_buffers")

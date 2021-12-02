@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 import logging
 from typing import Sequence, Any, Dict
 
+import jax
 from jax import jit
 from jax._src.util import partial, safe_map
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p)
+                      jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
+                      ShapedArray)
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib import xla_extension
@@ -26,7 +28,10 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 get_input_output_sharding_specs,
                                                 hlo_sharding_to_sharding_spec,
                                                 HloProtoStatus)
-from parax.util import OrderedSet, get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias, log_jaxpr
+from parax.global_env import global_config
+from parax.util import (OrderedSet, get_compile_options,
+                        jaxpr_to_hlo_computation, setup_computation_alias,
+                        log_jaxpr, compile_dummy_zero_constant)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -168,7 +173,7 @@ class XlaPipelineComputation(PipelineComputation):
             device_assignment=(device.id,) if device else None,
             use_spmd_partitioning=False,
             parameter_is_tupled_arguments=tuple_args,
-            build_random_seed=42,
+            build_random_seed=global_config.build_random_seed,
         )
 
         compiled = backend.compile(xla_computation, compile_options=options)
@@ -195,6 +200,27 @@ class XlaShardedPipelineComputation(PipelineComputation):
     output_acc_grad_indices: Sequence[int] = None
     donatables: OrderedSet[Var] = None
     compiled = None
+
+    @classmethod
+    def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
+        backend_name = 'gpu'
+        backend = xb.get_backend(backend_name)
+        strategy_config = StrategyConfig(global_config.build_random_seed,
+                                         logical_mesh_shape, None)
+        compiled = compile_dummy_zero_constant(backend,
+                                               np.prod(logical_mesh_shape))
+        hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
+        return cls(
+            name=name,
+            hlo_proto=hlo_proto,
+            strategy_config=strategy_config,
+            donated_invars=[],
+            invars=[],
+            outvars=[outvar],
+            output_acc_grad_indices=[],
+            donatables=OrderedSet(),
+        )
 
     @classmethod
     def from_auto_sharded_computation(
@@ -571,6 +597,116 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         new_computations.append(new_computation)
     new_computations = list(reversed(new_computations))
     return new_computations
+
+
+# TODO(yonghao): make it a pure function
+def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
+                  gensym_func):
+
+    def only_create_consts(jaxpr: Jaxpr):
+        const_vars = OrderedSet()
+        for eqn in jaxpr.eqns:
+            for var in eqn.invars:
+                if isinstance(var, Var) and var not in const_vars:
+                    return False
+            const_vars.update(
+                [v for v in eqn.outvars if not isinstance(v, DropVar)])
+        return True
+
+    def task_offloader(forward_stage: JaxPipelineComputation,
+                       backward_stage: JaxPipelineComputation):
+        from jax.interpreters.partial_eval import remat_call_p
+
+        def get_size(var):
+            if not isinstance(var, Var):
+                return 0
+            if isinstance(var, DropVar):
+                return 0
+            return np.prod(var.aval.shape) * np.dtype(var.aval.dtype).itemsize
+
+        offloaded_eqns = list()
+        mapping = dict()
+        for eqn in reversed(forward_stage.eqns):
+            if eqn.primitive == pipeline_p:
+                continue
+            if (eqn.primitive == remat_call_p and
+                    only_create_consts(eqn.params["call_jaxpr"])):
+                invar_shapes = sum([get_size(var) for var in eqn.invars])
+                if invar_shapes == 0:
+                    offloaded_eqns.append(eqn)
+        # remove outvars from forward stage
+        # assert len(offloaded_eqns)#, forward_stage.closed_jaxpr()
+        removed_outvars = set()
+        for eqn in offloaded_eqns:
+            not_dropped = [
+                var for var in eqn.outvars if not isinstance(var, DropVar)
+            ]
+            removed_outvars.update(not_dropped)
+        previous_end = forward_stage.eqns[-1]
+        new_invars = []
+        new_outvars = []
+        removed_after_end_marker = set()
+        for i, o in zip(previous_end.invars, previous_end.outvars):
+            if i in removed_outvars:
+                removed_after_end_marker.add(o)
+                mapping[i] = o
+                continue
+            new_invars.append(i)
+            new_outvars.append(o)
+        add_dummy_dependency_var = (len(forward_stage.invars) != 0 or
+                                    len(new_outvars) != 0)
+
+        # TODO(zhuohan): Here we add a dummy byte from forward stage to
+        #  backward stage to add a dependency link from the forward stage to
+        #  the backward stage. Should not need this once we fixed the stage
+        #  slicing in XLA.
+        if add_dummy_dependency_var:
+            dummy_outvar = gensym_func(Literal(0).aval)
+            dummy_eqn = new_jaxpr_eqn([Literal(0), Literal(0)], [dummy_outvar],
+                                      jax.lax.add_p, {})
+            forward_stage.eqns.insert(-1, dummy_eqn)
+            new_invars.append(dummy_outvar)
+            marked_dummy_outvar = gensym_func(dummy_outvar.aval)
+            new_outvars.append(marked_dummy_outvar)
+
+        forward_stage.eqns[-1] = mark_pipeline_jaxpreqn(
+            new_invars, new_outvars, previous_end.params["name"], "end")
+        forward_stage.outvars.clear()
+        forward_stage.outvars.extend(new_outvars)
+        # add invars and eqn into backward stage
+        previous_start = backward_stage.eqns[0]
+        new_invars = []
+        new_outvars = []
+        for i, o in zip(previous_start.invars, previous_start.outvars):
+            if i in removed_after_end_marker:
+                mapping[i] = o
+                continue
+            new_invars.append(i)
+            new_outvars.append(o)
+            backward_stage.invars.append(i)
+
+        if add_dummy_dependency_var:
+            new_invars.append(marked_dummy_outvar)
+            new_outvars.append(gensym_func(marked_dummy_outvar.aval))
+
+        backward_stage.eqns[0] = mark_pipeline_jaxpreqn(
+            new_invars, new_outvars, previous_start.params["name"], "start")
+        backward_stage.invars.clear()
+        backward_stage.invars.extend(new_invars)
+        for eqn in offloaded_eqns:
+            mapped_outvars = [
+                mapping[mapping[var]] if var in mapping else var
+                for var in eqn.outvars
+            ]
+            mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars,
+                                       eqn.primitive, eqn.params,
+                                       eqn.source_info)
+            backward_stage.eqns.insert(1, mapped_eqn)
+
+    num_layers = len(jax_pipeline_computations) // 2
+    for i in range(num_layers):
+        task_offloader(jax_pipeline_computations[i],
+                       jax_pipeline_computations[-i - 1])
 
 
 def rearrange_vars(vars,

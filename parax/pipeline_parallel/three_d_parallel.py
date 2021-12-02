@@ -17,8 +17,9 @@ from parax.pipeline_parallel.computation import (
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_compile_config,
     get_donatable_intermediate,
-    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
-    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars)
+    mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
+    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
+    split_donate_invars, XlaShardedPipelineComputation)
 from parax.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
@@ -72,6 +73,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_layers, acc_grad_invars, acc_grad_outvars)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
+    offload_remat(jax_pipeline_layers, gensym_func)
 
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars
@@ -151,12 +153,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         logger.debug(schedule.pprint_schedule(print=False))
 
     # Call auto-sharding pass to shard each stage
-    xla_stages, total_flops = shard_each_stage(jax_all_stages, sliced_meshes,
-                                               schedule, n_stages, num_meshes,
-                                               grad_in_to_out, global_invars,
-                                               acc_grad_outvars,
-                                               donate_invars_dict,
-                                               memory_budget_per_device)
+    xla_stages, total_flops = shard_each_stage(
+        jax_all_stages, sliced_meshes, schedule, n_stages, num_meshes,
+        grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
+        memory_budget_per_device, gensym_func)
     total_flops *= num_micro_batches
 
     # Wrap all things into a distributed runtime
@@ -183,10 +183,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict,
-                     memory_budget_per_device):
+                     memory_budget_per_device, gensym_func):
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
+    dummy_stage_id_dict = [[] for _ in range(num_meshes)]
     donatable_dict = [[] for _ in range(num_meshes)]
     mesh_stage_mapping = schedule.mesh_stage_mapping
     donatable_list = get_donatable_intermediate(
@@ -197,6 +198,10 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         mesh_indices = list(schedule.stage_placement(i))
         assert len(mesh_indices) == 1
         mesh_idx = mesh_indices[0]
+        if len(stage.outvars) == 0:
+            # This is a dummy stage, we don't need to shard it
+            dummy_stage_id_dict[mesh_idx].append(i)
+            continue
         stage_id_dict[mesh_idx].append(i)
         stage_dict[mesh_idx].append(stage)
         donatable_dict[mesh_idx].append(donatable_list[i])
@@ -231,6 +236,12 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             # logical mesh shape == physical mesh shape
             logical_mesh_choices = [virtual_mesh.get_default_logical_mesh()]
         logical_mesh_search_mode = "cost_model"
+        # Setup dummy stages
+        for i in dummy_stage_id_dict[mesh_idx]:
+            xla_stages[i] = XlaShardedPipelineComputation.dummy_computation(
+                jax_all_stages[i].name, logical_mesh_choices[0].id_mesh.shape,
+                gensym_func)
+
         stage_donate_invars = [
             donate_invars_dict[stage_idx]
             for stage_idx in stage_id_dict[mesh_idx]

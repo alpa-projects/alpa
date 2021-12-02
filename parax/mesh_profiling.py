@@ -469,7 +469,9 @@ def profile_all(device_cluster):
                                                   size_configs)
 
         op_infos = []
-        for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
+        for op_type in [
+                "all-reduce", "all-gather", "reduce-scatter", "all-to-all"
+        ]:
             for spec in all_specs:
                 op_infos.append((op_type, spec))
 

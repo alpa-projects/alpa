@@ -686,10 +686,6 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                                        eqn.source_info)
             backward_stage.eqns.insert(1, mapped_eqn)
 
-        if len(forward_stage.outvars) == 0:
-            # Add a dummy variable for the empty forward stage
-            dummy_var = gensym_func(1)
-
     num_layers = len(jax_pipeline_computations) // 2
     for i in range(num_layers):
         task_offloader(jax_pipeline_computations[i],

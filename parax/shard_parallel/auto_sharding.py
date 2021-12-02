@@ -76,7 +76,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     return_after_slice_auto_sharded_stages = bool(multiple_stages)
 
     total_devices = logical_mesh_choices[0].total_devices
-    build_random_seed = 42
+    build_random_seed = global_config.build_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=total_devices,

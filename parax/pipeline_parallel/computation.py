@@ -7,7 +7,8 @@ from typing import Sequence, Any, Dict
 from jax import jit
 from jax._src.util import partial, safe_map
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p)
+                      jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
+                      ShapedArray)
 from jax.interpreters import xla
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib import xla_extension
@@ -26,7 +27,10 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 get_input_output_sharding_specs,
                                                 hlo_sharding_to_sharding_spec,
                                                 HloProtoStatus)
-from parax.util import OrderedSet, get_compile_options, jaxpr_to_hlo_computation, setup_computation_alias, log_jaxpr
+from parax.global_env import global_config
+from parax.util import (OrderedSet, get_compile_options,
+                        jaxpr_to_hlo_computation, setup_computation_alias,
+                        log_jaxpr, compile_allocate_zero_buffers)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -168,7 +172,7 @@ class XlaPipelineComputation(PipelineComputation):
             device_assignment=(device.id,) if device else None,
             use_spmd_partitioning=False,
             parameter_is_tupled_arguments=tuple_args,
-            build_random_seed=42,
+            build_random_seed=global_config.build_random_seed,
         )
 
         compiled = backend.compile(xla_computation, compile_options=options)
@@ -195,6 +199,31 @@ class XlaShardedPipelineComputation(PipelineComputation):
     output_acc_grad_indices: Sequence[int] = None
     donatables: OrderedSet[Var] = None
     compiled = None
+
+    @classmethod
+    def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
+        backend_name = 'gpu'
+        backend = xb.get_backend(backend_name)
+        strategy_config = StrategyConfig(global_config.build_random_seed,
+                                         logical_mesh_shape,
+                                         None)
+        compiled = compile_allocate_zero_buffers(
+            backend, np.prod(logical_mesh_shape),
+            xc.Shape.array_shape(np.dtype(np.int32), ()),
+            np.dtype(np.int32)
+        )
+        hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
+        return cls(
+            name=name,
+            hlo_proto=hlo_proto,
+            strategy_config=strategy_config,
+            donated_invars=[],
+            invars=[],
+            outvars=[outvar],
+            output_acc_grad_indices=[],
+            donatables=OrderedSet(),
+        )
 
     @classmethod
     def from_auto_sharded_computation(
@@ -574,7 +603,8 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
 
 
 # TODO(yonghao): make it a pure function
-def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation]):
+def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
+                  gensym_func):
 
     def only_create_consts(jaxpr: Jaxpr):
         const_vars = OrderedSet()
@@ -656,10 +686,16 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation]):
                                        eqn.source_info)
             backward_stage.eqns.insert(1, mapped_eqn)
 
+        if len(forward_stage.outvars) == 0:
+            # Add a dummy variable for the empty forward stage
+            dummy_var = gensym_func(1)
+
     num_layers = len(jax_pipeline_computations) // 2
     for i in range(num_layers):
         task_offloader(jax_pipeline_computations[i],
                        jax_pipeline_computations[-i - 1])
+
+
 
 
 def rearrange_vars(vars,

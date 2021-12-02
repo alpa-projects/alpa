@@ -13,7 +13,7 @@ ops = xla_client.ops
 
 
 class ProfilingResult:
-    """Store the profiling result."""
+    """Store the profiling result for a physical mesh."""
 
     def __init__(self):
         # Cost dictionary for communication primitives
@@ -124,6 +124,14 @@ class ProfilingResult:
         return ret
 
 
+class ProfilingResultDatabase:
+    def __init__(self, folder):
+        pass
+
+    def query_prof_res(self, device_cluster_key, mesh_shape):
+        pass
+
+
 def _op_parameter(builder, num, shape, dtype):
     shape = xla_client.Shape.array_shape(np.dtype(dtype), shape)
     name = ""
@@ -179,7 +187,7 @@ def _op_all_to_all(operand, replica_groups, channel_id):
     return ret
 
 
-def compile_profiling_executable(backend, shapes, op_func, num_devices):
+def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     """
     Compile a xla executable for benchmarking operators.
     It is a while loop that calls the operator for multiple times.
@@ -330,8 +338,8 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
         # Compile
-        shapes, compiled = compile_profiling_executable(backend, shapes,
-                                                        op_func, num_devices)
+        shapes, compiled = _compile_profiling_executable(backend, shapes,
+                                                         op_func, num_devices)
 
         # Warm up
         device_inputs = []
@@ -464,8 +472,7 @@ def profile_all(device_cluster):
                                                   size_configs)
 
         op_infos = []
-        #for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
-        for op_type in ["all-to-all"]:
+        for op_type in ["all-reduce", "all-gather", "reduce-scatter", "all-to-all"]:
             for spec in all_specs:
                 op_infos.append((op_type, spec))
 
@@ -505,7 +512,7 @@ def profile_all(device_cluster):
         profile_res.all_gather_cost_dict = all_gather_cost_dict
         profile_res.reduce_scatter_cost_dict = reduce_scatter_cost_dict
         profile_res.all_to_all_cost_dict = all_to_all_cost_dict
-        prof_dict[(num_host, num_devices_per_host)] = profile_res
+        prof_dict[(num_hosts, num_devices_per_host)] = profile_res
 
     print_used_time("Profile communication")
     return prof_dict

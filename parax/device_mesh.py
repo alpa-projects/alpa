@@ -172,6 +172,7 @@ class MeshHostWorker:
             if slice_shape == tensor_shape:
                 col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
             else:
+                print(">>>>> slow path...")
                 ind, n_elements = infer_offset_and_n_elements(offset)
                 col.send_multigpu(to_send[ind],
                                   dst_rank,
@@ -180,6 +181,7 @@ class MeshHostWorker:
                                   n_elements=n_elements)
         else:
             # slower path, because of indexing.
+            print(">>>>> slowest path...")
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
             src_buffer = jax_tensor_index(
@@ -217,6 +219,7 @@ class MeshHostWorker:
             if slice_shape == tensor_shape:
                 col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
             else:
+                print(">>>>> slow path...")
                 ind, n_elements = infer_offset_and_n_elements(
                     indices_in_dst_tile)
                 col.recv_multigpu(to_recv[ind],
@@ -228,6 +231,7 @@ class MeshHostWorker:
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/parax-project/parax/issues/145
+            print(">>>>> slowest path...")
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])

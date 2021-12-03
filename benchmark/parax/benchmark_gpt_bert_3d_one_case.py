@@ -99,7 +99,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
 
     global_config.force_data_parallel = force_data_parallel
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.reduce_scatter_grad_acc_friendly = False
+    global_config.pipeline_use_signal_send_recv = True
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh()

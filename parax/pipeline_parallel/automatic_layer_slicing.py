@@ -131,7 +131,6 @@ def get_stat(jaxpr):
 def slice_jaxpr(jaxpr: Jaxpr,
                 layer_num: int,
                 eps: float,
-                return_value=False,
                 stat=None,
                 cost_criteria="flops"):
     layer_num = int(layer_num)
@@ -192,8 +191,15 @@ def slice_jaxpr(jaxpr: Jaxpr,
         MaxCost_argmin = np.full((length + 1, layer_num + 1),
                                  -1,
                                  dtype=np.int32)
+        SolutionImbalance = np.full((length + 1, layer_num + 1),
+                                    np.inf,
+                                    dtype=np.float32)
         MaxCost[0, 0] = 0
         SumCostUnderMax[0, 0] = 0
+        # Currently use variance to measure imbalance
+        for r in range(0, length + 1):
+            SolutionImbalance[r, 0] = 0
+
         for q in range(1, layer_num + 1):
             for r in range(1, length + 1):
                 for k in range(0, r):
@@ -201,12 +207,17 @@ def slice_jaxpr(jaxpr: Jaxpr,
                                     Blocked[k + 1, r] + Cost[k, r])
                     new_sum = (SumCostUnderMax[k, q - 1] + Blocked[k + 1, r] +
                                Cost[k, r])
+                    new_imbalance = (SolutionImbalance[k, q - 1] + k**2 / q -
+                                     r**2 / (q + 1) + (r - k)**2)
                     if (new_value < MaxCost[r, q] or
-                        (new_value <= MaxCost[r, q] *
-                         (1 + 1e-4) and new_sum < SumCostUnderMax[r, q])):
+                        (new_value <= MaxCost[r, q] * (1 + 1e-4) and
+                         (new_sum < SumCostUnderMax[r, q] or
+                          (new_sum <= SumCostUnderMax[r, q] * (1 + 1e-4) and
+                           new_imbalance < SolutionImbalance[r, q])))):
                         MaxCost[r, q] = new_value
                         SumCostUnderMax[r, q] = new_sum
                         MaxCost_argmin[r, q] = k
+                        SolutionImbalance[r, q] = new_imbalance
         return MaxCost_argmin, MaxCost[length, layer_num]
 
     Blocked = Init()
@@ -221,19 +232,31 @@ def slice_jaxpr(jaxpr: Jaxpr,
         r = k
     assert r == 0, "no solution for layer clustering" if r == -1 else "unknown error"
     solution = list(reversed(reversed_sliced_eqns))
-    if return_value:
-        return solution, value
-    return solution
+
+    stage_flops = []
+    stage_heavy_ops = []
+    for eqns in solution:
+        stage_flops.append(sum([eqn_flops(eqn) for eqn in eqns]))
+        stage_heavy_ops.append(sum([heavy_count(eqn) for eqn in eqns]))
+
+    solution_info = {
+        "total_cost": value,
+        "stage_flops": stage_flops,
+        "stage_heavy_ops": stage_heavy_ops,
+    }
+    return solution, solution_info
 
 
 def search_layer_num(jaxpr, eps, layer_eps=0):
     stat = non_trivial, Cost = get_stat(jaxpr)
     l = 2
     r = int(non_trivial.sum() / 3) + 1
-    _, l_val = slice_jaxpr(jaxpr, l, eps, True, stat)
+    _, solution_info = slice_jaxpr(jaxpr, l, eps, stat)
+    l_val = solution_info["total_cost"]
     while r - l > 1:
         mid = int((l + r) / 2)
-        _, mid_val = slice_jaxpr(jaxpr, mid, eps, True, stat)
+        _, solution_info = slice_jaxpr(jaxpr, mid, eps, stat)
+        mid_val = solution_info["total_cost"]
         if mid_val > l_val * (1 + layer_eps):
             r = mid
         else:
@@ -272,15 +295,18 @@ def automatic_layer_slicing(fn: Callable,
             if layer_num == "auto":
                 layer_num = search_layer_num(origin_jaxpr, eps, layer_eps)
 
-            slices = slice_jaxpr(origin_jaxpr,
-                                 layer_num,
-                                 eps,
-                                 cost_criteria=cost_criteria)
+            slices, solution_info = slice_jaxpr(origin_jaxpr,
+                                                layer_num,
+                                                eps,
+                                                cost_criteria=cost_criteria)
             print("-" * 20, "Automatic layer slicing stats", "-" * 20)
             print(f"layer_num: {layer_num}")
             print(" - Number of Jaxpr eqns in each stage:")
             for i, slice in enumerate(slices):
-                print(f"Layer {i}: {len(slice)}")
+                print(
+                    f"Layer {i}: #eqns={len(slice)},"
+                    f" flop={solution_info['stage_flops'][i] / (1000 ** 4):.3f} TFlop,"
+                    f" #heavy_ops={solution_info['stage_heavy_ops'][i]}")
             print(" - Invars of each stage:")
             get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
             print("-" * 70)

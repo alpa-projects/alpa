@@ -36,11 +36,17 @@ paper_auto_gpt_suite = {
 # 8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256], [6]) +
 #     get_auto_test_case("2.7B", [32, 64, 128, 256, 512], [8])),
 2: (get_auto_test_case("350M", [32, 64, 128], [6]) +
-    get_auto_test_case("760M", [64, 128, 256], [6])),
+    get_auto_test_case("760M", [64, 128, 256], [6]) +
+    get_auto_test_case("350M", [64], [12]) +
+    get_auto_test_case("760M", [128], [12])),
 4: (get_auto_test_case("760M", [32, 64, 128], [6]) +
-    get_auto_test_case("1.3B", [64, 128, 256], [6])),
+    get_auto_test_case("1.3B", [64, 128, 256], [6]) +
+    get_auto_test_case("760M", [64], [12]) +
+    get_auto_test_case("1.3B", [128], [12])),
 8: (get_auto_test_case("1.3B", [32, 64, 128], [6]) +
-    get_auto_test_case("2.7B", [64, 128, 256], [8])),
+    get_auto_test_case("2.7B", [64, 128, 256], [8]) +
+    get_auto_test_case("1.3B", [64], [12]) +
+    get_auto_test_case("2.7B", [128], [16])),
 }
 
 test_auto_gpt_suite = {

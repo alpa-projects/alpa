@@ -277,6 +277,33 @@ class AutoShardingAttentionTest(unittest.TestCase):
                         assert_replicated_row_partitioned(
                             weights[j], mesh_shape)
 
+    def test_bert_layer_force_batch_dim_mapping(self):
+        batch_size = 64
+        seq_len = 64
+        num_layers = 2
+        hidden_size = 32
+        num_heads = 8
+        deterministic = False
+        use_remat = False
+        global_config.force_batch_dim_to_mesh_dim = 0
+
+        # data parallel
+        device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
+        optimizer, hlo_ir, objective = self.run_bert_layers(
+            batch_size, seq_len, num_layers, hidden_size, num_heads,
+            deterministic, use_remat, device_mesh)
+
+        assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, 0)
+
+        # model parallel
+        device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
+        optimizer, hlo_ir, objective = self.run_bert_layers(
+            batch_size, seq_len, num_layers, hidden_size, num_heads,
+            deterministic, use_remat, device_mesh)
+        expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
+            batch_size * seq_len * hidden_size * 4, 1)
+        assert_close(objective, expected)
+
     def test_embedding_2d_mesh(self):
         vocab_size = 1024
         hidden_size = 8
@@ -571,6 +598,8 @@ def suite():
     suite.addTest(AutoShardingAttentionTest("test_bert_layer_data_parallel"))
     suite.addTest(AutoShardingAttentionTest("test_bert_layer_model_parallel"))
     suite.addTest(AutoShardingAttentionTest("test_bert_layer_2d_mesh"))
+    suite.addTest(
+        AutoShardingAttentionTest("test_bert_layer_force_batch_dim_mapping"))
 
     suite.addTest(AutoShardingAttentionTest("test_embedding_2d_mesh"))
 

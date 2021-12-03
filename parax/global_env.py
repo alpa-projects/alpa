@@ -41,6 +41,8 @@ class GlobalConfig:
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
         self.allow_replicated_parameters = True  # Whether allow replicated parameters.
         self.force_data_parallel = False  # Whether force to generate data-parallel
+        self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
+        # a mesh dimension
         self.force_zero_stage_3 = False  # Whether force to generate a strategy similar to
         # ZeRO optimizer stage 3
         self.force_zero_stage_3_all_gather_threshold = 1 << 26  # The threshold of all-gather combiner

@@ -387,7 +387,7 @@ def generate_stage_info(all_layers,
 
 
 def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
-                num_gpus):
+                num_gpus, auto_sharding_global_config):
     """
     Args:
         stage_info_list: List of info for compilation. Each info is a tuple with:
@@ -397,6 +397,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
     backup_config = global_config.backup()
     global_config.devices = logical_mesh
     compile_config = global_config.backup()
+    compile_config.update(auto_sharding_global_config)
     for stage_info in stage_info_list:
         proto, avals, out_avals, donate_invars = stage_info
         compile_workers.submit(

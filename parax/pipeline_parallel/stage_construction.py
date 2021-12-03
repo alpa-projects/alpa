@@ -188,14 +188,18 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
     return submesh_choices
 
 
-def distributed_profile_on_mesh(meshes, layers, donation_mapping,
-                                global_outvars, apply_grad_layers,
-                                apply_grad_global_info):
+def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
+                                donation_mapping, global_outvars,
+                                apply_grad_layers, apply_grad_global_info,
+                                auto_sharding_configs):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
+    num_auto_sharding_configs = len(auto_sharding_configs)
     indices = list(range(2 * num_layers))
-    compute_cost = np.full((num_layers, num_layers), np.inf)
-    max_n_succ_stages = np.full((num_layers, num_layers), -1)
+    compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs),
+                           np.inf)
+    max_n_succ_stages = np.full(
+        (num_layers, num_layers, num_auto_sharding_configs), -1)
     stage_infos = []
     stage_indices = []
     stage_intermediate_vars = []
@@ -229,54 +233,78 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
             profile_infos.append(profile_info)
             apply_grad_infos.append(apply_info)
 
-    print("- Compile all stages")
     # TODO(zhuohan): set the number of workers as a tunable parameter
     n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    logical_mesh = meshes[0].get_default_logical_mesh()
-    compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
+    for config_idx, auto_sharding_config in enumerate(auto_sharding_configs):
+        if auto_sharding_config is None:
+            continue
+        logical_mesh, auto_sharding_global_config = auto_sharding_config
+        print("- Compile all stages")
+        compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1,
+                                       auto_sharding_global_config)
 
-    print("- Start all profiling tasks")
-    profile_workers = ProfileWorkerPool(meshes)
-    for (compiled_output, stage_info, intermediate_vars,
-         apply_info) in zip(compiled_outputs, profile_infos,
-                            stage_intermediate_vars, apply_grad_infos):
-        (proto, config, in_shardings, out_shardings, hooked_proto,
-         apply_in_shardings) = compiled_output
-        intermediate_size = compute_intermediate_size(hooked_proto,
-                                                      intermediate_vars,
-                                                      config.logical_mesh_shape)
-        apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, *apply_info, config.logical_mesh_shape)
-        profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, stage_info, intermediate_size,
-                                apply_grad_input_size))
+        print("- Start all profiling tasks")
+        profile_workers = ProfileWorkerPool(meshes)
+        for (compiled_output, stage_info, intermediate_vars,
+             apply_info) in zip(compiled_outputs, profile_infos,
+                                stage_intermediate_vars, apply_grad_infos):
+            (proto, config, in_shardings, out_shardings, hooked_proto,
+             apply_in_shardings) = compiled_output
+            intermediate_size = compute_intermediate_size(
+                hooked_proto, intermediate_vars, config.logical_mesh_shape)
+            apply_grad_input_size = compute_apply_grad_invar_size(
+                apply_in_shardings, *apply_info, config.logical_mesh_shape)
+            profile_workers.submit(lambda w, v: w.profile.remote(*v),
+                                   (compiled_output, stage_info,
+                                    intermediate_size, apply_grad_input_size))
 
-    print("- Profile all stages")
-    pbar = tqdm.tqdm(stage_indices)
-    for start, end in pbar:
-        cost, max_stage, debug_info = profile_workers.get_next()
-        peak_memory, available_memory, intermediate_size, initial_size = debug_info
-        compute_cost[start, end] = np.mean(cost)
-        max_n_succ_stages[start, end] = max_stage
-        pbar.write(f"cost[{start}, {end}]={compute_cost[start, end]},"
-                   f" max_n_succ_stage={max_stage},"
-                   f" Mem: peak={peak_memory / GB:.3f}GB,"
-                   f" avail={available_memory / GB:.3f}GB,"
-                   f" intermediate={intermediate_size / GB:.3f}GB,"
-                   f" initial={initial_size / GB:.3f}GB")
-    profile_workers.shutdown()
+        print("- Profile all stages")
+        pbar = tqdm.tqdm(stage_indices)
+        for start, end in pbar:
+            cost, max_stage, debug_info = profile_workers.get_next()
+            peak_memory, available_memory, intermediate_size, initial_size = debug_info
+            compute_cost[start, end, config_idx] = np.mean(cost)
+            max_n_succ_stages[start, end, config_idx] = max_stage
+            pbar.write(f"cost[{start}, {end}]={compute_cost[start, end]},"
+                       f" max_n_succ_stage={max_stage},"
+                       f" Mem: peak={peak_memory / GB:.3f}GB,"
+                       f" avail={available_memory / GB:.3f}GB,"
+                       f" intermediate={intermediate_size / GB:.3f}GB,"
+                       f" initial={initial_size / GB:.3f}GB")
+        profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 
 
-def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
-                     global_outvars, apply_grad_layers, apply_grad_global_info):
+def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices, layers,
+                     donation_mapping, global_outvars, apply_grad_layers,
+                     apply_grad_global_info):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
-    compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
-                           np.inf)
-    max_n_succ_stages = np.full((num_layers, num_layers, num_submesh_choices),
-                                -1)
+    submesh_autosharding_configs = [
+        virtual_mesh.slice_2d(range(submesh[0]),
+                              range(submesh[1])).get_all_logical_mesh()
+        for submesh in submesh_choices
+    ]
+    # a config is: (logical_mesh, auto_sharding_global_configs)
+    # each (2D Mesh with force batch dim) + (1D Mesh with mix batch dim)
+    submesh_autosharding_configs = [
+        ([(logical_mesh, dict(force_batch_dim_to_mesh_dim=0))
+          for logical_mesh in configs] + [(configs[0], dict())])
+        for configs in submesh_autosharding_configs
+    ]
+    max_autosharding_configs = max(
+        [len(configs) for configs in submesh_autosharding_configs])
+    submesh_autosharding_configs = [
+        (configs + [None] * (max_autosharding_configs - len(configs)))
+        for configs in submesh_autosharding_configs
+    ]
+    compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, max_autosharding_configs),
+        np.inf)
+    max_n_succ_stages = np.full(
+        (num_layers, num_layers, num_submesh_choices, max_autosharding_configs),
+        -1)
     print("-" * 20 + " Automatic stage clustering " + "-" * 20)
     print(f"submesh_choices: {submesh_choices}")
 
@@ -289,10 +317,11 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
             num_hosts, num_devices)
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
-            apply_grad_layers, apply_grad_global_info)
+            apply_grad_layers, apply_grad_global_info,
+            submesh_autosharding_configs[mesh_id])
 
-        compute_cost[:, :, mesh_id] = mesh_compute_cost
-        max_n_succ_stages[:, :, mesh_id] = mesh_max_n_succ_stages
+        compute_cost[:, :, mesh_id, :] = mesh_compute_cost
+        max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
         toc = time()
         print(f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
               f' seconds')

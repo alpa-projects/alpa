@@ -1166,6 +1166,28 @@ class VirtualPhysicalMesh:
             return self.get_logical_mesh(
                 (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.1])
 
+    def get_all_logical_mesh(self, mesh_alpha=None, mesh_beta=None):
+        """
+        Generate all available logical mesh shapes. 
+        Stop when a dimension of the mesh is not even.
+        """
+        dim1 = self.total_devices
+        results: Sequence[LogicalDeviceMesh] = list()
+        cnt = 0
+        while dim1 % 2 == 0:
+            # TODO(yonghao): compute mesh_alpha and mesh_beta for each case
+            results.insert(
+                cnt,
+                self.get_logical_mesh((dim1, self.total_devices // dim1),
+                                      mesh_alpha, mesh_beta))
+            cnt += 1
+            results.insert(
+                cnt,
+                self.get_logical_mesh((self.total_devices // dim1, dim1),
+                                      mesh_alpha, mesh_beta))
+            dim1 //= 2
+        return results
+
 
 class DeviceCluster:
     """A ray cluster with GPU devices."""

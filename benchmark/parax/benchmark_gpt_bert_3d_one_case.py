@@ -87,7 +87,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
 
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_data_parallel,
+     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
      use_remat, prefer_reduce_scatter, auto_stage) = benchmark_case
 
     auto_layer = auto_stage
@@ -97,9 +97,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     # Parallel configs
     grad_func = parax.grad
 
-    global_config.force_data_parallel = force_data_parallel
+    if force_batch_dim_mapping:
+        global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.reduce_scatter_grad_acc_friendly = False
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
@@ -163,12 +163,12 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     state = create_train_state(rngkey, model, batch, dtype)
     print_used_time("Create train state")
 
-    # compile executable
+    # Compile executable
     train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, jnp.float16, auto_layer)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
-    # dump hlo ir for debugging
+    # Dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
     for i in range(len(stage_hlo_texts)):
         with open(f"tmp/stage_{i}.hlo", "w") as fout:

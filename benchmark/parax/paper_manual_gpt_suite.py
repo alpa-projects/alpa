@@ -21,7 +21,7 @@ fixed_params = (True, True, False)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
-    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, Auto-layer, Auto-stage
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
 1: [
 ],
 
@@ -46,7 +46,7 @@ test_gpt_suite = {
 
 
 paper_gpt_suite = {
-    # B,       model,           LD0, LD1, PD0, PD1, PP, NB,   FD,  Remat, RS, Auto-layer-slicing
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
 1: [
     # 125M
     (2,   *gpt_specs["125M"],  1,   1,   1,   1,   1,  1,    1,  *fixed_params),

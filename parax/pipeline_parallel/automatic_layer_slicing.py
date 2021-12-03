@@ -191,8 +191,15 @@ def slice_jaxpr(jaxpr: Jaxpr,
         MaxCost_argmin = np.full((length + 1, layer_num + 1),
                                  -1,
                                  dtype=np.int32)
+        SolutionImbalance = np.full((length + 1, layer_num + 1),
+                                    np.inf,
+                                    dtype=np.float32)
         MaxCost[0, 0] = 0
         SumCostUnderMax[0, 0] = 0
+        # Currently use variance to measure imbalance
+        for r in range(0, length + 1):
+            SolutionImbalance[r, 0] = 0
+
         for q in range(1, layer_num + 1):
             for r in range(1, length + 1):
                 for k in range(0, r):
@@ -200,12 +207,17 @@ def slice_jaxpr(jaxpr: Jaxpr,
                                     Blocked[k + 1, r] + Cost[k, r])
                     new_sum = (SumCostUnderMax[k, q - 1] + Blocked[k + 1, r] +
                                Cost[k, r])
+                    new_imbalance = (SolutionImbalance[k, q - 1] + k**2 / q -
+                                     r**2 / (q + 1) + (r - k)**2)
                     if (new_value < MaxCost[r, q] or
-                        (new_value <= MaxCost[r, q] *
-                         (1 + 1e-4) and new_sum < SumCostUnderMax[r, q])):
+                        (new_value <= MaxCost[r, q] * (1 + 1e-4) and
+                         (new_sum < SumCostUnderMax[r, q] or
+                          (new_sum <= SumCostUnderMax[r, q] * (1 + 1e-4) and
+                           new_imbalance < SolutionImbalance[r, q])))):
                         MaxCost[r, q] = new_value
                         SumCostUnderMax[r, q] = new_sum
                         MaxCost_argmin[r, q] = k
+                        SolutionImbalance[r, q] = new_imbalance
         return MaxCost_argmin, MaxCost[length, layer_num]
 
     Blocked = Init()

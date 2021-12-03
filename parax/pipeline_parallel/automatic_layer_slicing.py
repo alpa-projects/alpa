@@ -293,7 +293,7 @@ def automatic_layer_slicing(fn: Callable,
             for i, slice in enumerate(slices):
                 print(
                     f"Layer {i}: #eqns={len(slice)},"
-                    f" flop={solution_info['stage_flops'][i] / (1000 ** 4):.3f}TFlop"
+                    f" flop={solution_info['stage_flops'][i] / (1000 ** 4):.3f} TFlop,"
                     f" #heavy_ops={solution_info['stage_heavy_ops'][i]}")
             print(" - Invars of each stage:")
             get_cross_slice_vars(origin_jaxpr.jaxpr, slices)

@@ -91,7 +91,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        mesh_dim0, mesh_dim1, _, _, _,  num_micro_batches, force_data_parallel,\
+        mesh_dim0, mesh_dim1, _, _, _,  num_micro_batches, force_batch_dim_mapping,\
         use_remat, prefer_reduce_scatter, _ = benchmark_case
     dtype = jnp.float16
 
@@ -102,7 +102,9 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         num_micro_batches = None
         grad_func = jax.grad
 
-    global_config.force_data_parallel = force_data_parallel
+    if force_batch_dim_mapping:
+        # Always map batch dim to mesh dim 0
+        global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],

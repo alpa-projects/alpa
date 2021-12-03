@@ -38,11 +38,12 @@ test_gpt_suite = {
     # 142 performance case.
     # (16,  *gpt_specs["6.7B-half"],  1,   4,   1,   4,   2,  1,    False,  *fixed_params),
 
-    (32,  *gpt_specs["2.7B"],  1,   4,   1,   1,   2,  2,    1,  *fixed_params),
+    (32,  *gpt_specs["2.7B"],  1,   4,   1,   4,   2,  2,    True,  *fixed_params),
 
 ],
 
 16: [
+    (32,  *gpt_specs["2.7B"],  1,   4,   1,   4,   4,  1,    True,  *fixed_params),
 ],
 
 32: [

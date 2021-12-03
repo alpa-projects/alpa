@@ -93,11 +93,13 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
         # Set configs for force_zero_stage_3
         if global_config.force_zero_stage_3:
+            # Generate a strategy similar to ZeRO stage 3
             force_data_parallel = True
             prefer_reduce_scatter = True
             reduce_scatter_aggresive_partition = True
             all_gather_threshold = global_config.force_zero_stage_3_all_gather_threshold
         else:
+            # Use default settings
             force_data_parallel = global_config.force_data_parallel
             prefer_reduce_scatter = global_config.prefer_reduce_scatter
             reduce_scatter_aggresive_partition = False
@@ -105,6 +107,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
         # Set configs for force_data_parallel
         if force_data_parallel:
+            # Forcibly generate data-parallel strategy
             allow_all_gather = False
             allow_all_to_all = False
 
@@ -118,15 +121,20 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                     "Please make sure the mesh shape only has a single non-one dimension."
                 )
         else:
+            # Use default settings
             allow_all_gather = global_config.allow_all_gather
             allow_all_to_all = global_config.allow_all_to_all
 
-            if logical_mesh.id_mesh.shape[0] > 1 and logical_mesh.id_mesh.shape[
-                    1] > 1:
-                # in 2d mesh, force the batch tensor dim to match the first mesh dim
-                force_batch_dim_to_mesh_dim = 0
+            if global_config.force_batch_dim_to_mesh_dim is None:
+                # Automatically set force_batch_dim_to_mesh_dim
+                if logical_mesh.id_mesh.shape[
+                        0] > 1 and logical_mesh.id_mesh.shape[1] > 1:
+                    # In 2d mesh, force the batch tensor dim to match the first mesh dim
+                    force_batch_dim_to_mesh_dim = 0
+                else:
+                    force_batch_dim_to_mesh_dim = -1
             else:
-                force_batch_dim_to_mesh_dim = -1
+                force_batch_dim_to_mesh_dim = global_config.force_batch_dim_to_mesh_dim
 
         # Set configs for reduce-scatter
         if global_config.num_micro_batches is not None and global_config.num_micro_batches > 1:

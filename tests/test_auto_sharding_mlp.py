@@ -348,6 +348,28 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
 
+    def test_n_layer_mlp_force_batch_dim_mapping(self):
+        num_layers = 6
+        batch_size = 32
+        hidden_dim = 256
+        global_config.force_batch_dim_to_mesh_dim = 0
+
+        # Data parallel
+        device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
+        state, hlo_ir, objective = self.run_n_layer_mlp(num_layers, batch_size,
+                                                        hidden_dim, hidden_dim,
+                                                        hidden_dim, device_mesh)
+        assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, 0)
+
+        # Model parallel
+        device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
+        state, hlo_ir, objective = self.run_n_layer_mlp(num_layers, batch_size,
+                                                        hidden_dim, hidden_dim,
+                                                        hidden_dim, device_mesh)
+        expected = (num_layers - 1) *\
+          device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, 1)
+        assert_close(objective, expected)
+
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_n_layer_mlp_data_parallel()
@@ -418,6 +440,8 @@ def suite():
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_force_data_parallel"))
+    suite.addTest(
+        AutoShardingMLPTest("test_n_layer_mlp_force_batch_dim_mapping"))
 
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))

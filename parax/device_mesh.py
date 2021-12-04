@@ -1,6 +1,8 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
 from collections import defaultdict
 from collections.abc import Iterable
+import cupy
+from cupy.cuda import nccl
 import logging
 from operator import attrgetter
 import pickle
@@ -33,6 +35,7 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
                         jax_tensor_index, OrderedSet)
+from ray.util.collective.collective_group import nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -65,6 +68,8 @@ class MeshHostWorker:
                                                   node_id=host_id)
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
+        self.allgather_communicators = nccl.NcclCommunicator.initAll(
+            list(range(len(self.local_devices))))
         self.buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
@@ -250,12 +255,23 @@ class MeshHostWorker:
 
     def allgather(self, uuids, device_ids, slices):
         # TODO(Hao): implement a better allgather
-        for i, uuid in enumerate(uuids):
-            for j, slice in enumerate(slices):
-                if i == j:
-                    continue
-                self.buffers[uuid][slice] = self.buffers[uuids[j]][slice]
-        return
+        cupy_buffers = []
+        nccl_util.groupStart()
+        for i, (uuid, device_id) in enumerate(zip(uuids, device_ids)):
+            xla_buffer = self.buffers[uuid]
+            cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
+            ind, n_elements = infer_offset_and_n_elements(slices[i])
+            cupy_slice = cupy_buffer[ind]
+            self.allgather_communicators[device_id].allGather(
+                nccl_util.get_tensor_ptr(cupy_slice),
+                nccl_util.get_tensor_ptr(cupy_buffer), n_elements,
+                nccl_util.get_nccl_tensor_dtype(cupy_buffer),
+                cupy.cuda.Stream.null.ptr)
+            cupy_buffers.append(cupy_buffer)
+        nccl_util.groupEnd()
+        for uuid, cupy_buffer in zip(uuids, cupy_buffers):
+            self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
+
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}

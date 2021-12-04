@@ -288,7 +288,7 @@ class MeshHostWorker:
                                *recv_subtask,
                                group_name=task['group_name'])
 
-    def put_allgather_task(self, uuid, tasks, group_name):
+    def put_resharding_allgather_task(self, uuid, tasks):
         self.allgather_tasks[uuid] = {"tasks": tasks}
 
     def run_allgather_task(self, uuid, buffer_uuids):

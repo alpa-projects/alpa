@@ -14,6 +14,7 @@ gpt_specs = {
 "76B":  (1024,  10240, 60,    80,   51200, ),
 
 "6.7B-half": (1024,  4096,  16,    32,   51200, ),
+"2.7B-half": (1024,  2560,  4,    32,   51200, ),
 }
 
 
@@ -31,14 +32,21 @@ test_gpt_suite = {
 8: [
     #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
     # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
-    (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
+    # (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
 
     # 142 performance case.
     #(16,  *gpt_specs["6.7B-half"],  1,   4,   1,   4,   2,  1,    False,  *fixed_params),
     #(16,  1024, 2048, 8, 32, 51200, 1,   4,   1,   4,   2,  1,   True,  *fixed_params),
+
+    (32, *gpt_specs["2.7B-half"], 1,   4,   1,   4,   2,  2,    True,  *fixed_params),
+
 ],
 
 16: [
+    # (512, *gpt_specs["2.7B-half"], 1,   4,   1,   4,   4,  32,    True,  *fixed_params),
+
+    # (512, *gpt_specs["2.7B"], 1,   4,   1,   4,   4,  32,    True,  *fixed_params)
+    (512, *gpt_specs["6.7B"], 1,   4,   1,   4,   4,  64, True, *fixed_params)
 ],
 
 32: [

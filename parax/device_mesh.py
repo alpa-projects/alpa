@@ -69,10 +69,10 @@ class MeshHostWorker:
         self.executables = {}
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
+        self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
         set_override_backend(self.backend)
 
         if global_config.pipeline_use_signal_send_recv:
-            print("Use signal send recv")
             self.signal_tensors = []
             for d in self.local_devices:
                 self.signal_tensors.append(
@@ -160,6 +160,7 @@ class MeshHostWorker:
             group_name (str): collective group name
         """
         if global_config.pipeline_use_signal_send_recv:
+            print(">>>>> send: Use signal send recv")
             signal = self.signal_tensors[uuid % len(self.local_devices)]
             col.send_multigpu(signal, dst_rank, dst_gpu_idx, group_name)
             return
@@ -170,8 +171,10 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in offset)
             to_send = xla_buffer_to_cupy(self.buffers[uuid])
             if slice_shape == tensor_shape:
+                print(">>>>> send fast path...")
                 col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
             else:
+                print(">>>>> send slow path...")
                 ind, n_elements = infer_offset_and_n_elements(offset)
                 col.send_multigpu(to_send[ind],
                                   dst_rank,
@@ -180,6 +183,7 @@ class MeshHostWorker:
                                   n_elements=n_elements)
         else:
             # slower path, because of indexing.
+            print(">>>>> send slowest path...")
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
             src_buffer = jax_tensor_index(
@@ -205,6 +209,7 @@ class MeshHostWorker:
             raise RuntimeError("Buffer has not been created.")
 
         if global_config.pipeline_use_signal_send_recv:
+            # print(">>>>> recv: Use signal send recv")
             signal = self.signal_tensors[uuid % len(self.local_devices)]
             col.recv_multigpu(signal, src_rank, src_gpu_idx, group_name)
             return
@@ -215,8 +220,10 @@ class MeshHostWorker:
             to_recv = xla_buffer_to_cupy(self.buffers[uuid],
                                          take_ownership=True)
             if slice_shape == tensor_shape:
+                print(">>>>> recv fast path...")
                 col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
             else:
+                print(">>>>> recv slow path...")
                 ind, n_elements = infer_offset_and_n_elements(
                     indices_in_dst_tile)
                 col.recv_multigpu(to_recv[ind],
@@ -228,6 +235,7 @@ class MeshHostWorker:
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/parax-project/parax/issues/145
+            print(">>>>> recv slowest path...")
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
@@ -246,6 +254,16 @@ class MeshHostWorker:
                 xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+
+    def allgather(self, uuids, device_ids, slices):
+        # TODO(Hao): implement a better allgather
+        for i, uuid in enumerate(uuids):
+            for j, slice in enumerate(slices):
+                if i == j:
+                    continue
+                self.buffers[uuid][slice] = self.buffers[uuids[j]][slice]
+        return
+
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
@@ -270,6 +288,16 @@ class MeshHostWorker:
                                recv_detail[0],
                                *recv_subtask,
                                group_name=task['group_name'])
+
+    def put_allgather_task(self, uuid, tasks, group_name):
+        self.allgather_tasks[uuid] = {"tasks": tasks}
+
+    def run_allgather_task(self, uuid, buffer_uuids):
+        task = self.allgather_tasks[uuid]
+        allgather_details = task["tasks"]
+        device_ids, slices = allgather_details
+        self.allgather(buffer_uuids, device_ids, slices)
+        return
 
     ##### Profiling Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any]):

@@ -161,6 +161,18 @@ def benchmark_wide_resnet_internal(benchmark_case, niter):
     else:
         raise ValueError(f"Invalid dtype: {dtype}")
 
+    device_cluster = DeviceCluster()
+    virtual_mesh = device_cluster.get_virtual_physical_mesh()
+    set_parallelize_options(
+        devices=virtual_mesh,
+        strategy="3d_parallel",
+        num_micro_batches=num_micro_batches,
+        pipeline_stage_mode="auto_gpipe")
+        # pipeline_stage_mode="manual_gpipe",
+        # forward_stage_layer_ids=[list(range(0, 9)),
+        #                          list(range(9, 16))],
+        # sub_physical_mesh_shapes=[(1, 8)] * 2)
+
     # Parallel configs
     if num_micro_batches > 1:
         use_grad_acc = True
@@ -173,15 +185,6 @@ def benchmark_wide_resnet_internal(benchmark_case, niter):
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
     global_config.allow_mixed_mesh_shape = True
 
-    device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    set_parallelize_options(devices=virtual_mesh,
-                            strategy="3d_parallel",
-                            num_micro_batches=num_micro_batches,
-                            pipeline_stage_mode="auto_gpipe")
-                            # pipeline_stage_mode="manual_gpipe",
-                            # forward_stage_layer_ids=[list(range(0,9)), list(range(9,16))],
-                            # sub_physical_mesh_shapes=[(1,4)] * 2)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
@@ -208,7 +211,8 @@ def benchmark_wide_resnet_internal(benchmark_case, niter):
     param_count = compute_param_number(state.params)
 
     # Compile executable
-    executable: DecentralizedDistributedRuntime = train_step.get_executable(state, batch)
+    executable: DecentralizedDistributedRuntime = train_step.get_executable(
+        state, batch)
     print_used_time("Compile (driver)")
 
     stage_hlo_texts = executable.get_hlo_text()
@@ -220,8 +224,6 @@ def benchmark_wide_resnet_internal(benchmark_case, niter):
 
     executable.sync()
     print_used_time("Compile (workers)")
-    print(executable.profile_all_executables())
-    exit()
 
     # Benchmark step time
     for i in range(niter):
@@ -251,13 +253,14 @@ def benchmark_one_case(case):
 
     # Log results
     heads = [
-        "Model", "Model Config", "Parallel Config", "Param Count", "Peak Mem",
-        "Mean Latency", "Std Latency", "TFLOPS"
+        "Model", "Model Config", "Force Data Parallel", "Reduce Scatter",
+        "Remat", "Param Count", "Peak Mem", "Mean Latency", "Std Latency",
+        "TFLOPS"
     ]
     values = [
-        "wide-resnet", case[:-6], case[-6:], f"{param_count/1e9:.3f}",
-        f"{peak_mem}", f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-        f"{tflops:.2f}"
+        "wide-resnet", case[:-3], case[-3], case[-2], case[-1],
+        f"{param_count/1e9:.3f}", f"{peak_mem}", f"{np.mean(latencies):.3f}",
+        f"{np.std(latencies):.3f}", f"{tflops:.2f}"
     ]
     write_tsv(heads, values, f"result_wide_resnet.tsv")
 
@@ -308,28 +311,31 @@ benchmark_suite_32gb = {  # key = number of gpus, value = a list of cases
 benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
 
     1: [
-    #  B,   I,  L,   C,   W,  dtype, NB,     FD,   RS,    CK,
-    (960 * 2, 224, 50,  160,  2, "fp32", 40,  False, False,  True),
+    #   B,   I,  L,   C,   W,  dtype, NB,     FD,   RS,    CK,
+    (2048, 224, 50,  160,  2, "fp32", 32,  False, False,  True),
     ],
 
     2: [
-    #  B,   I,  L,   C,   W,  dtype, NB,     FD,   RS,    CK,
-    (960 * 2, 224, 50,  192,  2, "fp32", 40,  False, True,  True),
+    #   B,   I,  L,   C,   W,  dtype, NB,     FD,   RS,    CK,
+    (2048, 224, 50,  224,  2, "fp32", 32,  False, True,  True),
     ],
 
     4 : [
-    #  B,   I,  L,   C,   W,  dtype, NB,     FD,   RS,    CK,
-    (960 * 2, 224, 50,  320,  2, "fp32", 40,  False, True,  True),
+    #   B,   I,  L,   C,   W,  dtype, NB,     FD,    RS,    CK,
+    (2048, 224, 50,  320,  2, "fp32", 32,  False, False,  True),
+    (2048, 224, 50,  320,  2, "fp32", 32,  False,  True,  True),
     ],
 
     8: [
-    #  B,   I,   L,   C,   W,  dtype, NB,     FD,   RS,    CK,
-    (960 * 2, 224, 50,  448,   2, "fp32", 40,  False, True,  True),
+    #   B,   I,   L,   C,   W,  dtype, NB,     FD,    RS,    CK,
+    (2048, 224, 50,  448,   2, "fp32", 32,  False, False,  True),
+    (2048, 224, 50,  448,   2, "fp32", 32,  False,  True,  True),
     ],
 
     16: [
-    #  B,   I,   L,   C,   W,  dtype, NB,     FD,   RS,    CK,
-    (960, 224, 50,  640,   2, "fp32", 40,  False, False,  False),
+    #   B,   I,   L,   C,   W,  dtype, NB,     FD,   RS,    CK,
+    (2048, 224, 50,  640,   2, "fp32", 32,  False, False,  True),
+    (2048, 224, 50,  640,   2, "fp32", 32,  False, True,  True),
     ],
 
 }

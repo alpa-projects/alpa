@@ -12,22 +12,23 @@ from parax.pipeline_parallel.stage_construction import get_last_dp_result
 
 GB = 1024 ** 3
 
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers,
-# #head = num_heads, LD0 = logical mesh dim 0, LD1 = logical mesh_dimension_1
-# PD0 = physical mesh dim 0, PD = physical mesh dim 1
-# FD = Force DP, NB = number of microbatches, Remat = rematerialization
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
+# #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
+# PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
+# NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
+# RS = prefer_reduce_scatter
 
 # yapf: disable
 
 default_suite = {
 4: [
-    # B,   S,     H,    L,  #head,    V      LD0, LD1, PD0, PD1, PP, NB,  FD,    Remat, auto-layer, auto-stage
+    #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Auto-pipeline
     (32,   1024,  1024, 4, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False),
     (32,   1024,  1024, 8, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False),
 ],
 
 8: [
-    # B,   S,     H,    L,  #head,    V      LD0, LD1, PD0, PD1, PP, NB,  FD,    Remat, auto-layer, auto-stage
+    #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Auto-pipeline
     (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, False), # 0.323
     (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  False, True,  False, False), # 0.380
     (128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  True,  True,  False, False), # 0.323

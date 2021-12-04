@@ -1044,17 +1044,36 @@ class CrossMeshCommunicator:
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
                     new_region = []
-                    for dim, s in enumerate(src_tileslice.offset):
-                        if dim == 0:
-                            assert (s.stop - s.start) % num_dst_replica == 0, \
-                                "cannot equally partition for scatter-gather optimization."
-                            region_length = (s.stop - s.start) // num_dst_replica
-                            new_s = slice(s.start + receiver_idx * region_length,
-                                          s.start + (receiver_idx + 1) * region_length,
-                                          s.step)
-                            new_region.append(new_s)
-                        else:
-                            new_region.append(s)
+
+                    # TODO(Hao): this is not general enough
+                    dim_0_length = src_tileslice.offset[0].stop - src_tileslice.offset[0].start
+                    dim_1_length = src_tileslice.offset[1].stop - src_tileslice.offset[1].start
+                    if dim_0_length < num_dst_replica:
+                        # look at the second dim
+                        assert dim_0_length * dim_1_length >= num_dst_replica, "cannot support partitioning over the third dim."
+                        dim_1_remained = num_dst_replica // dim_0_length
+                        dim_0_index = receiver_idx // dim_1_remained
+                        dim_1_index = receiver_idx % dim_1_remained
+                        for dim, s in enumerate(src_tileslice.offset):
+                            if dim == 0:
+                                new_region.append(slice(dim_0_index, dim_0_index+1, s.step))
+                            elif dim == 1:
+                                ind = dim_1_length // dim_1_remained
+                                new_region.append(slice(ind * dim_1_index,  ind * (dim_1_index + 1), None))
+                            else:
+                                new_region.append(s)
+                    else:
+                        for dim, s in enumerate(src_tileslice.offset):
+                            if dim == 0:
+                                assert (s.stop - s.start) % num_dst_replica == 0, \
+                                    "cannot equally partition for scatter-gather optimization."
+                                region_length = (s.stop - s.start) // num_dst_replica
+                                new_s = slice(s.start + receiver_idx * region_length,
+                                              s.start + (receiver_idx + 1) * region_length,
+                                              s.step)
+                                new_region.append(new_s)
+                            else:
+                                new_region.append(s)
                     per_spec_slice_plan[receiver_idx][src_tileslice_idx] = new_region
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size

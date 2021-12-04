@@ -160,7 +160,6 @@ class MeshHostWorker:
             group_name (str): collective group name
         """
         if global_config.pipeline_use_signal_send_recv:
-            print(">>>>> send: Use signal send recv")
             signal = self.signal_tensors[uuid % len(self.local_devices)]
             col.send_multigpu(signal, dst_rank, dst_gpu_idx, group_name)
             return
@@ -171,10 +170,8 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in offset)
             to_send = xla_buffer_to_cupy(self.buffers[uuid])
             if slice_shape == tensor_shape:
-                print(">>>>> send fast path...")
                 col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
             else:
-                print(">>>>> send slow path...")
                 ind, n_elements = infer_offset_and_n_elements(offset)
                 col.send_multigpu(to_send[ind],
                                   dst_rank,
@@ -183,7 +180,6 @@ class MeshHostWorker:
                                   n_elements=n_elements)
         else:
             # slower path, because of indexing.
-            print(">>>>> send slowest path...")
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
             src_buffer = jax_tensor_index(
@@ -220,10 +216,8 @@ class MeshHostWorker:
             to_recv = xla_buffer_to_cupy(self.buffers[uuid],
                                          take_ownership=True)
             if slice_shape == tensor_shape:
-                print(">>>>> recv fast path...")
                 col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
             else:
-                print(">>>>> recv slow path...")
                 ind, n_elements = infer_offset_and_n_elements(
                     indices_in_dst_tile)
                 col.recv_multigpu(to_recv[ind],
@@ -235,7 +229,6 @@ class MeshHostWorker:
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/parax-project/parax/issues/145
-            print(">>>>> recv slowest path...")
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])

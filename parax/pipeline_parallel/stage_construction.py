@@ -281,24 +281,32 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices, layers,
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
-    submesh_autosharding_configs = [
+    submesh_logical_mesh_choices = [
         virtual_mesh.slice_2d(range(submesh[0]),
-                              range(submesh[1])).get_all_logical_mesh()
+                              range(submesh[1])).get_logical_mesh_choices()
         for submesh in submesh_choices
     ]
     # a config is: (logical_mesh, auto_sharding_global_configs)
     # each (2D Mesh with force batch dim) + (1D Mesh with mix batch dim)
-    submesh_autosharding_configs = [
-        ([(logical_mesh, dict(force_batch_dim_to_mesh_dim=0))
-          for logical_mesh in configs] + [(configs[0], dict())])
-        for configs in submesh_autosharding_configs
-    ]
+
+    sliced_virtual_meshes = []
+    autosharding_configs = []
+    for submesh in submesh_choices:
+        num_hosts, num_devices = submesh
+        submesh_sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+            num_hosts, num_devices)
+        submesh_autosharding_configs = (
+            submesh_sliced_virtual_meshes[0]
+            .get_logical_mesh_and_autosharding_config_choices())
+        sliced_virtual_meshes.append(submesh_sliced_virtual_meshes)
+        autosharding_configs.append(submesh_autosharding_configs)
+
     max_autosharding_configs = max(
-        [len(configs) for configs in submesh_autosharding_configs])
-    submesh_autosharding_configs = [
-        (configs + [None] * (max_autosharding_configs - len(configs)))
-        for configs in submesh_autosharding_configs
-    ]
+        [len(configs) for configs in autosharding_configs])
+
+    for configs in autosharding_configs:
+        configs += [None] * (max_autosharding_configs - len(configs))
+
     compute_cost = np.full(
         (num_layers, num_layers, num_submesh_choices, max_autosharding_configs),
         np.inf)
@@ -318,7 +326,7 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices, layers,
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
             apply_grad_layers, apply_grad_global_info,
-            submesh_autosharding_configs[mesh_id])
+            autosharding_configs[mesh_id])
 
         compute_cost[:, :, mesh_id, :] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages

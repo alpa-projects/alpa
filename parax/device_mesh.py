@@ -1166,26 +1166,31 @@ class VirtualPhysicalMesh:
             return self.get_logical_mesh(
                 (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.1])
 
-    def get_all_logical_mesh(self, mesh_alpha=None, mesh_beta=None):
+    def get_1d_logical_mesh(self):
+        """Return a 1D logical mesh."""
+        return self.get_logical_mesh((1, self.total_devices))
+
+    def get_logical_mesh_and_autosharding_config_choices(self, option="all"):
         """
-        Generate all available logical mesh shapes. 
-        Stop when a dimension of the mesh is not even.
+        Return a list of logical meshes and autosharding configs for the
+        auto stage construction algorithm.
+        Args:
+            option (string): ["all", "single_node_model_parallel", "default"].
         """
-        dim1 = self.total_devices
-        results: Sequence[LogicalDeviceMesh] = list()
-        cnt = 0
-        while dim1 % 2 == 0:
-            # TODO(yonghao): compute mesh_alpha and mesh_beta for each case
-            results.insert(
-                cnt,
-                self.get_logical_mesh((dim1, self.total_devices // dim1),
-                                      mesh_alpha, mesh_beta))
-            cnt += 1
-            results.insert(
-                cnt,
-                self.get_logical_mesh((self.total_devices // dim1, dim1),
-                                      mesh_alpha, mesh_beta))
-            dim1 //= 2
+        results = []
+        if option in ["all", "single_node_model_parallel"]:
+            if option == "all":
+                max_mp_dimension = self.total_devices
+            else:  # option == "single_node_model_parallel"
+                max_mp_dimension = self.num_devices_per_host
+            for i in range(1, max_mp_dimension + 1):
+                if self.total_devices % i == 0:
+                    results.append(
+                        (self.get_logical_mesh((self.total_devices // i, i)),
+                         {"force_batch_dim_to_mesh_dim": 0}))
+            results.append((self.get_logical_mesh((self.total_devices, 1)), {}))
+        elif option == "default":
+            results.append((self.get_default_logical_mesh(), {}))
         return results
 
 

@@ -484,8 +484,8 @@ class ReshardingTask:
         return dst_array
 
     def __str__(self):
-        return f"ReshardingTask(shape:{self.task_spec.aval.shape}, "\
-               f"{self.task_spec.src_sharding_spec} -> {self.task_spec.dst_sharding_spec})"
+        return f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"\
+               f"{self.task_spec.src_sharding_spec} ->\n{self.task_spec.dst_sharding_spec})"
 
 
 @dataclass

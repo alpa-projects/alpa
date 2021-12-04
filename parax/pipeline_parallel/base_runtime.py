@@ -233,5 +233,5 @@ class BaseDistributedRuntime(BaseRuntime):
             for dst_idx in range(len(self._resharding_tasks)):
                 for var, task in self._resharding_tasks[src_idx][dst_idx].items(
                 ):
-                    ret += f"{var}: Mesh {src_idx}->{dst_idx}, {task}\n"
+                    ret += f"{var}: Mesh {src_idx}->{dst_idx}, {task}\n\n"
         return ret

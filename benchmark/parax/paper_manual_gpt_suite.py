@@ -16,6 +16,7 @@ gpt_specs = {
 
 "15B-":  (1024,  5120,  8,    40,   51200, ),
 
+"2.7B-": (1024,  2560,  4,    32,   51200, ),
 "6.7B-half": (1024,  4096,  16,    32,   51200, ),
 }
 
@@ -38,12 +39,13 @@ test_gpt_suite = {
     # 142 performance case.
     # (16,  *gpt_specs["6.7B-half"],  1,   4,   1,   4,   2,  1,    False,  *fixed_params),
 
-    (32,  *gpt_specs["2.7B"],  1,   4,   1,   4,   2,  2,    True,  *fixed_params),
+    # (32,  *gpt_specs["2.7B"],  1,   4,   1,   4,   2,  2,    True,  *fixed_params),
 
+    (512,  *gpt_specs["2.7B-"],  1,   4,   1,   4,   2,  32,    True,  *fixed_params),
 ],
 
 16: [
-    (32,  *gpt_specs["2.7B"],  1,   4,   1,   4,   4,  1,    True,  *fixed_params),
+    (16,  *gpt_specs["2.7B-"],  1,   4,   1,   4,   4,  1,    True,  *fixed_params),
 ],
 
 32: [

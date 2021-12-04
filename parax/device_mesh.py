@@ -264,7 +264,6 @@ class MeshHostWorker:
                 self.buffers[uuid][slice] = self.buffers[uuids[j]][slice]
         return
 
-
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 

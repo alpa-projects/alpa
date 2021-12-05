@@ -271,13 +271,13 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
     for (compiled_output, stage) in zip(compiled_outputs, stages):
         (proto, config, in_shardings, out_shardings, hooked_proto,
          apply_in_shardings) = compiled_output
-        _, stage_info, _, intermediate_vars, profile_info, apply_info = stage
+        _, _, _, intermediate_vars, profile_info, apply_info = stage
         intermediate_size = compute_intermediate_size(
             hooked_proto, intermediate_vars, config.logical_mesh_shape)
         apply_grad_input_size = compute_apply_grad_invar_size(
             apply_in_shardings, *apply_info, config.logical_mesh_shape)
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, stage_info,
+                               (compiled_output, profile_info,
                                 intermediate_size, apply_grad_input_size))
 
     print("- Profile all stages")

@@ -56,12 +56,12 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
         num_experts, expert_group_size, \
-        mesh_dim0, mesh_dim1, _, _ , _, num_micro_batches, force_data_parallel,\
+        mesh_dim0, mesh_dim1, _, _ , _, num_micro_batches, force_batch_dim_mapping,\
         use_remat, prefer_reduce_scatter, _, _ = benchmark_case
     dtype = jnp.float16
 
-    rang_factor = 2
-    expected_expert_group_size = min(seq_len * 2, batch_size * seq_len // num_micro_batches // mesh_dim0 // rang_factor)
+    rang_factor = 1
+    expected_expert_group_size = min(expert_group_size, batch_size * seq_len // num_micro_batches // mesh_dim0 // rang_factor)
     if expected_expert_group_size != expert_group_size:
         print("- Expected expert group size should be {}, but got {}. Will reset it".
               format(expected_expert_group_size, expert_group_size))
@@ -74,7 +74,9 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         num_micro_batches = None
         grad_func = jax.grad
 
-    global_config.force_data_parallel = force_data_parallel
+    if force_batch_dim_mapping:
+        # Always map batch dim to mesh dim 0
+        global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
     global_config.allow_mixed_mesh_shape = True
 

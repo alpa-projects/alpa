@@ -99,6 +99,17 @@ class VirtualDistributedArray:
         return replicated_maxes
 
     @property
+    def num_replicas(self):
+        if self.tiled:
+            return 1
+        else:
+            num_replicas = 1
+            for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
+                if isinstance(assignment, Replicated):
+                    num_replicas = num_replicas * assignment.replicas
+            return num_replicas
+
+    @property
     def tiled(self):
         """Whether this distributed array is fully tiled."""
         if not self.replicated_maxes:
@@ -1018,7 +1029,9 @@ class CrossMeshCommunicator:
     def _generate_resharding_strategy(self, spec):
         """Look at the sharding specs and generate the fastest sharding strategy."""
         if global_config.use_scatter_gather and spec.dst.replicated_maxes and \
-                spec.dst.replicated_maxes == spec.src.replicated_maxes:
+                spec.dst.replicated_maxes == spec.src.replicated_maxes and \
+                spec.dst.num_replicas > 1:
+            print(">>>> Scatter-allgather optimization enabled.")
             return self._generate_scatter_gather_resharding_strategy(spec)
         else:
             # pure send/recv

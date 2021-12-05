@@ -67,7 +67,7 @@ if __name__ == "__main__":
         parameter_count, ilp_objective, peak_mem, latencies, tflops = result
 
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                 "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
+                 "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                  "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
 

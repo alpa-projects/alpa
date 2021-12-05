@@ -254,13 +254,15 @@ class MeshHostWorker:
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
     def allgather(self, uuids, device_ids, slices):
-        # TODO(Hao): implement a better allgather
+        # TODO(yonghao): check allgather happens only in single node
         cupy_buffers = []
         nccl_util.groupStart()
-        for i, (uuid, device_id) in enumerate(zip(uuids, device_ids)):
+        for device_id, tensor_slice in zip(device_ids, slices):
+            uuid = uuids[device_id]
             xla_buffer = self.buffers[uuid]
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
-            ind, n_elements = infer_offset_and_n_elements(slices[i])
+            # FIXME(Hao): seems like a redundant level of list 
+            ind, n_elements = infer_offset_and_n_elements(tensor_slice[0])
             cupy_slice = cupy_buffer[ind]
             self.allgather_communicators[device_id].allGather(
                 nccl_util.get_tensor_ptr(cupy_slice),
@@ -303,7 +305,7 @@ class MeshHostWorker:
     def run_allgather_task(self, uuid, buffer_uuids):
         task = self.allgather_tasks[uuid]
         allgather_details = task["tasks"]
-        device_ids, slices = allgather_details
+        device_ids, _, slices, dtype = allgather_details
         self.allgather(buffer_uuids, device_ids, slices)
         return
 

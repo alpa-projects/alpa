@@ -290,11 +290,11 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         max_n_succ_stages[start, end, config_idx] = max_stage
         pbar.write(f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]},"
                    f" max_n_succ_stage={max_stage},"
-                   f" Mem: peak={peak_memory / GB:.3f}GB,"
-                   f" avail={available_memory / GB:.3f}GB,"
+                   f" Mem: avail={available_memory / GB:.3f}GB,"
+                   f" peak={peak_memory / GB:.3f}GB,"
                    f" intermediate={intermediate_size / GB:.3f}GB,"
                    f" initial={initial_size / GB:.3f}GB,"
-                   f" logical_mesh={(logical_mesh.idx.shape, auto_sharding_global_config)}")
+                   f" logical_mesh={(logical_mesh.id_mesh.shape, auto_sharding_global_config)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 
@@ -538,8 +538,9 @@ def cluster_layers_and_slice_mesh(layers,
                 list(range(start_id, end_id))
                 for (start_id, end_id), _, _ in solution
             ]
-            submesh_shapes = [submesh_choices[i] for _, i, _ in solution]
-            selected_autosharding_configs = [autosharding_configs[i] for _, _, i in solution]
+            submesh_shapes = [submesh_choices[submesh_id] for _, submesh_id, _ in solution]
+            selected_autosharding_configs = [autosharding_configs[submesh_id][autosharding_config_id] for _, submesh_id, autosharding_config_id in solution]
+            print("selected_autosharding_configs", selected_autosharding_configs)
             logical_mesh_shapes = [mesh.id_mesh.shape for mesh, _ in selected_autosharding_configs]
             autosharding_global_configs = [config for _, config in selected_autosharding_configs]
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)

@@ -113,7 +113,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
         submesh_shapes=global_config.sub_physical_mesh_shapes,
         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-        autosharding_global_configs=global_config.submesh_autosharding_global_configs)
+        autosharding_global_configs=global_config.submesh_autosharding_global_configs,
+        logical_mesh_search_space=global_config.logical_mesh_search_space)
 
     num_meshes = len(sliced_meshes)
 

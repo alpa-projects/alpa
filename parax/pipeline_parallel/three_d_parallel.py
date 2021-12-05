@@ -223,8 +223,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         logical_mesh_choices = [
             virtual_mesh.get_logical_mesh(logical_mesh_shapes[mesh_idx])
         ]
-        global_config.update(autosharding_global_configs[mesh_idx])
-        global_config.restore(global_config_backup)
+        mesh_global_config = global_config.backup()
+        mesh_global_config.update(autosharding_global_configs[mesh_idx])
         logical_mesh_search_mode = "cost_model"
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:
@@ -248,7 +248,6 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "grad_acc_num_micro_batches": None,
                 "bypass_device_assignment_check": True
             }
-            mesh_global_config = global_config.backup()
             compile_workers.submit(compile_fn,
                                    (mesh_global_config, proto, jaxpr_config,
                                     mesh_config, multiple_stage_config))
@@ -256,6 +255,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                                               stage_donate_invars)
             total_flops += flops
         else:
+            global_config.restore(mesh_global_config)
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 virtual_mesh, logical_mesh_choices, logical_mesh_search_mode,

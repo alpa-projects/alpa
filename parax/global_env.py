@@ -99,7 +99,8 @@ def set_parallelize_options(devices=None,
                             sub_physical_mesh_shapes=None,
                             sub_logical_mesh_shapes=None,
                             pipeline_parallel_schedule="1f1b",
-                            pipeline_distributed_compile=True):
+                            pipeline_distributed_compile=True,
+                            force_batch_dim_to_mesh_dim=None):
     """
     Set the global options for all @parallelize decorator.
 
@@ -160,6 +161,7 @@ def set_parallelize_options(devices=None,
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
     global_config.pipeline_parallel_schedule = pipeline_parallel_schedule
     global_config.pipeline_distributed_compile = pipeline_distributed_compile
+    global_config.force_batch_dim_to_mesh_dim = force_batch_dim_to_mesh_dim
 
 
 # Don't let the compilation on the driver node use GPUs.

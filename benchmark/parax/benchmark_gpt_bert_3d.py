@@ -88,7 +88,7 @@ if __name__ == "__main__":
                                     use_separate_process=args.use_separate_process)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes) = result
+         submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
 
         if not auto_layer_and_stage:
             heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
@@ -107,12 +107,14 @@ if __name__ == "__main__":
                      "#Microbatch", "Remat", "Reduce-scatter",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
                      "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
-                     "Layer->Stage Mapping", "Submesh Shapes"]
+                     "Layer->Stage Mapping", "Submesh Shapes",
+                     "Logical Mesh Shapes", "Autosharding Global Configs"]
             values = [args.model + "-auto", str(case[:6]), str(num_gpus), str(pp),
                       str(case[11]), str(case[13]), str(case[14]),
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                       f"{max_mem_allocated/GB:.3f}G", str(compute_cost_file_name),
-                      str(forward_stage_layer_ids), str(submesh_shapes)]
+                      str(forward_stage_layer_ids), str(submesh_shapes),
+                      str(logical_mesh_shapes), str(autosharding_global_configs)]
             write_tsv(heads, values, output_name)
 

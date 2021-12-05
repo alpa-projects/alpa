@@ -188,7 +188,7 @@ class ProfileWorkerPool:
 
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        total_devices = len(virtual_meshes) * len(virtual_meshes[0].devices)
+        total_devices = len(virtual_meshes) * virtual_meshes[0].total_devices
         self.actors = [
             worker_cls.remote(mesh, total_devices) for mesh in virtual_meshes
         ]
@@ -386,8 +386,7 @@ def generate_stage_info(all_layers,
     return compile_info, intermediate_vars, profile_info, apply_info
 
 
-def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
-                num_gpus):
+def compile_all(stages, num_cpus, num_gpus):
     """
     Args:
         stage_info_list: List of info for compilation. Each info is a tuple with:
@@ -395,9 +394,11 @@ def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
     """
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     backup_config = global_config.backup()
-    global_config.devices = logical_mesh
-    compile_config = global_config.backup()
-    for stage_info in stage_info_list:
+    for _, stage_info, auto_sharding_config, _, _, _ in stages:
+        logical_mesh, auto_sharding_global_config = auto_sharding_config
+        global_config.devices = logical_mesh
+        compile_config = global_config.backup()
+        compile_config.update(auto_sharding_global_config)
         proto, avals, out_avals, donate_invars = stage_info
         compile_workers.submit(
             lambda w, v: w.compile_stage_with_search.remote(*v),
@@ -405,7 +406,7 @@ def compile_all(stage_info_list, logical_mesh: VirtualPhysicalMesh, num_cpus,
              donate_invars))
 
     compiled_outputs = []
-    for stage_info in tqdm.tqdm(stage_info_list):
+    for _ in tqdm.tqdm(stages):
         compiled_output = compile_workers.get_next()
         compiled_outputs.append(compiled_output)
 

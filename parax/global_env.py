@@ -33,6 +33,8 @@ class GlobalConfig:
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
+        self.submesh_autosharding_global_configs = None
+        self.logical_mesh_search_space = "default"
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
 
@@ -97,6 +99,8 @@ def set_parallelize_options(devices=None,
                             forward_stage_layer_ids=None,
                             sub_physical_mesh_shapes=None,
                             sub_logical_mesh_shapes=None,
+                            submesh_autosharding_global_configs=None,
+                            logical_mesh_search_space="default",
                             pipeline_parallel_schedule="1f1b",
                             pipeline_distributed_compile=True):
     """
@@ -157,6 +161,8 @@ def set_parallelize_options(devices=None,
     global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
     # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
+    global_config.submesh_autosharding_global_configs = submesh_autosharding_global_configs
+    global_config.logical_mesh_search_space = logical_mesh_search_space
     global_config.pipeline_parallel_schedule = pipeline_parallel_schedule
     global_config.pipeline_distributed_compile = pipeline_distributed_compile
 

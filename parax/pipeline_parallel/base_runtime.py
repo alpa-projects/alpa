@@ -204,6 +204,7 @@ class BaseDistributedRuntime(BaseRuntime):
                 dst_mesh = self.physical_meshes[dst_mesh_idx]
                 t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
                 t.get_send_recv_tasks()
+                t.get_allgather_tasks()
                 self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t
 
     def _put_resharding_tasks(self):
@@ -220,6 +221,8 @@ class BaseDistributedRuntime(BaseRuntime):
             for j in range(self.num_mesh):
                 for _, task in self._resharding_tasks[i][j].items():
                     task.put_send_recv_tasks()
+                    if task.is_scatter_gather_task:
+                        task.put_allgather_tasks()
 
     def _destroy_collective_groups(self):
         for i in range(self.num_mesh):

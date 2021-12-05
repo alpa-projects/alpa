@@ -12,30 +12,31 @@ from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_sui
 from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite
 
 GB = 1 << 30
+_ = None
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, D0 = mesh_dimension_0, D1 = mesh_dimension_1,
-# NB = num_micro_batches, FM = force_batch_dim_mapping,
-# RS = prefer_reduce_scatter, CK = use_checkpoint
+# #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
+# NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
+# RS = prefer_reduce_scatter
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-layer-slicing
-    (8,  1024,  1024,  4,    32,   51200, 1,   1,   1,   1,    1,   1,  True, True,  False, False),
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _,   _,    1,   1,  True, True,  False, _),
 ],
 
 4: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-layer-slicing
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-layer-slicing
-    (8,  1024,  1024,  4,    32,   51200, 1,   8,   1,   1,    1,   1,  True, True,  False, False),
-    (8,  1024,  1024,  4,    32,   51200, 8,   1,   1,   1,    1,   1,  True, True,  False, False),
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _,   _,    1,   1,  True, True,  False, _),
+    (8,  1024,  1024,  4,    32,   51200, 8,   1,   _,   _,    1,   1,  True, True,  False, _),
 ],
 
 16: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-layer-slicing
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
 ]
 }
 

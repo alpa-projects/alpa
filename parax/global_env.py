@@ -33,6 +33,7 @@ class GlobalConfig:
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
+        self.submesh_autosharding_global_configs = None
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
 

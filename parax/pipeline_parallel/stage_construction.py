@@ -489,7 +489,9 @@ def cluster_layers_and_slice_mesh(layers,
                                   logical_mesh_search_space="default",
                                   cache_compute_cost=None,
                                   forward_stage_layer_ids=None,
-                                  submesh_shapes=None):
+                                  submesh_shapes=None,
+                                  logical_mesh_shapes=None,
+                                  autosharding_global_configs=None):
     """
     Cluster pipeline layers into stages, slice the device mesh
     into multiple submeshes, and assign the stages to the submeshes.
@@ -539,7 +541,9 @@ def cluster_layers_and_slice_mesh(layers,
                 for (start_id, end_id), _, _ in solution
             ]
             submesh_shapes = [submesh_choices[submesh_id] for _, submesh_id, _ in solution]
-            selected_autosharding_configs = [autosharding_configs[submesh_id][autosharding_config_id] for _, submesh_id, autosharding_config_id in solution]
+            selected_autosharding_configs = [
+                autosharding_configs[submesh_id][autosharding_config_id]
+                for _, submesh_id, autosharding_config_id in solution]
             print("selected_autosharding_configs", selected_autosharding_configs)
             logical_mesh_shapes = [mesh.id_mesh.shape for mesh, _ in selected_autosharding_configs]
             autosharding_global_configs = [config for _, config in selected_autosharding_configs]
@@ -611,7 +615,21 @@ def cluster_layers_and_slice_mesh(layers,
                                            submesh_shapes=submesh_shapes)
     else:
         raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
-    return stages, stage_to_mesh, sliced_meshes
+    # Check logical mesh shapes or assign default logical mesh shapes
+    if logical_mesh_shapes is not None:
+        assert len(logical_mesh_shapes) == len(sliced_meshes)
+        for logical_mesh_shape, submesh in zip(logical_mesh_shapes,
+                                               sliced_meshes):
+            assert np.prod(logical_mesh_shape) == submesh.total_devices
+    else:
+        logical_mesh_shapes = [submesh.get_default_logical_mesh()
+                               for submesh in sliced_meshes]
+    if autosharding_global_configs is not None:
+        assert len(autosharding_global_configs) == len(submesh_shapes)
+    else:
+        autosharding_global_configs = [{}] * len(submesh_shapes)
+    return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
+            autosharding_global_configs)
 
 
 def get_stage_outvars(layers: Sequence[JaxPipelineComputation],

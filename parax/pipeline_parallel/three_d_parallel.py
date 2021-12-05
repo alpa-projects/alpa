@@ -87,11 +87,12 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     layer_to_dummy_mesh = (list(range(num_forward_layers)) +
                            list(reversed(range(num_forward_layers))))
     # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
-    jax_apply_layers, _, _, _, dummy_global_outvars, dummy_donated_invars =\
-            process_apply_gradient(apply_grad_jaxpr,
-                barrier, acc_grad_dict, jax_pipeline_layers, layer_to_dummy_mesh,
-                gensym_func, num_micro_batches, len(jax_pipeline_layers) // 2,
-                global_invars, global_outvars, donated_invars)
+    (jax_apply_layers, _, _, _, dummy_global_outvars,
+     dummy_donated_invars) = process_apply_gradient(
+         apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
+         layer_to_dummy_mesh, gensym_func, num_micro_batches,
+         len(jax_pipeline_layers) // 2, global_invars, global_outvars,
+         donated_invars)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   dummy_donated_invars,
                                                   global_invars, global_outvars)
@@ -99,28 +100,33 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Construct pipeline stages by merging layers
     virtual_mesh = devices
-    jax_pipeline_stages, stage_to_mesh, sliced_meshes = (
-        cluster_layers_and_slice_mesh(
-            jax_pipeline_layers,
-            virtual_mesh,
-            donation_mapping,
-            acc_grad_outvars,
-            num_micro_batches,
-            jax_apply_layers=jax_apply_layers,
-            apply_grad_global_info=apply_grad_global_info,
-            pipeline_stage_mode=global_config.pipeline_stage_mode,
-            cache_compute_cost=global_config.cache_compute_cost,
-            forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-            submesh_shapes=global_config.sub_physical_mesh_shapes))
+    (jax_pipeline_stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
+     autosharding_global_configs) = cluster_layers_and_slice_mesh(
+         jax_pipeline_layers,
+         virtual_mesh,
+         donation_mapping,
+         acc_grad_outvars,
+         num_micro_batches,
+         jax_apply_layers=jax_apply_layers,
+         apply_grad_global_info=apply_grad_global_info,
+         pipeline_stage_mode=global_config.pipeline_stage_mode,
+         cache_compute_cost=global_config.cache_compute_cost,
+         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+         submesh_shapes=global_config.sub_physical_mesh_shapes,
+         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+         autosharding_global_configs=global_config.
+         submesh_autosharding_global_configs,
+         logical_mesh_search_space=global_config.logical_mesh_search_space)
+
     num_meshes = len(sliced_meshes)
 
     # Process apply_gradient and donation
     if have_apply_grad:
-        sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement, global_outvars, donated_invars =\
-            process_apply_gradient(apply_grad_jaxpr,
-                barrier, acc_grad_dict, jax_pipeline_stages, stage_to_mesh,
-                gensym_func, num_micro_batches, num_meshes,
-                global_invars, global_outvars, donated_invars)
+        (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
+         global_outvars, donated_invars) = process_apply_gradient(
+             apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
+             stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
+             global_invars, global_outvars, donated_invars)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
     else:
         jax_all_stages = jax_pipeline_stages
@@ -156,7 +162,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     xla_stages, total_flops = shard_each_stage(
         jax_all_stages, sliced_meshes, schedule, n_stages, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
-        memory_budget_per_device, gensym_func)
+        memory_budget_per_device, gensym_func, logical_mesh_shapes,
+        autosharding_global_configs)
     total_flops *= num_micro_batches
 
     # Wrap all things into a distributed runtime
@@ -183,7 +190,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict,
-                     memory_budget_per_device, gensym_func):
+                     memory_budget_per_device, gensym_func, logical_mesh_shapes,
+                     autosharding_global_configs):
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
@@ -206,17 +214,6 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         stage_dict[mesh_idx].append(stage)
         donatable_dict[mesh_idx].append(donatable_list[i])
 
-    # Address logical mesh requirement by users
-    slms = global_config.sub_logical_mesh_shapes
-    if slms != None:
-        assert len(slms) == len(global_config.sub_physical_mesh_shapes)
-        assert all(
-            np.prod(slms[i]) == np.prod(
-                global_config.sub_physical_mesh_shapes[i])
-            for i in range(num_meshes))
-    else:
-        slms = [None] * num_meshes
-
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1, global_config.backup())
@@ -226,15 +223,11 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     total_flops = 0
     for mesh_idx in range(num_meshes):
         virtual_mesh = virtual_meshes[mesh_idx]
-        if slms[mesh_idx]:
-            # set to a user-required logical mesh shape
-            # e.g. [1, 4] physical mesh could produce a [2, 2] logical mesh
-            logical_mesh_choices = [
-                virtual_mesh.get_logical_mesh(slms[mesh_idx])
-            ]
-        else:
-            # logical mesh shape == physical mesh shape
-            logical_mesh_choices = [virtual_mesh.get_default_logical_mesh()]
+        logical_mesh_choices = [
+            virtual_mesh.get_logical_mesh(logical_mesh_shapes[mesh_idx])
+        ]
+        mesh_global_config = global_config.backup()
+        mesh_global_config.update(autosharding_global_configs[mesh_idx])
         logical_mesh_search_mode = "cost_model"
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:
@@ -258,14 +251,14 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "grad_acc_num_micro_batches": None,
                 "bypass_device_assignment_check": True
             }
-
             compile_workers.submit(compile_fn,
-                                   (global_config_backup, proto, jaxpr_config,
+                                   (mesh_global_config, proto, jaxpr_config,
                                     mesh_config, multiple_stage_config))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops
         else:
+            global_config.restore(mesh_global_config)
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 logical_mesh_choices, logical_mesh_search_mode,
@@ -275,6 +268,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage
+        global_config.restore(global_config_backup)
+
     if global_config.pipeline_distributed_compile:
         for mesh_idx in range(num_meshes):
             computation_protos, strategy_config = compile_workers.get_next()

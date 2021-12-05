@@ -88,10 +88,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                            list(reversed(range(num_forward_layers))))
     # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
     (jax_apply_layers, _, _, _, dummy_global_outvars,
-     dummy_donated_invars) = process_apply_gradient(apply_grad_jaxpr,
-        barrier, acc_grad_dict, jax_pipeline_layers, layer_to_dummy_mesh,
-        gensym_func, num_micro_batches, len(jax_pipeline_layers) // 2,
-        global_invars, global_outvars, donated_invars)
+     dummy_donated_invars) = process_apply_gradient(
+         apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
+         layer_to_dummy_mesh, gensym_func, num_micro_batches,
+         len(jax_pipeline_layers) // 2, global_invars, global_outvars,
+         donated_invars)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   dummy_donated_invars,
                                                   global_invars, global_outvars)
@@ -101,20 +102,21 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     virtual_mesh = devices
     (jax_pipeline_stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
      autosharding_global_configs) = cluster_layers_and_slice_mesh(
-        jax_pipeline_layers,
-        virtual_mesh,
-        donation_mapping,
-        acc_grad_outvars,
-        num_micro_batches,
-        jax_apply_layers=jax_apply_layers,
-        apply_grad_global_info=apply_grad_global_info,
-        pipeline_stage_mode=global_config.pipeline_stage_mode,
-        cache_compute_cost=global_config.cache_compute_cost,
-        forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-        submesh_shapes=global_config.sub_physical_mesh_shapes,
-        logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-        autosharding_global_configs=global_config.submesh_autosharding_global_configs,
-        logical_mesh_search_space=global_config.logical_mesh_search_space)
+         jax_pipeline_layers,
+         virtual_mesh,
+         donation_mapping,
+         acc_grad_outvars,
+         num_micro_batches,
+         jax_apply_layers=jax_apply_layers,
+         apply_grad_global_info=apply_grad_global_info,
+         pipeline_stage_mode=global_config.pipeline_stage_mode,
+         cache_compute_cost=global_config.cache_compute_cost,
+         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+         submesh_shapes=global_config.sub_physical_mesh_shapes,
+         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+         autosharding_global_configs=global_config.
+         submesh_autosharding_global_configs,
+         logical_mesh_search_space=global_config.logical_mesh_search_space)
 
     num_meshes = len(sliced_meshes)
 
@@ -122,9 +124,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if have_apply_grad:
         (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
          global_outvars, donated_invars) = process_apply_gradient(
-            apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages, stage_to_mesh,
-            gensym_func, num_micro_batches, num_meshes,
-            global_invars, global_outvars, donated_invars)
+             apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
+             stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
+             global_invars, global_outvars, donated_invars)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
     else:
         jax_all_stages = jax_pipeline_stages
@@ -188,8 +190,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict,
-                     memory_budget_per_device, gensym_func,
-                     logical_mesh_shapes, autosharding_global_configs):
+                     memory_budget_per_device, gensym_func, logical_mesh_shapes,
+                     autosharding_global_configs):
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]

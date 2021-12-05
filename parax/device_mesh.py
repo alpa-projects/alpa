@@ -1185,9 +1185,10 @@ class VirtualPhysicalMesh:
                 max_mp_dimension = self.num_devices_per_host
             for i in range(1, max_mp_dimension + 1):
                 if self.total_devices % i == 0:
-                    results.append(
-                        (self.get_logical_mesh((self.total_devices // i, i)),
-                         {"force_batch_dim_to_mesh_dim": 0}))
+                    results.append((self.get_logical_mesh(
+                        (self.total_devices // i, i)), {
+                            "force_batch_dim_to_mesh_dim": 0
+                        }))
             results.append((self.get_logical_mesh((self.total_devices, 1)), {}))
         elif option == "default":
             results.append((self.get_default_logical_mesh(), {}))

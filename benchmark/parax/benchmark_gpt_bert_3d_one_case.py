@@ -227,7 +227,7 @@ def benchmark_one_case(model, case, niter, use_separate_process=False, dump_resu
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, -1, -1, [-1], -1, -1, None, None, None
+            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

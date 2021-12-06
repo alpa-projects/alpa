@@ -80,7 +80,7 @@ class HloCostModelTest(unittest.TestCase):
 
     def test_cluster_profling(self):
         cluster = DeviceCluster()
-        prof_database = cluster.profile_all("p3.16")
+        prof_database = cluster.profile_all("p3.16", comm_size_range=(19, 20))
         prof_database.save("tmp.pkl")
 
     def test_n_layer_mlp(self):
@@ -96,12 +96,13 @@ class HloCostModelTest(unittest.TestCase):
         hlo_module = self.run_n_layer_mlp(num_layers, batch_size, hidden_dim,
                                           hidden_dim, hidden_dim, logical_mesh)
         mesh_result = prof_database.query("p3.16", logical_mesh.shape)
-        print(estimate_hlo_module_cost(hlo_module, mesh_result))
+        cost = estimate_hlo_module_cost(hlo_module, mesh_result)
+        assert cost > 0
 
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(HloCostModelTest("test_cluster_profling"))
+    suite.addTest(HloCostModelTest("test_cluster_profling"))
     suite.addTest(HloCostModelTest("test_n_layer_mlp"))
     return suite
 

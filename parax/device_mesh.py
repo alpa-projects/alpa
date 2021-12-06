@@ -1241,8 +1241,8 @@ class DeviceCluster:
                                    num_devices_per_host=num_devices_per_host,
                                    head_ip=self.head_ip)
 
-    def profile_all(self, cluster_key):
-        return mesh_profiling.profile_all(self, cluster_key)
+    def profile_all(self, *args, **kwargs):
+        return mesh_profiling.profile_all(self, *args, **kwargs)
 
 
 ########################################

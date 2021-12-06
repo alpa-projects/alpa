@@ -28,7 +28,7 @@ class MeshProfilingResult:
         # Cost dictionary for computation primitives.
         # Reuse the same data structure.
         # Dict[Tuple(None, dtype)] -> List[Tuple(flop_count, time)]
-        self.matmul_cost_dict = defaultdict(list)
+        self.dot_cost_dict = defaultdict(list)
         self.conv_cost_dict = []
 
         # Cost dictionary for specific operators
@@ -290,7 +290,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
     for op_info in op_infos:
         print(f"Profiling {op_info}")
 
-        if op_info[0] == "matmul":
+        if op_info[0] == "dot":
             n, m, k, dtype = op_info[1]
             dtype = to_np_dtype(dtype)
             shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
@@ -415,28 +415,28 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
     return np.array(results)
 
 
-def profile_matmul(device_cluster):
+def profile_dot(device_cluster):
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
-    # Profile matmul
+    # Profile dot
     op_infos = []
     for dtype in ["f16", "f32"]:
-        for i in range(1, 48):
+        for i in range(0, 48):
             n = 128 * i
-            op_infos.append(("matmul", (n, n, n, dtype)))
+            op_infos.append(("dot", (n, n, n, dtype)))
     results = physical_mesh.profile_hlo_ops(op_infos)
 
-    matmul_cost_dict = defaultdict(list)
+    dot_cost_dict = defaultdict(list)
     for i in range(len(op_infos)):
         n, m, k, dtype = op_infos[i][1]
         flop_count = 2 * n * m * k
-        matmul_cost_dict[((), dtype)].append((flop_count, results[i]))
+        dot_cost_dict[((), dtype)].append((flop_count, results[i]))
         print(
             f"Matmul: {(n, m, k, dtype)}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}"
         )
 
-    return matmul_cost_dict
+    return dot_cost_dict
 
 
 def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
@@ -476,19 +476,20 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
     return all_specs
 
 
-def profile_all(device_cluster, cluster_key):
+def profile_all(device_cluster, cluster_key, comm_size_range):
+    """Profile costs for all dot and comuniation primitives."""
     from parax.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
     ##### Profile compute cost
-    matmul_cost_dict = profile_matmul(device_cluster)
-    print_used_time("Profile matmul")
+    dot_cost_dict = profile_dot(device_cluster)
+    print_used_time("Profile dot")
 
     ##### Profile communication cost
 
     # Enumerate all size configs
     size_configs = [(0, "f32"), (0, "f16")]
-    for i in range(20, 21):
+    for i in comm_size_range:
         size_configs.append((1 << i, "f32"))
         size_configs.append((1 << i, "f16"))
 
@@ -527,20 +528,16 @@ def profile_all(device_cluster, cluster_key):
             num_devices = len(replica_groups[0])
 
             if op_type == "all-gather":
-                communication_size = array_size * (num_devices -
-                                                   1) / num_devices
+                communication_size = array_size * (num_devices - 1) / num_devices
                 all_gather_cost_dict[(replica_groups, dtype)].append((size, results[i]))
             elif op_type == "all-reduce":
-                communication_size = 2 * array_size * (num_devices -
-                                                       1) / num_devices
+                communication_size = 2 * array_size * (num_devices - 1) / num_devices
                 all_reduce_cost_dict[(replica_groups, dtype)].append((size, results[i]))
             elif op_type == "all-to-all":
-                communication_size = array_size * (num_devices -
-                                                   1) / num_devices
+                communication_size = array_size * (num_devices - 1) / num_devices / num_devices
                 all_to_all_cost_dict[(replica_groups, dtype)].append((size, results[i]))
             elif op_type == "reduce-scatter":
-                communication_size = array_size * (
-                    num_devices - 1) / num_devices / num_devices
+                communication_size = array_size * (num_devices - 1) / num_devices
                 reduce_scatter_cost_dict[(replica_groups, dtype)].append((size, results[i]))
             else:
                 raise ValueError(f"Invalid op: {op_type}")
@@ -551,7 +548,7 @@ def profile_all(device_cluster, cluster_key):
         physical_mesh.shutdown()
 
         mesh_result = MeshProfilingResult()
-        mesh_result.matmul_cost_dict = matmul_cost_dict
+        mesh_result.dot_cost_dict = dot_cost_dict
         mesh_result.all_gather_cost_dict = all_gather_cost_dict
         mesh_result.all_reduce_cost_dict = all_reduce_cost_dict
         mesh_result.all_to_all_cost_dict = all_to_all_cost_dict
@@ -566,5 +563,6 @@ def profile_all(device_cluster, cluster_key):
 def estimate_hlo_module_cost(hlo_module, profile_results):
     with XlaPassContext({
         "gpu_cost_model::profiling_results": profile_results,
+        "gpu_cost_model::verbose": 1,
     }):
         return xla_extension.estimate_hlo_module_cost(hlo_module)

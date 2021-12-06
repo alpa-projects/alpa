@@ -285,7 +285,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
             f" Mem: avail={available_memory / GB:.3f}GB,"
             f" peak={peak_memory / GB:.3f}GB,"
             f" intermediate={intermediate_size / GB:.3f}GB,"
-            f" initial={initial_size / GB:.3f}GB,"
+            f" init={initial_size / GB:.3f}GB,"
             f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages

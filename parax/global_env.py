@@ -35,6 +35,7 @@ class GlobalConfig:
         self.sub_logical_mesh_shapes = None
         self.submesh_autosharding_global_configs = None
         self.logical_mesh_search_space = "default"
+        self.auto_stage_construction_imbalance_tolerance = 0.5
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
 

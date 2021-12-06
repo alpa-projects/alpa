@@ -8,9 +8,10 @@ import numba
 import numpy as np
 import ray
 
+from parax.device_mesh import VirtualPhysicalMesh
+from parax.global_env import global_config
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
-from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
     split_global_use_and_donate, generate_stage_info, compile_all,
@@ -240,8 +241,19 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shapes
+    is_full_mesh = len(meshes) == 1
+    computation_source_ratio = 1 / len(meshes)
+    tolerance = global_config.auto_stage_construction_imbalance_tolerance
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
+            if is_full_mesh:
+                continue
+            if is_full_mesh and not (start == 0 and end == num_layers - 1):
+                continue
+            flops_ratio = (end - start + 1) / num_layers
+            if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
+                (computation_source_ratio < flops_ratio * (1 - tolerance))):
+                continue
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
@@ -268,6 +280,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                          intermediate_vars, profile_info, apply_info))
 
     # TODO(zhuohan): set the number of workers as a tunable parameter
+    if len(stages) == 0:
+        return compute_cost, max_n_succ_stages
     n_workers = int(
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
     print("- Compile all stages")

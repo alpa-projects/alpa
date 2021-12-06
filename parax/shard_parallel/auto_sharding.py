@@ -172,8 +172,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
-                "auto_sharding::device_mesh_shape": tuple(
-                    logical_mesh.shape),
+                "auto_sharding::device_mesh_shape": tuple(logical_mesh.shape),
                 "auto_sharding::device_mesh_alpha": tuple(
                     float(x) for x in logical_mesh.mesh_alpha),
                 "auto_sharding::device_mesh_beta": tuple(
@@ -241,8 +240,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
-    strategy_config = StrategyConfig(build_random_seed,
-                                     logical_mesh.shape,
+    strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
                                      solution_vector)
     if multiple_stages == "stage_and_hooked":
         return hlo_stages, sharded_proto, strategy_config

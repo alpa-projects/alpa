@@ -120,8 +120,9 @@ class MeshProfilingResult:
             num_devices = len(key[0][0])
             sizes = np.array([x[0] for x in value])
             times = np.array([x[1] for x in value])
-            comm_bytes = 2 * (num_devices - 1) / num_devices * sizes * to_np_dtype(
-                key[1]).itemsize
+            comm_bytes = 2 * (num_devices -
+                              1) / num_devices * sizes * to_np_dtype(
+                                  key[1]).itemsize
             bandwidth = comm_bytes / times / GB
             bandwidth_str = ", ".join(f"{x:.2f}" for x in bandwidth)
             ret += f"Key: {key}\nBandwidth: {bandwidth_str}\n"
@@ -129,6 +130,7 @@ class MeshProfilingResult:
 
 
 class ProfilingResultDatabase:
+
     def __init__(self, data={}):
         self.data = data
 
@@ -144,7 +146,8 @@ class ProfilingResultDatabase:
             self.data[key].update(mesh_result)
 
     def update(self, new_database):
-        for ((cluster_key, mesh_shape), mesh_result) in new_database.data.items():
+        for ((cluster_key, mesh_shape),
+             mesh_result) in new_database.data.items():
             self.update_one_mesh(cluster_key, mesh_shape, mesh_result)
 
     def save(self, filename):
@@ -170,11 +173,13 @@ def _op_parameter(builder, num, shape, dtype):
                          shape.with_major_to_minor_layout_if_absent(), name,
                          replicated)
 
+
 def _op_all_gather(operand, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     ret = ops.AllGather(operand, 0, len(replica_groups[0]),
                         replica_groups_protos, channel_id, None, True)
     return ret
+
 
 def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
@@ -191,11 +196,13 @@ def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
                         True)
     return ret
 
+
 def _op_all_to_all(operand, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
     ret = ops.AllToAll(operand, 0, 0, len(replica_groups[0]),
                        replica_groups_protos, channel_id, None, True)
     return ret
+
 
 def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xla_client.make_replica_groups(replica_groups)
@@ -212,6 +219,7 @@ def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups, channel_id):
                             replica_groups_protos, channel_id, None, True)
     return ret
 
+
 def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     """
     Compile a xla executable for benchmarking operators.
@@ -219,10 +227,8 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     """
 
     in_tuple_shape = xla_client.Shape.tuple_shape(
-        [xla_client.Shape.array_shape(np.dtype(np.int32), ())] + [
-            xla_client.Shape.array_shape(dtype, shape)
-            for shape, dtype in shapes
-        ])
+        [xla_client.Shape.array_shape(np.dtype(np.int32), ())] +
+        [xla_client.Shape.array_shape(dtype, shape) for shape, dtype in shapes])
 
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.REPLICATED
@@ -283,7 +289,6 @@ def to_np_dtype(dtype_str):
         return np.dtype(dtype_str)
 
 
-
 def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
     results = []
 
@@ -319,8 +324,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
 
             warmup = 2
             number = min(
-                max(15,
-                    int((1 << 31) / (max(size, 1) * dtype.itemsize))),
+                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
                 1 << 13)
         elif op_info[0] == "all-reduce":
             replica_groups, dtype, size = op_info[1]
@@ -335,8 +339,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
 
             warmup = 2
             number = min(
-                max(15,
-                    int((1 << 31) / (max(size, 1) * dtype.itemsize))),
+                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
                 1 << 13)
         elif op_info[0] == "all-to-all":
             replica_groups, dtype, size = op_info[1]
@@ -353,8 +356,7 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
 
             warmup = 2
             number = min(
-                max(15,
-                    int((1 << 31) / (max(size, 1) * dtype.itemsize))),
+                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
                 1 << 13)
         elif op_info[0] == "reduce-scatter":
             replica_groups, dtype, size = op_info[1]
@@ -372,15 +374,14 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
 
             warmup = 2
             number = min(
-                max(15,
-                    int((1 << 31) / (max(size, 1) * dtype.itemsize))),
+                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
                 1 << 13)
         else:
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
         # Compile
-        shapes, compiled = _compile_profiling_executable(backend, shapes,
-                                                         op_func, num_devices)
+        shapes, compiled = _compile_profiling_executable(
+            backend, shapes, op_func, num_devices)
 
         # Warm up
         device_inputs = []
@@ -510,7 +511,9 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
                                                   size_configs)
 
         op_infos = []
-        for op_type in ["all-gather", "all-reduce", "all-to-all", "reduce-scatter"]:
+        for op_type in [
+                "all-gather", "all-reduce", "all-to-all", "reduce-scatter"
+        ]:
             for spec in all_specs:
                 op_infos.append((op_type, spec))
 
@@ -528,17 +531,25 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
             num_devices = len(replica_groups[0])
 
             if op_type == "all-gather":
-                communication_size = array_size * (num_devices - 1) / num_devices
-                all_gather_cost_dict[(replica_groups, dtype)].append((size, results[i]))
+                communication_size = array_size * (num_devices -
+                                                   1) / num_devices
+                all_gather_cost_dict[(replica_groups, dtype)].append(
+                    (size, results[i]))
             elif op_type == "all-reduce":
-                communication_size = 2 * array_size * (num_devices - 1) / num_devices
-                all_reduce_cost_dict[(replica_groups, dtype)].append((size, results[i]))
+                communication_size = 2 * array_size * (num_devices -
+                                                       1) / num_devices
+                all_reduce_cost_dict[(replica_groups, dtype)].append(
+                    (size, results[i]))
             elif op_type == "all-to-all":
-                communication_size = array_size * (num_devices - 1) / num_devices / num_devices
-                all_to_all_cost_dict[(replica_groups, dtype)].append((size, results[i]))
+                communication_size = array_size * (
+                    num_devices - 1) / num_devices / num_devices
+                all_to_all_cost_dict[(replica_groups, dtype)].append(
+                    (size, results[i]))
             elif op_type == "reduce-scatter":
-                communication_size = array_size * (num_devices - 1) / num_devices
-                reduce_scatter_cost_dict[(replica_groups, dtype)].append((size, results[i]))
+                communication_size = array_size * (num_devices -
+                                                   1) / num_devices
+                reduce_scatter_cost_dict[(replica_groups, dtype)].append(
+                    (size, results[i]))
             else:
                 raise ValueError(f"Invalid op: {op_type}")
 
@@ -554,7 +565,8 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         mesh_result.all_to_all_cost_dict = all_to_all_cost_dict
         mesh_result.reduce_scatter_cost_dict = reduce_scatter_cost_dict
         prof_database.update_one_mesh(cluster_key,
-            (num_hosts, num_devices_per_host), mesh_result)
+                                      (num_hosts, num_devices_per_host),
+                                      mesh_result)
 
     print_used_time("Profile communication")
     return prof_database
@@ -562,7 +574,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
 
 def estimate_hlo_module_cost(hlo_module, profile_results):
     with XlaPassContext({
-        "gpu_cost_model::profiling_results": profile_results,
-        "gpu_cost_model::verbose": 1,
+            "gpu_cost_model::profiling_results": profile_results,
+            "gpu_cost_model::verbose": 1,
     }):
         return xla_extension.estimate_hlo_module_cost(hlo_module)

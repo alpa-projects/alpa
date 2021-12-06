@@ -26,6 +26,7 @@ test_gpt_suite = {
 ],
 
 4: [
+    (1024,  *gpt_specs["760M"], 4,   1,   1,   4,   1,  32,  True,  *fixed_params),
 ],
 
 8: [

@@ -49,7 +49,7 @@ benchmark_suites = {
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=7)  # 2 warmup + 5 actual run.
+    parser.add_argument("--niter", type=int, default=5)  # 2 warmup + 5 actual run.
     parser.add_argument("--suite", choices=list(benchmark_suites.keys()),
                         default="paper_gpt")
     parser.add_argument("--no-separate-process", action='store_false',
@@ -75,24 +75,25 @@ if __name__ == "__main__":
     # Run all cases
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
-    for case in suite:
+    for benchmark_case in suite:
         (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
          l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
          use_remat, prefer_reduce_scatter, auto_pipeline) = benchmark_case
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
 
-        if pipeline_mp_size <= 1 and not auto_pipeline:
-            print(f"Skipping the case: {str(case)}, because PP <= 1. Please use `benchmark_gpt_bert_2d.py` "
-                  f"since 3d runtime will have a small overhead.")
-            continue
-        print("Working on case: {}".format(str(case)))
-        result = benchmark_one_case(args.model, case, args.niter,
+        #if pipeline_mp_size <= 1 and not auto_pipeline:
+        #    print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
+        #          f"Please use `benchmark_gpt_bert_2d.py` "
+        #          f"since 3d runtime will have a small overhead.")
+        #    continue
+        print("Working on case: {}".format(str(benchmark_case)))
+        result = benchmark_one_case(args.model, benchmark_case, args.niter,
                                     use_separate_process=args.use_separate_process)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
 
-        if not auto_layer_and_stage:
+        if not auto_pipeline:
             heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
                      "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",

@@ -94,6 +94,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     tie_word_embeddings = False
 
     # Parallel configs
+    auto_layer = auto_pipeline
     grad_func = parax.grad
 
     if force_batch_dim_mapping:

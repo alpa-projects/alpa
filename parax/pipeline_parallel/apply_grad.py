@@ -353,7 +353,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                     var_mesh[outvar] = OrderedSet(at_mesh)
             eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
     changed = True
-    while (changed):
+    while changed:
         changed = False
         # propagate back
         for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):

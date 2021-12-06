@@ -3,10 +3,10 @@ import math
 from time import time
 from typing import Sequence
 
-import tqdm
 import numba
 import numpy as np
 import ray
+import tqdm
 
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
@@ -32,50 +32,6 @@ def get_last_dp_result():
     return (last_compute_cost_file_name, last_forward_stage_layer_ids,
             last_submesh_shapes, last_logical_mesh_shapes,
             last_autosharding_global_configs)
-
-
-@numba.jit(nopython=True)
-def old_forward_dp_impl(num_layers, num_devices, num_microbatches,
-                        submesh_choices, compute_cost, max_stage_cost):
-    # For f, layer ID start from 1
-    f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float32)
-    f_stage_max = np.full((num_layers + 1, num_devices + 1),
-                          0.0,
-                          dtype=np.float32)
-    f_argmin = np.full((num_layers + 1, num_devices + 1, 2), -1, dtype=np.int32)
-    f[0, 0] = 0
-    for i in range(1, num_layers + 1):
-        for j in range(1, num_devices + 1):
-            for k in range(1, i + 1):
-                for m, submesh in enumerate(submesh_choices):
-                    s = np.prod(np.array(submesh))
-                    if s <= j:
-                        stage_cost = compute_cost[k - 1, i - 1, m]
-                        new_cost = f[k - 1, j - s] + stage_cost
-                        if stage_cost <= max_stage_cost and new_cost < f[i, j]:
-                            f[i, j] = new_cost
-                            f_stage_max[i, j] = max(f_stage_max[k - 1, j - s],
-                                                    stage_cost)
-                            f_argmin[i, j] = (k, m)
-
-    if np.isinf(f[num_layers, num_devices]):
-        return np.inf, None
-
-    total_cost = f[num_layers, num_devices] + (
-        num_microbatches - 1) * f_stage_max[num_layers, num_devices]
-    current_layer = num_layers
-    current_devices = num_devices
-
-    res = []
-    while current_layer > 0 and current_devices > 0:
-        start_layer, submesh_choice = f_argmin[current_layer, current_devices]
-        assert start_layer != -1 and current_devices != -1
-        res.append(((start_layer - 1, current_layer), submesh_choice))
-        current_layer = start_layer - 1
-        current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
-    assert current_layer == 0 and current_devices == 0
-
-    return total_cost, res
 
 
 @numba.jit(nopython=True)
@@ -199,9 +155,36 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
     return submesh_choices
 
 
-def get_all_submesh_autosharding_config_choices(virtual_mesh,
-                                                submesh_choices,
-                                                option="all"):
+def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
+    """
+    Return a list of logical meshes and autosharding configs for the
+    auto stage construction algorithm.
+
+    Args:
+        option (string): ["all", "single_node_model_parallel", "default"].
+    """
+    results = []
+    num_devices = virtual_submesh.total_devices
+    if option in ["all", "single_node_model_parallel"]:
+        if option == "all":
+            max_mp_dimension = num_devices
+        else:  # option == "single_node_model_parallel"
+            max_mp_dimension = num_devices
+
+        for i in range(1, max_mp_dimension + 1):
+            if num_devices % i == 0:
+                results.append((virtual_submesh.get_logical_mesh(
+                    (num_devices // i, i)), {
+                        "force_batch_dim_to_mesh_dim": 0
+                    }))
+        results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
+    elif option == "default":
+        results.append((virtual_submesh.get_default_logical_mesh(), {}))
+    return results
+
+
+def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
+                                                option):
     # a config is: (logical_mesh, auto_sharding_global_configs)
     # each (2D Mesh with force batch dim) + (1D Mesh with mix batch dim)
     autosharding_configs = []
@@ -210,16 +193,15 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh,
         virtual_submesh = virtual_mesh.slice_2d(
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
-        submesh_autosharding_configs = (
-            virtual_submesh.get_logical_mesh_and_autosharding_config_choices(
-                option))
+        submesh_autosharding_configs =\
+            get_one_submesh_autosharding_config_choices(virtual_submesh, option)
         autosharding_configs.append(submesh_autosharding_configs)
 
-    max_autosharding_configs = max(
+    # Pad all submesh to the maximum number of configs
+    max_num_autosharding_configs = max(
         [len(configs) for configs in autosharding_configs])
-
     for configs in autosharding_configs:
-        configs += [None] * (max_autosharding_configs - len(configs))
+        configs += [None] * (max_num_autosharding_configs - len(configs))
 
     return autosharding_configs
 
@@ -298,14 +280,13 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage
         pbar.write(
-            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]},"
+            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
             f" max_n_succ_stage={max_stage},"
             f" Mem: avail={available_memory / GB:.3f}GB,"
             f" peak={peak_memory / GB:.3f}GB,"
             f" intermediate={intermediate_size / GB:.3f}GB,"
-            f" initial={initial_size / GB:.3f}GB,"
-            f" logical_mesh={(logical_mesh.id_mesh.shape, auto_sharding_global_config)}"
-        )
+            f" init={initial_size / GB:.3f}GB,"
+            f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages
 
@@ -524,18 +505,18 @@ def cluster_layers_and_slice_mesh(layers,
         stage_layer_ids (List[List[int]]): The layer IDs of each stage.
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
-    # For mesh-slicing's profiling, we can use the create_donation_mapping
-    # to get a sketchy donation_mapping: only accumulate grad, no applygrad
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
         # Assume each forward layer corresponds to a backward layer
         assert len(layers) % 2 == 0
         num_layers = len(layers) // 2
         submesh_choices = get_submesh_choices(mesh)
+
         if pipeline_stage_mode == "auto_gpipe":
-            # use DP to find the optimal solution
             autosharding_configs = get_all_submesh_autosharding_config_choices(
                 mesh, submesh_choices, option=logical_mesh_search_space)
             num_autosharding_configs = len(autosharding_configs[0])
+
+            # Use DP to find the optimal solution.
             if cache_compute_cost is not None:
                 # FIXME(zhuohan): load max_n_succ_stages
                 compute_cost, max_n_succ_stages = np.load(cache_compute_cost,
@@ -549,6 +530,8 @@ def cluster_layers_and_slice_mesh(layers,
                                 num_micro_batches, submesh_choices,
                                 num_autosharding_configs, compute_cost,
                                 max_n_succ_stages)
+
+            # Parse solution
             forward_stage_layer_ids = [
                 list(range(start_id, end_id))
                 for (start_id, end_id), _, _ in solution
@@ -560,14 +543,14 @@ def cluster_layers_and_slice_mesh(layers,
                 autosharding_configs[submesh_id][autosharding_config_id]
                 for _, submesh_id, autosharding_config_id in solution
             ]
-            print("selected_autosharding_configs",
-                  selected_autosharding_configs)
             logical_mesh_shapes = [
-                mesh.id_mesh.shape for mesh, _ in selected_autosharding_configs
+                mesh.shape for mesh, _ in selected_autosharding_configs
             ]
             autosharding_global_configs = [
                 config for _, config in selected_autosharding_configs
             ]
+
+            # Print and store the results
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
             print("Result meshes:", submesh_shapes)
             print("Result logical_mesh_shapes:", logical_mesh_shapes)
@@ -620,14 +603,15 @@ def cluster_layers_and_slice_mesh(layers,
             merged_stages.append(merged_stage)
         stages = merged_stages
     elif pipeline_stage_mode == "uniform_layer_gpipe":
-        # this mode resembles Megatron in terms of the uniformity of mesh shapes.
+        # This mode resembles Megatron in terms of the uniformity of mesh shapes.
         num_acc_grad_stages = len(layers)
+        assert num_acc_grad_stages % 2 == 0
+
         stage_to_mesh = {
             i:
             (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
             for i, _ in enumerate(layers)
         }
-        assert num_acc_grad_stages % 2 == 0
         num_meshes = num_acc_grad_stages // 2
         stages = layers
         if submesh_shapes != None:
@@ -637,6 +621,7 @@ def cluster_layers_and_slice_mesh(layers,
                                            submesh_shapes=submesh_shapes)
     else:
         raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
+
     # Check logical mesh shapes or assign default logical mesh shapes
     if logical_mesh_shapes is not None:
         assert len(logical_mesh_shapes) == len(sliced_meshes)
@@ -645,7 +630,8 @@ def cluster_layers_and_slice_mesh(layers,
             assert np.prod(logical_mesh_shape) == submesh.total_devices
     else:
         logical_mesh_shapes = [
-            submesh.get_default_logical_mesh().id_mesh.shape for submesh in sliced_meshes
+            submesh.get_default_logical_mesh().shape
+            for submesh in sliced_meshes
         ]
     if autosharding_global_configs is not None:
         assert len(autosharding_global_configs) == len(sliced_meshes)

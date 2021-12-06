@@ -21,15 +21,16 @@ fixed_params = (True, True, False)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
 1: [
 ],
 
 4: [
+    (256,  *gpt_specs["760M"], 4,   1,   1,   4,   1,  32,  True,  *fixed_params),
 ],
 
 8: [
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
     # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
     (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
 
@@ -48,7 +49,7 @@ test_gpt_suite = {
 
 
 paper_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
 1: [
     # 125M
     (2,   *gpt_specs["125M"],  1,   1,   1,   1,   1,  1,    1,  *fixed_params),

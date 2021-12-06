@@ -88,13 +88,13 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, auto_stage) = benchmark_case
+     use_remat, prefer_reduce_scatter, auto_pipeline) = benchmark_case
 
-    auto_layer = auto_stage
     dtype = jnp.float16
     tie_word_embeddings = False
 
     # Parallel configs
+    auto_layer = auto_pipeline
     grad_func = parax.grad
 
     if force_batch_dim_mapping:
@@ -103,7 +103,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    if not auto_stage:
+    if not auto_pipeline:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 num_micro_batches=num_micro_batches,

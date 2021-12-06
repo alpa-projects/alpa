@@ -506,10 +506,10 @@ def cluster_layers_and_slice_mesh(layers,
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
     # Assume each forward layer corresponds to a backward layer
-    num_layers = len(layers) // 2
-    assert num_layers % 2 == 0
 
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
+        num_layers = len(layers) // 2
+        assert num_layers % 2 == 0
         submesh_choices = get_submesh_choices(mesh)
 
         if pipeline_stage_mode == "auto_gpipe":
@@ -604,12 +604,16 @@ def cluster_layers_and_slice_mesh(layers,
             merged_stages.append(merged_stage)
         stages = merged_stages
     elif pipeline_stage_mode == "uniform_layer_gpipe":
-        # this mode resembles Megatron in terms of the uniformity of mesh shapes.
+        # This mode resembles Megatron in terms of the uniformity of mesh shapes.
+        num_acc_grad_stages = len(layers)
+        assert num_acc_grad_stages % 2 == 0
+
         stage_to_mesh = {
-            i: (i if i < num_layers / 2 else num_layers - i - 1)
+            i:
+            (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
             for i, _ in enumerate(layers)
         }
-        num_meshes = num_layers // 2
+        num_meshes = num_acc_grad_stages // 2
         stages = layers
         if submesh_shapes != None:
             assert all(shape == submesh_shapes[0] for shape in submesh_shapes)

@@ -1006,17 +1006,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         all_profiled = [ray.get(handles) for handles in all_profiled_handles]
         return all_profiled
 
-    def get_peak_memory(self):
-        # TODO(yonghao): expose reset peak in XLA and add corresponding api in parax
-        handles = []
-        for physical_mesh in self.physical_meshes:
-            for worker in physical_mesh.workers:
-                handles.append(worker.get_max_memory_allocated.remote())
-
-        peak_memory_list = ray.get(handles)
-        peak_memory_list = [m / (1024**3) for m in peak_memory_list]
-        return peak_memory_list
-
 
 class PipelineMeshWorkerExecutable:
 

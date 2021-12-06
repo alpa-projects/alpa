@@ -645,12 +645,12 @@ def cluster_layers_and_slice_mesh(layers,
             assert np.prod(logical_mesh_shape) == submesh.total_devices
     else:
         logical_mesh_shapes = [
-            submesh.get_default_logical_mesh() for submesh in sliced_meshes
+            submesh.get_default_logical_mesh().id_mesh.shape for submesh in sliced_meshes
         ]
     if autosharding_global_configs is not None:
-        assert len(autosharding_global_configs) == len(submesh_shapes)
+        assert len(autosharding_global_configs) == len(sliced_meshes)
     else:
-        autosharding_global_configs = [{}] * len(submesh_shapes)
+        autosharding_global_configs = [{}] * len(sliced_meshes)
     return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
             autosharding_global_configs)
 

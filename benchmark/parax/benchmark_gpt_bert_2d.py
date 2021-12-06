@@ -99,12 +99,11 @@ if __name__ == "__main__":
 
         # Log results
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                 "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
+                 "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                  "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
-        parallel_config = (dp, mp, pp)
         values = [args.model, model_config, parallel_config, "N/A",
-                  force_batch_dim_mapping, use_remat, prefer_reduce_scatter, auto_pipeline,
+                  num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
                   f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",
                   f"{peak_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]

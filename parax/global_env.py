@@ -159,7 +159,6 @@ def set_parallelize_options(devices=None,
     global_config.cache_compute_cost = cache_compute_cost
     global_config.forward_stage_layer_ids = forward_stage_layer_ids
     global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
-    # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
     global_config.submesh_autosharding_global_configs = submesh_autosharding_global_configs
     global_config.logical_mesh_search_space = logical_mesh_search_space
@@ -167,11 +166,11 @@ def set_parallelize_options(devices=None,
     global_config.pipeline_distributed_compile = pipeline_distributed_compile
 
 
-# Don't let the compilation on the driver node use GPUs.
-# TODO(lmzheng): enable auto-tuning for compilation on workers.
-
 is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"
 
+# Don't let the compilation on the driver node use GPUs.
+# TODO(lmzheng): enable auto-tuning for compilation on workers.
 os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
                                          "") + " --xla_gpu_autotune_level=0"
+
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

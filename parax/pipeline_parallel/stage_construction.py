@@ -280,7 +280,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage
         pbar.write(
-            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.2f},"
+            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
             f" max_n_succ_stage={max_stage},"
             f" Mem: avail={available_memory / GB:.3f}GB,"
             f" peak={peak_memory / GB:.3f}GB,"

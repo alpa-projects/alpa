@@ -155,7 +155,7 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
     return submesh_choices
 
 
-def get_single_submesh_autosharding_config_choices(virtual_submesh, option):
+def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
     """
     Return a list of logical meshes and autosharding configs for the
     auto stage construction algorithm.
@@ -194,7 +194,7 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
         submesh_autosharding_configs =\
-            get_single_submesh_autosharding_config_choices(virtual_submesh, option)
+            get_one_submesh_autosharding_config_choices(virtual_submesh, option)
         autosharding_configs.append(submesh_autosharding_configs)
 
     # Pad all submesh to the maximum number of configs
@@ -508,8 +508,8 @@ def cluster_layers_and_slice_mesh(layers,
     # Assume each forward layer corresponds to a backward layer
 
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
+        assert len(layers) % 2 == 0
         num_layers = len(layers) // 2
-        assert num_layers % 2 == 0
         submesh_choices = get_submesh_choices(mesh)
 
         if pipeline_stage_mode == "auto_gpipe":

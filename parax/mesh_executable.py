@@ -501,6 +501,7 @@ class GradAccMeshDriverExecutable:
         # Get the channel ids of gradient sync all-reduce
         grad_sync_channel_ids =\
             get_grad_sync_channel_ids(accumulate_grad.hlo_modules()[0])
+        print(grad_sync_channel_ids)
 
         # Cache results for input and output sharding
         global_arg_shard_indices = [

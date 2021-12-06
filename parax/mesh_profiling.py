@@ -490,7 +490,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
 
     # Enumerate all size configs
     size_configs = [(0, "f32"), (0, "f16")]
-    for i in comm_size_range:
+    for i in range(*comm_size_range):
         size_configs.append((1 << i, "f32"))
         size_configs.append((1 << i, "f16"))
 

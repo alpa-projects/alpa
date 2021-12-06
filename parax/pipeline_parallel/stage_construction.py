@@ -505,9 +505,8 @@ def cluster_layers_and_slice_mesh(layers,
         stage_layer_ids (List[List[int]]): The layer IDs of each stage.
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
-    # Assume each forward layer corresponds to a backward layer
-
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
+        # Assume each forward layer corresponds to a backward layer
         assert len(layers) % 2 == 0
         num_layers = len(layers) // 2
         submesh_choices = get_submesh_choices(mesh)

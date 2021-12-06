@@ -15,9 +15,8 @@ gpt_specs = {
 }
 
 dummy_arguments = (0, 0, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
-fixed_params = (False, True, True, True) # FD,  Remat, RS, Auto layer & stage
+fixed_params = (False, True, True, True) # FM, Remat, RS, AP
 max_global_batch_size = 1024
-
 
 def get_auto_test_case(model_name, n_microbatches, num_layers):
     return [(max_global_batch_size, *gpt_specs[model_name],

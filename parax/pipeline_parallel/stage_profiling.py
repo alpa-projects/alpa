@@ -300,7 +300,7 @@ def compile_all(stages):
         compile_config = global_config.backup()
         compile_config.update(auto_sharding_global_config)
         (proto, avals, out_avals, donate_invars, output_acc_grad_indices) = compile_info
-        compile_workers.submit_with_index(
+        compile_workers.submit(
             lambda w, v: w.compile_stage_with_search.remote(*v),
             (stage_id, compile_config, logical_mesh, proto, avals, out_avals,
              donate_invars, output_acc_grad_indices))

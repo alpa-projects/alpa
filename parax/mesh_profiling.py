@@ -574,9 +574,10 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
     return prof_database
 
 
-def estimate_hlo_module_cost(hlo_module, profiling_results):
+def estimate_hlo_module_cost(hlo_module, profiling_results, num_microbatches):
     with XlaPassContext({
             "gpu_cost_model::profiling_results": profiling_results,
+            "gpu_cost_model::num_microbatches": num_microbatches,
             "gpu_cost_model::verbose": 0,
     }):
         return xla_extension.estimate_hlo_module_cost(hlo_module)

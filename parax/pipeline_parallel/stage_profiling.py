@@ -213,10 +213,11 @@ class ProfileWorkerPool:
 
 class HloCostModelProfileWorker:
 
-    def __init__(self, prof_result, num_devices):
+    def __init__(self, prof_result, num_devices, num_micro_batches):
         self.backend = xla_bridge.get_backend("gpu")
         self.prof_result = prof_result
         self.num_devices = num_devices
+        self.num_micro_batches = num_micro_batches
 
     def profile(self, compiled_output, stage_info, intermediate_size,
                 initial_size):
@@ -235,7 +236,8 @@ class HloCostModelProfileWorker:
         peak_memory = compiled.total_allocation_size()
         available_memory = self.prof_result.available_memory_per_device
         cost = estimate_hlo_module_cost(compiled.hlo_modules()[0],
-                                        self.prof_result)
+                                        self.prof_result,
+                                        num_micro_batches)
         del compiled
 
         if intermediate_size > 0:
@@ -257,12 +259,13 @@ class HloCostModelProfileWorkerPool:
     estimate the cost.
     """
 
-    def __init__(self, num_cpus, num_gpus, prof_result, mesh_num_devices):
+    def __init__(self, num_cpus, num_gpus, prof_result, mesh_num_devices,
+                 num_micro_batches):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
         worker_cls = ray.remote(num_cpus=1,
                                 num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
-            worker_cls.remote(prof_result, mesh_num_devices)
+            worker_cls.remote(prof_result, mesh_num_devices, num_micro_batches)
             for mesh in virtual_meshes
         ]
         self.pool = ActorPool(self.actors)
@@ -331,7 +334,8 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
         prof_result = prof_database.query("default", meshes[0].shape)
         profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus,
                                                         prof_result,
-                                                        mesh_num_devices)
+                                                        mesh_num_devices,
+                                                        global_config.num_micro_batches)
     else:
         profile_workers = ProfileWorkerPool(meshes)
 

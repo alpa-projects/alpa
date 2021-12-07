@@ -38,7 +38,7 @@ class GlobalConfig:
         self.sub_logical_mesh_shapes = None
         self.submesh_autosharding_global_configs = None
         self.logical_mesh_search_space = "default"
-        self.auto_stage_construction_imbalance_tolerance = np.Inf
+        self.auto_stage_construction_imbalance_tolerance = np.inf
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
         self.use_hlo_cost_model = False
@@ -111,6 +111,7 @@ def set_parallelize_options(
         sub_logical_mesh_shapes=None,
         submesh_autosharding_global_configs=None,
         logical_mesh_search_space="default",
+        auto_stage_construction_imbalance_tolerance=np.inf,
         pipeline_parallel_schedule="1f1b",
         use_hlo_cost_model=False,
         profiling_database_filename=None):
@@ -150,6 +151,13 @@ def set_parallelize_options(
         for each forward stage. Used for "manual_gpipe".
       sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
         submeshes for each forward stage. Used for manual layer slicing.
+      submesh_autosharding_global_configs (Optional[List[Dict]]): The global
+        configuration for auto-sharding of submeshes. Used for manual layer
+        slicing.
+      logical_mesh_search_space (str): The search space for the logical mesh
+        shape. Possible choices: {"default", "all", "single_node_model_parallel"}.
+      auto_stage_construction_imbalance_tolerance (float): The tolerance of
+        imbalance in the auto-stage construction.
       pipeline_parallel_schedule (str): the pipeline schedule, "gpipe" or "1f1b".
       use_hlo_cost_model (bool): Whether use the Hlo instruction cost model for pipeline profiling.
       profiling_database_filename (str): The filename of profiling result database.
@@ -173,6 +181,7 @@ def set_parallelize_options(
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
     global_config.submesh_autosharding_global_configs = submesh_autosharding_global_configs
     global_config.logical_mesh_search_space = logical_mesh_search_space
+    global_config.auto_stage_construction_imbalance_tolerance = auto_stage_construction_imbalance_tolerance
     global_config.pipeline_parallel_schedule = pipeline_parallel_schedule
     global_config.use_hlo_cost_model = use_hlo_cost_model
     global_config.profiling_database_filename = profiling_database_filename

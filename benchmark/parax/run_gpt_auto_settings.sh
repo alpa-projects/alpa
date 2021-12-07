@@ -11,10 +11,11 @@ run_experiment () {
     --exp_name auto_${NUM_GPUS}_gpus \
     --num-hosts ${NUM_HOSTS} \
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \
+    --disable-tqdm \
     |& tee auto_gpt_${NUM_GPUS}_gpus_${CURRENT_TIME}.log
 }
 
-# run_experiment 2 8
-# run_experiment 1 8
+run_experiment 2 8
+run_experiment 1 8
 run_experiment 1 4
 run_experiment 1 2

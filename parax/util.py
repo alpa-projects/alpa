@@ -7,8 +7,10 @@ import itertools as it
 import os
 import subprocess
 import time
+import tqdm
 from typing import Sequence
 from warnings import warn
+from functools import partialmethod
 
 import cupy as cp
 import flax
@@ -907,3 +909,7 @@ def get_cross_slice_vars(jaxpr, slices):
         for invar in invars:
             print(invar, invar.aval.shape, 'from layer', defined[invar])
     return
+
+
+def disable_tqdm_globally():
+    tqdm.tqdm.__init__ = partialmethod(tqdm.tqdm.__init__, disable=True)

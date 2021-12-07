@@ -19,9 +19,17 @@ dummy_arguments = (0, 0, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
 fixed_params = (False, True, True, True) # FM, Remat, RS, AP
 max_global_batch_size = 1024
 
-def get_auto_test_case(model_name, n_microbatches, num_layers):
+default_overwrite_dict = {
+    "auto_stage_construction_imbalance_tolerance": 1.0,
+    "logical_mesh_search_space": "all"
+}
+
+
+def get_auto_test_case(model_name, n_microbatches, num_layers, overwrite_global_config_dict=None):
+    if overwrite_global_config_dict is None:
+        overwrite_global_config_dict = default_overwrite_dict
     return [(max_global_batch_size, *gpt_specs[model_name],
-             *dummy_arguments, num_layer, n_microbatch, *fixed_params)
+             *dummy_arguments, num_layer, n_microbatch, *fixed_params, overwrite_global_config_dict)
             for n_microbatch in n_microbatches
             for num_layer in num_layers]
 
@@ -47,8 +55,8 @@ paper_auto_gpt_suite = {
     get_auto_test_case("2.7B", [64, 128, 256], [8]) +
     get_auto_test_case("1.3B", [16], [12]) +
     get_auto_test_case("2.7B", [64], [16])),
-16: (get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
-     get_auto_test_case("6.7B", [32, 64, 128, 256], [8]) +
+16: (get_auto_test_case("2.7B", [32, 64, 128], [8]) +
+     get_auto_test_case("6.7B", [64, 128, 256], [8]) +
      get_auto_test_case("2.7B", [64], [16]) +
      get_auto_test_case("6.7B", [128], [16])),
 }

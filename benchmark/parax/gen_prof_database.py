@@ -4,7 +4,7 @@ import argparse
 
 import jax
 from parax import DeviceCluster, ProfilingResultDatabase
-
+from parax.util import run_cmd
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -20,6 +20,8 @@ if __name__ == "__main__":
     # TODO(lmzheng): Modify jax so it does not allocate this useless CUDA context.
     jax.config.update('jax_platform_name', 'cpu')
     _ = jax.numpy.ones(1)
+
+    run_cmd("mkdir -p tmp")
 
     comm_size_range = (0, 29)
     cluster = DeviceCluster()

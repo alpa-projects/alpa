@@ -1,6 +1,7 @@
 # pylint: disable=no-self-use
 """Profiling communication cost."""
 from collections import defaultdict
+import os
 import pickle
 import time
 
@@ -55,15 +56,18 @@ class MeshProfilingResult:
 
         This is used to make the scale of time cost similar to the old alpha-beta model.
         """
-        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
         self._multiply_scale_internal(factor, self.all_gather_cost_dict)
+        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
+        self._multiply_scale_internal(factor, self.all_to_all_cost_dict)
         self._multiply_scale_internal(factor, self.reduce_scatter_cost_dict)
 
     def make_monotonic(self):
         """Make the bandwidth monotonically increase along with the communication size."""
-        self._make_monotonic_internal(self.all_reduce_cost_dict)
         self._make_monotonic_internal(self.all_gather_cost_dict)
+        self._make_monotonic_internal(self.all_reduce_cost_dict)
+        self._make_monotonic_internal(self.all_to_all_cost_dict)
         self._make_monotonic_internal(self.reduce_scatter_cost_dict)
+        self._make_monotonic_internal(self.dot_cost_dict)
 
     def _make_monotonic_internal(self, cost_dict):
         new_cost_dict = {}
@@ -289,12 +293,29 @@ def to_np_dtype(dtype_str):
     else:
         return np.dtype(dtype_str)
 
+def rank_0_print(host_id, msg):
+    if host_id == 0:
+        print(msg)
 
 def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
     results = []
     num_devices_per_node = 8
+    save_every = 20
 
-    for op_info in op_infos:
+    # Must use an absolute efs path due to distributed ray workers
+    TMP_CACHE_FILE = "/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl"
+    if os.path.exists(TMP_CACHE_FILE):
+        rank_0_print(host_id, f"Load cached dot cost dict from {TMP_CACHE_FILE}...")
+        cache_dict = pickle.load(open(TMP_CACHE_FILE, "rb"))
+    else:
+        cache_dict = {}
+
+    for i, op_info in enumerate(op_infos):
+        if op_info in cache_dict:
+            rank_0_print(host_id, f"Hit cache {op_info}...")
+            results.append(cache_dict[op_info])
+            continue
+
         if op_info[0] == "dot":
             n, m, k, dtype_str = op_info[1]
             dtype = to_np_dtype(dtype_str)
@@ -394,8 +415,7 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         else:
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
-        if host_id == 0:
-            print(f"Profiling {op_info}, work: {work}, number: {number}.")
+        rank_0_print(host_id, f"Profiling {op_info}, work: {work}, number: {number}.")
 
         # Compile
         shapes, compiled = _compile_profiling_executable(
@@ -403,25 +423,25 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
 
         # Warm up
         device_inputs = []
-        for i, (shape, dtype) in enumerate(shapes):
-            if i == 0:
+        for j, (shape, dtype) in enumerate(shapes):
+            if j == 0:
                 device_inputs.append([
                     backend.buffer_from_pyval(np.int32(warmup),
-                                              local_devices[i])
-                    for i in range(len(local_devices))
+                                              local_devices[k])
+                    for k in range(len(local_devices))
                 ])
             else:
                 device_inputs.append([
                     backend.buffer_from_pyval(np.empty(shape, dtype),
-                                              local_devices[i])
-                    for i in range(len(local_devices))
+                                              local_devices[k])
+                    for k in range(len(local_devices))
                 ])
         device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
 
         # Run profiling
         device_inputs[0] = \
-            [backend.buffer_from_pyval(np.int32(number), local_devices[i])
-                for i in range(len(local_devices))]
+            [backend.buffer_from_pyval(np.int32(number), local_devices[k])
+                for k in range(len(local_devices))]
 
         [d.synchronize_all_activity() for d in local_devices]
         tic = time.time()
@@ -429,12 +449,23 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         [d.synchronize_all_activity() for d in local_devices]
         toc = time.time()
 
-        results.append((toc - tic) / number)
+        mean_time = (toc - tic) / number
+        cache_dict[op_info] = mean_time
+        results.append(mean_time)
+
+        if host_id == 0 and i % save_every == 0:
+            rank_0_print(host_id, "Save cache...")
+            pickle.dump(cache_dict, open(TMP_CACHE_FILE, "wb"))
 
     return np.array(results)
 
 
 def profile_dot(device_cluster):
+    TMP_CACHE_FILE = "tmp/dot_cost_dict.pkl"
+    if os.path.exists(TMP_CACHE_FILE):
+        print(f"Load cached dot cost dict from {TMP_CACHE_FILE}...")
+        return pickle.load(open(TMP_CACHE_FILE, "rb"))
+
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
@@ -455,6 +486,7 @@ def profile_dot(device_cluster):
             f"Matmul: {(n, m, k, dtype)}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}"
         )
 
+    pickle.dump(dot_cost_dict, open(TMP_CACHE_FILE, "wb"))
     return dot_cost_dict
 
 
@@ -492,7 +524,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                 all_specs.add((tuple(replica_group), dtype, size))
     all_specs = list(all_specs)
     all_specs.sort()
-    return all_specs
+    return list(all_specs)
 
 
 def profile_all(device_cluster, cluster_key, comm_size_range):
@@ -536,13 +568,14 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
 
         physical_mesh = tmp_mesh.get_physical_mesh()
         available_memory_per_device = physical_mesh.get_available_memory()
+
         results = physical_mesh.profile_hlo_ops(op_infos)
 
+        # Parse results
         all_gather_cost_dict = defaultdict(list)
         all_reduce_cost_dict = defaultdict(list)
         all_to_all_cost_dict = defaultdict(list)
         reduce_scatter_cost_dict = defaultdict(list)
-
         for i in range(len(op_infos)):
             op_type, (replica_groups, dtype, size) = op_infos[i]
             array_size = size * to_np_dtype(dtype).itemsize
@@ -583,6 +616,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         mesh_result.all_to_all_cost_dict = all_to_all_cost_dict
         mesh_result.reduce_scatter_cost_dict = reduce_scatter_cost_dict
         mesh_result.available_memory_per_device = available_memory_per_device
+        mesh_result.make_monotonic()
         prof_database.update_one_mesh(cluster_key,
                                       (num_hosts, num_devices_per_host),
                                       mesh_result)

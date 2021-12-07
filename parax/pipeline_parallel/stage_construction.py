@@ -230,7 +230,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 continue
             flops_ratio = (tot_flops[end + 1] - tot_flops[start]) / tot_flops
             if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
-                (computation_source_ratio < flops_ratio * (1 + tolerance))):
+                (computation_source_ratio < flops_ratio / (1 + tolerance))):
                 continue
             layer_indices = (
                 indices[start:end + 1] +

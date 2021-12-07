@@ -47,7 +47,7 @@ class BaseWorkerPoolWrapper(ABC):
         return self.pool.get_next()
 
     def submit_with_index(self, index, fn, value):
-        self.pool.submit(lambda w, v: (v[0], fn(*v[1])), (index, value))
+        self.pool.submit(lambda w, v: (v[0], fn(w, v[1])), (index, value))
 
     def get_next_unordered_with_index(self):
         index, value = self.pool.get_next_unordered()

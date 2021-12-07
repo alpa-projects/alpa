@@ -89,7 +89,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, auto_pipeline) = benchmark_case
+     use_remat, prefer_reduce_scatter, auto_pipeline, overwrite_global_config_dict) = benchmark_case
 
     dtype = jnp.float16
     tie_word_embeddings = False
@@ -106,20 +106,26 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
+
+    if overwrite_global_config_dict is None:
+        overwrite_global_config_dict = {}
+
     if not auto_pipeline:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 num_micro_batches=num_micro_batches,
                                 sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                                 sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
-                                pipeline_parallel_schedule="1f1b")
+                                pipeline_parallel_schedule="1f1b",
+                                **overwrite_global_config_dict)
     else:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode="auto_gpipe",
                                 use_hlo_cost_model=False,
                                 profiling_database_filename="prof_database.pkl",
-                                num_micro_batches=num_micro_batches)
+                                num_micro_batches=num_micro_batches,
+                                **overwrite_global_config_dict)
 
     # Prepare input batch
     # Note: there will be an input conversion.

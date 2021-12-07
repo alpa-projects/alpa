@@ -11,7 +11,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     ray.init(address="auto")
 
-    comm_size_range = (0, 27)
+    comm_size_range = (0, 29)
     cluster = DeviceCluster()
     prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range)
     prof_database.save(args.filename)

@@ -13,7 +13,7 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all,
+    split_global_use_and_donate, generate_stage_info, compile_all, profile_all,
     ProfileWorkerPool)
 from parax.util import OrderedSet
 
@@ -250,44 +250,11 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                          intermediate_vars, profile_info, apply_info))
 
     # TODO(zhuohan): set the number of workers as a tunable parameter
-    n_workers = int(
-        min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
     print("- Compile all stages")
-    compiled_outputs = compile_all(stages, n_workers,
-                                   ray.available_resources()["GPU"])
-
-    print("- Start all profiling tasks")
-    profile_workers = ProfileWorkerPool(meshes)
-    for (compiled_output, stage) in zip(compiled_outputs, stages):
-        (proto, config, in_shardings, out_shardings, hooked_proto,
-         apply_in_shardings) = compiled_output
-        _, _, _, intermediate_vars, profile_info, apply_info = stage
-        intermediate_size = compute_intermediate_size(hooked_proto,
-                                                      intermediate_vars,
-                                                      config.logical_mesh_shape)
-        apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, *apply_info, config.logical_mesh_shape)
-        profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, profile_info,
-                                intermediate_size, apply_grad_input_size))
+    compiled_outputs = compile_all(stages)
 
     print("- Profile all stages")
-    pbar = tqdm.tqdm(stages)
-    for (start, end, config_idx), _, auto_sharding_config, _, _, _ in pbar:
-        logical_mesh, auto_sharding_global_config = auto_sharding_config
-        cost, max_stage, debug_info = profile_workers.get_next()
-        peak_memory, available_memory, intermediate_size, initial_size = debug_info
-        compute_cost[start, end, config_idx] = np.mean(cost)
-        max_n_succ_stages[start, end, config_idx] = max_stage
-        pbar.write(
-            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
-            f" max_n_succ_stage={max_stage},"
-            f" Mem: avail={available_memory / GB:.3f}GB,"
-            f" peak={peak_memory / GB:.3f}GB,"
-            f" intermediate={intermediate_size / GB:.3f}GB,"
-            f" init={initial_size / GB:.3f}GB,"
-            f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
-    profile_workers.shutdown()
+    compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs, meshes)
     return compute_cost, max_n_succ_stages
 
 

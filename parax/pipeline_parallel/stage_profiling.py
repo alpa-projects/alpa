@@ -15,6 +15,8 @@ from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
+from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
     as VDA)
@@ -26,8 +28,8 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 HloProtoStatus,
                                                 sharding_proto_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
-from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
 
+INFINITY_N_STAGES = 4096
 
 class CompileWorker:
     """
@@ -120,7 +122,7 @@ class CompileWorker:
 
 
 class CompileWorkerPool:
-    """wrapped ray.util.ActorPool"""
+    """A pool of CompileWorker for distributed compilation."""
 
     def __init__(self, num_cpus, num_gpus, debug_mode=False):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
@@ -148,10 +150,8 @@ class CompileWorkerPool:
 
 
 class ProfileWorker:
-
-    def __init__(self, virtual_mesh: VirtualPhysicalMesh, max_stage):
+    def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
-        self.max_stage = max_stage
 
     def profile(self, compiled_output, stage_info, intermediate_size,
                 initial_size):
@@ -167,9 +167,9 @@ class ProfileWorker:
                                                         out_avals,
                                                         donated_invars, [])
 
-        self.mesh.reset_remote_memory_stats()
-        peak_mem = executable.get_total_allocation_size()
-        available_mem = self.mesh.get_available_memory()
+        self.mesh.reset_memory_stats()
+        peak_memory = executable.get_total_allocation_size()
+        available_memory = self.mesh.get_available_memory()
         cost = executable.profile_with_dummy_inputs()
         del executable
 
@@ -177,7 +177,8 @@ class ProfileWorker:
             max_stage = int((available_mem - peak_mem - initial_size) //
                             intermediate_size) - 1
         else:
-            max_stage = self.max_stage
+            max_stage = INFINITY_N_STAGES
+
         if np.mean(cost) == np.inf:
             max_stage = -1
         return cost, max_stage, (peak_memory, available_memory,
@@ -185,13 +186,12 @@ class ProfileWorker:
 
 
 class ProfileWorkerPool:
-    """wrapped ray.util.ActorPool"""
+    """A pool of ProfileWorker for distributed profiling."""
 
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        total_devices = len(virtual_meshes) * virtual_meshes[0].total_devices
         self.actors = [
-            worker_cls.remote(mesh, total_devices) for mesh in virtual_meshes
+            worker_cls.remote(mesh)  for mesh in virtual_meshes
         ]
         self.pool = ActorPool(self.actors)
 
@@ -208,6 +208,78 @@ class ProfileWorkerPool:
             else:
                 w.__ray_terminate__.remote()
         gc.collect()
+
+
+def compile_all(stages):
+    """
+    Args:
+        stage_info_list: List of info for compilation. Each info is a tuple with:
+            (proto, in_avals, out_avals, donate_invars)
+    """
+    num_cpus = min(max(ray.available_resources()["CPU"] // 2, 1), len(stages))
+    num_gpus = ray.available_resources()["GPU"]
+
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    backup_config = global_config.backup()
+    for _, stage_info, auto_sharding_config, _, _, _ in stages:
+        logical_mesh, auto_sharding_global_config = auto_sharding_config
+        global_config.devices = logical_mesh
+        compile_config = global_config.backup()
+        compile_config.update(auto_sharding_global_config)
+        proto, avals, out_avals, donate_invars = stage_info
+        compile_workers.submit(
+            lambda w, v: w.compile_stage_with_search.remote(*v),
+            (compile_config, logical_mesh, proto, avals, out_avals,
+             donate_invars))
+
+    compiled_outputs = []
+    for _ in tqdm.tqdm(stages):
+        compiled_output = compile_workers.get_next()
+        compiled_outputs.append(compiled_output)
+
+    compile_workers.shutdown()
+    global_config.restore(backup_config)
+    return compiled_outputs
+
+
+def profile_all(stages, compiled_outputs, meshes):
+    use_hlo_cost_model = False
+
+    if use_hlo_cost_model:
+        profile_workers = HloCostModelProfileWorkerPool()
+    else:
+        profile_workers = ProfileWorkerPool(meshes)
+
+    for (compiled_output, stage) in zip(compiled_outputs, stages):
+        (proto, config, in_shardings, out_shardings, hooked_proto,
+         apply_in_shardings) = compiled_output
+        _, _, _, intermediate_vars, profile_info, apply_info = stage
+        intermediate_size = compute_intermediate_size(hooked_proto,
+                                                      intermediate_vars,
+                                                      config.logical_mesh_shape)
+        apply_grad_input_size = compute_apply_grad_invar_size(
+            apply_in_shardings, *apply_info, config.logical_mesh_shape)
+        profile_workers.submit(lambda w, v: w.profile.remote(*v),
+                               (compiled_output, profile_info,
+                                intermediate_size, apply_grad_input_size))
+
+    pbar = tqdm.tqdm(stages)
+    for (start, end, config_idx), _, auto_sharding_config, _, _, _ in pbar:
+        logical_mesh, auto_sharding_global_config = auto_sharding_config
+        cost, max_stage, debug_info = profile_workers.get_next()
+        peak_memory, available_memory, intermediate_size, initial_size = debug_info
+        compute_cost[start, end, config_idx] = np.mean(cost)
+        max_n_succ_stages[start, end, config_idx] = max_stage
+        pbar.write(
+            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
+            f" max_n_succ_stage={max_stage},"
+            f" Mem: avail={available_memory / GB:.3f}GB,"
+            f" peak={peak_memory / GB:.3f}GB,"
+            f" intermediate={intermediate_size / GB:.3f}GB,"
+            f" init={initial_size / GB:.3f}GB,"
+            f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
+    profile_workers.shutdown()
+    return compute_cost, max_n_succ_stages
 
 
 def split_global_use_and_donate(layers, layer_indices, donation_mapping,
@@ -385,35 +457,6 @@ def generate_stage_info(all_layers,
     proto = built.as_serialized_hlo_module_proto()
     compile_info = (proto, avals, out_avals, tot_donation)
     return compile_info, intermediate_vars, profile_info, apply_info
-
-
-def compile_all(stages, num_cpus, num_gpus):
-    """
-    Args:
-        stage_info_list: List of info for compilation. Each info is a tuple with:
-            (proto, in_avals, out_avals, donate_invars)
-    """
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
-    backup_config = global_config.backup()
-    for _, stage_info, auto_sharding_config, _, _, _ in stages:
-        logical_mesh, auto_sharding_global_config = auto_sharding_config
-        global_config.devices = logical_mesh
-        compile_config = global_config.backup()
-        compile_config.update(auto_sharding_global_config)
-        proto, avals, out_avals, donate_invars = stage_info
-        compile_workers.submit(
-            lambda w, v: w.compile_stage_with_search.remote(*v),
-            (compile_config, logical_mesh, proto, avals, out_avals,
-             donate_invars))
-
-    compiled_outputs = []
-    for _ in tqdm.tqdm(stages):
-        compiled_output = compile_workers.get_next()
-        compiled_outputs.append(compiled_output)
-
-    compile_workers.shutdown()
-    global_config.restore(backup_config)
-    return compiled_outputs
 
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,

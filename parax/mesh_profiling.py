@@ -453,7 +453,7 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         cache_dict[op_info] = mean_time
         results.append(mean_time)
 
-        if host_id == 0 and i % save_every == 0:
+        if host_id == 0 and (i % save_every == 0 or i == len(op_infos) - 1):
             rank_0_print(host_id, "Save cache...")
             pickle.dump(cache_dict, open(TMP_CACHE_FILE, "wb"))
 
@@ -461,11 +461,6 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
 
 
 def profile_dot(device_cluster):
-    TMP_CACHE_FILE = "tmp/dot_cost_dict.pkl"
-    if os.path.exists(TMP_CACHE_FILE):
-        print(f"Load cached dot cost dict from {TMP_CACHE_FILE}...")
-        return pickle.load(open(TMP_CACHE_FILE, "rb"))
-
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
@@ -486,7 +481,6 @@ def profile_dot(device_cluster):
             f"Matmul: {(n, m, k, dtype)}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}"
         )
 
-    pickle.dump(dot_cost_dict, open(TMP_CACHE_FILE, "wb"))
     return dot_cost_dict
 
 

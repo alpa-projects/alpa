@@ -148,11 +148,11 @@ class CompileWorker:
                 output_sharding_proto, hooked_proto,
                 apply_grad_input_sharding_protos)
 
-    def compile_with_config(self, global_config_dict, proto, jaxpr_config,
+    def compile_with_config(self, stage_id, global_config_dict, proto, jaxpr_config,
                             mesh_config, multiple_stage_config):
         global_config.restore(global_config_dict)
         built = xla_client.XlaComputation(proto)
-        return compile_with_search(self.backend, built, *jaxpr_config,
+        return stage_id, compile_with_search(self.backend, built, *jaxpr_config,
                                    *mesh_config, **multiple_stage_config)
 
 

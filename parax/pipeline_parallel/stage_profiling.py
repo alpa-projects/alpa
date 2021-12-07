@@ -173,11 +173,9 @@ class ProfileWorker:
                                     output_shardings=out_shardings)
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        executable = PartialGradAccMeshDriverExecutable(self.mesh, compiled,
-                                                        config, avals,
-                                                        out_avals,
-                                                        donated_invars,
-                                                        output_acc_grad_indices)
+        executable = PartialGradAccMeshDriverExecutable(
+            self.mesh, compiled, config, avals, out_avals, donated_invars,
+            output_acc_grad_indices)
 
         self.mesh.reset_memory_stats()
         peak_memory = executable.get_total_allocation_size()
@@ -234,7 +232,6 @@ class HloCostModelProfileWorker:
         proto, config, _, _, _, _ = compiled_output
         xla_computation = xla_client.XlaComputation(proto)
 
-
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
         compiled = compile_with_given_strategy(self.backend,
                                                xla_computation,
@@ -250,8 +247,7 @@ class HloCostModelProfileWorker:
                 hlo_module, acc_grad_indices)
         peak_memory = compiled.total_allocation_size()
         available_memory = self.prof_result.available_memory_per_device
-        cost = estimate_hlo_module_cost(hlo_module,
-                                        self.prof_result,
+        cost = estimate_hlo_module_cost(hlo_module, self.prof_result,
                                         self.num_micro_batches,
                                         grad_sync_channel_ids)
         del compiled
@@ -348,10 +344,9 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
         prof_database = ProfilingResultDatabase()
         prof_database.load(global_config.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)
-        profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus,
-                                                        prof_result,
-                                                        mesh_num_devices,
-                                                        global_config.num_micro_batches)
+        profile_workers = HloCostModelProfileWorkerPool(
+            num_cpus, num_gpus, prof_result, mesh_num_devices,
+            global_config.num_micro_batches)
     else:
         profile_workers = ProfileWorkerPool(meshes)
 
@@ -566,7 +561,8 @@ def generate_stage_info(all_layers,
 
     built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
     proto = built.as_serialized_hlo_module_proto()
-    compile_info = (proto, avals, out_avals, tot_donation, output_acc_grad_indices)
+    compile_info = (proto, avals, out_avals, tot_donation,
+                    output_acc_grad_indices)
     return compile_info, intermediate_vars, profile_info, apply_info
 
 

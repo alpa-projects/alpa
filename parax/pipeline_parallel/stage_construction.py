@@ -316,9 +316,10 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
         tic = time()
         if global_config.profile_with_whole_ray_cluster:
             whole_cluster_virtual_mesh = DeviceCluster(
-                ).get_virtual_physical_mesh()
-            sliced_virtual_meshes = (whole_cluster_virtual_mesh.slice_profiling_submeshes(
-                num_hosts, num_devices))
+            ).get_virtual_physical_mesh()
+            sliced_virtual_meshes = (
+                whole_cluster_virtual_mesh.slice_profiling_submeshes(
+                    num_hosts, num_devices))
         else:
             sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
                 num_hosts, num_devices)

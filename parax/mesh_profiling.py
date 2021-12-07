@@ -300,7 +300,7 @@ def rank_0_print(host_id, msg):
 def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
     results = []
     num_devices_per_node = 8
-    save_every = 20
+    save_every = 30
 
     # Must use an absolute efs path due to distributed ray workers
     TMP_CACHE_FILE = "/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl"
@@ -411,7 +411,8 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
         warmup = max(number // 10, 2)
-        rank_0_print(host_id, f"Profiling {op_info}, work: {work}, number: {number}.")
+        rank_0_print(host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
+                              f"time: {time.time():.0f}.")
 
         # Compile
         shapes, compiled = _compile_profiling_executable(

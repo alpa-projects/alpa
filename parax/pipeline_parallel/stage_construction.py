@@ -17,7 +17,6 @@ from parax.pipeline_parallel.stage_profiling import (
     ProfileWorkerPool)
 from parax.util import OrderedSet
 
-
 last_compute_cost_file_name = None
 last_forward_stage_layer_ids = None
 last_submesh_shapes = None
@@ -252,8 +251,9 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
     print("- Profile all stages")
     # shape of compute_cost and max_n_succ_stages:
     # (num_layers, num_layers, num_autosharding_configs)
-    compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs, meshes,
-        num_layers, num_autosharding_configs)
+    compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs,
+                                                  meshes, num_layers,
+                                                  num_autosharding_configs)
     return compute_cost, max_n_succ_stages
 
 

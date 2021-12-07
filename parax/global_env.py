@@ -18,7 +18,7 @@ class GlobalConfig:
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
 
-        ########## Options for logical mesh shape search ##########
+        ########## Options for shard parallel ##########
         self.search_logical_mesh_shape = False
         self.mesh_shape_search_mode = "cost_model"
         self.mesh_shape_search_log_file = None
@@ -27,7 +27,7 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
-        ########## Options for pipeline stage ##########
+        ########## Options for pipeline parallel ##########
         self.pipeline_stage_mode = "uniform_layer_gpipe"
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile
         self.forward_stage_layer_ids = None
@@ -37,6 +37,8 @@ class GlobalConfig:
         self.logical_mesh_search_space = "default"
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
+        self.use_hlo_cost_model = False
+        self.profiling_database_filename = None
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
@@ -54,7 +56,8 @@ class GlobalConfig:
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
 
         ########## Options for pipeline runtime ##########
-        self.pipeline_distributed_compile = True
+        self.pipeline_distributed_compile = True  # Whether to use distributed compilation
+        # in pipeline parallel for each stage. Disabling it helps debug.
         self.pipeline_use_signal_send_recv = False
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
@@ -84,25 +87,29 @@ class GlobalConfig:
 global_config = GlobalConfig()
 
 
-def set_parallelize_options(devices=None,
-                            strategy="shard_parallel",
-                            memory_budget_per_device=None,
-                            search_logical_mesh_shape=False,
-                            mesh_shape_search_mode="cost_model",
-                            mesh_shape_search_log_file=None,
-                            num_micro_batches=None,
-                            profile_communication=False,
-                            cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False,
-                            pipeline_stage_mode="uniform_layer_gpipe",
-                            cache_compute_cost=None,
-                            forward_stage_layer_ids=None,
-                            sub_physical_mesh_shapes=None,
-                            sub_logical_mesh_shapes=None,
-                            submesh_autosharding_global_configs=None,
-                            logical_mesh_search_space="default",
-                            pipeline_parallel_schedule="1f1b",
-                            pipeline_distributed_compile=True):
+def set_parallelize_options(
+        devices=None,
+        strategy="shard_parallel",
+        memory_budget_per_device=None,
+        num_micro_batches=None,
+        # shard-parallel
+        search_logical_mesh_shape=False,
+        mesh_shape_search_mode="cost_model",
+        mesh_shape_search_log_file=None,
+        profile_communication=False,
+        cache_folder="parax_cache",
+        cache_auto_sharding_ilp_solution=False,
+        # pipeline-parallel
+        pipeline_stage_mode="uniform_layer_gpipe",
+        cache_compute_cost=None,
+        forward_stage_layer_ids=None,
+        sub_physical_mesh_shapes=None,
+        sub_logical_mesh_shapes=None,
+        submesh_autosharding_global_configs=None,
+        logical_mesh_search_space="default",
+        pipeline_parallel_schedule="1f1b",
+        use_hlo_cost_model=False,
+        profiling_database_filename=None):
     """
     Set the global options for all @parallelize decorator.
 
@@ -140,8 +147,8 @@ def set_parallelize_options(devices=None,
       sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
         submeshes for each forward stage. Used for manual layer slicing.
       pipeline_parallel_schedule (str): the pipeline schedule, "gpipe" or "1f1b".
-      pipeline_distributed_compile (bool): Whether to use distributed compilation
-        in pipeline parallel for each stage. Disabling it helps debug.
+      use_hlo_cost_model (bool): Whether use the Hlo instruction cost model for pipeline profiling.
+      profiling_database_filename (str): The filename of profiling result database.
     """
     global global_config
 
@@ -163,7 +170,8 @@ def set_parallelize_options(devices=None,
     global_config.submesh_autosharding_global_configs = submesh_autosharding_global_configs
     global_config.logical_mesh_search_space = logical_mesh_search_space
     global_config.pipeline_parallel_schedule = pipeline_parallel_schedule
-    global_config.pipeline_distributed_compile = pipeline_distributed_compile
+    global_config.use_hlo_cost_model = use_hlo_cost_model
+    global_config.profiling_database_filename = profiling_database_filename
 
 
 is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"

@@ -30,7 +30,8 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
 INFINITY_N_STAGES = 4096
-GB = 1024 ** 3
+GB = 1024**3
+
 
 class CompileWorker:
     """
@@ -151,6 +152,7 @@ class CompileWorkerPool:
 
 
 class ProfileWorker:
+
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
@@ -175,7 +177,7 @@ class ProfileWorker:
         del executable
 
         if intermediate_size > 0:
-            max_stage = int((available_mem - peak_mem - initial_size) //
+            max_stage = int((available_memory - peak_memory - initial_size) //
                             intermediate_size) - 1
         else:
             max_stage = INFINITY_N_STAGES
@@ -191,9 +193,7 @@ class ProfileWorkerPool:
 
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        self.actors = [
-            worker_cls.remote(mesh)  for mesh in virtual_meshes
-        ]
+        self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
         self.pool = ActorPool(self.actors)
 
     def submit(self, fn, value):
@@ -212,6 +212,7 @@ class ProfileWorkerPool:
 
 
 class HloCostModelProfileWorker:
+
     def __init__(self, prof_result, num_devices):
         self.backend = xla_bridge.get_backend("gpu")
         self.prof_result = prof_result
@@ -233,11 +234,12 @@ class HloCostModelProfileWorker:
                                                run_backend_codegen=True)
         peak_memory = compiled.total_allocation_size()
         available_memory = self.prof_result.available_memory_per_device
-        cost = estimate_hlo_module_cost(compiled.hlo_modules()[0], self.prof_result)
+        cost = estimate_hlo_module_cost(compiled.hlo_modules()[0],
+                                        self.prof_result)
         del compiled
 
         if intermediate_size > 0:
-            max_stage = int((available_mem - peak_mem - initial_size) //
+            max_stage = int((available_memory - peak_memory - initial_size) //
                             intermediate_size) - 1
         else:
             max_stage = INFINITY_N_STAGES
@@ -251,15 +253,17 @@ class HloCostModelProfileWorker:
 class HloCostModelProfileWorkerPool:
     """A pool of HloCostModelProfileWorker for distributed profiling.
 
-    Intead of doing real measurement, this class uses a HLO instruction cost model to
+    Intead of doing real measurements, this class uses a HLO instruction cost model to
     estimate the cost.
     """
 
     def __init__(self, num_cpus, num_gpus, prof_result, mesh_num_devices):
         gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
-        worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
+        worker_cls = ray.remote(num_cpus=1,
+                                num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
-            worker_cls.remote(prof_result, mesh_num_devices)  for mesh in virtual_meshes
+            worker_cls.remote(prof_result, mesh_num_devices)
+            for mesh in virtual_meshes
         ]
         self.pool = ActorPool(self.actors)
 
@@ -310,20 +314,24 @@ def compile_all(stages):
     return compiled_outputs
 
 
-def profile_all(stages, compiled_outputs, meshes, num_layers, num_auto_sharding_configs):
-    use_hlo_cost_model = False
-    compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs), np.inf)
+def profile_all(stages, compiled_outputs, meshes, num_layers,
+                num_auto_sharding_configs):
+    compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs),
+                           np.inf)
     max_n_succ_stages = np.full(
         (num_layers, num_layers, num_auto_sharding_configs), -1)
 
-    if use_hlo_cost_model:
-        num_cpus = min(max(ray.available_resources()["CPU"] // 2, 1), len(stages))
+    if global_config.use_hlo_cost_model:
+        num_cpus = min(max(ray.available_resources()["CPU"] // 2, 1),
+                       len(stages))
         num_gpus = ray.available_resources()["GPU"]
         mesh_num_devices = meshes[0].total_devices
         prof_database = ProfilingResultDatabase()
-        prof_database.load("prof_database.pkl")
+        prof_database.load(global_config.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)
-        profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus, prof_result, mesh_num_devices)
+        profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus,
+                                                        prof_result,
+                                                        mesh_num_devices)
     else:
         profile_workers = ProfileWorkerPool(meshes)
 

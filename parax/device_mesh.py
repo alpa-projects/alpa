@@ -463,6 +463,10 @@ class PhysicalDeviceMesh:
         return ret
 
     @property
+    def shape(self):
+        return (len(self.host_ids), self.num_devices_per_host)
+
+    @property
     def total_devices(self):
         """Return the total number of GPUs on this mesh."""
         return len(self.device_ids_flat)
@@ -735,7 +739,7 @@ class PhysicalDeviceMesh:
         else:
             return min([device.available_memory() for device in self.devices])
 
-    def reset_remote_memory_stats(self):
+    def reset_memory_stats(self):
         if self.is_distributed:
             for worker in self.workers:
                 ray.get(worker.reset_memory_stats.remote())
@@ -1106,6 +1110,10 @@ class VirtualPhysicalMesh:
                 all_submeshes.append(self.slice_2d(host_indices,
                                                    device_indices))
         return all_submeshes
+
+    @property
+    def shape(self):
+        return (len(self.host_ids), self.num_devices_per_host)
 
     @property
     def total_devices(self):

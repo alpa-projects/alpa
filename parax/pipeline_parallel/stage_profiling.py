@@ -110,7 +110,7 @@ class CompileWorker:
             "grad_acc_num_micro_batches": None,
             "bypass_device_assignment_check": True
         }
-        protos, hooked_proto, strategy_config = self.compile_with_config(
+        _, (protos, hooked_proto, strategy_config) = self.compile_with_config(stage_id,
             global_config_dict, proto, jaxpr_config, mesh_config,
             multiple_stage_config)
         assert (len(protos) <=

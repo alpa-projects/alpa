@@ -6,7 +6,7 @@ from parax import DeviceCluster, ProfilingResultDatabase
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cluster_key", type=str, default="p3.16")
+    parser.add_argument("--cluster_key", type=str, default="default")
     parser.add_argument("--filename", type=str, default="prof_database.pkl")
     args = parser.parse_args()
     ray.init(address="auto")

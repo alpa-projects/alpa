@@ -166,14 +166,15 @@ class ProfileWorker:
                                                         config, avals,
                                                         out_avals,
                                                         donated_invars, [])
+
         self.mesh.reset_remote_memory_stats()
+        peak_mem = executable.get_total_allocation_size()
+        available_mem = self.mesh.get_available_memory()
         cost = executable.profile_with_dummy_inputs()
         del executable
-        peak_memory = self.mesh.get_max_memory_allocated()
-        available_memory = self.mesh.get_available_memory()
-        self.mesh.reset_remote_memory_stats()
+
         if intermediate_size > 0:
-            max_stage = int((available_memory - peak_memory - initial_size) //
+            max_stage = int((available_mem - peak_mem - initial_size) //
                             intermediate_size) - 1
         else:
             max_stage = self.max_stage

@@ -13,11 +13,10 @@ from parax.pipeline_parallel.computation import (JaxPipelineComputation,
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all,
+    split_global_use_and_donate, generate_stage_info, compile_all, profile_all,
     ProfileWorkerPool)
 from parax.util import OrderedSet
 
-GB = 1024 * 1024 * 1024
 last_compute_cost_file_name = None
 last_forward_stage_layer_ids = None
 last_submesh_shapes = None
@@ -94,11 +93,11 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
 
     res = []
     while current_s > 0 and current_layer < num_layers and current_devices > 0:
-        next_start_layer, submesh_choice, auto_sharding_choice = (
+        next_start_layer, submesh_choice, autosharding_choice = (
             f_argmin[current_s, current_layer, current_devices])
         assert next_start_layer != -1 and current_devices != -1
         res.append(((current_layer, next_start_layer), submesh_choice,
-                    auto_sharding_choice))
+                    autosharding_choice))
         current_s -= 1
         current_layer = next_start_layer
         current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
@@ -185,7 +184,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
 
 def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
                                                 option):
-    # a config is: (logical_mesh, auto_sharding_global_configs)
+    # a config is: (logical_mesh, autosharding_global_configs)
     # each (2D Mesh with force batch dim) + (1D Mesh with mix batch dim)
     autosharding_configs = []
     for submesh in submesh_choices:
@@ -209,15 +208,11 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
 def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 donation_mapping, global_outvars,
                                 apply_grad_layers, apply_grad_global_info,
-                                auto_sharding_configs):
+                                autosharding_configs):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
-    num_auto_sharding_configs = len(auto_sharding_configs)
+    num_autosharding_configs = len(autosharding_configs)
     indices = list(range(2 * num_layers))
-    compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs),
-                           np.inf)
-    max_n_succ_stages = np.full(
-        (num_layers, num_layers, num_auto_sharding_configs), -1)
     stages = []
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
@@ -231,7 +226,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 apply_grad_layers[idx] for idx in indices[start:end + 1]
             ]
             stage_name = "stage_{}_{}".format(start, end)
-            (stage_info, intermediate_vars, profile_info,
+            (compile_info, intermediate_vars, profile_info,
              apply_info) = generate_stage_info(
                  layers,
                  layer_indices,
@@ -241,53 +236,24 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                  insert_hook_after=end - start,
                  apply_grad_info=(selected_apply_grad_layers,
                                   *apply_grad_global_info))
-            for config_idx, auto_sharding_config in enumerate(
-                    auto_sharding_configs):
-                if auto_sharding_config is not None:
+            for config_idx, autosharding_config in enumerate(
+                    autosharding_configs):
+                if autosharding_config is not None:
                     stage_indices = (start, end, config_idx)
                     stages.append(
-                        (stage_indices, stage_info, auto_sharding_config,
+                        (stage_indices, compile_info, autosharding_config,
                          intermediate_vars, profile_info, apply_info))
 
     # TODO(zhuohan): set the number of workers as a tunable parameter
-    n_workers = int(
-        min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
     print("- Compile all stages")
-    compiled_outputs = compile_all(stages, n_workers,
-                                   ray.available_resources()["GPU"])
-
-    print("- Start all profiling tasks")
-    profile_workers = ProfileWorkerPool(meshes)
-    for (compiled_output, stage) in zip(compiled_outputs, stages):
-        (proto, config, in_shardings, out_shardings, hooked_proto,
-         apply_in_shardings) = compiled_output
-        _, _, _, intermediate_vars, profile_info, apply_info = stage
-        intermediate_size = compute_intermediate_size(hooked_proto,
-                                                      intermediate_vars,
-                                                      config.logical_mesh_shape)
-        apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, *apply_info, config.logical_mesh_shape)
-        profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, profile_info,
-                                intermediate_size, apply_grad_input_size))
+    compiled_outputs = compile_all(stages)
 
     print("- Profile all stages")
-    pbar = tqdm.tqdm(stages)
-    for (start, end, config_idx), _, auto_sharding_config, _, _, _ in pbar:
-        logical_mesh, auto_sharding_global_config = auto_sharding_config
-        cost, max_stage, debug_info = profile_workers.get_next()
-        peak_memory, available_memory, intermediate_size, initial_size = debug_info
-        compute_cost[start, end, config_idx] = np.mean(cost)
-        max_n_succ_stages[start, end, config_idx] = max_stage
-        pbar.write(
-            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
-            f" max_n_succ_stage={max_stage},"
-            f" Mem: avail={available_memory / GB:.3f}GB,"
-            f" peak={peak_memory / GB:.3f}GB,"
-            f" intermediate={intermediate_size / GB:.3f}GB,"
-            f" init={initial_size / GB:.3f}GB,"
-            f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
-    profile_workers.shutdown()
+    # shape of compute_cost and max_n_succ_stages:
+    # (num_layers, num_layers, num_autosharding_configs)
+    compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs,
+                                                  meshes, num_layers,
+                                                  num_autosharding_configs)
     return compute_cost, max_n_succ_stages
 
 

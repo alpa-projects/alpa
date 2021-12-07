@@ -429,7 +429,7 @@ class PhysicalDeviceMesh:
             env_vars = {
                 "PARAX_IS_WORKER": "True",
                 "NCCL_USE_MULTISTREAM": "False",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".92",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 # "NCCL_SHM_DISABLE": "1",
@@ -461,6 +461,10 @@ class PhysicalDeviceMesh:
         ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
         ret = ret.replace(" ", "-")
         return ret
+
+    @property
+    def shape(self):
+        return (len(self.host_ids), self.num_devices_per_host)
 
     @property
     def total_devices(self):
@@ -735,7 +739,7 @@ class PhysicalDeviceMesh:
         else:
             return min([device.available_memory() for device in self.devices])
 
-    def reset_remote_memory_stats(self):
+    def reset_memory_stats(self):
         if self.is_distributed:
             for worker in self.workers:
                 ray.get(worker.reset_memory_stats.remote())
@@ -1106,6 +1110,10 @@ class VirtualPhysicalMesh:
                 all_submeshes.append(self.slice_2d(host_indices,
                                                    device_indices))
         return all_submeshes
+
+    @property
+    def shape(self):
+        return (len(self.host_ids), self.num_devices_per_host)
 
     @property
     def total_devices(self):

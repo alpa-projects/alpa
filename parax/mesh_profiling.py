@@ -290,15 +290,14 @@ def to_np_dtype(dtype_str):
         return np.dtype(dtype_str)
 
 
-def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
+def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
     results = []
+    num_devices_per_node = 8
 
     for op_info in op_infos:
-        print(f"Profiling {op_info}")
-
         if op_info[0] == "dot":
-            n, m, k, dtype = op_info[1]
-            dtype = to_np_dtype(dtype)
+            n, m, k, dtype_str = op_info[1]
+            dtype = to_np_dtype(dtype_str)
             shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
 
             def op_func(operands):
@@ -308,8 +307,15 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                 out = ops.DotGeneral(lhs, rhs, dim_numbers)
                 operands[-1] = out
 
+            flop_ct = max(2 * n * m * k, 1)
             warmup = 2
-            number = 10
+            if dtype_str == "f16":
+                work = 50e12
+            elif dtype_str == "f32":
+                work = 10e12
+            else:
+                raise ValueError(f"Invalid type: {dtype_str}")
+            number = min(max(12, int(work / flop_ct)), 1 << 12)
         elif op_info[0] == "all-gather":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
@@ -324,9 +330,11 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                 operands[-1] = out
 
             warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
+            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+                work = 1 << 33
+            else:
+                work = 1 << 31
+            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
         elif op_info[0] == "all-reduce":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
@@ -339,9 +347,11 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                 operands[-1] = out
 
             warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
+            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+                work = 1 << 32
+            else:
+                work = 1 << 30
+            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
         elif op_info[0] == "all-to-all":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
@@ -356,9 +366,11 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                 operands[-1] = out
 
             warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
+            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+                work = 1 << 33
+            else:
+                work = 1 << 31
+            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
         elif op_info[0] == "reduce-scatter":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
@@ -374,11 +386,16 @@ def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
                 operands[-1] = out
 
             warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
+            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+                work = 1 << 33
+            else:
+                work = 1 << 31
+            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
         else:
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
+
+        if host_id == 0:
+            print(f"Profiling {op_info}, work: {work}, number: {number}.")
 
         # Compile
         shapes, compiled = _compile_profiling_executable(
@@ -496,7 +513,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         size_configs.append((1 << i, "f16"))
 
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    submesh_choices = get_submesh_choices(virtual_mesh)
+    submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
 
     prof_database = ProfilingResultDatabase()
     for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):

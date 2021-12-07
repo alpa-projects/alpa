@@ -8,9 +8,10 @@ import numpy as np
 import ray
 import tqdm
 
+from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
+from parax.pipeline_parallel.automatic_layer_slicing import eqn_flops
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
-from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
     split_global_use_and_donate, generate_stage_info, compile_all, profile_all,
@@ -209,17 +210,28 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
 def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 donation_mapping, global_outvars,
                                 apply_grad_layers, apply_grad_global_info,
-                                autosharding_configs):
+                                autosharding_configs, cluster_size,
+                                layer_flops_prefix_sum):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
+    tot_flops = layer_flops_prefix_sum[num_layers]
     num_autosharding_configs = len(autosharding_configs)
     indices = list(range(2 * num_layers))
     stages = []
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shapes
+    computation_source_ratio = meshes[0].total_devices / cluster_size
+    is_full_mesh = computation_source_ratio == 1
+    tolerance = global_config.auto_stage_construction_imbalance_tolerance
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
+            if is_full_mesh and not (start == 0 and end == num_layers - 1):
+                continue
+            flops_ratio = (tot_flops[end + 1] - tot_flops[start]) / tot_flops
+            if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
+                (computation_source_ratio < flops_ratio / (1 + tolerance))):
+                continue
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
@@ -245,6 +257,12 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                         (stage_indices, compile_info, autosharding_config,
                          intermediate_vars, profile_info, apply_info))
 
+    if len(stages) == 0:
+        compute_cost = np.full(
+            (num_layers, num_layers, num_autosharding_configs), np.inf)
+        max_n_succ_stages = np.full(
+            (num_layers, num_layers, num_autosharding_configs), -1)
+        return compute_cost, max_n_succ_stages
     # TODO(zhuohan): set the number of workers as a tunable parameter
     print("- Compile all stages")
     compiled_outputs = compile_all(stages)
@@ -258,6 +276,14 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
     return compute_cost, max_n_succ_stages
 
 
+def _get_layer_flops_prefix_sum(layers):
+    layer_flops_prefix_sum = [0]
+    for layer in layers:
+        layer_flops = sum([eqn_flops(eqn) for eqn in layer.eqns])
+        layer_flops_prefix_sum.append(layer_flops_prefix_sum[-1] + layer_flops)
+    return layer_flops_prefix_sum
+
+
 def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
                      autosharding_configs, layers, donation_mapping,
                      global_outvars, apply_grad_layers, apply_grad_global_info):
@@ -265,6 +291,8 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
     num_autosharding_configs = len(autosharding_configs[0])
+    cluster_size = virtual_mesh.total_devices
+    layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
 
     compute_cost = np.full(
         (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
@@ -292,7 +320,7 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
             apply_grad_layers, apply_grad_global_info,
-            autosharding_configs[mesh_id])
+            autosharding_configs[mesh_id], cluster_size, layer_flops_prefix_sum)
 
         compute_cost[:, :, mesh_id, :] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages

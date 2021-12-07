@@ -2,6 +2,8 @@
 import os
 import copy
 
+import numpy as np
+
 
 class GlobalConfig:
     """Global configuration of parax.
@@ -36,6 +38,7 @@ class GlobalConfig:
         self.sub_logical_mesh_shapes = None
         self.submesh_autosharding_global_configs = None
         self.logical_mesh_search_space = "default"
+        self.auto_stage_construction_imbalance_tolerance = np.Inf
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
         self.use_hlo_cost_model = False

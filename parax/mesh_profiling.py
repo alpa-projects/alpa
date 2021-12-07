@@ -329,7 +329,6 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
                 operands[-1] = out
 
             flop_ct = max(2 * n * m * k, 1)
-            warmup = 2
             if dtype_str == "f16":
                 work = 50e12
             elif dtype_str == "f32":
@@ -350,7 +349,6 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
                 out = _op_all_gather(operands[0], replica_groups, channel_id)
                 operands[-1] = out
 
-            warmup = 2
             if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
                 work = 1 << 33
             else:
@@ -367,7 +365,6 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
                                      channel_id)
                 operands[-1] = out
 
-            warmup = 2
             if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
                 work = 1 << 32
             else:
@@ -386,7 +383,6 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
                 out = _op_all_to_all(operands[0], replica_groups, channel_id)
                 operands[-1] = out
 
-            warmup = 2
             if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
                 work = 1 << 33
             else:
@@ -406,7 +402,6 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
                                          replica_groups, channel_id)
                 operands[-1] = out
 
-            warmup = 2
             if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
                 work = 1 << 33
             else:
@@ -415,6 +410,7 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         else:
             raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
+        warmup = max(number // 10, 2)
         rank_0_print(host_id, f"Profiling {op_info}, work: {work}, number: {number}.")
 
         # Compile

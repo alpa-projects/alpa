@@ -155,7 +155,7 @@ class ProfileWorker:
 
     def profile(self, compiled_output, stage_info, intermediate_size,
                 initial_size):
-        avals, out_avals, tot_donation = stage_info
+        avals, out_avals, tot_donation, acc_grad_indices = stage_info
         proto, config, in_shardings, out_shardings, _, _ = compiled_output
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
@@ -165,7 +165,8 @@ class ProfileWorker:
         executable = PartialGradAccMeshDriverExecutable(self.mesh, compiled,
                                                         config, avals,
                                                         out_avals,
-                                                        donated_invars, [])
+                                                        donated_invars,
+                                                        acc_grad_indices)
         self.mesh.reset_remote_memory_stats()
         cost = executable.profile_with_dummy_inputs()
         del executable
@@ -319,7 +320,13 @@ def generate_stage_info(all_layers,
               merged.jaxpr.eqns), merged.consts)
     compute_avals = [var.aval for var in merged.jaxpr.invars]
     compute_out_avals = [var.aval for var in merged.jaxpr.outvars]
-    profile_info = (compute_avals, compute_out_avals, list(tot_donation))
+    acc_grad_outvars = set(global_outvars)
+    acc_grad_indices = [
+        i for i, var in enumerate(merged.jaxpr.outvars)
+        if var in acc_grad_outvars
+    ]
+    profile_info = (compute_avals, compute_out_avals, list(tot_donation),
+                    acc_grad_indices)
 
     apply_info = None, None
 

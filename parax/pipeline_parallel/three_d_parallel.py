@@ -251,8 +251,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "grad_acc_num_micro_batches": None,
                 "bypass_device_assignment_check": True
             }
-            compile_workers.submit_with_index(mesh_idx, compile_fn,
-                                   (mesh_global_config, proto, jaxpr_config,
+            compile_workers.submit(compile_fn,
+                                   (mesh_idx, mesh_global_config, proto, jaxpr_config,
                                     mesh_config, multiple_stage_config))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)

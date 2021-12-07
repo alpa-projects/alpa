@@ -10,12 +10,13 @@ import tqdm
 
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
-from parax.device_mesh import VirtualPhysicalMesh
+from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
     split_global_use_and_donate, generate_stage_info, compile_all, profile_all,
     ProfileWorkerPool)
 from parax.util import OrderedSet
+from parax.global_env import global_config
 
 last_compute_cost_file_name = None
 last_forward_stage_layer_ids = None
@@ -279,8 +280,15 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
         print(f"- Profiling for submesh {mesh_id} {submesh}:")
         num_hosts, num_devices = submesh
         tic = time()
-        sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
-            num_hosts, num_devices)
+        if global_config.profile_with_whole_ray_cluster:
+            whole_cluster_virtual_mesh = DeviceCluster(
+            ).get_virtual_physical_mesh()
+            sliced_virtual_meshes = (
+                whole_cluster_virtual_mesh.slice_profiling_submeshes(
+                    num_hosts, num_devices))
+        else:
+            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+                num_hosts, num_devices)
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
             apply_grad_layers, apply_grad_global_info,

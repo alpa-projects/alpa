@@ -134,7 +134,9 @@ class CompileWorkerPool:
     """A pool of CompileWorker for distributed compilation."""
 
     def __init__(self, num_cpus, num_gpus, debug_mode=False):
-        gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
+        gpu_per_cpu = 1
+        while gpu_per_cpu * num_cpus > num_gpus:
+            gpu_per_cpu /= 2
         worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
         self.actors = [worker_cls.remote() for _ in range(num_cpus)]
         self.pool = ActorPool(self.actors)

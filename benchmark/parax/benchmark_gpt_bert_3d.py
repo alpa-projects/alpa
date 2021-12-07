@@ -57,12 +57,18 @@ if __name__ == "__main__":
                              "Errors in a single case will terminate this script.",
                         dest='use_separate_process')
     parser.add_argument("--exp_name", type=str, default="default")
+    parser.add_argument("--num-hosts", type=int, default=None)
+    parser.add_argument("--num-devices-per-host", type=int, default=None)
     args = parser.parse_args()
 
     print(f"- Use separate process: {args.use_separate_process}")
 
     ray.init(address="auto")
-    num_gpus = int(ray.cluster_resources()["GPU"])
+    if args.num_hosts is not None or args.num_devices_per_host is not None:
+        assert args.num_hosts is not None and args.num_devices_per_host is not None
+        num_gpus = args.num_hosts * args.num_devices_per_host
+    else:
+        num_gpus = int(ray.cluster_resources()["GPU"])
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:
@@ -88,6 +94,8 @@ if __name__ == "__main__":
         #    continue
         print("Working on case: {}".format(str(benchmark_case)))
         result = benchmark_one_case(args.model, benchmark_case, args.niter,
+                                    num_hosts=args.num_hosts,
+                                    num_devices_per_host=args.num_devices_per_host,
                                     use_separate_process=args.use_separate_process)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,

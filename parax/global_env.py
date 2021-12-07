@@ -29,6 +29,7 @@ class GlobalConfig:
 
         ########## Options for pipeline parallel ##########
         self.pipeline_stage_mode = "uniform_layer_gpipe"
+        self.profile_with_whole_ray_cluster = True
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None

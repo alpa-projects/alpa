@@ -15,7 +15,7 @@ from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config
-from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
@@ -57,7 +57,8 @@ class CompileWorker:
         return input_sharding_protos, output_sharding_proto
 
     def compile_stage_with_search(self, global_config_dict, logical_mesh, proto,
-                                  avals, out_avals, donate_invars):
+                                  avals, out_avals, donate_invars,
+                                  output_acc_grad_indices):
         """
         Compile a single stage with auto sharding.
         Args:
@@ -73,6 +74,7 @@ class CompileWorker:
         """
         self.cnt += 1
 
+        # Compile with search to get sharding annotations.
         jaxpr_config = (avals, out_avals, donate_invars)
         mesh_config = (None, [logical_mesh
                              ], global_config.mesh_shape_search_mode,
@@ -94,6 +96,8 @@ class CompileWorker:
         else:
             apply_grad_input_sharding_protos = None
         sharded_proto = protos[0]
+
+        # Get the accumulate_grad part and compile to fully optimized.
         sharding_annotated_computation = xla_client.XlaComputation(
             sharded_proto)
         if logical_mesh.total_devices > 1:
@@ -102,13 +106,16 @@ class CompileWorker:
         else:
             input_sharding_protos = None
             output_sharding_proto = None
+        rewrite_for_grad_acc = len(output_acc_grad_indices) > 0
         compiled = compile_with_given_strategy(
             self.backend,
             sharding_annotated_computation,
             strategy_config,
             logical_mesh.total_devices,
             bypass_device_assignment_check=True,
-            hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED)
+            hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED,
+            rewrite_for_grad_acc=rewrite_for_grad_acc,
+            rewrite_grad_acc_indices=output_acc_grad_indices)
         optimized_proto = compiled.hlo_modules(
         )[0].as_serialized_hlo_module_proto()
         return (optimized_proto, strategy_config, input_sharding_protos,
@@ -156,9 +163,10 @@ class ProfileWorker:
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
-    def profile(self, compiled_output, stage_info, intermediate_size,
+    def profile(self, compiled_output, profile_info, intermediate_size,
                 initial_size):
-        avals, out_avals, tot_donation = stage_info
+
+        avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
         proto, config, in_shardings, out_shardings, _, _ = compiled_output
         compiled = ProtoAndSharding(proto=proto,
                                     input_shardings=in_shardings,
@@ -168,7 +176,8 @@ class ProfileWorker:
         executable = PartialGradAccMeshDriverExecutable(self.mesh, compiled,
                                                         config, avals,
                                                         out_avals,
-                                                        donated_invars, [])
+                                                        donated_invars,
+                                                        output_acc_grad_indices)
 
         self.mesh.reset_memory_stats()
         peak_memory = executable.get_total_allocation_size()
@@ -219,25 +228,32 @@ class HloCostModelProfileWorker:
         self.num_devices = num_devices
         self.num_micro_batches = num_micro_batches
 
-    def profile(self, compiled_output, stage_info, intermediate_size,
+    def profile(self, compiled_output, profile_info, intermediate_size,
                 initial_size):
+        _, _, _, acc_grad_indices = profile_info
         proto, config, _, _, _, _ = compiled_output
+        xla_computation = xla_client.XlaComputation(proto)
 
-        xla_computation = xla_client.XlaComputation(hlo_proto)
+
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
-
         compiled = compile_with_given_strategy(self.backend,
                                                xla_computation,
                                                config,
                                                self.num_devices,
-                                               False,
+                                               True,
                                                hlo_proto_status,
                                                run_backend_codegen=True)
+        hlo_module = compiled.hlo_modules()[0]
+        grad_sync_channel_ids = ""
+        if acc_grad_indices:
+            grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
+                hlo_module, acc_grad_indices)
         peak_memory = compiled.total_allocation_size()
         available_memory = self.prof_result.available_memory_per_device
-        cost = estimate_hlo_module_cost(compiled.hlo_modules()[0],
+        cost = estimate_hlo_module_cost(hlo_module,
                                         self.prof_result,
-                                        num_micro_batches)
+                                        self.num_micro_batches,
+                                        grad_sync_channel_ids)
         del compiled
 
         if intermediate_size > 0:
@@ -266,7 +282,7 @@ class HloCostModelProfileWorkerPool:
                                 num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
             worker_cls.remote(prof_result, mesh_num_devices, num_micro_batches)
-            for mesh in virtual_meshes
+            for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)
 
@@ -296,16 +312,16 @@ def compile_all(stages):
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     backup_config = global_config.backup()
-    for _, stage_info, auto_sharding_config, _, _, _ in stages:
+    for _, compile_info, auto_sharding_config, _, _, _ in stages:
         logical_mesh, auto_sharding_global_config = auto_sharding_config
         global_config.devices = logical_mesh
         compile_config = global_config.backup()
         compile_config.update(auto_sharding_global_config)
-        proto, avals, out_avals, donate_invars = stage_info
+        proto, avals, out_avals, donate_invars, output_acc_grad_indices = compile_info
         compile_workers.submit(
             lambda w, v: w.compile_stage_with_search.remote(*v),
             (compile_config, logical_mesh, proto, avals, out_avals,
-             donate_invars))
+             donate_invars, output_acc_grad_indices))
 
     compiled_outputs = []
     for _ in tqdm.tqdm(stages):
@@ -481,7 +497,13 @@ def generate_stage_info(all_layers,
               merged.jaxpr.eqns), merged.consts)
     compute_avals = [var.aval for var in merged.jaxpr.invars]
     compute_out_avals = [var.aval for var in merged.jaxpr.outvars]
-    profile_info = (compute_avals, compute_out_avals, list(tot_donation))
+    acc_grad_outvars = set(global_outvars)
+    output_acc_grad_indices = [
+        i for i, var in enumerate(merged.jaxpr.outvars)
+        if var in acc_grad_outvars
+    ]
+    profile_info = (compute_avals, compute_out_avals, list(tot_donation),
+                    output_acc_grad_indices)
 
     apply_info = None, None
 
@@ -544,7 +566,7 @@ def generate_stage_info(all_layers,
 
     built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
     proto = built.as_serialized_hlo_module_proto()
-    compile_info = (proto, avals, out_avals, tot_donation)
+    compile_info = (proto, avals, out_avals, tot_donation, output_acc_grad_indices)
     return compile_info, intermediate_vars, profile_info, apply_info
 
 
@@ -666,8 +688,6 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
 
     avals = [v.aval for v in invars]
-    # print("apply grad invars",
-    #       [(var.aval.shape, var in selected_invars) for var in invars])
     if np.prod(logical_mesh_shape) == 1:
         tot = sum([
             get_byte(aval)

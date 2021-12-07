@@ -5,6 +5,7 @@ from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 import tqdm
 import numpy as np
 import ray
+from abc import ABC, abstractmethod
 from ray.util import ActorPool
 
 import jax.numpy as jnp
@@ -33,6 +34,31 @@ INFINITY_N_STAGES = 4096
 GB = 1024**3
 
 
+class BaseWorkerPoolWrapper(ABC):
+
+    @abstractmethod
+    def __init__(self):
+        self.actors = None
+        self.pool = None
+
+    def submit(self, fn, value):
+        self.pool.submit(fn, value)
+
+    def get_next(self):
+        return self.pool.get_next()
+
+    def get_next_unordered(self):
+        return self.pool.get_next_unordered()
+
+    def shutdown(self, force=True):
+        for w in self.actors:
+            if force:
+                ray.kill(w)
+            else:
+                w.__ray_terminate__.remote()
+        gc.collect()
+
+
 class CompileWorker:
     """
     A ray actor to distributedly compile Jaxpr to HLO Proto.
@@ -56,12 +82,13 @@ class CompileWorker:
         output_sharding_proto = output_sharding.proto_tuple()
         return input_sharding_protos, output_sharding_proto
 
-    def compile_stage_with_search(self, global_config_dict, logical_mesh, proto,
-                                  avals, out_avals, donate_invars,
-                                  output_acc_grad_indices):
+    def compile_stage_with_search(self, stage_id, global_config_dict,
+                                  logical_mesh, proto, avals, out_avals,
+                                  donate_invars, output_acc_grad_indices):
         """
         Compile a single stage with auto sharding.
         Args:
+            stage_id: the index of the input stage.
             global_config_dict: the global config dictionary for compilation setting.
             logical_mesh: the logical mesh for compilation.
             proto: the proto of XlaComputation to be compiled
@@ -84,8 +111,8 @@ class CompileWorker:
             "grad_acc_num_micro_batches": None,
             "bypass_device_assignment_check": True
         }
-        protos, hooked_proto, strategy_config = self.compile_with_config(
-            global_config_dict, proto, jaxpr_config, mesh_config,
+        _, (protos, hooked_proto, strategy_config) = self.compile_with_config(
+            stage_id, global_config_dict, proto, jaxpr_config, mesh_config,
             multiple_stage_config)
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
@@ -118,19 +145,20 @@ class CompileWorker:
             rewrite_grad_acc_indices=output_acc_grad_indices)
         optimized_proto = compiled.hlo_modules(
         )[0].as_serialized_hlo_module_proto()
-        return (optimized_proto, strategy_config, input_sharding_protos,
-                output_sharding_proto, hooked_proto,
-                apply_grad_input_sharding_protos)
+        return stage_id, (optimized_proto, strategy_config,
+                          input_sharding_protos, output_sharding_proto,
+                          hooked_proto, apply_grad_input_sharding_protos)
 
-    def compile_with_config(self, global_config_dict, proto, jaxpr_config,
-                            mesh_config, multiple_stage_config):
+    def compile_with_config(self, stage_id, global_config_dict, proto,
+                            jaxpr_config, mesh_config, multiple_stage_config):
         global_config.restore(global_config_dict)
         built = xla_client.XlaComputation(proto)
-        return compile_with_search(self.backend, built, *jaxpr_config,
-                                   *mesh_config, **multiple_stage_config)
+        return stage_id, compile_with_search(self.backend, built, *jaxpr_config,
+                                             *mesh_config,
+                                             **multiple_stage_config)
 
 
-class CompileWorkerPool:
+class CompileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of CompileWorker for distributed compilation."""
 
     def __init__(self, num_cpus, num_gpus, debug_mode=False):
@@ -145,28 +173,14 @@ class CompileWorkerPool:
     def local_get(self, fn, *value):
         return fn(self.local_worker, value)
 
-    def submit(self, fn, value):
-        self.pool.submit(fn, value)
-
-    def get_next(self):
-        return self.pool.get_next()
-
-    def shutdown(self, force=True):
-        for w in self.actors:
-            if force:
-                ray.kill(w)
-            else:
-                w.__ray_terminate__.remote()
-        gc.collect()
-
 
 class ProfileWorker:
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
 
-    def profile(self, compiled_output, profile_info, intermediate_size,
-                initial_size):
+    def profile(self, stage_id, compiled_output, profile_info,
+                intermediate_size, initial_size):
 
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
         proto, config, in_shardings, out_shardings, _, _ = compiled_output
@@ -192,31 +206,17 @@ class ProfileWorker:
                             max(intermediate_size, 1e-8) - 1)
             max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
 
-        return cost, max_stage, (peak_memory, available_memory,
-                                 intermediate_size, initial_size)
+        return stage_id, cost, max_stage, (peak_memory, available_memory,
+                                           intermediate_size, initial_size)
 
 
-class ProfileWorkerPool:
+class ProfileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of ProfileWorker for distributed profiling."""
 
     def __init__(self, virtual_meshes):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
         self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
         self.pool = ActorPool(self.actors)
-
-    def submit(self, fn, value):
-        self.pool.submit(fn, value)
-
-    def get_next(self):
-        return self.pool.get_next()
-
-    def shutdown(self, force=True):
-        for w in self.actors:
-            if force:
-                ray.kill(w)
-            else:
-                w.__ray_terminate__.remote()
-        gc.collect()
 
 
 class HloCostModelProfileWorker:
@@ -227,8 +227,8 @@ class HloCostModelProfileWorker:
         self.num_devices = num_devices
         self.num_micro_batches = num_micro_batches
 
-    def profile(self, compiled_output, profile_info, intermediate_size,
-                initial_size):
+    def profile(self, stage_id, compiled_output, profile_info,
+                intermediate_size, initial_size):
         _, _, _, acc_grad_indices = profile_info
         proto, config, _, _, _, _ = compiled_output
         xla_computation = xla_client.XlaComputation(proto)
@@ -260,11 +260,11 @@ class HloCostModelProfileWorker:
                             max(intermediate_size, 1e-8) - 1)
             max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
 
-        return cost, max_stage, (peak_memory, available_memory,
-                                 intermediate_size, initial_size)
+        return stage_id, cost, max_stage, (peak_memory, available_memory,
+                                           intermediate_size, initial_size)
 
 
-class HloCostModelProfileWorkerPool:
+class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of HloCostModelProfileWorker for distributed profiling.
 
     Intead of doing real measurements, this class uses a HLO instruction cost model to
@@ -273,7 +273,9 @@ class HloCostModelProfileWorkerPool:
 
     def __init__(self, num_cpus, num_gpus, prof_result, mesh_num_devices,
                  num_micro_batches):
-        gpu_per_cpu = min(1, num_gpus / num_cpus * 0.5)
+        gpu_per_cpu = 1
+        while gpu_per_cpu * num_cpus > num_gpus:
+            gpu_per_cpu /= 2
         worker_cls = ray.remote(num_cpus=1,
                                 num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
@@ -281,20 +283,6 @@ class HloCostModelProfileWorkerPool:
             for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)
-
-    def submit(self, fn, value):
-        self.pool.submit(fn, value)
-
-    def get_next(self):
-        return self.pool.get_next()
-
-    def shutdown(self, force=True):
-        for w in self.actors:
-            if force:
-                ray.kill(w)
-            else:
-                w.__ray_terminate__.remote()
-        gc.collect()
 
 
 def compile_all(stages):
@@ -308,21 +296,23 @@ def compile_all(stages):
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     backup_config = global_config.backup()
-    for _, compile_info, auto_sharding_config, _, _, _ in stages:
+    for stage_id, (_, compile_info, auto_sharding_config, _, _,
+                   _) in enumerate(stages):
         logical_mesh, auto_sharding_global_config = auto_sharding_config
         global_config.devices = logical_mesh
         compile_config = global_config.backup()
         compile_config.update(auto_sharding_global_config)
-        proto, avals, out_avals, donate_invars, output_acc_grad_indices = compile_info
+        (proto, avals, out_avals, donate_invars,
+         output_acc_grad_indices) = compile_info
         compile_workers.submit(
             lambda w, v: w.compile_stage_with_search.remote(*v),
-            (compile_config, logical_mesh, proto, avals, out_avals,
+            (stage_id, compile_config, logical_mesh, proto, avals, out_avals,
              donate_invars, output_acc_grad_indices))
 
-    compiled_outputs = []
+    compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
-        compiled_output = compile_workers.get_next()
-        compiled_outputs.append(compiled_output)
+        stage_id, compiled_output = compile_workers.get_next_unordered()
+        compiled_outputs[stage_id] = compiled_output
 
     compile_workers.shutdown()
     global_config.restore(backup_config)
@@ -350,7 +340,8 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
     else:
         profile_workers = ProfileWorkerPool(meshes)
 
-    for (compiled_output, stage) in zip(compiled_outputs, stages):
+    for stage_id, (compiled_output,
+                   stage) in enumerate(zip(compiled_outputs, stages)):
         (proto, config, in_shardings, out_shardings, hooked_proto,
          apply_in_shardings) = compiled_output
         _, _, _, intermediate_vars, profile_info, apply_info = stage
@@ -360,13 +351,16 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
         apply_grad_input_size = compute_apply_grad_invar_size(
             apply_in_shardings, *apply_info, config.logical_mesh_shape)
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, profile_info,
+                               (stage_id, compiled_output, profile_info,
                                 intermediate_size, apply_grad_input_size))
 
     pbar = tqdm.tqdm(stages)
-    for (start, end, config_idx), _, auto_sharding_config, _, _, _ in pbar:
+    for _ in pbar:
+        stage_id, cost, max_stage, debug_info = profile_workers.get_next_unordered(
+        )
+        (start, end,
+         config_idx), _, auto_sharding_config, _, _, _ = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config
-        cost, max_stage, debug_info = profile_workers.get_next()
         peak_memory, available_memory, intermediate_size, initial_size = debug_info
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage

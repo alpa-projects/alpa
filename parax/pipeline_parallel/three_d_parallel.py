@@ -251,9 +251,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "grad_acc_num_micro_batches": None,
                 "bypass_device_assignment_check": True
             }
-            compile_workers.submit(compile_fn,
-                                   (mesh_global_config, proto, jaxpr_config,
-                                    mesh_config, multiple_stage_config))
+            compile_workers.submit(
+                compile_fn, (mesh_idx, mesh_global_config, proto, jaxpr_config,
+                             mesh_config, multiple_stage_config))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops
@@ -271,8 +271,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         global_config.restore(global_config_backup)
 
     if global_config.pipeline_distributed_compile:
-        for mesh_idx in range(num_meshes):
-            computation_protos, strategy_config = compile_workers.get_next()
+        for _ in range(num_meshes):
+            mesh_idx, (computation_protos,
+                       strategy_config) = compile_workers.get_next_unordered()
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_protos(

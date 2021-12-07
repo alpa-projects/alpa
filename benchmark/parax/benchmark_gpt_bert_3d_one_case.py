@@ -104,8 +104,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     device_cluster = DeviceCluster()
+    host_ids = None if num_hosts == None else list(range(num_hosts))
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
-        host_ids=list(range(num_hosts)),
+        host_ids=host_ids,
         num_devices_per_host=num_devices_per_host)
 
     if overwrite_global_config_dict is None:

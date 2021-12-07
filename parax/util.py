@@ -912,4 +912,4 @@ def get_cross_slice_vars(jaxpr, slices):
 
 
 def disable_tqdm_globally():
-    tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+    tqdm.tqdm.__init__ = partialmethod(tqdm.tqdm.__init__, disable=True)

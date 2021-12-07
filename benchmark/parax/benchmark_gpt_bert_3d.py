@@ -59,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_name", type=str, default="default")
     parser.add_argument("--num-hosts", type=int, default=None)
     parser.add_argument("--num-devices-per-host", type=int, default=None)
+    parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     print(f"- Use separate process: {args.use_separate_process}")
@@ -96,7 +97,8 @@ if __name__ == "__main__":
         result = benchmark_one_case(args.model, benchmark_case, args.niter,
                                     num_hosts=args.num_hosts,
                                     num_devices_per_host=args.num_devices_per_host,
-                                    use_separate_process=args.use_separate_process)
+                                    use_separate_process=args.use_separate_process,
+                                    disable_tqdm=args.disable_tqdm)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result

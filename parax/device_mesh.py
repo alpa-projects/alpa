@@ -46,11 +46,6 @@ def device_id_to_str(host_ip, device_id, device_type="gpu"):
     return "{}:{}:{}".format(host_ip, device_type, str(device_id))
 
 
-def device_str_to_id(device_str):
-    """Parse device string to get its device id."""
-    return int(device_str.split(":")[-1])
-
-
 class MeshHostWorker:
     """A ray actor that manages the xla computation on a single host."""
 
@@ -78,6 +73,7 @@ class MeshHostWorker:
         set_override_backend(self.backend)
 
         if global_config.pipeline_use_signal_send_recv:
+            print("Use signal send recv.")
             self.signal_tensors = []
             for d in self.local_devices:
                 self.signal_tensors.append(
@@ -374,7 +370,6 @@ class MeshHostWorker:
 
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)
-        return True
 
 
 class PhysicalDeviceMesh:
@@ -472,16 +467,15 @@ class PhysicalDeviceMesh:
             # Set XLA environment variables
             env_vars = {
                 "PARAX_IS_WORKER": "True",
+                "NCCL_USE_MULTISTREAM": "False",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
-                "NCCL_USE_MULTISTREAM": "False",
                 # "NCCL_SHM_DISABLE": "1",
-                # "TF_CUDA_REMAP_DEVICE_ID": "False"
                 # "NCCL_DEBUG": "INFO",
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
             }
 
             # Launch a ray actor
@@ -838,6 +832,10 @@ class LogicalDeviceMesh:
         self.mesh_alpha = tuple(mesh_alpha)
         self.mesh_beta = tuple(mesh_beta)
 
+    @property
+    def shape(self):
+        return self.id_mesh.shape
+
     def all_gather_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
         return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
@@ -1051,7 +1049,7 @@ class VirtualPhysicalMesh:
     """
     A virtual physical mesh used for pipeline parallel compilation.
 
-    VirtualPhysicalMesh is used for compilation. We don't allocate actual workers for it.
+    VirtualPhysicalMesh is used during compile time. We don't allocate actual workers for it.
     When compilation is finished, we instantiated it as a PhysicalDeviceMesh and launch workers.
 
     A VirtualPhysicalMesh can also be sliced into multiple VirtualPhysicalMesh.
@@ -1208,30 +1206,6 @@ class VirtualPhysicalMesh:
         """Return a 1D logical mesh."""
         return self.get_logical_mesh((1, self.total_devices))
 
-    def get_logical_mesh_and_autosharding_config_choices(self, option="all"):
-        """
-        Return a list of logical meshes and autosharding configs for the
-        auto stage construction algorithm.
-        Args:
-            option (string): ["all", "single_node_model_parallel", "default"].
-        """
-        results = []
-        if option in ["all", "single_node_model_parallel"]:
-            if option == "all":
-                max_mp_dimension = self.total_devices
-            else:  # option == "single_node_model_parallel"
-                max_mp_dimension = self.num_devices_per_host
-            for i in range(1, max_mp_dimension + 1):
-                if self.total_devices % i == 0:
-                    results.append((self.get_logical_mesh(
-                        (self.total_devices // i, i)), {
-                            "force_batch_dim_to_mesh_dim": 0
-                        }))
-            results.append((self.get_logical_mesh((self.total_devices, 1)), {}))
-        elif option == "default":
-            results.append((self.get_default_logical_mesh(), {}))
-        return results
-
 
 class DeviceCluster:
     """A ray cluster with GPU devices."""
@@ -1310,8 +1284,8 @@ class DeviceCluster:
                                    num_devices_per_host=num_devices_per_host,
                                    head_ip=self.head_ip)
 
-    def profile_all(self):
-        return mesh_profiling.profile_all(self)
+    def profile_all(self, *args, **kwargs):
+        return mesh_profiling.profile_all(self, *args, **kwargs)
 
 
 ########################################

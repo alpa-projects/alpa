@@ -1,5 +1,6 @@
 """Test HLO cost model."""
 
+import pickle
 import unittest
 
 import jax
@@ -9,7 +10,8 @@ from flax.training.train_state import TrainState
 import optax
 import ray
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, DeviceCluster
+from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
+from parax.mesh_profiling import estimate_hlo_module_cost
 from parax.global_env import global_config
 from parax.util import map_to_shape
 
@@ -78,23 +80,30 @@ class HloCostModelTest(unittest.TestCase):
 
     def test_cluster_profling(self):
         cluster = DeviceCluster()
-        cluster.profile_all()
+        prof_database = cluster.profile_all("p3.16", comm_size_range=(19, 20))
+        prof_database.save("tmp_prof_database.pkl")
 
     def test_n_layer_mlp(self):
-        return
-        num_layers = 4
-        batch_size = 256
-        hidden_dim = 32
+        num_layers = 2
+        batch_size = 32
+        hidden_dim = 16
+
+        prof_database = ProfilingResultDatabase()
+        prof_database.load("tmp_prof_database.pkl")
 
         device_mesh = DeviceCluster().get_physical_mesh()
+        logical_mesh = device_mesh.get_default_logical_mesh()
         hlo_module = self.run_n_layer_mlp(num_layers, batch_size, hidden_dim,
-                                          hidden_dim, hidden_dim, device_mesh)
+                                          hidden_dim, hidden_dim, logical_mesh)
+        mesh_result = prof_database.query("p3.16", logical_mesh.shape)
+        cost = estimate_hlo_module_cost(hlo_module, mesh_result)
+        assert cost > 0
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(HloCostModelTest("test_cluster_profling"))
-    #suite.addTest(HloCostModelTest("test_n_layer_mlp"))
+    suite.addTest(HloCostModelTest("test_n_layer_mlp"))
     return suite
 
 

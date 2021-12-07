@@ -89,7 +89,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         global last_s_val
         global last_objective
 
-        mesh_shape = logical_mesh.id_mesh.shape
+        mesh_shape = logical_mesh.shape
 
         # Set configs for force_zero_stage_3
         if global_config.force_zero_stage_3:
@@ -127,8 +127,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
             if global_config.force_batch_dim_to_mesh_dim is None:
                 # Automatically set force_batch_dim_to_mesh_dim
-                if logical_mesh.id_mesh.shape[
-                        0] > 1 and logical_mesh.id_mesh.shape[1] > 1:
+                if logical_mesh.shape[0] > 1 and logical_mesh.shape[1] > 1:
                     # In 2d mesh, force the batch tensor dim to match the first mesh dim
                     force_batch_dim_to_mesh_dim = 0
                 else:
@@ -173,8 +172,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
-                "auto_sharding::device_mesh_shape": tuple(
-                    logical_mesh.id_mesh.shape),
+                "auto_sharding::device_mesh_shape": tuple(logical_mesh.shape),
                 "auto_sharding::device_mesh_alpha": tuple(
                     float(x) for x in logical_mesh.mesh_alpha),
                 "auto_sharding::device_mesh_beta": tuple(
@@ -212,7 +210,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
             compiled, solution_vector, objective = _invoke_compilation(
                 logical_mesh)
             strategy_config = StrategyConfig(build_random_seed,
-                                             logical_mesh.id_mesh.shape,
+                                             logical_mesh.shape,
                                              solution_vector)
 
             if logical_mesh_search_mode == "measurement":
@@ -235,15 +233,14 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 inp = MeasureInput(search_task, strategy_config)
                 res = MeasureResult(time_costs, objective, 0, int(time.time()))
                 save_to_file([inp], [res], record_file)
-            #print(logical_mesh.id_mesh.shape, objective, np.mean(time_costs))
+            #print(logical_mesh.shape, objective, np.mean(time_costs))
 
         logical_mesh, compiled, solution_vector, objective = \
             best_logical_mesh, best_compiled, best_solution_vector, best_objective
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
-    strategy_config = StrategyConfig(build_random_seed,
-                                     logical_mesh.id_mesh.shape,
+    strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
                                      solution_vector)
     if multiple_stages == "stage_and_hooked":
         return hlo_stages, sharded_proto, strategy_config
@@ -443,7 +440,7 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
             mesh_mapping = (pxla.ShardedAxis(1), pxla.ShardedAxis(0))
     elif sharding_type == OpSharding.Type.REPLICATED:
         sharding = (pxla.NoSharding(),) * len(aval.shape)
-        mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.id_mesh.shape)),)
+        mesh_mapping = (pxla.Replicated(np.prod(logical_mesh.shape)),)
     else:
         raise NotImplementedError("Type: " + str(sharding_type))
 

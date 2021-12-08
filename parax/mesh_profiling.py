@@ -339,6 +339,7 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         elif op_info[0] == "all-gather":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
+            size = size // len(replica_groups[0]) * len(replica_groups[0])
             shapes = [((size // len(replica_groups[0]),), dtype),
                       ((size,), dtype)]
 
@@ -373,6 +374,7 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         elif op_info[0] == "all-to-all":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
+            size = size // (len(replica_groups[0]) ** 2) * (len(replica_groups[0]) ** 2)
             shapes = [((size // len(replica_groups[0]),), dtype),
                       ((size // len(replica_groups[0]),), dtype)]
 
@@ -391,6 +393,7 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         elif op_info[0] == "reduce-scatter":
             replica_groups, dtype, size = op_info[1]
             dtype = to_np_dtype(dtype)
+            size = size // len(replica_groups[0]) * len(replica_groups[0])
             shapes = [((size,), dtype),
                       ((size // len(replica_groups[0]),), dtype)]
 

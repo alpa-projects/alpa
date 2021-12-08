@@ -270,7 +270,8 @@ class MeshHostWorker:
     def profile_hlo_ops(self, op_infos: Sequence[Any]):
         num_devices = self.num_hosts * len(self.local_devices)
         return mesh_profiling.profile_hlo_ops(self.backend, self.local_devices,
-                                              num_devices, op_infos)
+                                              self.host_id, num_devices,
+                                              op_infos)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
@@ -692,12 +693,12 @@ class PhysicalDeviceMesh:
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
-    def profile_hlo_ops(self, op_infos: Sequence[Tuple]):
+    def profile_hlo_ops(self, op_infos: Sequence[Tuple], timeout=None):
         assert self.is_distributed
         tasks = []
         for w in self.workers:
             tasks.append(w.profile_hlo_ops.remote(op_infos))
-        return ray.get(tasks)[0]
+        return ray.get(tasks, timeout=timeout)[0]
 
     def get_remote_timer(self, timer_name: str):
         if self.is_distributed:

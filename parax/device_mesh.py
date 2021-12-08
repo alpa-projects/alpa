@@ -185,6 +185,8 @@ class MeshHostWorker:
                                   n_elements=n_elements)
         else:
             # slower path, because of indexing.
+            print(">>>> Offset: {}, tensor shape: {}".format(offset, tensor_shape))
+            print(">>>> Send: Slowest path...")
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
             src_buffer = jax_tensor_index(
@@ -234,6 +236,7 @@ class MeshHostWorker:
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/parax-project/parax/issues/145
+            print(">>>> Recv: Slowest path...")
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])

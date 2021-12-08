@@ -137,8 +137,6 @@ def benchmark_moe_internal(benchmark_case, niter):
     executable.sync()
     print_used_time("Compile (worker)")
 
-    print(executable.profile_all_executables())
-
     for i in range(niter):
         state = train_step(state, batch, rngkey)
 

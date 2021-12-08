@@ -496,18 +496,24 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
                                  raw_avals):
     """Trace the jaxpr of the computation of a micro batch."""
     avals = []
+    batch_size = None
     for aval, is_batch_var in zip(raw_avals, batch_invars):
         if is_batch_var:
             assert aval.shape[0] % num_micro_batches == 0,\
                 "The batch dimension must be divisable by num_micro_batches."
-            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
+            if batch_size is None:
+                batch_size = aval.shape[0] // num_micro_batches
+            else:
+                assert batch_size == aval.shape[0] // num_micro_batches,\
+                    "The batch dimension must be the same for all batch vars."
+            shape = (batch_size,) + aval.shape[1:]
             avals.append(aval.update(shape=shape))
         else:
             avals.append(aval)
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    return closed_jaxpr, avals
+    return closed_jaxpr, avals, batch_size
 
 
 def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,

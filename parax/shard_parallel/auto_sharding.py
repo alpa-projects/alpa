@@ -20,7 +20,7 @@ from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tu
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-INFINITY_COST = 1e15
+INFINITY_COST = 1e13
 
 
 class HloProtoStatus(enum.IntEnum):

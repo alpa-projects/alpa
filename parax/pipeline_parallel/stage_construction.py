@@ -156,7 +156,8 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
     return submesh_choices
 
 
-def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
+def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
+                                                batch_size):
     """
     Return a list of logical meshes and autosharding configs for the
     auto stage construction algorithm.
@@ -172,12 +173,14 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
         else:  # option == "single_node_model_parallel"
             max_mp_dimension = virtual_submesh.num_devices_per_host
 
-        for i in range(1, max_mp_dimension + 1):
-            if num_devices % i == 0:
-                results.append((virtual_submesh.get_logical_mesh(
-                    (num_devices // i, i)), {
-                        "force_batch_dim_to_mesh_dim": 0
-                    }))
+        for mp_size in range(1, max_mp_dimension + 1):
+            if num_devices % mp_size == 0:
+                dp_size = num_devices // mp_size
+                if batch_size % dp_size == 0:
+                    results.append((virtual_submesh.get_logical_mesh(
+                        (dp_size, mp_size)), {
+                            "force_batch_dim_to_mesh_dim": 0
+                        }))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
@@ -185,7 +188,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
 
 
 def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
-                                                option):
+                                                option, batch_size):
     # a config is: (logical_mesh, autosharding_global_configs)
     # each (2D Mesh with force batch dim) + (1D Mesh with mix batch dim)
     autosharding_configs = []
@@ -194,8 +197,9 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
         virtual_submesh = virtual_mesh.slice_2d(
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
-        submesh_autosharding_configs =\
-            get_one_submesh_autosharding_config_choices(virtual_submesh, option)
+        submesh_autosharding_configs = (
+            get_one_submesh_autosharding_config_choices(virtual_submesh, option,
+                                                        batch_size))
         autosharding_configs.append(submesh_autosharding_configs)
 
     # Pad all submesh to the maximum number of configs
@@ -478,6 +482,7 @@ def cluster_layers_and_slice_mesh(layers,
                                   donation_mapping,
                                   global_outvars,
                                   num_micro_batches,
+                                  batch_size,
                                   jax_apply_layers=None,
                                   apply_grad_global_info=None,
                                   pipeline_stage_mode="uniform_layer_gpipe",
@@ -516,7 +521,10 @@ def cluster_layers_and_slice_mesh(layers,
 
         if pipeline_stage_mode == "auto_gpipe":
             autosharding_configs = get_all_submesh_autosharding_config_choices(
-                mesh, submesh_choices, option=logical_mesh_search_space)
+                mesh,
+                submesh_choices,
+                option=logical_mesh_search_space,
+                batch_size=batch_size)
             num_autosharding_configs = len(autosharding_configs[0])
 
             # Use DP to find the optimal solution.

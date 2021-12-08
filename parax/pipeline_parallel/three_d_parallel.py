@@ -47,8 +47,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if num_micro_batches is None:
         logger.warning("num microbatch is unset. Use 1 by default.")
         num_micro_batches = 1
-    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars,
-                                                   num_micro_batches, avals)
+    closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
+        fun, batch_invars, num_micro_batches, avals)
 
     # Split the jaxpr into compute_grad and apply_grad
     gensym_func = gensym([closed_jaxpr.jaxpr])
@@ -107,6 +107,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
          donation_mapping,
          acc_grad_outvars,
          num_micro_batches,
+         batch_size,
          jax_apply_layers=jax_apply_layers,
          apply_grad_global_info=apply_grad_global_info,
          pipeline_stage_mode=global_config.pipeline_stage_mode,

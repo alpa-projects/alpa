@@ -124,8 +124,6 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode="auto_gpipe",
-                                use_hlo_cost_model=False,
-                                profiling_database_filename="prof_database.pkl",
                                 num_micro_batches=num_micro_batches,
                                 **overwrite_global_config_dict)
 

@@ -21,7 +21,9 @@ max_global_batch_size = 1024
 
 default_overwrite_dict = {
     "auto_stage_construction_imbalance_tolerance": 1.0,
-    "logical_mesh_search_space": "all"
+    "logical_mesh_search_space": "all",
+    "use_hlo_cost_model": True,
+    "profiling_database_filename": "prof_database.pkl",
 }
 
 
@@ -55,8 +57,8 @@ paper_auto_gpt_suite = {
     get_auto_test_case("2.7B", [64, 128, 256], [8]) +
     get_auto_test_case("1.3B", [16], [12]) +
     get_auto_test_case("2.7B", [64], [16])),
-16: (get_auto_test_case("2.7B", [32, 64, 128], [8]) +
-     get_auto_test_case("6.7B", [64, 128, 256], [8]) +
+16: (get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
+     get_auto_test_case("6.7B", [32, 64, 128, 256], [8]) +
      get_auto_test_case("2.7B", [64], [16]) +
      get_auto_test_case("6.7B", [128], [16])),
 }

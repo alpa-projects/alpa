@@ -291,8 +291,9 @@ def compile_all(stages):
         stage_info_list: List of info for compilation. Each info is a tuple with:
             (proto, in_avals, out_avals, donate_invars)
     """
-    num_cpus = min(max(ray.available_resources()["CPU"] // 2, 1), len(stages))
-    num_gpus = ray.available_resources()["GPU"]
+    num_cpus = int(
+        min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
+    num_gpus = int(ray.available_resources()["GPU"])
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     backup_config = global_config.backup()
@@ -327,9 +328,9 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
         (num_layers, num_layers, num_auto_sharding_configs), -1)
 
     if global_config.use_hlo_cost_model:
-        num_cpus = min(max(ray.available_resources()["CPU"] // 2, 1),
-                       len(stages))
-        num_gpus = ray.available_resources()["GPU"]
+        num_cpus = int(
+            min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
+        num_gpus = int(ray.available_resources()["GPU"])
         mesh_num_devices = meshes[0].total_devices
         prof_database = ProfilingResultDatabase()
         prof_database.load(global_config.profiling_database_filename)

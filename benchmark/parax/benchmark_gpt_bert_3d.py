@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+import time
 
 import numpy as np
 import ray
@@ -130,3 +131,5 @@ if __name__ == "__main__":
                       forward_stage_layer_ids, submesh_shapes,
                       logical_mesh_shapes, autosharding_global_configs, overwrite_global_config_dict]
             write_tsv(heads, values, output_name)
+
+        time.sleep(0.1)  # for ctrl+c to work

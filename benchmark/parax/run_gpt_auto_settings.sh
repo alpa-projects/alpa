@@ -13,6 +13,7 @@ run_experiment () {
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \
     --disable-tqdm \
     |& tee auto_gpt_${NUM_GPUS}_gpus_${CURRENT_TIME}.log
+  sleep 0.1 # for ctrl+c to work
 }
 
 run_experiment 2 8

@@ -256,7 +256,8 @@ def compile_with_given_strategy(backend,
                                 bypass_device_assignment_check,
                                 hlo_proto_status,
                                 rewrite_for_grad_acc=False,
-                                rewrite_grad_acc_indices=None):
+                                rewrite_grad_acc_indices=None,
+                                run_backend_codegen="auto"):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
@@ -301,7 +302,10 @@ def compile_with_given_strategy(backend,
     else:
         raise ValueError(f"Invalid status: {hlo_proto_status}")
 
-    run_backend_codegen = not bypass_device_assignment_check
+    if run_backend_codegen == "auto":
+        run_backend_codegen = not bypass_device_assignment_check
+    else:
+        assert isinstance(run_backend_codegen, bool)
 
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(

@@ -16,7 +16,7 @@ from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
-from parax.util import print_used_time, run_cmd
+from parax.util import print_used_time, run_cmd, disable_tqdm_globally
 
 GB = 1024 ** 3
 
@@ -81,14 +81,16 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
 
     return train_step
 
-def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
+def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
+                                num_hosts=None, num_devices_per_host=None,
+                                disable_tqdm=False):
     backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, auto_pipeline) = benchmark_case
+     use_remat, prefer_reduce_scatter, auto_pipeline, overwrite_global_config_dict) = benchmark_case
 
     dtype = jnp.float16
     tie_word_embeddings = False
@@ -102,19 +104,33 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_physical_mesh()
+    host_ids = None if num_hosts == None else list(range(num_hosts))
+    virtual_mesh = device_cluster.get_virtual_physical_mesh(
+        host_ids=host_ids,
+        num_devices_per_host=num_devices_per_host)
+
+    if overwrite_global_config_dict is None:
+        overwrite_global_config_dict = {}
+
     if not auto_pipeline:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 num_micro_batches=num_micro_batches,
                                 sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                                 sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
-                                pipeline_parallel_schedule="1f1b")
+                                pipeline_parallel_schedule="1f1b",
+                                **overwrite_global_config_dict)
     else:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode="auto_gpipe",
-                                num_micro_batches=num_micro_batches)
+                                use_hlo_cost_model=False,
+                                profiling_database_filename="prof_database.pkl",
+                                num_micro_batches=num_micro_batches,
+                                **overwrite_global_config_dict)
+
+    if disable_tqdm:
+        disable_tqdm_globally()
 
     # Prepare input batch
     # Note: there will be an input conversion.
@@ -207,23 +223,34 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter):
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
-def benchmark_one_case(model, case, niter, use_separate_process=False, dump_result=False):
+def benchmark_one_case(model, case, niter, use_separate_process=False,
+                       dump_result=False, num_hosts=None,
+                       num_devices_per_host=None, disable_tqdm=False):
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True)
         jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 
-        result = benchmark_gpt_bert_internal(model, case, niter)
+        result = benchmark_gpt_bert_internal(model, case, niter,
+                                             num_hosts, num_devices_per_host,
+                                             disable_tqdm)
         result = result + get_last_dp_result()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
         run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        ret = run_cmd("python3 benchmark_gpt_bert_3d_one_case.py "
-                     f"--model {model} "
-                     f"--niter {niter} "
-                     f'--case "{case}" '
-                     f"--dump-result ")
+        cmd = (f"python3 -u benchmark_gpt_bert_3d_one_case.py "
+               f"--model {model} "
+               f"--niter {niter} "
+               f'--case "{case}" '
+               f"--dump-result ")
+        if num_hosts is not None:
+            cmd += f"--num-hosts {num_hosts} "
+        if num_devices_per_host is not None:
+            cmd += f"--num-devices-per-host {num_devices_per_host} "
+        if disable_tqdm:
+            cmd += "--disable-tqdm "
+        ret = run_cmd(cmd)
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
@@ -242,9 +269,15 @@ if __name__ == "__main__":
     parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--dump-result", action="store_true",
         help="Dump results into a temporary pickle file")
+    parser.add_argument("--num-hosts", type=int, default=None)
+    parser.add_argument("--num-devices-per-host", type=int, default=None)
+    parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
     benchmark_one_case(args.model, case, args.niter,
-                       use_separate_process=False, dump_result=args.dump_result)
+                       use_separate_process=False, dump_result=args.dump_result,
+                       num_hosts=args.num_hosts,
+                       num_devices_per_host=args.num_devices_per_host,
+                       disable_tqdm=args.disable_tqdm)

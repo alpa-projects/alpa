@@ -24,6 +24,7 @@ class MeshProfilingResult:
         self.all_reduce_cost_dict = defaultdict(list)
         self.all_to_all_cost_dict = defaultdict(list)
         self.reduce_scatter_cost_dict = defaultdict(list)
+        self.available_memory_per_device = None
 
         # Cost dictionary for computation primitives.
         # Reuse the same data structure.
@@ -496,7 +497,6 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
 
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     submesh_choices = get_submesh_choices(virtual_mesh)
-    #submesh_choices = ((1, 8),)
 
     prof_database = ProfilingResultDatabase()
     for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
@@ -518,6 +518,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
                 op_infos.append((op_type, spec))
 
         physical_mesh = tmp_mesh.get_physical_mesh()
+        available_memory_per_device = physical_mesh.get_available_memory()
         results = physical_mesh.profile_hlo_ops(op_infos)
 
         all_gather_cost_dict = defaultdict(list)
@@ -564,6 +565,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         mesh_result.all_reduce_cost_dict = all_reduce_cost_dict
         mesh_result.all_to_all_cost_dict = all_to_all_cost_dict
         mesh_result.reduce_scatter_cost_dict = reduce_scatter_cost_dict
+        mesh_result.available_memory_per_device = available_memory_per_device
         prof_database.update_one_mesh(cluster_key,
                                       (num_hosts, num_devices_per_host),
                                       mesh_result)
@@ -572,9 +574,14 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
     return prof_database
 
 
-def estimate_hlo_module_cost(hlo_module, profile_results):
+def estimate_hlo_module_cost(hlo_module,
+                             profiling_results,
+                             num_micro_batches=1,
+                             grad_sync_channel_ids=""):
     with XlaPassContext({
-            "gpu_cost_model::profiling_results": profile_results,
+            "gpu_cost_model::profiling_results": profiling_results,
+            "gpu_cost_model::num_micro_batches": num_micro_batches,
+            "gpu_cost_model::grad_sync_channel_ids": grad_sync_channel_ids,
             "gpu_cost_model::verbose": 0,
     }):
         return xla_extension.estimate_hlo_module_cost(hlo_module)

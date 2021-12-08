@@ -270,7 +270,8 @@ class MeshHostWorker:
     def profile_hlo_ops(self, op_infos: Sequence[Any]):
         num_devices = self.num_hosts * len(self.local_devices)
         return mesh_profiling.profile_hlo_ops(self.backend, self.local_devices,
-                                              self.host_id, num_devices, op_infos)
+                                              self.host_id, num_devices,
+                                              op_infos)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(

@@ -692,12 +692,12 @@ class PhysicalDeviceMesh:
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
-    def profile_hlo_ops(self, op_infos: Sequence[Tuple]):
+    def profile_hlo_ops(self, op_infos: Sequence[Tuple], timeout=None):
         assert self.is_distributed
         tasks = []
         for w in self.workers:
             tasks.append(w.profile_hlo_ops.remote(op_infos))
-        return ray.get(tasks)[0]
+        return ray.get(tasks, timeout=timeout)[0]
 
     def get_remote_timer(self, timer_name: str):
         if self.is_distributed:

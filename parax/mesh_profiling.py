@@ -295,17 +295,158 @@ def to_np_dtype(dtype_str):
 
 def rank_0_print(host_id, msg):
     if host_id == 0:
-        print(msg)
+        print(msg, flush=True)
+
+
+def profile_one_hlo_op(backend, local_devices, host_id, num_devices, num_devices_per_node, op_info):
+    if op_info[0] == "dot":
+        n, m, k, dtype_str = op_info[1]
+        dtype = to_np_dtype(dtype_str)
+        shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
+
+        def op_func(operands):
+            lhs, rhs, _ = operands
+            dim_numbers = (((1,), (0,)), ((), ()))
+            dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
+            out = ops.DotGeneral(lhs, rhs, dim_numbers)
+            operands[-1] = out
+
+        flop_ct = max(2 * n * m * k, 1)
+        if dtype_str == "f16":
+            work = 50e12
+        elif dtype_str == "f32":
+            work = 10e12
+        else:
+            raise ValueError(f"Invalid type: {dtype_str}")
+        number = min(max(12, int(work / flop_ct)), 1 << 12)
+    elif op_info[0] == "all-gather":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        size = size // len(replica_groups[0]) * len(replica_groups[0])
+        shapes = [((size // len(replica_groups[0]),), dtype),
+                  ((size,), dtype)]
+
+        def op_func(operands):
+            if shapes[0][0][0] == 0:
+                return
+            channel_id = backend.create_channel_handle()
+            out = _op_all_gather(operands[0], replica_groups, channel_id)
+            operands[-1] = out
+
+        if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+            work = 1 << 33
+        else:
+            work = 1 << 31
+        number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
+    elif op_info[0] == "all-reduce":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        shapes = [((size,), dtype), ((size,), dtype)]
+
+        def op_func(operands):
+            channel_id = backend.create_channel_handle()
+            out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
+                                 channel_id)
+            operands[-1] = out
+
+        if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+            work = 1 << 32
+        else:
+            work = 1 << 30
+        number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
+    elif op_info[0] == "all-to-all":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        size = size // (len(replica_groups[0]) ** 2) * (len(replica_groups[0]) ** 2)
+        shapes = [((size // len(replica_groups[0]),), dtype),
+                  ((size // len(replica_groups[0]),), dtype)]
+
+        def op_func(operands):
+            if shapes[0][0][0] // len(replica_groups[0]) == 0:
+                return
+            channel_id = backend.create_channel_handle()
+            out = _op_all_to_all(operands[0], replica_groups, channel_id)
+            operands[-1] = out
+
+        if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+            work = 1 << 33
+        else:
+            work = 1 << 31
+        number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
+    elif op_info[0] == "reduce-scatter":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        size = size // len(replica_groups[0]) * len(replica_groups[0])
+        shapes = [((size,), dtype),
+                  ((size // len(replica_groups[0]),), dtype)]
+
+        def op_func(operands):
+            if shapes[1][0][0] == 0:
+                return
+            channel_id = backend.create_channel_handle()
+            out = _op_reduce_scatter(operands[0], dtype, "add",
+                                     replica_groups, channel_id)
+            operands[-1] = out
+
+        if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
+            work = 1 << 33
+        else:
+            work = 1 << 31
+        number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
+    else:
+        raise NotImplementedError(f"Invalid op: {op_info[0]}")
+
+    warmup = max(number // 10, 2)
+    rank_0_print(host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
+                          f"time: {time.time():.0f}.")
+
+    # Compile
+    shapes, compiled = _compile_profiling_executable(
+        backend, shapes, op_func, num_devices)
+
+    # Warm up
+    device_inputs = []
+    for j, (shape, dtype) in enumerate(shapes):
+        if j == 0:
+            device_inputs.append([
+                backend.buffer_from_pyval(np.int32(warmup),
+                                          local_devices[k])
+                for k in range(len(local_devices))
+            ])
+        else:
+            device_inputs.append([
+                backend.buffer_from_pyval(np.empty(shape, dtype),
+                                          local_devices[k])
+                for k in range(len(local_devices))
+            ])
+
+    [d.synchronize_all_activity() for d in local_devices]
+    device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+    # Run profiling
+    device_inputs[0] = \
+        [backend.buffer_from_pyval(np.int32(number), local_devices[k])
+            for k in range(len(local_devices))]
+
+    [d.synchronize_all_activity() for d in local_devices]
+    tic = time.time()
+    compiled.execute_sharded_on_local_devices(device_inputs)
+    [d.synchronize_all_activity() for d in local_devices]
+    toc = time.time()
+
+    mean_time = (toc - tic) / number
+    return mean_time
+
 
 def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
     results = []
     num_devices_per_node = 8
-    save_every = 30
+    save_every = 25
 
     # Must use an absolute efs path due to distributed ray workers
     TMP_CACHE_FILE = "/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl"
     if os.path.exists(TMP_CACHE_FILE):
-        rank_0_print(host_id, f"Load cached dot cost dict from {TMP_CACHE_FILE}...")
+        rank_0_print(host_id, f"Load cached hlo op cost dict from {TMP_CACHE_FILE}...")
         cache_dict = pickle.load(open(TMP_CACHE_FILE, "rb"))
     else:
         cache_dict = {}
@@ -316,144 +457,12 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
             results.append(cache_dict[op_info])
             continue
 
-        if op_info[0] == "dot":
-            n, m, k, dtype_str = op_info[1]
-            dtype = to_np_dtype(dtype_str)
-            shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
-
-            def op_func(operands):
-                lhs, rhs, _ = operands
-                dim_numbers = (((1,), (0,)), ((), ()))
-                dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
-                out = ops.DotGeneral(lhs, rhs, dim_numbers)
-                operands[-1] = out
-
-            flop_ct = max(2 * n * m * k, 1)
-            if dtype_str == "f16":
-                work = 50e12
-            elif dtype_str == "f32":
-                work = 10e12
-            else:
-                raise ValueError(f"Invalid type: {dtype_str}")
-            number = min(max(12, int(work / flop_ct)), 1 << 12)
-        elif op_info[0] == "all-gather":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            size = size // len(replica_groups[0]) * len(replica_groups[0])
-            shapes = [((size // len(replica_groups[0]),), dtype),
-                      ((size,), dtype)]
-
-            def op_func(operands):
-                if shapes[0][0][0] == 0:
-                    return
-                channel_id = backend.create_channel_handle()
-                out = _op_all_gather(operands[0], replica_groups, channel_id)
-                operands[-1] = out
-
-            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
-                work = 1 << 33
-            else:
-                work = 1 << 31
-            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
-        elif op_info[0] == "all-reduce":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            shapes = [((size,), dtype), ((size,), dtype)]
-
-            def op_func(operands):
-                channel_id = backend.create_channel_handle()
-                out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
-                                     channel_id)
-                operands[-1] = out
-
-            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
-                work = 1 << 32
-            else:
-                work = 1 << 30
-            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
-        elif op_info[0] == "all-to-all":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            size = size // (len(replica_groups[0]) ** 2) * (len(replica_groups[0]) ** 2)
-            shapes = [((size // len(replica_groups[0]),), dtype),
-                      ((size // len(replica_groups[0]),), dtype)]
-
-            def op_func(operands):
-                if shapes[0][0][0] // len(replica_groups[0]) == 0:
-                    return
-                channel_id = backend.create_channel_handle()
-                out = _op_all_to_all(operands[0], replica_groups, channel_id)
-                operands[-1] = out
-
-            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
-                work = 1 << 33
-            else:
-                work = 1 << 31
-            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
-        elif op_info[0] == "reduce-scatter":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            size = size // len(replica_groups[0]) * len(replica_groups[0])
-            shapes = [((size,), dtype),
-                      ((size // len(replica_groups[0]),), dtype)]
-
-            def op_func(operands):
-                if shapes[1][0][0] == 0:
-                    return
-                channel_id = backend.create_channel_handle()
-                out = _op_reduce_scatter(operands[0], dtype, "add",
-                                         replica_groups, channel_id)
-                operands[-1] = out
-
-            if max(replica_groups[0]) - min(replica_groups[0]) < num_devices_per_node:
-                work = 1 << 33
-            else:
-                work = 1 << 31
-            number = min(max(12, int(work / max(size* dtype.itemsize, 1))), 1 << 13)
-        else:
-            raise NotImplementedError(f"Invalid op: {op_info[0]}")
-
-        warmup = max(number // 10, 2)
-        rank_0_print(host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
-                              f"time: {time.time():.0f}.")
-
-        # Compile
-        shapes, compiled = _compile_profiling_executable(
-            backend, shapes, op_func, num_devices)
-
-        # Warm up
-        device_inputs = []
-        for j, (shape, dtype) in enumerate(shapes):
-            if j == 0:
-                device_inputs.append([
-                    backend.buffer_from_pyval(np.int32(warmup),
-                                              local_devices[k])
-                    for k in range(len(local_devices))
-                ])
-            else:
-                device_inputs.append([
-                    backend.buffer_from_pyval(np.empty(shape, dtype),
-                                              local_devices[k])
-                    for k in range(len(local_devices))
-                ])
-        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
-
-        # Run profiling
-        device_inputs[0] = \
-            [backend.buffer_from_pyval(np.int32(number), local_devices[k])
-                for k in range(len(local_devices))]
-
-        [d.synchronize_all_activity() for d in local_devices]
-        tic = time.time()
-        compiled.execute_sharded_on_local_devices(device_inputs)
-        [d.synchronize_all_activity() for d in local_devices]
-        toc = time.time()
-
-        mean_time = (toc - tic) / number
+        mean_time = profile_one_hlo_op(backend, local_devices, host_id, num_devices,
+                                       num_devices_per_node, op_info)
         cache_dict[op_info] = mean_time
         results.append(mean_time)
 
-        if host_id == 0 and (i % save_every == 0 or i == len(op_infos) - 1):
+        if host_id == 0 and ((i+1) % save_every == 0 or i == len(op_infos) - 1):
             rank_0_print(host_id, "Save cache...")
             pickle.dump(cache_dict, open(TMP_CACHE_FILE, "wb"))
 
@@ -563,7 +572,22 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         physical_mesh = tmp_mesh.get_physical_mesh()
         available_memory_per_device = physical_mesh.get_available_memory()
 
-        results = physical_mesh.profile_hlo_ops(op_infos)
+        # Profile operators in batch to resolve some deadlock issues
+        batch_size = 25
+        batch_timeout = batch_size * 20
+        results = []
+        s = 0
+        while s < len(op_infos):
+            try:
+                batch_result = physical_mesh.profile_hlo_ops(op_infos[s:s + batch_size],
+                                                             timeout=batch_timeout)
+            except ray.exceptions.GetTimeoutError:
+                physical_mesh.shutdown(forced=True)
+                time.sleep(10)
+                physical_mesh = tmp_mesh.get_physical_mesh()
+                continue
+            results.extend(batch_result)
+            s += batch_size
 
         # Parse results
         all_gather_cost_dict = defaultdict(list)

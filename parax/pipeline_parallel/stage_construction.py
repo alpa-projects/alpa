@@ -170,7 +170,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
         if option == "all":
             max_mp_dimension = num_devices
         else:  # option == "single_node_model_parallel"
-            max_mp_dimension = num_devices
+            max_mp_dimension = virtual_submesh.num_devices_per_host
 
         for i in range(1, max_mp_dimension + 1):
             if num_devices % i == 0:

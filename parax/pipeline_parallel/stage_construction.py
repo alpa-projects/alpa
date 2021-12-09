@@ -150,8 +150,17 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         "while now num_devices_per_host = {}".format(num_devices_per_host))
 
     # larger meshes:
-    for i in range(2, num_hosts + 1):
-        submesh_choices.append((i, num_devices_per_host))
+    if global_config.submesh_choices_mode == "all":
+        for i in range(2, num_hosts + 1):
+            submesh_choices.append((i, num_devices_per_host))
+    elif global_config.submesh_choices_mode == "power_of_two":
+        i = 2
+        while i <= num_hosts:
+            submesh_choices.append((i, num_devices_per_host))
+            i *= 2
+    else:
+        raise ValueError("Invalid submesh_choices: {}".format(
+            global_config.submesh_choices))
 
     return submesh_choices
 

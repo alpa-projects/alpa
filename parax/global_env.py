@@ -37,6 +37,7 @@ class GlobalConfig:
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
         self.submesh_autosharding_global_configs = None
+        self.submesh_choices_mode = "power_of_two"
         self.logical_mesh_search_space = "default"
         self.auto_stage_construction_imbalance_tolerance = np.inf
         self.pipeline_parallel_schedule = "1f1b"

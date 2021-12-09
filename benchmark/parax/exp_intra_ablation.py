@@ -6,11 +6,16 @@ import ray
 from parax import DeviceCluster, global_config
 from parax.util import write_tsv, to_str_round
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case as benchmark_one_case_gpt_raw
+from benchmark_moe_2d_one_case import benchmark_one_case as benchmark_one_case_moe_raw
 from benchmark_wide_resnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
 
 benchmark_one_case_gpt = lambda case, niter, num_host, num_devices_per_host: \
     benchmark_one_case_gpt_raw("gpt", case, niter, num_host, num_devices_per_host,
                                local=False, use_separate_process=True)
+
+benchmark_one_case_moe = lambda case, niter, num_host, num_devices_per_host: \
+    benchmark_one_case_moe_raw(case, niter, num_host, num_devices_per_host,
+                                   local=False, use_separate_process=True)
 
 benchmark_one_case_wresnet = lambda case, niter, num_host, num_devices_per_host: \
     benchmark_one_case_wresnet_raw(case, niter, num_host, num_devices_per_host,
@@ -129,20 +134,75 @@ wresnet_heuristic = [
     (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     "shard-largest"),
 ]
 
-suites = [
-    # GPT
-    ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
-    ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
-    ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
-    ("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
-    ("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+moe1_spec = [
+    #B,   I,   L,   C, W,   V,     E,  S_
+    (8, 1024, 1024, 8, 32,  51200, 8,  4096),
+    (8, 1024, 1024, 8, 32,  51200, 16, 4096),
+    (8, 1024, 1024, 8, 32,  51200, 32, 4096),
+    (8, 1024, 1024, 8, 32,  51200, 64, 4096),
+]
 
-    # W-resnet
-    ("W-ResNet-1", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
+moe_auto_sharding = [
+    #model,         LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe1_spec[0], 1,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe1_spec[1], 2,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe1_spec[2], 4,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe1_spec[3], 8,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+]
+
+moe_data_parallel = [
+    #model,         LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+    (*moe1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+    (*moe1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+    (*moe1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+]
+
+moe_zero_2 = [
+    #model,         LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+    (*moe1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+    (*moe1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+    (*moe1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+]
+
+moe_zero_3 = [
+    #model,         LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+    (*moe1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+    (*moe1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+    (*moe1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+]
+
+moe_heuristic = [
+    #model,         LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+    (*moe1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+    (*moe1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+    (*moe1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+]
+
+suites = [
+    ## GPT
+    #("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
+    #("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
+    #("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
+    #("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
+    #("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+
+    ## W-resnet
+    #("W-ResNet-1", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
+
+    # MoE
+    ("MoE-1", "parax.auto_sharding", moe_auto_sharding, benchmark_one_case_moe),
+    #("MoE-1", "parax.data_parallel", moe_data_parallel, benchmark_one_case_moe),
+    #("MoE-1", "parax.zero_2", moe_zero_2, benchmark_one_case_moe),
+    #("MoE-1", "parax.zero_3", moe_zero_3, benchmark_one_case_moe),
+    #("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe),
 ]
 
 
@@ -154,7 +214,10 @@ def build_cases():
     for suite in suites:
         model_name, method, args_list, benchmark_func = suite
         for i, args in enumerate(args_list):
-            num_devices = args[6] * args[7]
+            if "MoE" in model_name:
+                num_devices = args[8] * args[9]
+            else: # GPT and W-ResNet
+                num_devices = args[6] * args[7]
             num_hosts = ((num_devices + 7) // 8)
             num_devices_per_host = min(num_devices, 8)
             cases.append((exp_name, instance, num_hosts, num_devices_per_host,

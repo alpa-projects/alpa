@@ -57,7 +57,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
         num_experts, expert_group_size, \
         mesh_dim0, mesh_dim1, _, _ , _, num_micro_batches, force_batch_dim_mapping,\
-        use_remat, prefer_reduce_scatter, _, _ = benchmark_case
+        use_remat, prefer_reduce_scatter, other, _ = benchmark_case
     dtype = jnp.float16
 
     rang_factor = 1
@@ -79,6 +79,13 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
     global_config.allow_mixed_mesh_shape = True
+
+    if other == "zero-3":
+        global_config.force_zero_stage_3 = True
+    elif other in ["shard-largest"]:
+        global_config.force_simple_heuristic = other
+        global_config.remat_using_while = True
+
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -217,5 +224,5 @@ if __name__ == "__main__":
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
-    benchmark_one_case(case, args.niter, args.local, args.num_hosts,
-                       args.num_devices_per_host, False, args.dump_result)
+    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
+                       args.local, False, args.dump_result)

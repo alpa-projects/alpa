@@ -272,4 +272,3 @@ if __name__ == "__main__":
     case = eval(args.case)
     benchmark_one_case(args.model, case, args.niter, args.num_hosts, args.num_devices_per_host,
                        args.local, False, args.dump_result)
-

@@ -21,7 +21,7 @@ from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchma
                         compute_param_number)
 
 from benchmark.parax.paper_manual_moe_suite import paper_moe_suite, test_moe_suite
-from benchmark_gpt_bert import load_profiling_result, get_train_step
+from benchmark_gpt_bert_2d_one_case import get_train_step
 
 
 GB = 1024 ** 3
@@ -162,15 +162,18 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer_moe.pkl"
 
 
-def benchmark_one_case(case, niter, local, use_separate_process=False, dump_result=False):
+def benchmark_one_case(case, niter, num_hosts, num_devices_per_host, local,
+                       use_separate_process=False, dump_result=False):
     if not use_separate_process:
         # Launch physical mesh
         if local:
-            physical_mesh = PhysicalDeviceMesh(jax.devices())
+            assert num_hosts == 1
+            physical_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices_per_host])
         else:
             ray.init(address="auto", ignore_reinit_error=True)
             device_cluster = DeviceCluster()
-            physical_mesh = device_cluster.get_physical_mesh()
+            physical_mesh = device_cluster.get_physical_mesh(
+                list(range(num_hosts)), num_devices_per_host)
             jax.config.update('jax_platform_name', 'cpu')
 
         global_config.use_dummy_value_for_benchmarking = True
@@ -185,6 +188,8 @@ def benchmark_one_case(case, niter, local, use_separate_process=False, dump_resu
         ret = run_cmd("python3 benchmark_moe_2d_one_case.py "
                       f"--niter {niter} "
                       f'--case "{case}" '
+                      f"--num-hosts {num_hosts} "
+                      f"--num-devices-per-host {num_devices_per_host} "
                       f"{'--local' if local else ''} "
                       f"--dump-result ")
         if ret == 0:
@@ -202,6 +207,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--niter", type=int, default=10)
     parser.add_argument("--case", type=str, required=True)
+    parser.add_argument("--num-hosts", type=int)
+    parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--local", action="store_true",
                         help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--dump-result", action="store_true",
@@ -210,4 +217,5 @@ if __name__ == "__main__":
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
-    benchmark_one_case(case, args.niter, args.local, False, args.dump_result)
+    benchmark_one_case(case, args.niter, args.local, args.num_hosts,
+                       args.num_devices_per_host, False, args.dump_result)

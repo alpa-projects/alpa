@@ -1,8 +1,10 @@
 # pylint: disable=no-self-use
 """Profiling communication cost."""
 from collections import defaultdict
+import os
 import pickle
 import time
+import ray
 
 import numpy as np
 
@@ -55,15 +57,18 @@ class MeshProfilingResult:
 
         This is used to make the scale of time cost similar to the old alpha-beta model.
         """
-        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
         self._multiply_scale_internal(factor, self.all_gather_cost_dict)
+        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
+        self._multiply_scale_internal(factor, self.all_to_all_cost_dict)
         self._multiply_scale_internal(factor, self.reduce_scatter_cost_dict)
 
     def make_monotonic(self):
         """Make the bandwidth monotonically increase along with the communication size."""
-        self._make_monotonic_internal(self.all_reduce_cost_dict)
         self._make_monotonic_internal(self.all_gather_cost_dict)
+        self._make_monotonic_internal(self.all_reduce_cost_dict)
+        self._make_monotonic_internal(self.all_to_all_cost_dict)
         self._make_monotonic_internal(self.reduce_scatter_cost_dict)
+        self._make_monotonic_internal(self.dot_cost_dict)
 
     def _make_monotonic_internal(self, cost_dict):
         new_cost_dict = {}
@@ -290,129 +295,188 @@ def to_np_dtype(dtype_str):
         return np.dtype(dtype_str)
 
 
-def profile_hlo_ops(backend, local_devices, num_devices, op_infos):
-    results = []
+def rank_0_print(host_id, msg):
+    if host_id == 0:
+        print(msg, flush=True)
 
-    for op_info in op_infos:
-        print(f"Profiling {op_info}")
 
-        if op_info[0] == "dot":
-            n, m, k, dtype = op_info[1]
-            dtype = to_np_dtype(dtype)
-            shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
+def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
+                       num_devices_per_node, op_info):
+    if op_info[0] == "dot":
+        n, m, k, dtype_str = op_info[1]
+        dtype = to_np_dtype(dtype_str)
+        shapes = [((n, k), dtype), ((k, m), dtype), ((n, m), dtype)]
 
-            def op_func(operands):
-                lhs, rhs, _ = operands
-                dim_numbers = (((1,), (0,)), ((), ()))
-                dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
-                out = ops.DotGeneral(lhs, rhs, dim_numbers)
-                operands[-1] = out
+        def op_func(operands):
+            lhs, rhs, _ = operands
+            dim_numbers = (((1,), (0,)), ((), ()))
+            dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
+            out = ops.DotGeneral(lhs, rhs, dim_numbers)
+            operands[-1] = out
 
-            warmup = 2
-            number = 10
-        elif op_info[0] == "all-gather":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            shapes = [((size // len(replica_groups[0]),), dtype),
-                      ((size,), dtype)]
-
-            def op_func(operands):
-                if shapes[0][0][0] == 0:
-                    return
-                channel_id = backend.create_channel_handle()
-                out = _op_all_gather(operands[0], replica_groups, channel_id)
-                operands[-1] = out
-
-            warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
-        elif op_info[0] == "all-reduce":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            shapes = [((size,), dtype), ((size,), dtype)]
-
-            def op_func(operands):
-                channel_id = backend.create_channel_handle()
-                out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
-                                     channel_id)
-                operands[-1] = out
-
-            warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
-        elif op_info[0] == "all-to-all":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            shapes = [((size // len(replica_groups[0]),), dtype),
-                      ((size // len(replica_groups[0]),), dtype)]
-
-            def op_func(operands):
-                if shapes[0][0][0] // len(replica_groups[0]) == 0:
-                    return
-                channel_id = backend.create_channel_handle()
-                out = _op_all_to_all(operands[0], replica_groups, channel_id)
-                operands[-1] = out
-
-            warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
-        elif op_info[0] == "reduce-scatter":
-            replica_groups, dtype, size = op_info[1]
-            dtype = to_np_dtype(dtype)
-            shapes = [((size,), dtype),
-                      ((size // len(replica_groups[0]),), dtype)]
-
-            def op_func(operands):
-                if shapes[1][0][0] == 0:
-                    return
-                channel_id = backend.create_channel_handle()
-                out = _op_reduce_scatter(operands[0], dtype, "add",
-                                         replica_groups, channel_id)
-                operands[-1] = out
-
-            warmup = 2
-            number = min(
-                max(15, int((1 << 31) / (max(size, 1) * dtype.itemsize))),
-                1 << 13)
+        flop_ct = max(2 * n * m * k, 1)
+        if dtype_str == "f16":
+            work = 50e12
+        elif dtype_str == "f32":
+            work = 10e12
         else:
-            raise NotImplementedError(f"Invalid op: {op_info[0]}")
+            raise ValueError(f"Invalid type: {dtype_str}")
+        number = min(max(12, int(work / flop_ct)), 1 << 12)
+    elif op_info[0] == "all-gather":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        size = size // len(replica_groups[0]) * len(replica_groups[0])
+        shapes = [((size // len(replica_groups[0]),), dtype), ((size,), dtype)]
 
-        # Compile
-        shapes, compiled = _compile_profiling_executable(
-            backend, shapes, op_func, num_devices)
+        def op_func(operands):
+            if shapes[0][0][0] == 0:
+                return
+            channel_id = backend.create_channel_handle()
+            out = _op_all_gather(operands[0], replica_groups, channel_id)
+            operands[-1] = out
 
-        # Warm up
-        device_inputs = []
-        for i, (shape, dtype) in enumerate(shapes):
-            if i == 0:
-                device_inputs.append([
-                    backend.buffer_from_pyval(np.int32(warmup),
-                                              local_devices[i])
-                    for i in range(len(local_devices))
-                ])
-            else:
-                device_inputs.append([
-                    backend.buffer_from_pyval(np.empty(shape, dtype),
-                                              local_devices[i])
-                    for i in range(len(local_devices))
-                ])
-        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+        if max(replica_groups[0]) - min(
+                replica_groups[0]) < num_devices_per_node:
+            work = 1 << 33
+        else:
+            work = 1 << 31
+        number = min(max(12, int(work / max(size * dtype.itemsize, 1))),
+                     1 << 13)
+    elif op_info[0] == "all-reduce":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        shapes = [((size,), dtype), ((size,), dtype)]
 
-        # Run profiling
-        device_inputs[0] = \
-            [backend.buffer_from_pyval(np.int32(number), local_devices[i])
-                for i in range(len(local_devices))]
+        def op_func(operands):
+            channel_id = backend.create_channel_handle()
+            out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
+                                 channel_id)
+            operands[-1] = out
 
-        [d.synchronize_all_activity() for d in local_devices]
-        tic = time.time()
-        compiled.execute_sharded_on_local_devices(device_inputs)
-        [d.synchronize_all_activity() for d in local_devices]
-        toc = time.time()
+        if max(replica_groups[0]) - min(
+                replica_groups[0]) < num_devices_per_node:
+            work = 1 << 32
+        else:
+            work = 1 << 30
+        number = min(max(12, int(work / max(size * dtype.itemsize, 1))),
+                     1 << 13)
+    elif op_info[0] == "all-to-all":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        size = size // (len(replica_groups[0])**2) * (len(replica_groups[0])**2)
+        shapes = [((size // len(replica_groups[0]),), dtype),
+                  ((size // len(replica_groups[0]),), dtype)]
 
-        results.append((toc - tic) / number)
+        def op_func(operands):
+            if shapes[0][0][0] // len(replica_groups[0]) == 0:
+                return
+            channel_id = backend.create_channel_handle()
+            out = _op_all_to_all(operands[0], replica_groups, channel_id)
+            operands[-1] = out
+
+        if max(replica_groups[0]) - min(
+                replica_groups[0]) < num_devices_per_node:
+            work = 1 << 33
+        else:
+            work = 1 << 31
+        number = min(max(12, int(work / max(size * dtype.itemsize, 1))),
+                     1 << 13)
+    elif op_info[0] == "reduce-scatter":
+        replica_groups, dtype, size = op_info[1]
+        dtype = to_np_dtype(dtype)
+        size = size // len(replica_groups[0]) * len(replica_groups[0])
+        shapes = [((size,), dtype), ((size // len(replica_groups[0]),), dtype)]
+
+        def op_func(operands):
+            if shapes[1][0][0] == 0:
+                return
+            channel_id = backend.create_channel_handle()
+            out = _op_reduce_scatter(operands[0], dtype, "add", replica_groups,
+                                     channel_id)
+            operands[-1] = out
+
+        if max(replica_groups[0]) - min(
+                replica_groups[0]) < num_devices_per_node:
+            work = 1 << 33
+        else:
+            work = 1 << 31
+        number = min(max(12, int(work / max(size * dtype.itemsize, 1))),
+                     1 << 13)
+    else:
+        raise NotImplementedError(f"Invalid op: {op_info[0]}")
+
+    warmup = max(number // 10, 2)
+    rank_0_print(
+        host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
+        f"time: {time.time():.0f}.")
+
+    # Compile
+    shapes, compiled = _compile_profiling_executable(backend, shapes, op_func,
+                                                     num_devices)
+
+    # Warm up
+    device_inputs = []
+    for j, (shape, dtype) in enumerate(shapes):
+        if j == 0:
+            device_inputs.append([
+                backend.buffer_from_pyval(np.int32(warmup), local_devices[k])
+                for k in range(len(local_devices))
+            ])
+        else:
+            device_inputs.append([
+                backend.buffer_from_pyval(np.empty(shape, dtype),
+                                          local_devices[k])
+                for k in range(len(local_devices))
+            ])
+
+    [d.synchronize_all_activity() for d in local_devices]
+    device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+
+    # Run profiling
+    device_inputs[0] = \
+        [backend.buffer_from_pyval(np.int32(number), local_devices[k])
+            for k in range(len(local_devices))]
+
+    [d.synchronize_all_activity() for d in local_devices]
+    tic = time.time()
+    compiled.execute_sharded_on_local_devices(device_inputs)
+    [d.synchronize_all_activity() for d in local_devices]
+    toc = time.time()
+
+    mean_time = (toc - tic) / number
+    return mean_time
+
+
+def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
+    results = []
+    num_devices_per_node = 8
+    save_every = 15
+
+    # Must use an absolute efs path due to distributed ray workers
+    TMP_CACHE_FILE = "/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl"
+    if os.path.exists(TMP_CACHE_FILE):
+        rank_0_print(host_id,
+                     f"Load cached hlo op cost dict from {TMP_CACHE_FILE}...")
+        cache_dict = pickle.load(open(TMP_CACHE_FILE, "rb"))
+    else:
+        cache_dict = {}
+
+    for i, op_info in enumerate(op_infos):
+        if op_info in cache_dict:
+            rank_0_print(host_id, f"Hit cache {op_info}...")
+            results.append(cache_dict[op_info])
+            continue
+
+        mean_time = profile_one_hlo_op(backend, local_devices, host_id,
+                                       num_devices, num_devices_per_node,
+                                       op_info)
+        cache_dict[op_info] = mean_time
+        results.append(mean_time)
+
+        if host_id == 0 and ((i + 1) % save_every == 0 or
+                             i == len(op_infos) - 1):
+            rank_0_print(host_id, "Save cache...")
+            pickle.dump(cache_dict, open(TMP_CACHE_FILE, "wb"))
 
     return np.array(results)
 
@@ -475,7 +539,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                 all_specs.add((tuple(replica_group), dtype, size))
     all_specs = list(all_specs)
     all_specs.sort()
-    return all_specs
+    return list(all_specs)
 
 
 def profile_all(device_cluster, cluster_key, comm_size_range):
@@ -496,7 +560,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         size_configs.append((1 << i, "f16"))
 
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    submesh_choices = get_submesh_choices(virtual_mesh)
+    submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
 
     prof_database = ProfilingResultDatabase()
     for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
@@ -519,13 +583,32 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
 
         physical_mesh = tmp_mesh.get_physical_mesh()
         available_memory_per_device = physical_mesh.get_available_memory()
-        results = physical_mesh.profile_hlo_ops(op_infos)
 
+        # Profile operators in batch to resolve some deadlock issues
+        batch_size = 30
+        batch_timeout = batch_size * 20
+        results = []
+        s = 0
+        while s < len(op_infos):
+            try:
+                batch_result = physical_mesh.profile_hlo_ops(
+                    op_infos[s:s + batch_size], timeout=batch_timeout)
+            except ray.exceptions.RayError:
+                physical_mesh.shutdown(forced=True)
+                physical_mesh = None
+                time.sleep(30)
+                physical_mesh = tmp_mesh.get_physical_mesh()
+                continue
+            #batch_result = physical_mesh.profile_hlo_ops(op_infos[s:s + batch_size],
+            #                                             timeout=batch_timeout)
+            results.extend(batch_result)
+            s += batch_size
+
+        # Parse results
         all_gather_cost_dict = defaultdict(list)
         all_reduce_cost_dict = defaultdict(list)
         all_to_all_cost_dict = defaultdict(list)
         reduce_scatter_cost_dict = defaultdict(list)
-
         for i in range(len(op_infos)):
             op_type, (replica_groups, dtype, size) = op_infos[i]
             array_size = size * to_np_dtype(dtype).itemsize
@@ -566,6 +649,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         mesh_result.all_to_all_cost_dict = all_to_all_cost_dict
         mesh_result.reduce_scatter_cost_dict = reduce_scatter_cost_dict
         mesh_result.available_memory_per_device = available_memory_per_device
+        mesh_result.make_monotonic()
         prof_database.update_one_mesh(cluster_key,
                                       (num_hosts, num_devices_per_host),
                                       mesh_result)

@@ -147,7 +147,10 @@ moe_auto_sharding = [
     (*moe1_spec[0], 1,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
     (*moe1_spec[1], 2,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
     (*moe1_spec[2], 4,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe1_spec[2], 2,   2,   _,   _,   _,  1,  False, True,  True,  _,  _),
     (*moe1_spec[3], 8,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe1_spec[3], 4,   2,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe1_spec[3], 2,   4,   _,   _,   _,  1,  False, True,  True,  _,  _),
 ]
 
 moe_data_parallel = [

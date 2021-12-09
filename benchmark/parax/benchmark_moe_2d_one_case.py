@@ -11,7 +11,6 @@ import numpy as np
 import ray
 
 import parax
-from benchmark.util import compute_moe_parameter_count
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
@@ -20,6 +19,7 @@ from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchma
                         count_communication_primitives, print_used_time,
                         compute_param_number)
 
+from benchmark.util import compute_moe_parameter_count
 from benchmark.parax.paper_manual_moe_suite import paper_moe_suite, test_moe_suite
 from benchmark_gpt_bert_2d_one_case import get_train_step
 

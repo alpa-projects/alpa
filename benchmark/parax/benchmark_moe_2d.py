@@ -4,9 +4,9 @@ from datetime import datetime
 import numpy as np
 import ray
 
+from parax.util import run_cmd, write_tsv, get_num_hosts_and_num_devices
 from benchmark.parax.benchmark_moe_2d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_moe_suite import paper_moe_suite, test_moe_suite
-from parax.util import run_cmd, write_tsv, get_num_hosts_and_num_devices
 
 GB = 1024 ** 3
 
@@ -20,9 +20,15 @@ _ = None
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B, S,    H     L, #head, V,     S_,   E, LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP, _
-    (8, 1024, 1024, 8, 32,    51200, 1024, 8, 1,   1,   _,   _,    1,   1,  True, True,  False, _,  _),
+    #B, S,    H     L, #head, V,     E,  S_,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP, _
+    (8, 1024, 1024, 8, 32,    51200, 8,  1024, 1,   1,   _,   _,    1,   1,  True, True,  False, _,  _),
 ],
+
+8: [
+    #B, S,    H     L, #head, V,     E,  S_,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP, _
+    (8, 1024, 1024, 8, 32,    51200, 16, 1024, 1,   1,   _,   _,    1,   1,  True, True,  False, _,  _),
+],
+
 }
 
 benchmark_suites = {

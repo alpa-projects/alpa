@@ -12,13 +12,13 @@ import optax
 import ray
 
 import parax
-from benchmark_gpt_bert_3d_one_case import get_train_step
-from benchmark.util import compute_moe_parameter_count, compute_moe_tflops, run_cmd
 from parax import (global_config, set_parallelize_options, DeviceCluster)
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from parax.util import (write_tsv, print_used_time)
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
+from benchmark_gpt_bert_3d_one_case import get_train_step
+from benchmark.util import compute_moe_parameter_count, compute_moe_tflops, run_cmd
 from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_suite
 
 GB = 1024 ** 3
@@ -52,7 +52,7 @@ def create_train_state(rngkey, model, dtype, batch):
     return state
 
 
-def benchmark_moe_internal(benchmark_case, niter):
+def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_host):
     # Backup global config
     global time
     backup = global_config.backup()
@@ -62,9 +62,8 @@ def benchmark_moe_internal(benchmark_case, niter):
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size, \
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,\
         num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter, \
-        auto_layer, _ = benchmark_case
+        auto_pipeline, _ = benchmark_case
     dtype = jnp.float16
-
 
     rang_factor = 1
     expected_expert_group_size = min(expert_group_size, batch_size * seq_len // num_micro_batches // l_dim0 // rang_factor)
@@ -84,6 +83,10 @@ def benchmark_moe_internal(benchmark_case, niter):
     global_config.allow_mixed_mesh_shape = True
 
     device_cluster = DeviceCluster()
+    virtual_mesh = device_cluster.get_virtual_physical_mesh(
+        host_ids=list(range(num_hosts)),
+        num_devices_per_host=num_devices_per_host)
+
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
@@ -166,13 +169,14 @@ def benchmark_moe_internal(benchmark_case, niter):
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
-def benchmark_one_case(case, niter, use_separate_process=False, dump_result=False):
+def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
+                       use_separate_process=False, dump_result=False):
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True)
         jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 
-        result = benchmark_moe_internal(case, niter)
+        result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
         result = result + get_last_dp_result()
     else:
         # Launch a new process for benchmark to isolate errors.
@@ -181,6 +185,8 @@ def benchmark_one_case(case, niter, use_separate_process=False, dump_result=Fals
         ret = run_cmd("python3 benchmark_moe_3d_one_case.py "
                       f"--niter {niter} "
                       f'--case "{case}" '
+                      f"--num-hosts {num_hosts} "
+                      f"--num-devices-per-host {num_devices_per_host} "
                       f"--dump-result ")
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
@@ -197,11 +203,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--niter", type=int, default=7)
     parser.add_argument("--case", type=str, required=True)
+    parser.add_argument("--num-hosts", type=int)
+    parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--dump-result", action="store_true",
                         help="Dump results into a temporary pickle file")
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
-    benchmark_one_case(case, args.niter,
+    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
                        use_separate_process=False, dump_result=args.dump_result)

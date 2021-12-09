@@ -1038,7 +1038,7 @@ class CrossMeshCommunicator:
             return self._generate_send_recv_resharding_strategy_by_loads(spec)
 
     def _generate_scatter_gather_resharding_strategy(self, spec):
-        """scatter-gather optimizaiton."""
+        """scatter-gather optimization."""
         is_scatter_gather = True
         per_spec_plans = []
         per_spec_slice_plans = []

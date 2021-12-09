@@ -52,7 +52,6 @@ benchmark_suites = {
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=5,
         help="Number of benchmark iteration")
     parser.add_argument("--num-hosts", type=int)
@@ -103,8 +102,8 @@ if __name__ == "__main__":
                  "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                  "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
-        values = [args.model, model_config, parallel_config,
-                  num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
+        values = ["w-resnet", model_config, parallel_config, num_micro_batches,
+                  force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
                   f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",
                   f"{peak_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]

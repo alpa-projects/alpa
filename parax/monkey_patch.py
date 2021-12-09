@@ -62,11 +62,12 @@ jax.random.fold_in = remove_fold_in
 
 remat_using_while_backup = jax.xla._remat_using_while
 
+
 def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
                           call_jaxpr):
     if global_config.remat_using_while:
         return remat_using_while_backup(c, axis_env, in_nodes, name_stack,
-            backend, name, call_jaxpr)
+                                        backend, name, call_jaxpr)
 
     bias_args = xla_identity(c, *in_nodes, op_type="remat_begin")
     bias_args = [

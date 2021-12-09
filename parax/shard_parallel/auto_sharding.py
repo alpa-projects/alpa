@@ -169,6 +169,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::grad_acc_num_micro_batches":
                     grad_acc_num_micro_batches or 1,
                 "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
+                "auto_sharding::force_simple_heuristic": global_config.force_simple_heuristic,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,

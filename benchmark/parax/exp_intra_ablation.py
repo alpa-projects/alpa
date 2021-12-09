@@ -66,19 +66,21 @@ gpt_zero_3 = [
 
 gpt_heuristic = [
     # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "heuristic"),
-    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  "heuristic"),
-    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  "heuristic"),
-    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  "heuristic"),
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "shard-largest"),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
 ]
 
 suites = [
+    # GPT
     ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
     ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
     ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
     ("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
-    #("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+    ("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
 ]
+
 
 def build_cases():
     instance = "p3.16"

@@ -18,7 +18,7 @@ gpt_1_spec = [
     (8,   1024, 2048, 8, 2048//128, 25600),
     (8,   1024, 3072, 8, 3072//128, 25600),
     (8,   1024, 4096, 8, 4096//128, 25600),
-    (8,   1024, 6144, 8, 6144//128, 25600),
+    (8,   1024, 5888, 8, 5888//128, 25600),
 ]
 
 _ = None
@@ -76,7 +76,7 @@ suites = [
     ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
     ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
     ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
-    #("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
+    ("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
     #("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
 ]
 

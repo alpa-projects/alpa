@@ -43,6 +43,7 @@ test_gpt_suite = {
 ],
 
 32: [
+    (1024,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  32,    True,  *fixed_params),
 ]
 
 }

@@ -15,34 +15,22 @@ _ = None
 # D0 = mesh_dimension_0, D1 = mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping,
 # RS = prefer_reduce_scatter, Remat = use_rematerialization
+# 
 
 default_benchmark_suite = {
 1: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    Remat,
-    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False),
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False, _),
 ],
 
 4 : [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    Remat,
-    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False),
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False, _),
 ],
 
 8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    Remat,
-    # data-parallel
-    #(128,  224, 50,  192, 2, "fp32", 8,  1,  1,  True,  True,  False),
-    #(512,  224, 50,  192, 2, "fp32", 8,  1,  4,  True,  True,  False),
-    #(128,  224, 50,  192, 2, "fp32", 8,  1,  1,  False, True,  False),
-    #(512,  224, 50,  192, 2, "fp32", 8,  1,  4,  False, True,  False),
-
-    # model-parallel
-    #(16,   224, 50,  320, 2, "fp32", 8,  1,  1,  True,   True,  False),
-    #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  True,   True,  False),
-    #(16,   224, 50,  320, 2, "fp32", 8,  1,  1,  False,  True,  False),
-    #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  False,  True,  False),
-
-    # 2d mesh
-    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False),
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False, _), 
 ],
 }
 
@@ -85,7 +73,7 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
             mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
-            prefer_reduce_scatter, use_remat = benchmark_case
+            prefer_reduce_scatter, use_remat, other = benchmark_case
 
         model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
         parallel_config = (mesh_dim0, mesh_dim1)

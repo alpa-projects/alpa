@@ -149,7 +149,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     model_type = "wide_resnet"
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
-        prefer_reduce_scatter, use_remat = benchmark_case
+        prefer_reduce_scatter, use_remat, other = benchmark_case
     if dtype == "fp32":
         dtype = jnp.float32
     elif dtype == "fp16":
@@ -160,7 +160,6 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     # Parallel configs
     if num_micro_batches > 1:
         use_grad_acc = True
-        global_config.prefer_reduce_scatter = False
     else:
         use_grad_acc = False
         num_micro_batches = None
@@ -169,7 +168,12 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
         # Always map batch dim to mesh dim 0
         global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.allow_mixed_mesh_shape = True
+    global_config.allow_mixed_mesh_shape = False
+    if other == "zero-3":
+        global_config.force_zero_stage_3 = True
+    elif other in ["shard-largest"]:
+        global_config.force_simple_heuristic = other
+        global_config.remat_using_while = True
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -213,7 +217,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("last.hlo", "w") as fout:
+    with open("tmp/last_2d.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -224,7 +228,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 28 * GB: # out of memory
+    if alloc_mem > 16 * GB:
         latencies = [-1]
     else:
         for i in range(niter):

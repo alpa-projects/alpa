@@ -48,16 +48,18 @@ class GlobalConfig:
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
         self.allow_replicated_parameters = True  # Whether allow replicated parameters.
-        self.force_data_parallel = False  # Whether force to generate data-parallel
+        self.force_data_parallel = False  # Whether force to generate data-parallel.
         self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
-        # a mesh dimension
+        # a mesh dimension.
         self.force_zero_stage_3 = False  # Whether force to generate a strategy similar to
-        # ZeRO optimizer stage 3
-        self.force_zero_stage_3_all_gather_threshold = 1 << 26  # The threshold of all-gather combiner
+        # ZeRO optimizer stage 3.
+        self.force_zero_stage_3_all_gather_threshold = 1 << 25  # The threshold of all-gather combiner
         # if force_zero_stage_3 is true.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
+        # instead of the ILP solver.
 
         ########## Options for pipeline runtime ##########
         self.pipeline_distributed_compile = True  # Whether to use distributed compilation
@@ -68,6 +70,7 @@ class GlobalConfig:
 
         ########## Options for XLA compilation ##########
         self.build_random_seed = 42
+        self.remat_using_while = False
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during

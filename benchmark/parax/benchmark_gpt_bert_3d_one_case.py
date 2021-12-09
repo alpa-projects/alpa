@@ -82,8 +82,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
     return train_step
 
 def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
-                                num_hosts=None, num_devices_per_host=None,
-                                disable_tqdm=False):
+                                num_hosts, num_devices_per_host, disable_tqdm=False):
     backup = global_config.backup()
     print_used_time(None)
 
@@ -104,9 +103,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
     device_cluster = DeviceCluster()
-    host_ids = None if num_hosts == None else list(range(num_hosts))
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
-        host_ids=host_ids,
+        host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
 
     if overwrite_global_config_dict is None:
@@ -221,9 +219,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
-def benchmark_one_case(model, case, niter, use_separate_process=False,
-                       dump_result=False, num_hosts=None,
-                       num_devices_per_host=None, disable_tqdm=False):
+def benchmark_one_case(model, case, niter,
+                       num_hosts, num_devices_per_host,
+                       use_separate_process=False,
+                       dump_result=False, disable_tqdm=False):
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True)
         jax.config.update('jax_platform_name', 'cpu')
@@ -241,11 +240,9 @@ def benchmark_one_case(model, case, niter, use_separate_process=False,
                f"--model {model} "
                f"--niter {niter} "
                f'--case "{case}" '
+               f"--num-hosts {num_hosts} "
+               f"--num-devices-per-host {num_devices_per_host} "
                f"--dump-result ")
-        if num_hosts is not None:
-            cmd += f"--num-hosts {num_hosts} "
-        if num_devices_per_host is not None:
-            cmd += f"--num-devices-per-host {num_devices_per_host} "
         if disable_tqdm:
             cmd += "--disable-tqdm "
         ret = run_cmd(cmd)
@@ -265,17 +262,16 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=7)
     parser.add_argument("--case", type=str, required=True)
+    parser.add_argument("--num-hosts", type=int)
+    parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--dump-result", action="store_true",
         help="Dump results into a temporary pickle file")
-    parser.add_argument("--num-hosts", type=int, default=None)
-    parser.add_argument("--num-devices-per-host", type=int, default=None)
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
     benchmark_one_case(args.model, case, args.niter,
+                       args.num_hosts, args.num_devices_per_host,
                        use_separate_process=False, dump_result=args.dump_result,
-                       num_hosts=args.num_hosts,
-                       num_devices_per_host=args.num_devices_per_host,
                        disable_tqdm=args.disable_tqdm)

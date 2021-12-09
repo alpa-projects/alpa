@@ -30,9 +30,9 @@ default_suite = {
 8: [
     #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    AP
     (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, False, None), # 0.323
-    (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  False, True,  False, False, None), # 0.380
-    (128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  True,  True,  False, False, None), # 0.323
-    (128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  False, True,  False, False, None), # 0.380
+    #(64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  False, True,  False, False, None), # 0.380
+    #(128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  True,  True,  False, False, None), # 0.323
+    #(128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  False, True,  False, False, None), # 0.380
 ]
 }
 
@@ -53,24 +53,29 @@ if __name__ == "__main__":
     parser.add_argument("--niter", type=int, default=5)  # 2 warmup + 5 actual run.
     parser.add_argument("--suite", choices=list(benchmark_suites.keys()),
                         default="paper_gpt")
+    parser.add_argument("--num-hosts", type=int, default=None)
+    parser.add_argument("--num-devices-per-host", type=int, default=None)
     parser.add_argument("--no-separate-process", action='store_false',
                         help="Do not launch separate processes for benchmark."
                              "Errors in a single case will terminate this script.",
                         dest='use_separate_process')
     parser.add_argument("--exp_name", type=str, default="default")
-    parser.add_argument("--num-hosts", type=int, default=None)
-    parser.add_argument("--num-devices-per-host", type=int, default=None)
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     print(f"- Use separate process: {args.use_separate_process}")
 
+    # Get the number of devices
     ray.init(address="auto")
     if args.num_hosts is not None or args.num_devices_per_host is not None:
         assert args.num_hosts is not None and args.num_devices_per_host is not None
-        num_gpus = args.num_hosts * args.num_devices_per_host
+        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
     else:
-        num_gpus = int(ray.cluster_resources()["GPU"])
+        num_hosts = len(ray.nodes())
+        num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
+    num_gpus = num_hosts * num_devices_per_host
+
+    # Get the benchmark suite
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:
@@ -80,24 +85,26 @@ if __name__ == "__main__":
         exit()
     run_cmd("mkdir -p tmp")
 
-    # Run all cases
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
+
+    # Run all cases
     for benchmark_case in suite:
         (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
          l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
          use_remat, prefer_reduce_scatter, auto_pipeline, overwrite_global_config_dict) = benchmark_case
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
 
-        #if pipeline_mp_size <= 1 and not auto_pipeline:
-        #    print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
-        #          f"Please use `benchmark_gpt_bert_2d.py` "
-        #          f"since 3d runtime will have a small overhead.")
-        #    continue
+        if pipeline_mp_size <= 1 and not auto_pipeline:
+            print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
+                  f"Please use `benchmark_gpt_bert_2d.py` "
+                  f"since 3d runtime will have a small overhead.")
+            continue
+
+        # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
         result = benchmark_one_case(args.model, benchmark_case, args.niter,
-                                    num_hosts=args.num_hosts,
-                                    num_devices_per_host=args.num_devices_per_host,
+                                    num_hosts, num_devices_per_host,
                                     use_separate_process=args.use_separate_process,
                                     disable_tqdm=args.disable_tqdm)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,

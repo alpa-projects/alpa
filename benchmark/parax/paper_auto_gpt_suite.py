@@ -16,7 +16,7 @@ gpt_specs = {
 }
 
 dummy_arguments = (0, 0, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
-fixed_params = (False, True, True, True) # FM, Remat, RS, AP
+fixed_params = (False, True, True) # FM, Remat, RS, AP
 max_global_batch_size = 1024
 
 default_overwrite_dict = {
@@ -27,11 +27,14 @@ default_overwrite_dict = {
 }
 
 
-def get_auto_test_case(model_name, n_microbatches, num_layers, overwrite_global_config_dict=None):
+def get_auto_test_case(model_name, n_microbatches, num_layers,
+                       pipeline_stage_mode="auto_gpipe",
+                       overwrite_global_config_dict=None):
     if overwrite_global_config_dict is None:
         overwrite_global_config_dict = default_overwrite_dict
     return [(max_global_batch_size, *gpt_specs[model_name],
-             *dummy_arguments, num_layer, n_microbatch, *fixed_params, overwrite_global_config_dict)
+             *dummy_arguments, num_layer, n_microbatch, *fixed_params,
+             pipeline_stage_mode, overwrite_global_config_dict)
             for n_microbatch in n_microbatches
             for num_layer in num_layers]
 
@@ -62,7 +65,7 @@ paper_auto_gpt_suite = {
      get_auto_test_case("2.7B", [64], [16]) +
      get_auto_test_case("6.7B", [128], [16])),
 32: (get_auto_test_case("6.7B", [16, 32, 64, 128], [8]) +
-     get_auto_test_case("15B", [32, 64, 128, 256], [8]) +
+     get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
      get_auto_test_case("6.7B", [64], [16]) +
      get_auto_test_case("15B", [128], [16])),
 }
@@ -75,4 +78,13 @@ test_auto_gpt_suite = {
 # 8: get_auto_test_case("TEST", [2], [2]),
 # 16: get_auto_test_case("2.7B", [16], [8]),
 16: get_auto_test_case("6.7B", [256], [8]),
+}
+
+result_auto_gpt_suite = {
+32: get_auto_test_case("6.7B", [64], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[i] for i in range(8)],
+    "sub_physical_mesh_shapes": [(1, 4)] * 8,
+    "sub_logical_mesh_shapes": [(4, 1)] * 8,
+    "submesh_autosharding_global_configs": [{'force_batch_dim_to_mesh_dim': 0}] * 8,
+})
 }

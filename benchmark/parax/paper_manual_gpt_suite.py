@@ -17,7 +17,7 @@ gpt_specs = {
 }
 
 
-fixed_params = (True, True, False, None)
+fixed_params = (True, True, "uniform_layer_gpipe", None)
 max_global_batch_size = 1024
 
 test_gpt_suite = {

@@ -8,7 +8,6 @@ import ray
 import optax
 
 import parax
-from benchmark.parax.benchmark_transformer_layer_3d import report_pipeline_breakdown
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from parax import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, mark_pipeline, manual_layer_slicing, automatic_layer_slicing)
@@ -19,6 +18,33 @@ from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.util import print_used_time, run_cmd, disable_tqdm_globally
 
 GB = 1024 ** 3
+
+
+def report_pipeline_breakdown(executable, timer_names, niter):
+    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
+
+    print(">>> overall: {}...".format(overall_costs))
+    other_percentage = [100.0] * niter
+    other = overall_costs
+    for timer_name in timer_names:
+        costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+        if len(costs) == 0:
+            costs = [0.0] * niter
+        percentage = [cost / overall_costs[i] * 100 for i, cost in enumerate(costs)]
+        other = [remain - costs[i] for i, remain in enumerate(other)]
+        other_percentage = [remain - percentage[i] for i, remain in enumerate(other_percentage)]
+        strs = []
+        for i, cost in enumerate(costs):
+            strs.append(str(cost) + f" ({percentage[i]:.1f}) ")
+        print_string = ",".join(strs)
+        print(">>> {}: {}".format(timer_name, print_string))
+
+    # print unknown overhead
+    strs = []
+    for i, remain in enumerate(other):
+        strs.append(" " + str(remain) + f" ({other_percentage[i]:.1f})")
+    print_string = ",".join(strs)
+    print(">>> {}: {}".format("Others: ", print_string))
 
 
 def create_train_state(rngkey, model, batch, dtype):

@@ -27,6 +27,7 @@ from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
 import numpy as np
+import ray
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
@@ -813,6 +814,26 @@ def list_gpu_info():
     return ret
 
 
+def disable_tqdm_globally():
+    tqdm.tqdm.__init__ = partialmethod(tqdm.tqdm.__init__, disable=True)
+
+
+def get_num_hosts_and_num_devices(args):
+    """Get the number of hosts and the number of devices per host for benchmark scripts."""
+    if args.num_hosts is not None or args.num_devices_per_host is not None:
+        assert args.num_hosts is not None and args.num_devices_per_host is not None
+        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
+    else:
+        if hasattr(args, "local") and args.local:
+            num_hosts = 1
+            num_devices_per_host = list_gpu_info().count("UUID")
+        else:
+            ray.init(address="auto")
+            num_hosts = len(ray.nodes())
+            num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
+    return num_hosts, num_devices_per_host
+
+
 def write_tsv(heads, values, filename, print_line=True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
@@ -916,6 +937,3 @@ def get_cross_slice_vars(jaxpr, slices):
             print(invar, invar.aval.shape, 'from layer', defined[invar])
     return
 
-
-def disable_tqdm_globally():
-    tqdm.tqdm.__init__ = partialmethod(tqdm.tqdm.__init__, disable=True)

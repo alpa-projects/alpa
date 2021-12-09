@@ -24,7 +24,8 @@ fixed_params = (True,  True,  False)
 test_moe_suite = {
 
 1: [
-    (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
+    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Auto-pipeline), _
+    (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  False,   *fixed_params,     1),
 ],
 
 2: [
@@ -34,6 +35,7 @@ test_moe_suite = {
 ],
 
 8: [
+    (8,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params,     1),
 ],
 
 16: [
@@ -47,7 +49,7 @@ test_moe_suite = {
 
 paper_moe_suite = {
 1: [
-    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Auto-layer-slicing),
+    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, AP), _
     #1 GPUs, deepspeed max bs = 8, parax = 16
     (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     (32,    *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
@@ -66,7 +68,7 @@ paper_moe_suite = {
     # MP is always worse
     # ===============================
     # 380M model
-    # B,      model,                             LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, Tie, Auto-layer-slicing),
+    # B,      model,                              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, AP), _
     (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     (64,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
     (256,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
@@ -124,7 +126,8 @@ paper_moe_suite = {
 ],
 
 4: [
-    # B,      model,                             LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, Tie, Auto-layer-slicing),
+    # B,      model,                              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, AP), _
+    (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     # ================================
     # 690M model
     # 4 GPUs, deepspeed max effective bs = 8, no MP

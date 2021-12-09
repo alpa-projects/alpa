@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
         # Run one case
         print(">>> Working on case: {}".format(str(case)))
-        result = benchmark_one_case(case, args.niter, num_hosts, num_devices_per_host
+        result = benchmark_one_case(case, args.niter, num_hosts, num_devices_per_host,
                                     use_separate_process=args.use_separate_process)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,

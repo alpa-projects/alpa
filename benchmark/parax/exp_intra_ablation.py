@@ -6,10 +6,16 @@ import ray
 from parax import DeviceCluster, global_config
 from parax.util import write_tsv, to_str_round
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case as benchmark_one_case_gpt_raw
+from benchmark_wide_resnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
 
 benchmark_one_case_gpt = lambda case, niter, num_host, num_devices_per_host: \
     benchmark_one_case_gpt_raw("gpt", case, niter, num_host, num_devices_per_host,
                                local=False, use_separate_process=True)
+
+benchmark_one_case_wresnet = lambda case, niter, num_host, num_devices_per_host: \
+    benchmark_one_case_wresnet_raw(case, niter, num_host, num_devices_per_host,
+                                   local=False, use_separate_process=True)
+
 
 GB = 1 << 30
 
@@ -72,13 +78,68 @@ gpt_heuristic = [
     (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
 ]
 
+wresnet1_spec = [
+    #B,   I,   L,  C,   W, dtype,  
+    (64,  224, 50, 64,  2, "fp32"), 
+    (128, 224, 50, 64,  2, "fp32"), 
+    (128, 224, 50, 64,  2, "fp32"), 
+    (256, 224, 50, 64,  2, "fp32"), 
+]
+
+wresnet_auto_sharding = [
+    #model,             D0, D1, NB, FM,    RS,   Remat, other
+    (*wresnet1_spec[0], 1,  1,  1,  False, False, _,     _),
+    (*wresnet1_spec[1], 2,  1,  1,  True,  False, _,     _),
+    #(*wresnet1_spec[2], 4,  1,  1,  False, False, _,     _),
+    #(*wresnet1_spec[3], 8,  1,  1,  False, False, _,     _),
+]
+
+wresnet_data_parallel = [
+    #model,             D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet1_spec[0], 1,  1,  1,  True,  False, _,     _),
+    (*wresnet1_spec[1], 2,  1,  1,  True,  False, _,     _),
+    (*wresnet1_spec[2], 4,  1,  1,  True,  False, _,     _),
+    (*wresnet1_spec[3], 8,  1,  1,  True,  False, _,     _),
+]
+
+wresnet_zero_2 = [
+    #model,             D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet1_spec[0], 1,  1,  1,  True,  True, _,     _),
+    (*wresnet1_spec[1], 2,  1,  1,  True,  True, _,     _),
+    (*wresnet1_spec[2], 4,  1,  1,  True,  True, _,     _),
+    (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     _),
+]
+
+wresnet_zero_3 = [
+    #model,             D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet1_spec[0], 1,  1,  1,  True,  True, _,     "zero-3"),
+    (*wresnet1_spec[1], 2,  1,  1,  True,  True, _,     "zero-3"),
+    (*wresnet1_spec[2], 4,  1,  1,  True,  True, _,     "zero-3"),
+    (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     "zero-3"),
+]
+
+wresnet_heuristic = [
+    #model,             D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet1_spec[0], 1,  1,  1,  True,  True, _,     "shard-largest"),
+    (*wresnet1_spec[1], 2,  1,  1,  True,  True, _,     "shard-largest"),
+    (*wresnet1_spec[2], 4,  1,  1,  True,  True, _,     "shard-largest"),
+    (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     "shard-largest"),
+]
+
 suites = [
     # GPT
-    ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
-    ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
-    ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
-    ("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
-    ("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+    #("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
+    #("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
+    #("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
+    #("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
+    #("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+
+    # W-resnet
+    ("W-ResNet-1", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
+    #("W-ResNet-1", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
 ]
 
 

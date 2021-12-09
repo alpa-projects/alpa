@@ -170,10 +170,12 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
         if option == "all":
             max_mp_dimension = num_devices
         else:  # option == "single_node_model_parallel"
-            max_mp_dimension = num_devices
+            max_mp_dimension = virtual_submesh.num_devices_per_host
 
         for i in range(1, max_mp_dimension + 1):
             if num_devices % i == 0:
+                if i == 8 and i == num_devices:
+                    continue
                 results.append((virtual_submesh.get_logical_mesh(
                     (num_devices // i, i)), {
                         "force_batch_dim_to_mesh_dim": 0
@@ -181,6 +183,10 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option):
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
+    elif option == "only_dp":
+        results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
+            "force_batch_dim_to_mesh_dim": 0
+        }))
     return results
 
 
@@ -250,6 +256,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                  insert_hook_after=end - start,
                  apply_grad_info=(selected_apply_grad_layers,
                                   *apply_grad_global_info))
+            if is_full_mesh:
+                intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
                     autosharding_configs):
                 if autosharding_config is not None:
@@ -258,16 +266,10 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                         (stage_indices, compile_info, autosharding_config,
                          intermediate_vars, profile_info, apply_info))
 
+    # TODO(zhuohan): set the number of workers as a tunable parameter
     if len(stages) == 0:
         compute_cost = np.full(
             (num_layers, num_layers, num_autosharding_configs), np.inf)
-        max_n_succ_stages = np.full(
-            (num_layers, num_layers, num_autosharding_configs), -1)
-        return compute_cost, max_n_succ_stages
-    # TODO(zhuohan): set the number of workers as a tunable parameter
-    if len(stages) == 0:
-        compute_cost = np.full((num_layers, num_layers, num_autosharding_configs),
-                           np.inf)
         max_n_succ_stages = np.full(
             (num_layers, num_layers, num_autosharding_configs), -1)
         return compute_cost, max_n_succ_stages

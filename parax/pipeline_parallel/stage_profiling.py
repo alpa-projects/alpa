@@ -1,6 +1,5 @@
 import gc
 from typing import Dict, OrderedDict, Sequence, Tuple
-from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 
 import tqdm
 import numpy as np
@@ -13,6 +12,7 @@ from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, jaxpr_as_fun,
                       new_jaxpr_eqn, named_call_p)
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
+from ray.exceptions import RayActorError
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config
@@ -24,6 +24,7 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
     merge_computation_jaxprs, rearrange_vars)
+from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
@@ -171,15 +172,16 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
         self.local_worker = CompileWorker() if debug_mode else None
 
     def local_get(self, fn, *value):
-        return fn(self.local_worker, value)
+        return fn(self.local_worker, *value)
 
 
 class ProfileWorker:
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
+        self.v_mesh = virtual_mesh
 
-    def profile(self, stage_id, compiled_output, profile_info,
+    def profile_impl(self, stage_id, compiled_output, profile_info,
                 intermediate_size, initial_size):
 
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
@@ -208,6 +210,25 @@ class ProfileWorker:
 
         return stage_id, cost, max_stage, (peak_memory, available_memory,
                                            intermediate_size, initial_size)
+
+    def profile(self, stage_id, compiled_output, profile_info,
+                intermediate_size, initial_size):
+        # TODO(yonghao): find out why the below happens:
+        # 16GPU WResNet with config:
+        # (1536, 224, 50,  640,   2, "fp32", 32,  False, False,  True),
+        # When profiling start=[9], end=[14,15], the profile fails because cublas error
+        for _ in range(3):
+            try:
+                return self.profile_impl(stage_id, compiled_output, profile_info,
+                    intermediate_size, initial_size)
+            except RayActorError:
+                print("Meet an error in profiling")
+                self.restart(forced=True)
+        return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
+
+    def restart(self, forced):
+        self.mesh.shutdown(forced=forced)
+        self.mesh = self.v_mesh.get_physical_mesh()
 
 
 class ProfileWorkerPool(BaseWorkerPoolWrapper):

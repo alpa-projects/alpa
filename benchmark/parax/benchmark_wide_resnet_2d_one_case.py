@@ -198,6 +198,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
+    param_count = compute_param_number(state.params)
     train_step = get_train_step(learning_rate_fn, use_grad_acc)
     print_used_time("Create train state")
 
@@ -235,7 +236,6 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     # Compute statistics
     num_gpus = mesh_dim0 * mesh_dim1
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
-    param_count = compute_param_number(state.params)
     peak_mem = physical_mesh.get_max_memory_allocated()
 
     # Restore global config

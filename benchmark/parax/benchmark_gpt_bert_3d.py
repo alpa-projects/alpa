@@ -5,7 +5,7 @@ import time
 import numpy as np
 import ray
 
-from parax.util import write_tsv, run_cmd
+from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite
@@ -65,17 +65,10 @@ if __name__ == "__main__":
 
     print(f"- Use separate process: {args.use_separate_process}")
 
-    # Get the number of devices
-    ray.init(address="auto")
-    if args.num_hosts is not None or args.num_devices_per_host is not None:
-        assert args.num_hosts is not None and args.num_devices_per_host is not None
-        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
-    else:
-        num_hosts = len(ray.nodes())
-        num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
+    # Get the benchmark suite
+    num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
     num_gpus = num_hosts * num_devices_per_host
 
-    # Get the benchmark suite
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:

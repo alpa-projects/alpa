@@ -5,7 +5,7 @@ import ray
 
 import numpy as np
 
-from parax.util import list_gpu_info, write_tsv, run_cmd
+from parax.util import list_gpu_info, write_tsv, run_cmd, get_num_hosts_and_num_devices
 
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
@@ -63,21 +63,10 @@ if __name__ == "__main__":
     parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
 
-    # Get the number of devices
-    if args.num_hosts is not None or args.num_devices_per_host is not None:
-        assert args.num_hosts is not None and args.num_devices_per_host is not None
-        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
-    else:
-        if args.local:
-            num_hosts = 1
-            num_devices_per_host = list_gpu_info().count("UUID")
-        else:
-            ray.init(address="auto")
-            num_hosts = len(ray.nodes())
-            num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
+    # Get the benchmark suite
+    num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
     num_gpus = num_hosts * num_devices_per_host
 
-    # Get the benchmark suite
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:

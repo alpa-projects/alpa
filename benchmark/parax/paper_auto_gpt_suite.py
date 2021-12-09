@@ -16,7 +16,7 @@ gpt_specs = {
 }
 
 dummy_arguments = (0, 0, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
-fixed_params = (False, True, True) # FM, Remat, RS, AP
+fixed_params = (False, True, True) # FM, Remat, RS
 max_global_batch_size = 1024
 
 default_overwrite_dict = {
@@ -60,14 +60,15 @@ paper_auto_gpt_suite = {
     get_auto_test_case("2.7B", [64, 128, 256], [8]) +
     get_auto_test_case("1.3B", [16], [12]) +
     get_auto_test_case("2.7B", [64], [16])),
-16: (get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
-     get_auto_test_case("6.7B", [32, 64, 128, 256], [8]) +
-     get_auto_test_case("2.7B", [64], [16]) +
-     get_auto_test_case("6.7B", [128], [16])),
-32: (get_auto_test_case("6.7B", [16, 32, 64, 128], [8]) +
-     get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
-     get_auto_test_case("6.7B", [64], [16]) +
-     get_auto_test_case("15B", [128], [16])),
+16: (# get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
+     get_auto_test_case("6.7B", [32, 64, 128, 256], [32, 34])
+     # get_auto_test_case("2.7B", [64], [16]) +
+     # get_auto_test_case("6.7B", [128], [16])
+     ),
+32: (# get_auto_test_case("6.7B", [16, 32, 64, 128], [8]) +
+     # get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
+     get_auto_test_case("6.7B", [64, 128], [32, 34]) +
+     get_auto_test_case("15B", [128, 256, 512], [32, 34])),
 }
 
 test_auto_gpt_suite = {

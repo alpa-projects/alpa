@@ -46,11 +46,6 @@ def device_id_to_str(host_ip, device_id, device_type="gpu"):
     return "{}:{}:{}".format(host_ip, device_type, str(device_id))
 
 
-def device_str_to_id(device_str):
-    """Parse device string to get its device id."""
-    return int(device_str.split(":")[-1])
-
-
 class MeshHostWorker:
     """A ray actor that manages the xla computation on a single host."""
 
@@ -78,6 +73,7 @@ class MeshHostWorker:
         set_override_backend(self.backend)
 
         if global_config.pipeline_use_signal_send_recv:
+            print("Use signal send recv.")
             self.signal_tensors = []
             for d in self.local_devices:
                 self.signal_tensors.append(
@@ -310,7 +306,8 @@ class MeshHostWorker:
     def profile_hlo_ops(self, op_infos: Sequence[Any]):
         num_devices = self.num_hosts * len(self.local_devices)
         return mesh_profiling.profile_hlo_ops(self.backend, self.local_devices,
-                                              num_devices, op_infos)
+                                              self.host_id, num_devices,
+                                              op_infos)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
@@ -371,7 +368,6 @@ class MeshHostWorker:
 
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)
-        return True
 
 
 class PhysicalDeviceMesh:
@@ -469,16 +465,15 @@ class PhysicalDeviceMesh:
             # Set XLA environment variables
             env_vars = {
                 "PARAX_IS_WORKER": "True",
+                "NCCL_USE_MULTISTREAM": "False",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
-                "NCCL_USE_MULTISTREAM": "False",
                 # "NCCL_SHM_DISABLE": "1",
-                # "TF_CUDA_REMAP_DEVICE_ID": "False"
                 # "NCCL_DEBUG": "INFO",
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
             }
 
             # Launch a ray actor
@@ -503,6 +498,10 @@ class PhysicalDeviceMesh:
         ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
         ret = ret.replace(" ", "-")
         return ret
+
+    @property
+    def shape(self):
+        return (len(self.host_ids), self.num_devices_per_host)
 
     @property
     def total_devices(self):
@@ -730,12 +729,12 @@ class PhysicalDeviceMesh:
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
-    def profile_hlo_ops(self, op_infos: Sequence[Tuple]):
+    def profile_hlo_ops(self, op_infos: Sequence[Tuple], timeout=None):
         assert self.is_distributed
         tasks = []
         for w in self.workers:
             tasks.append(w.profile_hlo_ops.remote(op_infos))
-        return ray.get(tasks)[0]
+        return ray.get(tasks, timeout=timeout)[0]
 
     def get_remote_timer(self, timer_name: str):
         if self.is_distributed:
@@ -777,7 +776,7 @@ class PhysicalDeviceMesh:
         else:
             return min([device.available_memory() for device in self.devices])
 
-    def reset_remote_memory_stats(self):
+    def reset_memory_stats(self):
         if self.is_distributed:
             for worker in self.workers:
                 ray.get(worker.reset_memory_stats.remote())
@@ -834,6 +833,10 @@ class LogicalDeviceMesh:
             mesh_beta = [1] * len(self.id_mesh.shape)
         self.mesh_alpha = tuple(mesh_alpha)
         self.mesh_beta = tuple(mesh_beta)
+
+    @property
+    def shape(self):
+        return self.id_mesh.shape
 
     def all_gather_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
@@ -1048,7 +1051,7 @@ class VirtualPhysicalMesh:
     """
     A virtual physical mesh used for pipeline parallel compilation.
 
-    VirtualPhysicalMesh is used for compilation. We don't allocate actual workers for it.
+    VirtualPhysicalMesh is used during compile time. We don't allocate actual workers for it.
     When compilation is finished, we instantiated it as a PhysicalDeviceMesh and launch workers.
 
     A VirtualPhysicalMesh can also be sliced into multiple VirtualPhysicalMesh.
@@ -1146,6 +1149,10 @@ class VirtualPhysicalMesh:
         return all_submeshes
 
     @property
+    def shape(self):
+        return (len(self.host_ids), self.num_devices_per_host)
+
+    @property
     def total_devices(self):
         """Return the total number of GPUs on this mesh."""
         return len(self.device_ids_flat)
@@ -1200,6 +1207,10 @@ class VirtualPhysicalMesh:
         else:
             return self.get_logical_mesh(
                 (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.1])
+
+    def get_1d_logical_mesh(self):
+        """Return a 1D logical mesh."""
+        return self.get_logical_mesh((1, self.total_devices))
 
 
 class DeviceCluster:
@@ -1279,8 +1290,8 @@ class DeviceCluster:
                                    num_devices_per_host=num_devices_per_host,
                                    head_ip=self.head_ip)
 
-    def profile_all(self):
-        return mesh_profiling.profile_all(self)
+    def profile_all(self, *args, **kwargs):
+        return mesh_profiling.profile_all(self, *args, **kwargs)
 
 
 ########################################

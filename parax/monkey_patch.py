@@ -10,6 +10,7 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
 from jax.lib import xla_client as xc
 from jax.lib.xla_bridge import get_backend as default_get_backend
 
+from parax.global_env import global_config
 from parax.pipeline_parallel.primitive_def import xla_identity
 
 ########################################
@@ -59,9 +60,14 @@ jax.random.uniform = fast_uniform
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
+remat_using_while_backup = jax.xla._remat_using_while
 
 def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
                           call_jaxpr):
+    if global_config.remat_using_while:
+        return remat_using_while_backup(c, axis_env, in_nodes, name_stack,
+            backend, name, call_jaxpr)
+
     bias_args = xla_identity(c, *in_nodes, op_type="remat_begin")
     bias_args = [
         xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))

@@ -60,7 +60,7 @@ if __name__ == "__main__":
                                     use_separate_process=args.use_separate_process)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes) = result
+         submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
 
 
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",

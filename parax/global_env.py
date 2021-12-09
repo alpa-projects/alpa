@@ -2,6 +2,8 @@
 import os
 import copy
 
+import numpy as np
+
 
 class GlobalConfig:
     """Global configuration of parax.
@@ -18,7 +20,7 @@ class GlobalConfig:
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
 
-        ########## Options for logical mesh shape search ##########
+        ########## Options for shard parallel ##########
         self.search_logical_mesh_shape = False
         self.mesh_shape_search_mode = "cost_model"
         self.mesh_shape_search_log_file = None
@@ -27,32 +29,41 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
-        ########## Options for pipeline stage ##########
+        ########## Options for pipeline parallel ##########
         self.pipeline_stage_mode = "uniform_layer_gpipe"
+        self.profile_with_whole_ray_cluster = True
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
+        self.submesh_autosharding_global_configs = None
+        self.logical_mesh_search_space = "default"
+        self.auto_stage_construction_imbalance_tolerance = np.inf
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
+        self.use_hlo_cost_model = False
+        self.profiling_database_filename = None
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
         self.allow_replicated_parameters = True  # Whether allow replicated parameters.
-        self.force_data_parallel = False  # Whether force to generate data-parallel
+        self.force_data_parallel = False  # Whether force to generate data-parallel.
         self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
-        # a mesh dimension
+        # a mesh dimension.
         self.force_zero_stage_3 = False  # Whether force to generate a strategy similar to
-        # ZeRO optimizer stage 3
-        self.force_zero_stage_3_all_gather_threshold = 1 << 26  # The threshold of all-gather combiner
+        # ZeRO optimizer stage 3.
+        self.force_zero_stage_3_all_gather_threshold = 1 << 25  # The threshold of all-gather combiner
         # if force_zero_stage_3 is true.
         self.prefer_reduce_scatter = False  # Prefer reduce-scatter over allreduce.
         self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
         self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
+        # instead of the ILP solver.
 
         ########## Options for pipeline runtime ##########
-        self.pipeline_distributed_compile = True
+        self.pipeline_distributed_compile = True  # Whether to use distributed compilation
+        # in pipeline parallel for each stage. Disabling it helps debug.
         self.pipeline_use_signal_send_recv = False
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
@@ -60,6 +71,7 @@ class GlobalConfig:
 
         ########## Options for XLA compilation ##########
         self.build_random_seed = 42
+        self.remat_using_while = False
 
         ########## Options for benchmark ##########
         # If true, the system is allowed to use dummy values during
@@ -83,23 +95,30 @@ class GlobalConfig:
 global_config = GlobalConfig()
 
 
-def set_parallelize_options(devices=None,
-                            strategy="shard_parallel",
-                            memory_budget_per_device=None,
-                            search_logical_mesh_shape=False,
-                            mesh_shape_search_mode="cost_model",
-                            mesh_shape_search_log_file=None,
-                            num_micro_batches=None,
-                            profile_communication=False,
-                            cache_folder="parax_cache",
-                            cache_auto_sharding_ilp_solution=False,
-                            pipeline_stage_mode="uniform_layer_gpipe",
-                            cache_compute_cost=None,
-                            forward_stage_layer_ids=None,
-                            sub_physical_mesh_shapes=None,
-                            sub_logical_mesh_shapes=None,
-                            pipeline_parallel_schedule="1f1b",
-                            pipeline_distributed_compile=True):
+def set_parallelize_options(
+        devices=None,
+        strategy="shard_parallel",
+        memory_budget_per_device=None,
+        num_micro_batches=None,
+        # shard-parallel
+        search_logical_mesh_shape=False,
+        mesh_shape_search_mode="cost_model",
+        mesh_shape_search_log_file=None,
+        profile_communication=False,
+        cache_folder="parax_cache",
+        cache_auto_sharding_ilp_solution=False,
+        # pipeline-parallel
+        pipeline_stage_mode="uniform_layer_gpipe",
+        cache_compute_cost=None,
+        forward_stage_layer_ids=None,
+        sub_physical_mesh_shapes=None,
+        sub_logical_mesh_shapes=None,
+        submesh_autosharding_global_configs=None,
+        logical_mesh_search_space="default",
+        auto_stage_construction_imbalance_tolerance=np.inf,
+        pipeline_parallel_schedule="1f1b",
+        use_hlo_cost_model=False,
+        profiling_database_filename=None):
     """
     Set the global options for all @parallelize decorator.
 
@@ -136,9 +155,16 @@ def set_parallelize_options(devices=None,
         for each forward stage. Used for "manual_gpipe".
       sub_logical_mesh_shapes (Optional[List[Tuple[int, int]]]): the logical shapes of
         submeshes for each forward stage. Used for manual layer slicing.
+      submesh_autosharding_global_configs (Optional[List[Dict]]): The global
+        configuration for auto-sharding of submeshes. Used for manual layer
+        slicing.
+      logical_mesh_search_space (str): The search space for the logical mesh
+        shape. Possible choices: {"default", "all", "single_node_model_parallel"}.
+      auto_stage_construction_imbalance_tolerance (float): The tolerance of
+        imbalance in the auto-stage construction.
       pipeline_parallel_schedule (str): the pipeline schedule, "gpipe" or "1f1b".
-      pipeline_distributed_compile (bool): Whether to use distributed compilation
-        in pipeline parallel for each stage. Disabling it helps debug.
+      use_hlo_cost_model (bool): Whether use the Hlo instruction cost model for pipeline profiling.
+      profiling_database_filename (str): The filename of profiling result database.
     """
     global global_config
 
@@ -156,17 +182,20 @@ def set_parallelize_options(devices=None,
     global_config.cache_compute_cost = cache_compute_cost
     global_config.forward_stage_layer_ids = forward_stage_layer_ids
     global_config.sub_physical_mesh_shapes = sub_physical_mesh_shapes
-    # Note(Hao): a (2, 4) physical mesh can expand to (1, 8), (2, 4), (4, 2) etc.
     global_config.sub_logical_mesh_shapes = sub_logical_mesh_shapes
+    global_config.submesh_autosharding_global_configs = submesh_autosharding_global_configs
+    global_config.logical_mesh_search_space = logical_mesh_search_space
+    global_config.auto_stage_construction_imbalance_tolerance = auto_stage_construction_imbalance_tolerance
     global_config.pipeline_parallel_schedule = pipeline_parallel_schedule
-    global_config.pipeline_distributed_compile = pipeline_distributed_compile
+    global_config.use_hlo_cost_model = use_hlo_cost_model
+    global_config.profiling_database_filename = profiling_database_filename
 
-
-# Don't let the compilation on the driver node use GPUs.
-# TODO(lmzheng): enable auto-tuning for compilation on workers.
 
 is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"
 
+# Don't let the compilation on the driver node use GPUs.
+# TODO(lmzheng): enable auto-tuning for compilation on workers.
 os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
                                          "") + " --xla_gpu_autotune_level=0"
+
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

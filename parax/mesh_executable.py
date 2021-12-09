@@ -294,7 +294,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             for cost_vec in costs:
                 if np.inf in cost_vec:
                     return [np.inf] * len(cost_vec)
-            costs = costs[0]
+            costs = np.mean(costs)
         else:
             costs = profile_xla_executable(self.compiled,
                                            xla_bridge.get_backend("gpu"),

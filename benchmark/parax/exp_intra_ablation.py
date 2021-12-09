@@ -43,25 +43,25 @@ gpt_auto_sharding = [
 gpt_data_parallel = [
     # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
     (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  False, _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  False, _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  False, _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  False, _),
 ]
 
 gpt_zero_2 = [
     # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
     (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _),
 ]
 
 gpt_zero_3 = [
     # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
     (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
 ]
 
 gpt_heuristic = [
@@ -73,8 +73,8 @@ gpt_heuristic = [
 ]
 
 suites = [
-    #("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
-    #("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
+    ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
+    ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
     ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
     #("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
     #("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
@@ -120,4 +120,4 @@ if __name__ == "__main__":
         values = [exp_name, instance, num_hosts, num_devices_per_host,
                   model_name, method, to_str_round(value_dict, 4),
                   int(time.time())]
-        write_tsv(heads, values, f"exp_intra_ablation.tsv")
+        write_tsv(heads, values, f"results_intra_ablation.tsv")

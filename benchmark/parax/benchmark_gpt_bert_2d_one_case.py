@@ -107,6 +107,9 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
 
+    if other == "zero-3":
+        global_config.force_zero_stage_3 = True
+
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,

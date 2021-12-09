@@ -147,7 +147,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     # Model configs
     model_type = "wide_resnet"
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
-        mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
+        mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
         prefer_reduce_scatter, use_remat = benchmark_case
     if dtype == "fp32":
         dtype = jnp.float32
@@ -164,7 +164,9 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
         use_grad_acc = False
         num_micro_batches = None
 
-    global_config.force_data_parallel = force_data_parallel
+    if force_batch_dim_mapping:
+        # Always map batch dim to mesh dim 0
+        global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
     global_config.allow_mixed_mesh_shape = True
 
@@ -302,5 +304,5 @@ if __name__ == "__main__":
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
-    benchmark_one_case(args.model, case, args.niter, args.num_hosts, args.num_devices_per_host,
+    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
                        args.local, False, args.dump_result)

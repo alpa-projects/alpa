@@ -42,7 +42,7 @@ default_benchmark_suite = {
     #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  False,  True,  False),
 
     # 2d mesh
-    (64,   224, 50,  320, 2, "fp32", 2,  4,  1,  False, False, False),
+    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False),
 ],
 }
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     # Run all cases
     for benchmark_case in suite:
         batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
-            mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
+            mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
             prefer_reduce_scatter, use_remat = benchmark_case
 
         model_config = (batch_size, image_size, num_layers, num_channels, width_factor)

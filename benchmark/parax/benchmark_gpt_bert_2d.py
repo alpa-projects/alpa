@@ -64,7 +64,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Get the number of devices
-    if args.num_hosts is None:
+    if args.num_hosts is not None or args.num_devices_per_host is not None:
+        assert args.num_hosts is not None and args.num_devices_per_host is not None
+        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
+    else:
         if args.local:
             num_hosts = 1
             num_devices_per_host = list_gpu_info().count("UUID")
@@ -72,11 +75,9 @@ if __name__ == "__main__":
             ray.init(address="auto")
             num_hosts = len(ray.nodes())
             num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
-    else:
-        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
     num_gpus = num_hosts * num_devices_per_host
 
-    # Get benchmark suite and run all cases
+    # Get the benchmark suite
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:

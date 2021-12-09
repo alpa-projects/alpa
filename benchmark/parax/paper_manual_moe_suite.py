@@ -35,7 +35,7 @@ test_moe_suite = {
 ],
 
 8: [
-    (8,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params,     1),
+    (16,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params,     1),
 ],
 
 16: [

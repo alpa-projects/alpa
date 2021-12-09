@@ -67,6 +67,7 @@ class GlobalConfig:
         self.pipeline_use_signal_send_recv = False
         self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
+        self.use_scatter_gather = True
 
         ########## Options for XLA compilation ##########
         self.build_random_seed = 42

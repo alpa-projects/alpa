@@ -50,12 +50,12 @@ if __name__ == "__main__":
     for case in suite:
         batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size, \
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, \
-        num_micro_batches, force_data_parallel, use_remat, tie_word_embeddings, \
+        num_micro_batches, force_data_parallel, use_remat, reduce_scatter, \
         auto_layer, _ = case
-        if pipeline_mp_size < 1:
+        if pipeline_mp_size <= 1:
             print(f"Skipping the case: {str(case)}, because PP <= 1. Lianmin will test it.")
             continue
-
+        print(">>> Working on case: {}".format(str(case)))
         result = benchmark_one_case(case, args.niter,
                                     use_separate_process=args.use_separate_process)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
 
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs",
+                 "Force Mapping", "Remat", "Reduce-scatter", "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem"]
 
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
@@ -72,7 +72,7 @@ if __name__ == "__main__":
         p_mesh_shape = (p_dim0, p_dim1)
         values = ["MoE", str(model_config), str(paralell_config),
                   str(p_mesh_shape), str(num_micro_batches), str(force_data_parallel), str(use_remat),
-                  f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                  str(reduce_scatter), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                   f"{max_mem_allocated/GB:5.3f}G" ]
         write_tsv(heads, values, output_name)

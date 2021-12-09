@@ -135,11 +135,11 @@ wresnet_heuristic = [
 ]
 
 moe1_spec = [
-    #B,   I,   L,   C, W,   V,     E,  S_
-    (8, 1024, 1024, 8, 32,  51200, 8,  4096),
-    (8, 1024, 1024, 8, 32,  51200, 16, 4096),
-    (8, 1024, 1024, 8, 32,  51200, 32, 4096),
-    (8, 1024, 1024, 8, 32,  51200, 64, 4096),
+    #B, S,    H     L, #head,    V,     E,  S_,
+    (8, 1024, 1024, 8, 1024//32, 51200, 8,  1024),
+    (8, 1024, 1280, 8, 1280//32, 51200, 16, 1024),
+    (8, 1024, 1536, 8, 1536//64, 51200, 16, 1024),
+    (8, 1024, 1536, 8, 1536//64, 51200, 32, 1024),
 ]
 
 moe_auto_sharding = [
@@ -183,26 +183,26 @@ moe_heuristic = [
 ]
 
 suites = [
-    ## GPT
-    #("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
-    #("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
-    #("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
-    #("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
-    #("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+    # GPT
+    ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
+    ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
+    ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
+    ("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
+    ("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
 
-    ## W-resnet
-    #("W-ResNet-1", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
-    #("W-ResNet-1", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
-    #("W-ResNet-1", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
-    #("W-ResNet-1", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
-    #("W-ResNet-1", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
+    # W-resnet
+    ("W-ResNet-1", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
+    ("W-ResNet-1", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
+    ("W-ResNet-1", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
+    ("W-ResNet-1", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
+    ("W-ResNet-1", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
 
     # MoE
     ("MoE-1", "parax.auto_sharding", moe_auto_sharding, benchmark_one_case_moe),
-    #("MoE-1", "parax.data_parallel", moe_data_parallel, benchmark_one_case_moe),
-    #("MoE-1", "parax.zero_2", moe_zero_2, benchmark_one_case_moe),
-    #("MoE-1", "parax.zero_3", moe_zero_3, benchmark_one_case_moe),
-    #("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe),
+    ("MoE-1", "parax.data_parallel", moe_data_parallel, benchmark_one_case_moe),
+    ("MoE-1", "parax.zero_2", moe_zero_2, benchmark_one_case_moe),
+    ("MoE-1", "parax.zero_3", moe_zero_3, benchmark_one_case_moe),
+    ("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe),
 ]
 
 

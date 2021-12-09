@@ -830,7 +830,8 @@ def get_num_hosts_and_num_devices(args):
         else:
             ray.init(address="auto")
             num_hosts = len(ray.nodes())
-            num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
+            num_devices_per_host = int(
+                ray.cluster_resources()["GPU"]) // num_hosts
     return num_hosts, num_devices_per_host
 
 
@@ -936,4 +937,3 @@ def get_cross_slice_vars(jaxpr, slices):
         for invar in invars:
             print(invar, invar.aval.shape, 'from layer', defined[invar])
     return
-

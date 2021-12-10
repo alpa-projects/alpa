@@ -678,7 +678,8 @@ def cluster_layers_and_slice_mesh(layers,
 
     for name in ["stage-construction", "stage-construction-dp",
                  "stage-construction-compilation", "stage-construction-profiling"]:
-        timers(name).stop()
+        if name in timers.timers:
+            timers(name).stop()
     return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
             autosharding_global_configs)
 

@@ -103,4 +103,4 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
               f" #heavy_ops={stage_heavy_ops[i]}")
     print(" - Invars of each stage:")
     get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
-    print("-" * 70)
+    print("-" * 61)

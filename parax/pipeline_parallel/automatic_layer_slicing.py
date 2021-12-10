@@ -19,6 +19,7 @@ from parax.pipeline_parallel.manual_layer_slicing import (insert_marker,
 from parax.pipeline_parallel.layer_stats import (is_nontrivial, eqn_flops,
                                                  heavy_count,
                                                  log_layer_slicing_stats)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 

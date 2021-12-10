@@ -11,6 +11,7 @@ from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_sui
 from benchmark.parax.paper_auto_moe_suite import test_auto_moe_suite, paper_auto_moe_suite
 
 GB = 1024 ** 3
+_ = None
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, S_ = expert_group_size, E = expert_number,

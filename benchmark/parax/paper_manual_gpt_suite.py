@@ -3,28 +3,28 @@
 gpt_specs = {
 # Note: that head_size = hidden_size / #head
         # S，    H，    #L,   #head,  V,
-"125M": (1024,  768,   12,    12,   51200, ),
-"350M": (1024,  1024,  24,    16,   51200, ),
-"760M": (1024,  1536,  24,    16,   51200, ),
-"1.3B": (1024,  2048,  24,    32,   51200, ),
-"2.7B": (1024,  2560,  32,    32,   51200, ),
-"6.7B": (1024,  4096,  32,    32,   51200, ),
-"15B":  (1024,  5120,  48,    40,   51200, ),
-"39B":  (1024,  8192,  48,    64,   51200, ),
-"76B":  (1024,  10240, 60,    80,   51200, ),
+"125M": (1024,  768,   12,    12,   51200,),
+"350M": (1024,  1024,  24,    16,   51200,),
+"760M": (1024,  1536,  24,    16,   51200,),
+"1.3B": (1024,  2048,  24,    32,   51200,),
+"2.7B": (1024,  2560,  32,    32,   51200,),
+"6.7B": (1024,  4096,  32,    32,   51200,),
+"15B":  (1024,  5120,  48,    40,   51200,),
+"39B":  (1024,  8192,  48,    64,   51200,),
+"76B":  (1024,  10240, 60,    80,   51200,),
 
 # for debugging purpose
-"6.7B-half": (1024,  4096,  16,    32,   51200, ),
-"2.7B-half": (1024,  2560,  4,    32,   51200, ),
-"15B-":  (1024,  5120,  4,    40,   51200, ),
+"6.7B-half": (1024,  4096,  16,   32,   51200,),
+"2.7B-half": (1024,  2560,  4,    32,   51200,),
+"15B-":      (1024,  5120,  4,    40,   51200,),
 }
 
-
-fixed_params = (True, True, "uniform_layer_gpipe", None)
+              # Remat, RS,   pipeline_stage_mode,   overwrite_global_config_dict
+fixed_params = (True,  True, "uniform_layer_gpipe", None)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,  ...
 1: [
 ],
 
@@ -33,7 +33,7 @@ test_gpt_suite = {
 ],
 
 8: [
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
     # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
     # (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
 
@@ -57,7 +57,7 @@ test_gpt_suite = {
 
 
 paper_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
 1: [
     # 125M
     (2,   *gpt_specs["125M"],  1,   1,   1,   1,   1,  1,    1,  *fixed_params),

@@ -5,7 +5,7 @@ import time
 import numpy as np
 import ray
 
-from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices
+from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
 from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite, result_auto_gpt_suite
@@ -16,23 +16,19 @@ GB = 1024 ** 3
 # #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
 # PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, AP = auto-pipeline
+# RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
 
 # yapf: disable
 
 default_suite = {
 4: [
-    #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    AP
-    (32,   1024,  1024, 4, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False, None),
-    (32,   1024,  1024, 8, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False, None),
+    #B,   S,     H     L,   #head,   V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    AP
-    (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, False, None), # 0.323
-    #(64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  False, True,  False, False, None), # 0.380
-    #(128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  True,  True,  False, False, None), # 0.323
-    #(128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  False, True,  False, False, None), # 0.380
+    #B,   S,     H     L,  #head,    V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
+    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "uniform_layer_gpipe", None),
+    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "auto_gpipe",          None),
 ]
 }
 
@@ -102,7 +98,7 @@ if __name__ == "__main__":
                                     use_separate_process=args.use_separate_process,
                                     disable_tqdm=args.disable_tqdm)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
-         tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
+         tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
 
         if pipeline_stage_mode == "uniform_layer_gpipe":
@@ -123,14 +119,16 @@ if __name__ == "__main__":
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
                      "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
                      "Layer->Stage Mapping", "Submesh Shapes",
-                     "Logical Mesh Shapes", "Autosharding Global Configs", "overwrite_global_config_dict"]
+                     "Logical Mesh Shapes", "Autosharding Global Configs",
+                     "overwrite_global_config_dict", "compilation times"]
             values = [args.model + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
                       num_micro_batches, use_remat, prefer_reduce_scatter,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                       f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
                       forward_stage_layer_ids, submesh_shapes,
-                      logical_mesh_shapes, autosharding_global_configs, overwrite_global_config_dict]
+                      logical_mesh_shapes, autosharding_global_configs,
+                      overwrite_global_config_dict, to_str_round(compilation_times, 2)]
             write_tsv(heads, values, output_name)
 
         time.sleep(0.1)  # for ctrl+c to work

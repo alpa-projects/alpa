@@ -17,25 +17,24 @@ _ = None
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, AP = auto_pipeline
+# RS = prefer_reduce_scatter
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
-    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _,   _,    1,   1,  True, True,  False, _),
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
+    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
 ],
 
 4: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
-    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _,   _,    1,   1,  True, True,  False, _),
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
+    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _, _,  1,   1,  True, True,  False, _, _),
 ],
 
 16: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
 ]
 }
 

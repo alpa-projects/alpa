@@ -39,9 +39,9 @@ class _Timer:
     def stop(self, sync_func=None):
         """Stop the timer."""
         if self.ever_suspended:
-            assert not self.started, "Stop the timer before suspending it."
+            assert not self.started, f"Stop the timer {self.name} before suspending it."
         else:
-            assert self.started, "timer is not started nor ever suspended."
+            assert self.started, f"timer {self.name} is not started nor ever suspended."
         if sync_func and do_sync:
             sync_func()
         if self.ever_suspended:

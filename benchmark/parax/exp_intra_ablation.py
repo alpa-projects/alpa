@@ -35,52 +35,52 @@ gpt_1_spec = [
 _ = None
 
 gpt_auto_sharding = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 2,   2,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 2,   2,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 4,   2,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 2,   4,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 4,   2,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 2,   4,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 ]
 
 gpt_data_parallel = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  False, _),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
 ]
 
 gpt_zero_2 = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 ]
 
 gpt_zero_3 = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other,    _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
 ]
 
 gpt_heuristic = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "shard-largest"),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "shard-largest", _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest", _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest", _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest", _),
 ]
 
 wresnet1_spec = [
@@ -205,7 +205,7 @@ suites = [
     ("MoE-1", "parax.data_parallel", moe_data_parallel, benchmark_one_case_moe),
     ("MoE-1", "parax.zero_2", moe_zero_2, benchmark_one_case_moe),
     ("MoE-1", "parax.zero_3", moe_zero_3, benchmark_one_case_moe),
-    ("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe),
+    ("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe), # need to set NCCL_LAUNCH_MODE
 ]
 
 

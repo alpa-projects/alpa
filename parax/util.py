@@ -859,12 +859,15 @@ def to_str_round(x, decimal=6):
         return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
                                ]) + "]"
     if isinstance(x, dict):
-        return str({k: eval(to_str_round(v)) for k, v in x.items()})
+        return str(
+            {k: eval(to_str_round(v, decimal=decimal)) for k, v in x.items()})
     if isinstance(x, int):
         return str(x)
     if isinstance(x, float):
         format_str = "%%.%df" % decimal
         return format_str % x
+    if x is None:
+        return str(x)
     raise ValueError("Invalid value: " + str(x))
 
 

@@ -15,7 +15,8 @@ from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
-from parax.util import print_used_time, run_cmd, disable_tqdm_globally
+from parax.timer import timers
+from parax.util import print_used_time, run_cmd, disable_tqdm_globally, to_str_round
 
 GB = 1024 ** 3
 
@@ -114,7 +115,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
     return train_step
 
 def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
-                                num_hosts, num_devices_per_host, disable_tqdm=False):
+                                num_hosts, num_devices_per_host):
     backup = global_config.backup()
     print_used_time(None)
 
@@ -156,9 +157,6 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches,
                                 **overwrite_global_config_dict)
-
-    if disable_tqdm:
-        disable_tqdm_globally()
 
     # Prepare input batch
     # Note: there will be an input conversion.
@@ -208,9 +206,17 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, jnp.float16, auto_layer)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
+
+    if pipeline_stage_mode == "auto_gpipe":
+        compilation_times = {k : timers(k).elapsed() for k in
+                ["stage-construction", "stage-construction-dp",
+                 "stage-construction-compilation", "stage-construction-profiling"]}
+        print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+    else:
+        compilation_times = None
 
     # Dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
@@ -245,7 +251,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
     # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute", "alloc"], niter)
     executable.shutdown()
-    return parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt
+    return (parameter_count, mem_allocated, max_mem_allocated, latencies,
+            tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
 
 
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
@@ -255,15 +262,16 @@ def benchmark_one_case(model, case, niter,
                        num_hosts, num_devices_per_host,
                        use_separate_process=False,
                        dump_result=False, disable_tqdm=False):
+    if disable_tqdm:
+        disable_tqdm_globally()
+
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True)
         jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 
         result = benchmark_gpt_bert_internal(model, case, niter,
-                                             num_hosts, num_devices_per_host,
-                                             disable_tqdm)
-        result = result + get_last_dp_result()
+                                             num_hosts, num_devices_per_host)
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
@@ -281,7 +289,7 @@ def benchmark_one_case(model, case, niter,
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None
+            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
@@ -292,7 +300,7 @@ def benchmark_one_case(model, case, niter,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=7)
+    parser.add_argument("--niter", type=int, default=6)
     parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)

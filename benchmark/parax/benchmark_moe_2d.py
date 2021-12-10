@@ -20,13 +20,13 @@ _ = None
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B, S,    H     L, #head, V,     E,  S_,   LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    AP, _
-    (8, 1024, 1024, 8, 32,    51200, 8,  1024, 1,   1,   _,   _,    1,   1,  True,  True,  False, _,  _),
+    #B, S,    H     L, #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
+    (8, 1024, 1024, 8, 32,    25600, 8,  1024, 1,   1,   _, _,  1,   1,  True,  True,  False, _, _),
 ],
 
 8: [
-    #B, S,    H     L, #head, V,     E,  S_,   LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    AP, _
-    (8, 1024, 1024, 8, 32,    51200, 16, 1024, 8,   1,   _,   _,    1,   1,  False, True,  False, _,  _),
+    #B, S,    H     L, #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
+    (8, 1024, 1024, 4, 32,    25600, 16, 1024, 8,   1,   _, _,  1,   1,  False, True,  False, _, _),
 ],
 
 }

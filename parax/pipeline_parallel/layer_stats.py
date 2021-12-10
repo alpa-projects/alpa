@@ -98,11 +98,9 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
     print(f"layer_num: {len(slices)}")
     print(" - Number of Jaxpr eqns in each stage:")
     for i, slice in enumerate(slices):
-        print(
-            f"Layer {i}: #eqns={len(slice)},"
-            f" flop={stage_flops[i] / (1000 ** 4):.3f} TFlop,"
-            f" #heavy_ops={stage_heavy_ops[i]}")
+        print(f"Layer {i}: #eqns={len(slice)},"
+              f" flop={stage_flops[i] / (1000 ** 4):.3f} TFlop,"
+              f" #heavy_ops={stage_heavy_ops[i]}")
     print(" - Invars of each stage:")
     get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
     print("-" * 70)
-

@@ -237,7 +237,7 @@ class ReshardingTask:
         else:
             if self._sender_tasks is not None and self._receiver_tasks is not None \
                 and self._allgather_tasks is not None:
-                    return True
+                return True
             else:
                 return False
 
@@ -461,13 +461,15 @@ class ReshardingTask:
             sl = self.task_spec.strategy.per_spec_slice_plans[i]
             participant_device_ids = []
             allgather_participants = []
-            participant_worker = self.collective_group.device_str_to_mesh_worker_map[dst_tile.replica_device_strs[0]]
+            participant_worker = self.collective_group.device_str_to_mesh_worker_map[
+                dst_tile.replica_device_strs[0]]
             dtype = self.task_spec.src.aval.dtype
             for replica_index, allgather_participant in enumerate(
                     dst_tile.replica_device_strs):
                 participant_device_ids.append(self.collective_group.\
                     device_str_to_device_id_map[allgather_participant])
-            self._allgather_tasks[participant_worker] = (participant_device_ids, dst_tile.replica_device_strs, sl, dtype)
+            self._allgather_tasks[participant_worker] = (
+                participant_device_ids, dst_tile.replica_device_strs, sl, dtype)
         return self._allgather_tasks
 
     def put_allgather_tasks(self):
@@ -479,8 +481,7 @@ class ReshardingTask:
             uuid = next_resharding_task_uuid()
             self.allgather_task_ids[worker] = uuid
             task_dones.append(
-                worker.put_resharding_allgather_task.remote(uuid, task)
-            )
+                worker.put_resharding_allgather_task.remote(uuid, task))
         ray.get(task_dones)
 
     def do_prepared(self, src_array, profiling=False):
@@ -902,6 +903,7 @@ def unflatten_tile_index(index, shape):
 
 
 class ReshardingStrategy:
+
     def __init__(self, per_spec_plans, per_spec_slice_plans, is_scatter_gather):
         self.per_spec_plans = per_spec_plans
         self.per_spec_slice_plans = per_spec_slice_plans
@@ -1044,8 +1046,10 @@ class CrossMeshCommunicator:
         per_spec_slice_plans = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             num_dst_replica = len(dst_tile.replica_device_strs)
-            per_spec_plan = np.empty((num_dst_replica, len(src_tileslices)), dtype=object)
-            per_spec_slice_plan = np.empty((num_dst_replica, len(src_tileslices)), dtype=object)
+            per_spec_plan = np.empty((num_dst_replica, len(src_tileslices)),
+                                     dtype=object)
+            per_spec_slice_plan = np.empty(
+                (num_dst_replica, len(src_tileslices)), dtype=object)
             for receiver_idx, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 for src_tileslice_idx, src_tileslice in enumerate(
@@ -1059,8 +1063,10 @@ class CrossMeshCommunicator:
                     new_region = []
 
                     # TODO(Hao): this is not general enough
-                    dim_0_length = src_tileslice.offset[0].stop - src_tileslice.offset[0].start
-                    dim_1_length = src_tileslice.offset[1].stop - src_tileslice.offset[1].start
+                    dim_0_length = src_tileslice.offset[
+                        0].stop - src_tileslice.offset[0].start
+                    dim_1_length = src_tileslice.offset[
+                        1].stop - src_tileslice.offset[1].start
                     if dim_0_length < num_dst_replica:
                         # look at the second dim
                         assert dim_0_length * dim_1_length >= num_dst_replica, "cannot support partitioning over the third dim."
@@ -1069,10 +1075,13 @@ class CrossMeshCommunicator:
                         dim_1_index = receiver_idx % dim_1_remained
                         for dim, s in enumerate(src_tileslice.offset):
                             if dim == 0:
-                                new_region.append(slice(dim_0_index, dim_0_index+1, s.step))
+                                new_region.append(
+                                    slice(dim_0_index, dim_0_index + 1, s.step))
                             elif dim == 1:
                                 ind = dim_1_length // dim_1_remained
-                                new_region.append(slice(ind * dim_1_index,  ind * (dim_1_index + 1), None))
+                                new_region.append(
+                                    slice(ind * dim_1_index,
+                                          ind * (dim_1_index + 1), None))
                             else:
                                 new_region.append(s)
                     else:
@@ -1080,19 +1089,23 @@ class CrossMeshCommunicator:
                             if dim == 0:
                                 assert (s.stop - s.start) % num_dst_replica == 0, \
                                     "cannot equally partition for scatter-gather optimization."
-                                region_length = (s.stop - s.start) // num_dst_replica
-                                new_s = slice(s.start + receiver_idx * region_length,
-                                              s.start + (receiver_idx + 1) * region_length,
-                                              s.step)
+                                region_length = (s.stop -
+                                                 s.start) // num_dst_replica
+                                new_s = slice(
+                                    s.start + receiver_idx * region_length,
+                                    s.start +
+                                    (receiver_idx + 1) * region_length, s.step)
                                 new_region.append(new_s)
                             else:
                                 new_region.append(s)
-                    per_spec_slice_plan[receiver_idx][src_tileslice_idx] = new_region
+                    per_spec_slice_plan[receiver_idx][
+                        src_tileslice_idx] = new_region
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
             per_spec_slice_plans.append(per_spec_slice_plan)
-        strategy = ReshardingStrategy(per_spec_plans, per_spec_slice_plans, is_scatter_gather)
+        strategy = ReshardingStrategy(per_spec_plans, per_spec_slice_plans,
+                                      is_scatter_gather)
         return strategy
 
     def _generate_send_recv_resharding_strategy_by_loads(self, spec):
@@ -1124,13 +1137,15 @@ class CrossMeshCommunicator:
                     }
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
-                    per_spec_slice_plan[receiver_idx][src_tileslice_idx] = src_tileslice.offset
+                    per_spec_slice_plan[receiver_idx][
+                        src_tileslice_idx] = src_tileslice.offset
                     # upload load on-the-fly
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
             per_spec_slice_plans.append(per_spec_slice_plan)
-        strategy = ReshardingStrategy(per_spec_plans, per_spec_slice_plans, is_scatter_gather)
+        strategy = ReshardingStrategy(per_spec_plans, per_spec_slice_plans,
+                                      is_scatter_gather)
         return strategy
 
     @staticmethod

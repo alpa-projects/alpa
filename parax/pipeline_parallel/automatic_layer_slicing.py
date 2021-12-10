@@ -16,7 +16,9 @@ from parax.util import OrderedSet
 from parax.pipeline_parallel.manual_layer_slicing import (insert_marker,
                                                           manual_layer_slicing,
                                                           remat_jaxpr)
-from parax.pipeline_parallel.layer_stats import (is_nontrivial, eqn_flops, heavy_count, log_layer_slicing_stats)
+from parax.pipeline_parallel.layer_stats import (is_nontrivial, eqn_flops,
+                                                 heavy_count,
+                                                 log_layer_slicing_stats)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -209,7 +211,6 @@ def automatic_layer_slicing(fn: Callable,
                                                 cost_criteria=cost_criteria)
             log_layer_slicing_stats(origin_jaxpr, slices)
             return origin_jaxpr, slices, out_shape_tree
-
 
         def wrapped(*args):
             origin_jaxpr, slices, out_shape_tree = get_sliced(*args)

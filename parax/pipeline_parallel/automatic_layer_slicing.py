@@ -312,8 +312,7 @@ def automatic_layer_slicing(fn: Callable,
             print("-" * 70)
             return origin_jaxpr, slices, out_shape_tree
 
-        @wraps(fn)
-        @manual_layer_slicing
+
         def wrapped(*args):
             origin_jaxpr, slices, out_shape_tree = get_sliced(*args)
             transformation = partial(
@@ -326,6 +325,10 @@ def automatic_layer_slicing(fn: Callable,
             ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
             _, out_tree = tree_flatten(out_shape_tree)
             return tree_unflatten(out_tree, ans)
+
+        if use_pipeline:
+            wrapped = manual_layer_slicing(wrapped)
+        wrapped = wraps(fn)(wrapped)
 
         wrapped.get_sliced = get_sliced
         return wrapped

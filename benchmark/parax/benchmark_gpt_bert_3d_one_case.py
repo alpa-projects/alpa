@@ -114,7 +114,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
     return train_step
 
 def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
-                                num_hosts, num_devices_per_host, disable_tqdm=False):
+                                num_hosts, num_devices_per_host):
     backup = global_config.backup()
     print_used_time(None)
 
@@ -156,9 +156,6 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches,
                                 **overwrite_global_config_dict)
-
-    if disable_tqdm:
-        disable_tqdm_globally()
 
     # Prepare input batch
     # Note: there will be an input conversion.
@@ -208,7 +205,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, jnp.float16, auto_layer)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -255,6 +252,9 @@ def benchmark_one_case(model, case, niter,
                        num_hosts, num_devices_per_host,
                        use_separate_process=False,
                        dump_result=False, disable_tqdm=False):
+    if disable_tqdm:
+        disable_tqdm_globally()
+
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True)
         jax.config.update('jax_platform_name', 'cpu')

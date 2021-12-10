@@ -54,7 +54,6 @@ def create_train_state(rngkey, model, dtype, batch):
 
 def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_host):
     # Backup global config
-    global time
     backup = global_config.backup()
     print_used_time(None)
 
@@ -62,8 +61,9 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size, \
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,\
         num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter, \
-        auto_pipeline, _ = benchmark_case
+        auto_pipeline, overwrite_global_config_dict = benchmark_case
     dtype = jnp.float16
+    tie_word_embeddings = False
 
     rang_factor = 1
     expected_expert_group_size = min(expert_group_size, batch_size * seq_len // num_micro_batches // l_dim0 // rang_factor)
@@ -72,8 +72,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
               format(expected_expert_group_size, expert_group_size))
         expert_group_size = expected_expert_group_size
 
-    tie_word_embeddings = False
     # Parallel configs
+    auto_layer = auto_pipeline
     grad_func = parax.grad
 
     if force_batch_dim_mapping:
@@ -86,14 +86,23 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
+    
+    if not isinstance(overwrite_global_config_dict, dict):
+        overwrite_global_config_dict = {}
 
-    virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    set_parallelize_options(devices=virtual_mesh,
-                            strategy="3d_parallel",
-                            num_micro_batches=num_micro_batches,
-                            sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
-                            sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
-                            pipeline_parallel_schedule="1f1b")
+    if not auto_pipeline:
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="3d_parallel",
+                                num_micro_batches=num_micro_batches,
+                                sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
+                                sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
+                                pipeline_parallel_schedule="1f1b")
+    else:
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="3d_parallel",
+                                pipeline_stage_mode="auto_gpipe",
+                                num_micro_batches=num_micro_batches,
+                                **overwrite_global_config_dict)
 
     # Prepare input batch
     batch = {
@@ -104,6 +113,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
+
+    add_manual_layer_slicing_marker = ((not auto_layer) and (pipeline_mp_size > 1))
 
     # Init train state
     model = FlaxMoEForLMModule(MoEConfig(
@@ -117,7 +128,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         expert_number=num_experts,
         pipeline_mp_size=pipeline_mp_size,
         tie_word_embeddings=tie_word_embeddings,
-        gradient_checkpointing=use_remat
+        gradient_checkpointing=use_remat and not auto_layer,
+        add_manual_pipeline_markers=add_manual_layer_slicing_marker,
     ), dtype=dtype)
 
     rngkey = jax.random.PRNGKey(0)
@@ -125,11 +137,11 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
-    # dump hlo ir for debugging
+    # Dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
     for i in range(len(stage_hlo_texts)):
         with open(f"tmp/stage_{i}.hlo", "w") as fout:
@@ -170,7 +182,11 @@ TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
+                       disable_tqdm=False,
                        use_separate_process=False, dump_result=False):
+    if disable_tqdm:
+        disable_tqdm_globally()
+
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True)
         jax.config.update('jax_platform_name', 'cpu')
@@ -187,7 +203,8 @@ def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
                       f'--case "{case}" '
                       f"--num-hosts {num_hosts} "
                       f"--num-devices-per-host {num_devices_per_host} "
-                      f"--dump-result ")
+                      f"--dump-result "
+                      f'{"--disable-tqdm" if disable_tqdm else ""}')
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
@@ -207,9 +224,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--dump-result", action="store_true",
                         help="Dump results into a temporary pickle file")
+    parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
     benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
-                       use_separate_process=False, dump_result=args.dump_result)
+                       use_separate_process=False, dump_result=args.dump_result,
+                       disable_tqdm=args.disable_tqdm)

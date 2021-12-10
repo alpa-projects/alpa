@@ -17,15 +17,14 @@ moe_specs = {
 
 }
 
-#               Remat, RS, AP
-fixed_params = (True,  True,  False)
+#               Remat, RS,   AP
+fixed_params = (True,  True, False)
 
 
 test_moe_suite = {
-
 1: [
-    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Auto-pipeline), _
-    (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  False,   *fixed_params,     1),
+    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,  (Remat, RS, AP), EP (deepspeed-only)
+    (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  False,   *fixed_params,  1),
 ],
 
 2: [
@@ -35,8 +34,10 @@ test_moe_suite = {
 ],
 
 8: [
+    (16,     *moe_specs["1.3B"],  8 * 1024 // 2,   1,    4,    1,    4,   2,    1,  False,   *fixed_params, 1),
+
     # All-to-all error
-    #(16,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params,     1),
+    #(16,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params, 1),
 ],
 
 16: [

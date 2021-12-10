@@ -150,8 +150,17 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         "while now num_devices_per_host = {}".format(num_devices_per_host))
 
     # larger meshes:
-    for i in range(2, num_hosts + 1):
-        submesh_choices.append((i, num_devices_per_host))
+    if global_config.submesh_choices_mode == "all":
+        for i in range(2, num_hosts + 1):
+            submesh_choices.append((i, num_devices_per_host))
+    elif global_config.submesh_choices_mode == "power_of_two":
+        i = 2
+        while i <= num_hosts:
+            submesh_choices.append((i, num_devices_per_host))
+            i *= 2
+    else:
+        raise ValueError("Invalid submesh_choices: {}".format(
+            global_config.submesh_choices))
 
     return submesh_choices
 
@@ -218,7 +227,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 layer_flops_prefix_sum):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
-    tot_flops = layer_flops_prefix_sum[num_layers]
+    tot_flops = layer_flops_prefix_sum[2 * num_layers]
     num_autosharding_configs = len(autosharding_configs)
     indices = list(range(2 * num_layers))
     stages = []
@@ -233,7 +242,9 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
             if is_full_mesh and not (start == 0 and end == num_layers - 1):
                 continue
             flops_ratio = (layer_flops_prefix_sum[end + 1] -
-                           layer_flops_prefix_sum[start]) / tot_flops
+                           layer_flops_prefix_sum[start] +
+                           layer_flops_prefix_sum[2 * num_layers - start] -
+                           layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
             if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
                 (computation_source_ratio < flops_ratio / (1 + tolerance))):
                 continue

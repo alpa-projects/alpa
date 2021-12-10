@@ -20,7 +20,7 @@ gpt_specs = {
 }
 
 
-fixed_params = (True, True, False, None)
+fixed_params = (True, True, "uniform_layer_gpipe", None)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
@@ -50,6 +50,7 @@ test_gpt_suite = {
 ],
 
 32: [
+    (1024,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  32,    True,  *fixed_params),
 ]
 
 }

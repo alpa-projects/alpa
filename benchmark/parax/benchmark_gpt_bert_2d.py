@@ -83,7 +83,7 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
          l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-         use_remat, prefer_reduce_scatter, auto_pipeline) = benchmark_case
+         use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
 

@@ -99,7 +99,13 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
         elif auto_layer:
-            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True, use_remat=use_remat)
+            if use_remat:
+                loss_func = automatic_layer_slicing(loss_func, num_layers,
+                                                    use_pipeline=False,
+                                                    use_remat=True)
+            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size,
+                                                use_pipeline=True,
+                                                use_remat=False)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
@@ -115,13 +121,13 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, auto_pipeline, overwrite_global_config_dict) = benchmark_case
+     use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
 
     dtype = jnp.float16
     tie_word_embeddings = False
 
     # Parallel configs
-    auto_layer = auto_pipeline
+    auto_layer = pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]
     grad_func = parax.grad
 
     if force_batch_dim_mapping:
@@ -136,7 +142,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     if overwrite_global_config_dict is None:
         overwrite_global_config_dict = {}
 
-    if not auto_pipeline:
+    if pipeline_stage_mode == "uniform_layer_gpipe":
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 num_micro_batches=num_micro_batches,
@@ -147,7 +153,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     else:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
-                                pipeline_stage_mode="auto_gpipe",
+                                pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches,
                                 **overwrite_global_config_dict)
 

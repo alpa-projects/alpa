@@ -92,7 +92,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     # Model configs
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
         mesh_dim0, mesh_dim1, _, _, _,  num_micro_batches, force_batch_dim_mapping,\
-        use_remat, prefer_reduce_scatter, other = benchmark_case
+        use_remat, prefer_reduce_scatter, other, overwrite_global_config_dict = benchmark_case
     dtype = jnp.float16
 
     # Parallel configs

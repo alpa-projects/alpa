@@ -8,7 +8,7 @@ import ray
 from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
-from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite
+from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite, result_auto_gpt_suite
 
 GB = 1024 ** 3
 
@@ -44,6 +44,7 @@ benchmark_suites = {
     "test_gpt": test_gpt_suite,
     "paper_auto_gpt": paper_auto_gpt_suite,
     "test_auto_gpt": test_auto_gpt_suite,
+    "result_auto_gpt": result_auto_gpt_suite,
 }
 
 
@@ -85,7 +86,7 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
          l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-         use_remat, prefer_reduce_scatter, auto_pipeline, overwrite_global_config_dict) = benchmark_case
+         use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
 
         if pipeline_mp_size <= 1 and not auto_pipeline:
@@ -104,7 +105,7 @@ if __name__ == "__main__":
          tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
 
-        if not auto_pipeline:
+        if pipeline_stage_mode == "uniform_layer_gpipe":
             heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
                      "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
@@ -123,7 +124,7 @@ if __name__ == "__main__":
                      "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
                      "Layer->Stage Mapping", "Submesh Shapes",
                      "Logical Mesh Shapes", "Autosharding Global Configs", "overwrite_global_config_dict"]
-            values = [args.model + "-auto", model_config, num_gpus, pipeline_mp_size,
+            values = [args.model + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
                       num_micro_batches, use_remat, prefer_reduce_scatter,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",

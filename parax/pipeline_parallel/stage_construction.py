@@ -284,7 +284,12 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
             (num_layers, num_layers, num_autosharding_configs), np.inf)
         max_n_succ_stages = np.full(
             (num_layers, num_layers, num_autosharding_configs), -1)
+        # Suspend timers
+        timers("stage-construction-compilation").suspend()
+        timers("stage-construction-profiling").start()
+        timers("stage-construction-profiling").suspend()
         return compute_cost, max_n_succ_stages
+
     # TODO(zhuohan): set the number of workers as a tunable parameter
     print("- Compile all stages")
     compiled_outputs = compile_all(stages)

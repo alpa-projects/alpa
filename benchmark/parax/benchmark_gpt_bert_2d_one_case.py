@@ -184,7 +184,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 28 * GB: # out of memory
+    if alloc_mem > 16 * GB: # out of memory
         latencies = [-1]
     else:
         for i in range(niter):

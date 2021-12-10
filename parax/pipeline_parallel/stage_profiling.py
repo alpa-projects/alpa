@@ -234,13 +234,17 @@ class HloCostModelProfileWorker:
         xla_computation = xla_client.XlaComputation(proto)
 
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
-        compiled = compile_with_given_strategy(self.backend,
-                                               xla_computation,
-                                               config,
-                                               self.num_devices,
-                                               True,
-                                               hlo_proto_status,
-                                               run_backend_codegen=True)
+        try:
+            compiled = compile_with_given_strategy(self.backend,
+                                                   xla_computation,
+                                                   config,
+                                                   self.num_devices,
+                                                   True,
+                                                   hlo_proto_status,
+                                                   run_backend_codegen=True)
+        except RuntimeError:
+            return stage_id, np.inf, -1, (0, 0, 0, 0)
+
         hlo_module = compiled.hlo_modules()[0]
         grad_sync_channel_ids = ""
         if acc_grad_indices:

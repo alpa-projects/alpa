@@ -144,7 +144,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 26 * GB: # out of memory
+    if alloc_mem > 16 * GB: # out of memory
         latencies = [-1]
     else:
         for i in range(niter):

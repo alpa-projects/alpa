@@ -31,7 +31,6 @@ benchmark_suites = {
 }
 
 
-
 def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
@@ -142,10 +141,13 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
-    compilation_times = {k : timers(k).elapsed() for k in
-            ["stage-construction", "stage-construction-dp",
-             "stage-construction-compilation", "stage-construction-profiling"]}
-    print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+    if auto_pipeline:
+        compilation_times = {k : timers(k).elapsed() for k in
+                ["stage-construction", "stage-construction-dp",
+                 "stage-construction-compilation", "stage-construction-profiling"]}
+        print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+    else:
+        compilation_times = None
 
     # Dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
@@ -215,7 +217,7 @@ def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None
+            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

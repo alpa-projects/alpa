@@ -205,7 +205,7 @@ suites = [
     ("MoE-1", "parax.data_parallel", moe_data_parallel, benchmark_one_case_moe),
     ("MoE-1", "parax.zero_2", moe_zero_2, benchmark_one_case_moe),
     ("MoE-1", "parax.zero_3", moe_zero_3, benchmark_one_case_moe),
-    ("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe),
+    ("MoE-1", "parax.heuristic", moe_heuristic, benchmark_one_case_moe), # need to set NCCL_LAUNCH_MODE
 ]
 
 

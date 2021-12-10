@@ -865,6 +865,8 @@ def to_str_round(x, decimal=6):
     if isinstance(x, float):
         format_str = "%%.%df" % decimal
         return format_str % x
+    if x is None:
+        return str(x)
     raise ValueError("Invalid value: " + str(x))
 
 

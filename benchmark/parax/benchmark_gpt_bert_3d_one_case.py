@@ -99,7 +99,13 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
         if add_pipeline_marker:
             loss_func = manual_layer_slicing(loss_func)
         elif auto_layer:
-            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size, use_pipeline=True, use_remat=use_remat)
+            if use_remat:
+                loss_func = automatic_layer_slicing(loss_func, num_layers,
+                                                    use_pipeline=False,
+                                                    use_remat=True)
+            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size,
+                                                use_pipeline=True,
+                                                use_remat=False)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training

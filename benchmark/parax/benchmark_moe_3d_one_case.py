@@ -12,10 +12,10 @@ import optax
 import ray
 
 import parax
-from parax import (global_config, set_parallelize_options, DeviceCluster)
+from parax import global_config, set_parallelize_options, DeviceCluster
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.util import (write_tsv, print_used_time)
+from parax.util import write_tsv, print_used_time, disable_tqdm_globally
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from benchmark_gpt_bert_3d_one_case import get_train_step
 from benchmark.util import compute_moe_parameter_count, compute_moe_tflops, run_cmd

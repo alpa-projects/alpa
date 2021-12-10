@@ -33,6 +33,12 @@ def get_auto_test_case(model_name, n_microbatches, num_layers, overwrite_global_
             for num_layer in num_layers]
 
 paper_auto_moe_suite = {
+2: (get_auto_test_case("380M", [16, 32, 64], [8]) +
+    get_auto_test_case("690M", [16, 32, 64], [8])),
+4: (get_auto_test_case("690M", [16, 32, 64], [8]) +
+    get_auto_test_case("1.3B", [16, 32, 64], [8])),
+8: (get_auto_test_case("1.3B", [16, 32, 64], [8]) +
+    get_auto_test_case("2.4B", [16, 32, 64], [8])),
 }
 
 test_auto_moe_suite = {

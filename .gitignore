@@ -33,3 +33,5 @@ benchmark/deepspeed/data
 *.npy
 *.pkl
 benchmark/parax/tmp
+*.log
+

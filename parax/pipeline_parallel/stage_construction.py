@@ -162,7 +162,7 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         raise ValueError("Invalid submesh_choices: {}".format(
             global_config.submesh_choices))
 
-    return submesh_choices
+    return tuple(submesh_choices)
 
 
 def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
@@ -281,14 +281,18 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         return compute_cost, max_n_succ_stages
     # TODO(zhuohan): set the number of workers as a tunable parameter
     print("- Compile all stages")
+    tic = time.time()
     compiled_outputs = compile_all(stages)
+    print("compilation takes {time.time() - tic:.0f} s")
 
+    tic = time.time()
     print("- Profile all stages")
     # shape of compute_cost and max_n_succ_stages:
     # (num_layers, num_layers, num_autosharding_configs)
     compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs,
                                                   meshes, num_layers,
                                                   num_autosharding_configs)
+    print("profiling takes {time.time() - tic:.0f} s")
     return compute_cost, max_n_succ_stages
 
 

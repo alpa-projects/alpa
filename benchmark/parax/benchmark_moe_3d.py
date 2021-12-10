@@ -106,7 +106,7 @@ if __name__ == "__main__":
             p_mesh_shape = (p_dim0, p_dim1)
             values = ["MoE", str(model_config), str(paralell_config),
                       str(p_mesh_shape), str(num_micro_batches), str(force_data_parallel), str(use_remat),
-                      str(reduce_scatter), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                      str(prefer_reduce_scatter), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                       f"{max_mem_allocated/GB:5.3f}G" ]
             write_tsv(heads, values, output_name)

@@ -15,7 +15,7 @@ _ = None
 
 dummy_arguments = (1, 1, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
 fixed_params = (False, True,  True, True) # FM, Remat, RS, AP
-max_global_batch_size = 1024
+max_global_batch_size = 128
 
 default_overwrite_dict = {
     "auto_stage_construction_imbalance_tolerance": 1.0,

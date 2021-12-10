@@ -41,7 +41,7 @@ class _Timer:
         if self.ever_suspended:
             assert not self.started, "Stop the timer before suspending it."
         else:
-            assert self.started, "timer is not started nor ever suspended."
+            assert self.started, f"timer {self.name} is not started nor ever suspended."
         if sync_func and do_sync:
             sync_func()
         if self.ever_suspended:

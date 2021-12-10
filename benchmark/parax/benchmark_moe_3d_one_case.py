@@ -15,8 +15,9 @@ import parax
 from parax import global_config, set_parallelize_options, DeviceCluster
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.util import write_tsv, print_used_time, disable_tqdm_globally
+from parax.util import write_tsv, print_used_time, disable_tqdm_globally, to_str_round
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
+from parax.timer import timers
 from benchmark_gpt_bert_3d_one_case import get_train_step
 from benchmark.util import compute_moe_parameter_count, compute_moe_tflops, run_cmd
 from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_suite
@@ -141,6 +142,11 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
+    compilation_times = {k : timers(k).elapsed() for k in
+            ["stage-construction", "stage-construction-dp",
+             "stage-construction-compilation", "stage-construction-profiling"]}
+    print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+
     # Dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
     for i in range(len(stage_hlo_texts)):
@@ -172,10 +178,12 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
                                      checkpoint_activations=True)
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)
+
     # Restore global config
     global_config.restore(backup)
     executable.shutdown()
-    return parameter_count, mem_allocated, max_mem_allocated, latencies, tflops, tflops_ckpt
+    return (parameter_count, mem_allocated, max_mem_allocated, latencies,
+            tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
 
 
 TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
@@ -193,7 +201,6 @@ def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
         global_config.use_dummy_value_for_benchmarking = True
 
         result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
-        result = result + get_last_dp_result()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.

@@ -26,9 +26,9 @@ default_suite = {
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
-    (64,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "uniform_layer_gpipe", None),
-    (64,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "auto_gpipe",          None),
+    #B,   S,     H     L,  #head,    V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
+    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "uniform_layer_gpipe", None),
+    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "auto_gpipe",          None),
 ]
 }
 

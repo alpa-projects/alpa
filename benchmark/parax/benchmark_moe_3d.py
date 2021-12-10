@@ -17,7 +17,7 @@ GB = 1024 ** 3
 # LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
 # PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
+# RS = prefer_reduce_scatter, AP = auto_pipeline
 
 # yapf: disable
 
@@ -26,9 +26,10 @@ default_suite = {
 ],
 
 8: [
-    #B,  S,    H,    L, #head, V,     E,  S_,            LD0, LD1, PD0, PD1, PP, NB, FM,   Remat, RS,    stage, _
-    (16, 1024, 768,  4, 16,    32000, 16, 8 * 1024 // 2, 1,   4    1,   4,   2,  1,  False,True,  True,  "uniform_layer_gpipe", _
-    (16, 1024, 768,  4, 16,    32000, 16, 8 * 1024 // 2, 1,   4    1,   4,   2,  1,  False,True,  True,  "auto_gpipe", _
+    #B,  S,    H,    L, #head, V,     E,  S_,            LD0, LD1, PD0, PD1, PP, NB, FM,   Remat, RS,    AP,    _
+    (16, 1024, 768,  4, 16,    32000, 16, 8 * 1024 // 2, 1,   4,   1,   4,   2,  1,  False,True,  True,  False, _),
+    (16, 1024, 768,  4, 16,    32000, 16, 8 * 1024 // 2, 1,   4,   1,   4,   2,  1,  False,True,  True,  True,  _),
+]
 }
 
 benchmark_suites = {

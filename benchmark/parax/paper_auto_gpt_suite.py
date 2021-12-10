@@ -82,8 +82,8 @@ test_auto_gpt_suite = {
 }
 
 result_auto_gpt_suite = {
-32: get_auto_test_case("6.7B", [64], [8], "manual_gpipe", {
-    "forward_stage_layer_ids": [[i] for i in range(8)],
+32: get_auto_test_case("6.7B", [64], [32], "manual_gpipe", {
+    "forward_stage_layer_ids": [[4 * i + j for j in range(4)] for i in range(8)],
     "sub_physical_mesh_shapes": [(1, 4)] * 8,
     "sub_logical_mesh_shapes": [(4, 1)] * 8,
     "submesh_autosharding_global_configs": [{'force_batch_dim_to_mesh_dim': 0}] * 8,

@@ -5,7 +5,7 @@ import ray
 
 import numpy as np
 
-from parax.util import list_gpu_info, write_tsv, run_cmd
+from parax.util import list_gpu_info, write_tsv, run_cmd, get_num_hosts_and_num_devices
 
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
@@ -32,7 +32,6 @@ default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 8: [
     #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
     (8,  1024,  1024,  4,    32,   51200, 1,   8,   _,   _,    1,   1,  True, True,  False, _),
-    (8,  1024,  1024,  4,    32,   51200, 8,   1,   _,   _,    1,   1,  True, True,  False, _),
 ],
 
 16: [
@@ -53,7 +52,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--niter", type=int, default=5,
         help="Number of benchmark iteration")
-    parser.add_argument("--use-profiling", action="store_true")
+    parser.add_argument("--num-hosts", type=int)
+    parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--suite", choices=list(benchmark_suites.keys()), default="default")
@@ -62,12 +62,11 @@ if __name__ == "__main__":
               "Errors in a single case will not terminate this script.")
     parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
-    # Get benchmark suite and run all cases
-    if args.local:
-        num_gpus = list_gpu_info().count("UUID")
-    else:
-        ray.init(address="auto")
-        num_gpus = int(ray.cluster_resources()["GPU"])
+
+    # Get the benchmark suite
+    num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
+    num_gpus = num_hosts * num_devices_per_host
+
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:
@@ -88,13 +87,15 @@ if __name__ == "__main__":
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
 
+        # Run one case
         if pipeline_mp_size > 1:
             print(f"Skipping the case: {str(benchmark_case)}, because PP > 1. "
                   f"Please use `benchmark_gpt_bert_3d.py`.")
             continue
         print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(args.model, benchmark_case, args.niter, args.local,
-                                    args.use_separate_process)
+        result = benchmark_one_case(args.model, benchmark_case, args.niter,
+                                    num_hosts, num_devices_per_host,
+                                    args.local, args.use_separate_process)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
 
         # Log results

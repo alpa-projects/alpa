@@ -60,9 +60,9 @@ moe_intra_only = [
 
 wresnet_intra_only = [
     # model,                       D0, D1, NB, FM,    RS,   Remat, other
-    #(1536, *wresnet_specs["250M"], 1,  1,  48, False, True, _, _),
-    #(1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
-    #(1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["250M"], 1,  1,  48, False, True, _, _),
+    (1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
     (1536, *wresnet_specs["2B"],   8,  1,  48, False, True, _, _), # MEM_FRACTION = 0.85
 ]
 

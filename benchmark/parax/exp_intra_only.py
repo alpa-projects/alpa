@@ -40,14 +40,10 @@ _ = None
 
 gpt_intra_only = [
     # model,                   LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Other, _
-    #(1024, *gpt_specs["350M"], 1,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
-    #(1024, *gpt_specs["760M"], 2,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
-    #(1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
-    (1024, *gpt_specs["2.7B"], 8,   1,   _,   _,   1,  128, True,  True,  True,  _,     _), # OOM
-    (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["350M"], 1,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["760M"], 2,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _,     _),
-    (1024, *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  32,  True,  True,  True,  _,     _),
-    (1024, *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  16,  True,  True,  True,  _,     _),
 ]
 
 moe_intra_only = [

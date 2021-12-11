@@ -860,7 +860,7 @@ def to_str_round(x, decimal=6):
                                ]) + "]"
     if isinstance(x, dict):
         return str(
-            {k: eval(to_str_round(v, decimal=decimal)) for k, v in x.items()})
+            {k: to_str_round(v, decimal=decimal) for k, v in x.items()})
     if isinstance(x, int):
         return str(x)
     if isinstance(x, float):

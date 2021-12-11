@@ -465,7 +465,7 @@ class PhysicalDeviceMesh:
             env_vars = {
                 "PARAX_IS_WORKER": "True",
                 "NCCL_USE_MULTISTREAM": "False",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
                 #"NCCL_LAUNCH_MODE": "PARALLEL",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this

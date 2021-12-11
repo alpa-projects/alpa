@@ -39,24 +39,31 @@ GB = 1 << 30
 _ = None
 
 gpt_intra_only = [
-    # model,                   LD0, LD1, PD0, PD1, PP,  NB,  FM,    Remat, RS,    Other, _
-    #(1024, *gpt_specs["350M"], 1,   1,   _,   _,   1,   64,  True,  True,  True,  _,     _),
-    #(1024, *gpt_specs["760M"], 2,   1,   _,   _,   1,   64,  True,  True,  True,  _,     _),
-    #(1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,   64,  True,  True,  True,  _,     _),
-    (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,   128,  True,  True,  True,  _,     _),
+    # model,                   LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Other, _
+    #(1024, *gpt_specs["350M"], 1,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    #(1024, *gpt_specs["760M"], 2,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    #(1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["2.7B"], 8,   1,   _,   _,   1,  128, True,  True,  True,  _,     _), # OOM
+    (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  32,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  16,  True,  True,  True,  _,     _),
 ]
 
 moe_intra_only = [
-    # model,                   S_,   LD0, LD1, PD0, PD1, PP,  NB,  FM,    Remat, RS,    Other, _
-    #(1024, *moe_specs["380M"], 2048, 1,   1,   _,   _,   1,   32,  False, True,  True,  _,     _),
-    #(1024, *moe_specs["690M"], 2048, 2,   1,   _,   _,   1,   32,  False, True,  True,  _,     _),
-    (1024, *moe_specs["1.3B"], 2048, 4,   1,   _,   _,   1,   16,  False, True,  True,  _,     _),
-    (1024, *moe_specs["2.4B"], 2048, 8,   1,   _,   _,   1,   16,  False, True,  True,  _,     _),
+    # model,                   S_,   LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (1024, *moe_specs["380M"], 2048, 1,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
+    (1024, *moe_specs["690M"], 2048, 2,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
+    (1024, *moe_specs["1.3B"], 2048, 4,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
+    (1024, *moe_specs["2.4B"], 2048, 8,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
 ]
 
 wresnet_intra_only = [
     # model,                       D0, D1, NB, FM,    RS,   Remat, other
-    (1024, *wresnet_specs["250M"], 1,  1,  32, False, True, _, _)
+    (1536, *wresnet_specs["250M"], 1,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["2B"],   8,  1,  32, False, True, _, _),
 ]
 
 suites = [

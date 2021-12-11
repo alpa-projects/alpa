@@ -253,8 +253,12 @@ class ReshardingTask:
         tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
         host_idx, device_idx = self.collective_group.device_str_to_rank_map[
             receiver]
-        host_idx = host_idx - self.collective_group.src_mesh.num_hosts
-        flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
+        is_reversed = host_idx < self.collective_group.src_mesh.num_hosts
+        if not is_reversed:
+            host_idx = host_idx - self.collective_group.src_mesh.num_hosts
+            flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
+        else:
+            flatten_idx = host_idx * self.src_mesh.num_devices_per_host + device_idx
         # Reconstruct logical mesh info
         dst_spec = self.task_spec.dst_sharding_spec
         dst_mesh_shape = [(dst_spec.sharding[mesh_map.axis].chunks[0]
@@ -494,20 +498,38 @@ class ReshardingTask:
         self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
             # TODO(yonghao): create new api for colleceive group instead of directly accessing it
-            worker_id = flatten_id // self.dst_mesh.num_devices_per_host
-            participant_worker = self.collective_group.mesh_workers[
-                worker_id + self.src_mesh.num_hosts]
-            receiver = self.collective_group.dst_mesh.device_strs[flatten_id]
-            (step, offset, group_idx, dst_mesh_shape
-            ) = self._allgather_receiver_step_and_offset(receiver)
-            post_allgather_indices = self._indices_in_dst_post_allgather(
-                indices, receiver, False)
-            group_details = self._allgather_tasks[
-                participant_worker].setdefault(
-                    group_idx, dict(participant_device_ids=list(),
-                                    slices=list()))
+            try:
+                worker_id = flatten_id // self.dst_mesh.num_devices_per_host
+                participant_worker = self.collective_group.mesh_workers[
+                    worker_id + self.src_mesh.num_hosts]
+                receiver = self.collective_group.dst_mesh.device_strs[worker_id]
+                (step, offset, group_idx, dst_mesh_shape
+                ) = self._allgather_receiver_step_and_offset(receiver)
+                post_allgather_indices = self._indices_in_dst_post_allgather(
+                    indices, receiver, False)
+                group_details = self._allgather_tasks[
+                        participant_worker].setdefault(
+                            group_idx,
+                            dict(participant_device_ids=list(), slices=list()))
+                is_Reversed = False
+            except:
+                worker_id = flatten_id // self.src_mesh.num_devices_per_host
+                participant_worker = self.collective_group.mesh_workers[
+                    worker_id]
+                receiver = self.collective_group.src_mesh.device_strs[
+                    flatten_id]
+                (step, offset, group_idx, dst_mesh_shape
+                ) = self._allgather_receiver_step_and_offset(receiver)
+                post_allgather_indices = self._indices_in_dst_post_allgather(
+                    indices, receiver, False)
+                group_details = self._allgather_tasks[
+                    participant_worker].setdefault(
+                        group_idx,
+                        dict(participant_device_ids=list(), slices=list()))
+                is_Reversed = True
             group_details["participant_device_ids"].append(
-                flatten_id % self.dst_mesh.num_devices_per_host)
+                flatten_id % (self.src_mesh.num_devices_per_host if is_Reversed
+                              else self.dst_mesh.num_devices_per_host))
             group_details["slices"].append(post_allgather_indices)
         return self._allgather_tasks
 

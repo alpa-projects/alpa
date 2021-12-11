@@ -77,6 +77,11 @@ benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
     (1536, 224, 50,  640,   2, "fp32", 32,  False, True,  True),
     ],
 
+    32: [
+    #   B,   I,   L,   C,   W,  dtype, NB,     FD,   RS,    CK,
+    (1536, 224, 50,  320,  16, "fp32", 32,  False, False,  True),
+    ],
+
 }
 
 benchmark_suites = {
@@ -106,6 +111,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Set global environments
+    ray.init(address="auto")
     if (args.num_hosts is not None or args.num_devices_per_host is not None):
         assert (args.num_hosts is not None and
                 args.num_devices_per_host is not None)

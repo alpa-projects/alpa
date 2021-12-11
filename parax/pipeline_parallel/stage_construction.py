@@ -174,6 +174,8 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
             max_mp_dimension = virtual_submesh.num_devices_per_host
 
         for mp_size in range(1, max_mp_dimension + 1):
+            if num_devices % 3 == 0:
+                continue
             if mp_size == 8 and mp_size == num_devices:
                     continue
             if num_devices % mp_size == 0:

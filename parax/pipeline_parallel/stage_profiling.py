@@ -49,7 +49,7 @@ class BaseWorkerPoolWrapper(ABC):
         return self.pool.get_next()
 
     def get_next_unordered(self):
-        return self.pool.get_next_unordered()
+        return self.pool.get_next_unordered(timeout=600)
 
     def shutdown(self, force=True):
         for w in self.actors:
@@ -217,13 +217,17 @@ class ProfileWorker:
         # 16GPU WResNet with config:
         # (1536, 224, 50,  640,   2, "fp32", 32,  False, False,  True),
         # When profiling start=[9], end=[14,15], the profile fails because cublas error
-        for _ in range(3):
+        for _ in range(2):
             try:
                 return self.profile_impl(stage_id, compiled_output, profile_info,
                     intermediate_size, initial_size)
             except RayActorError:
-                print("Meet an error in profiling")
+                print("Meet ray actor error in profiling")
                 self.restart(forced=True)
+            except AssertionError:
+                print("Meet assertion error in profiling")
+                self.restart(forced=True)
+                break
         return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
 
     def restart(self, forced):
@@ -378,8 +382,17 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
 
     pbar = tqdm.tqdm(stages)
     for _ in pbar:
-        stage_id, cost, max_stage, debug_info = profile_workers.get_next_unordered(
-        )
+        try:
+            stage_id, cost, max_stage, debug_info = profile_workers.get_next_unordered(
+            )
+        except TimeoutError:
+            print("FATAL: after waiting for too long, all profile workers are forcely killed")
+            profile_workers.shutdown(force=True)
+            return compute_cost, max_n_succ_stages
+        except:
+            print("FATAL: other error, all profile workers are forcely killed")
+            profile_workers.shutdown(force=True)
+            return compute_cost, max_n_succ_stages
         (start, end,
          config_idx), _, auto_sharding_config, _, _, _ = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config

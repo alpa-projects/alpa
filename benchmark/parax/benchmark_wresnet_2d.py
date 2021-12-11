@@ -5,7 +5,7 @@ import ray
 import numpy as np
 
 from parax.util import list_gpu_info, write_tsv, run_cmd, get_num_hosts_and_num_devices
-from benchmark_wide_resnet_2d_one_case import benchmark_one_case
+from benchmark_wresnet_2d_one_case import benchmark_one_case
 
 GB = 1 << 30
 _ = None
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     run_cmd("mkdir -p tmp")
 
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"w_resnet_parax_{args.exp_name}_{date_str}.tsv"
+    output_name = f"wresnet_parax_{args.exp_name}_{date_str}.tsv"
 
     # Run all cases
     for benchmark_case in suite:

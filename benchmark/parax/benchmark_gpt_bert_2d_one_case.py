@@ -184,13 +184,15 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 16 * GB: # out of memory
+    warmup = 2 if niter >= 5 else 1
+
+    if alloc_mem > physical_mesh.get_available_memory():
         latencies = [-1]
     else:
         for i in range(niter):
             state = train_step(state, batch, rngkey)
 
-        latencies = executable.get_execution_time_costs(warmup=2)
+        latencies = executable.get_execution_time_costs(warmup=warmup)
     print_used_time("Benchmark")
 
     # Compute statistics
@@ -207,7 +209,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     return param_count, ilp_objective, peak_mem, latencies, tflops
 
 
-TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(model, case, niter,

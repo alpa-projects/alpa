@@ -87,10 +87,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         global_config.remat_using_while = True
 
 
-    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
-                                                  mesh_topology="tree",
-                                                  inter_host_bandwidth=1,
-                                                  intra_host_bandwidth=30)
+    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1])
     set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
     # Prepare input batch

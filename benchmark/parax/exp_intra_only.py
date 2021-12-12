@@ -50,11 +50,15 @@ gpt_intra_only = [
 
 moe_intra_only = [
     # model,                   S_,   LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
-    #(1024, *moe_specs["380M"], 2048, 1,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
-    #(1024, *moe_specs["690M"], 2048, 2,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
-    #(1024, *moe_specs["1.3B"], 2048, 4,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
-    #(1024, *moe_specs["2.4B"], 2048, 8,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
-    #(1024, *moe_specs["10B"], 2048, 2,   8,   _,   _,   1,  32, False, True,  True,  _,     _),
+    (1024, *moe_specs["380M"], 2048, 1,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
+    (1024, *moe_specs["690M"], 2048, 2,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
+    (1024, *moe_specs["1.3B"], 2048, 4,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
+    (1024, *moe_specs["2.4B"], 2048, 8,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
+    (1024, *moe_specs["10B"],  2048, 2,   8,   _,   _,   1,  32, False, True,  True,  _,     _),
+    (64,   *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  2,  False, True,  True,  _,     _),
+    (128,  *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  4,  False, True,  True,  _,     _),
+    (256,  *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  8,  False, True,  True,  _,     _),
+    (1024, *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  32, False, True,  True,  _,     _),  # projected
 ]
 
 wresnet_intra_only = [

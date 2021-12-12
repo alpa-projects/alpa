@@ -44,6 +44,8 @@ gpt_intra_only = [
     (1024, *gpt_specs["760M"], 2,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["6.7B"], 2,   8,   _,   _,   1,  64,  True,  True,  True,  _,     _),
+    (1024, *gpt_specs["15B"],  4,  8,  _,   _,   1,  128,  True,  True,  True,  _, _), # reduce_scatter_grad_acc_friendly = False, ALLREDUCE_THRESHOLD = 1 << 20
 ]
 
 moe_intra_only = [

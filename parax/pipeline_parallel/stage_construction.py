@@ -660,7 +660,7 @@ def cluster_layers_and_slice_mesh(layers,
                                            num_meshes,
                                            submesh_shapes=submesh_shapes)
     else:
-        raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
+        raise ValueError(f"Unknown pipeline_stage_mode {pipeline_stage_mode}")
 
     # Check logical mesh shapes or assign default logical mesh shapes
     if logical_mesh_shapes is not None:

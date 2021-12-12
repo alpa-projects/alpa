@@ -140,13 +140,13 @@ def get_train_step(learning_rate_fn, use_grad_acc):
     return train_step
 
 
-def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
+def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     # Backup global config
     print_used_time(None)
     backup = global_config.backup()
 
     # Model configs
-    model_type = "wide_resnet"
+    model_type = "wresnet"
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
         prefer_reduce_scatter, use_remat, other = benchmark_case
@@ -192,7 +192,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Prepare input")
 
     # Init train state
-    if model_type == "wide_resnet":
+    if model_type == "wresnet":
         model = get_wide_resnet(num_layers, width_factor,
                                 num_channels, num_classes,
                                 dtype)
@@ -217,7 +217,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last_2d.hlo", "w") as fout:
+    with open("tmp/last_wresnet_2d.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -228,13 +228,15 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 16 * GB:
+    warmup = 2 if niter >= 5 else 1
+
+    if alloc_mem > physical_mesh.get_available_memory():
         latencies = [-1]
     else:
         for i in range(niter):
             state, metrics = train_step(state, batch)
 
-        latencies = executable.get_execution_time_costs(warmup=2)
+        latencies = executable.get_execution_time_costs(warmup=warmup)
     print_used_time("Benchmark")
 
     # Compute statistics
@@ -248,7 +250,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     return param_count, ilp_objective, peak_mem, latencies, tflops
 
 
-TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(case, niter,
@@ -270,14 +272,14 @@ def benchmark_one_case(case, niter,
         global_config.use_dummy_value_for_benchmarking = True
 
         # Run benchmark
-        result = benchmark_wide_resnet_internal(physical_mesh, case, niter)
+        result = benchmark_wresnet_internal(physical_mesh, case, niter)
 
         physical_mesh.shutdown()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
         run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        ret = run_cmd("python3 benchmark_wide_resnet_2d_one_case.py "
+        ret = run_cmd("python3 benchmark_wresnet_2d_one_case.py "
                      f"--niter {niter} "
                      f'--case "{case}" '
                      f"--num-hosts {num_hosts} "

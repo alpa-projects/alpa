@@ -188,7 +188,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
 
 
-TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,

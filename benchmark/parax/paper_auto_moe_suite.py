@@ -39,6 +39,8 @@ paper_auto_moe_suite = {
     get_auto_test_case("1.3B", [16, 32, 64], [8])),
 8: (get_auto_test_case("1.3B", [16, 32, 64], [8]) +
     get_auto_test_case("2.4B", [16, 32, 64], [8])),
+16: (get_auto_test_case("10B", [16, 32, 64], [8])),
+32: (get_auto_test_case("27B", [16, 32, 64], [16])),
 }
 
 test_auto_moe_suite = {

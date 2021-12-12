@@ -12,10 +12,12 @@ run_experiment () {
     --num-hosts ${NUM_HOSTS} \
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \
     --disable-tqdm \
-    |& tee auto_gpt_${NUM_GPUS}_gpus_${CURRENT_TIME}.log
+    |& tee auto_moe_${NUM_GPUS}_gpus_${CURRENT_TIME}.log
   sleep 0.1 # for ctrl+c to work
 }
 
-run_experiment 1 8
-run_experiment 1 4
-run_experiment 1 2
+run_experiment 4 8
+#run_experiment 2 8
+#run_experiment 1 8
+#run_experiment 1 4
+#run_experiment 1 2

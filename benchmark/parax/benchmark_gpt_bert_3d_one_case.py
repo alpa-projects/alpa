@@ -256,7 +256,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
 
 
-TMP_PICKLE_FILE_NAME = "tmp/tmp_transfer.pkl"
+TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(model, case, niter,

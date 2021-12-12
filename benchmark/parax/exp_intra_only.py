@@ -59,12 +59,15 @@ moe_intra_only = [
 
 wresnet_intra_only = [
     # model,                       D0, D1, NB, FM,    RS,   Remat, other
-    #(1536, *wresnet_specs["250M"], 1,  1,  48, False, True, _, _),
-    #(1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
-    #(1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
-    #(1536, *wresnet_specs["2B"],   8,  1,  48, False, True, _, _), # MEM_FRACTION = 0.85
-    #(1536, *wresnet_specs["4B"],   2,  8,  64, False, True, _, _), # MEM_FRACTION = 0.85
-    (1536, *wresnet_specs["6.8B"],   4,  8, 384, False, True, _, _), # MEM_FRACTION = 0.85
+    (1536, *wresnet_specs["250M"], 1,  1,  48, False, True, _, _),
+    (1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
+    (1536, *wresnet_specs["2B"],   8,  1,  48, False, True, _, _), # MEM_FRACTION = 0.85
+    (1536, *wresnet_specs["4B"],   2,  8,  64, False, True, _, _), # MEM_FRACTION = 0.85
+    (64,   *wresnet_specs["6.8B"], 4,  8,  2,  False, True, _, _), # MEM_FRACTION = 0.85
+    (128,  *wresnet_specs["6.8B"], 4,  8,  4,  False, True, _, _), # MEM_FRACTION = 0.85
+    (256,  *wresnet_specs["6.8B"], 4,  8,  8,  False, True, _, _), # MEM_FRACTION = 0.85
+    (1536, *wresnet_specs["6.8B"], 4,  8,  8,  False, True, _, _), # projected
 ]
 
 suites = [

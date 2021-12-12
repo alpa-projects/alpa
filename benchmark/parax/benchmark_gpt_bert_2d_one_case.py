@@ -113,10 +113,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         global_config.force_simple_heuristic = other
         global_config.remat_using_while = True
 
-    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
-                                                  mesh_topology="tree",
-                                                  inter_host_bandwidth=1,
-                                                  intra_host_bandwidth=30)
+    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1])
     set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
     print_used_time("Setup device mesh")

@@ -45,23 +45,26 @@ gpt_intra_only = [
     (1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["6.7B"], 2,   8,   _,   _,   1,  64,  True,  True,  True,  _,     _),
-    (1024, *gpt_specs["15B"],  4,  8,  _,   _,   1,  128,  True,  True,  True,  _, _), # reduce_scatter_grad_acc_friendly = False, ALLREDUCE_THRESHOLD = 1 << 20
+    (1024, *gpt_specs["15B"],  4,   8,  _,   _,   1,  128,  True,  True,  True,  _, _), # reduce_scatter_grad_acc_friendly = False, ALLREDUCE_THRESHOLD = 1 << 20
 ]
 
 moe_intra_only = [
     # model,                   S_,   LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
-    (1024, *moe_specs["380M"], 2048, 1,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
-    (1024, *moe_specs["690M"], 2048, 2,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
-    (1024, *moe_specs["1.3B"], 2048, 4,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
-    (1024, *moe_specs["2.4B"], 2048, 8,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
+    #(1024, *moe_specs["380M"], 2048, 1,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
+    #(1024, *moe_specs["690M"], 2048, 2,   1,   _,   _,   1,  32, False, True,  True,  _,     _),
+    #(1024, *moe_specs["1.3B"], 2048, 4,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
+    #(1024, *moe_specs["2.4B"], 2048, 8,   1,   _,   _,   1,  16, False, True,  True,  _,     _),
+    #(1024, *moe_specs["10B"], 2048, 2,   8,   _,   _,   1,  32, False, True,  True,  _,     _),
 ]
 
 wresnet_intra_only = [
     # model,                       D0, D1, NB, FM,    RS,   Remat, other
-    (1536, *wresnet_specs["250M"], 1,  1,  48, False, True, _, _),
-    (1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
-    (1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
-    (1536, *wresnet_specs["2B"],   8,  1,  48, False, True, _, _), # MEM_FRACTION = 0.85
+    #(1536, *wresnet_specs["250M"], 1,  1,  48, False, True, _, _),
+    #(1536, *wresnet_specs["500M"], 2,  1,  32, False, True, _, _),
+    #(1536, *wresnet_specs["1B"],   4,  1,  32, False, True, _, _),
+    #(1536, *wresnet_specs["2B"],   8,  1,  48, False, True, _, _), # MEM_FRACTION = 0.85
+    #(1536, *wresnet_specs["4B"],   2,  8,  64, False, True, _, _), # MEM_FRACTION = 0.85
+    (1536, *wresnet_specs["6.8B"],   4,  8, 384, False, True, _, _), # MEM_FRACTION = 0.85
 ]
 
 suites = [
@@ -118,7 +121,7 @@ if __name__ == "__main__":
             "param_count": param_count / 1e9,
             "peak_mem": peak_mem / GB,
             "latencies": latencies,
-            "tflops": tflops,
+            "tflops": tflops if tflops > 0.0 else -1.0,
         }
 
         # Log results

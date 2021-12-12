@@ -25,7 +25,7 @@ from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
 from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
-from parax.util import OrderedSet, get_shard_shape
+from parax.util import DisjointDict, OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -135,12 +135,6 @@ def logging_instructions(instructions):
 
 def get_dict(d: Dict[Any, Dict], k) -> Dict:
     return d.setdefault(k, dict())
-
-
-def recursive_lookup(d, k):
-    if k in d:
-        return recursive_lookup(d, d[k])
-    return k
 
 
 class DecentralizedDistributedRuntime(BaseDistributedRuntime):
@@ -258,7 +252,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh in self.physical_meshes:
             for worker in mesh.workers:
                 worker_tmp_instructions[worker] = []
-        donation_mapping = [dict() for _ in range(num_mesh)]
+        donation_mapping = [DisjointDict() for _ in range(num_mesh)]
         worker_to_idx = dict()
         for mesh_idx, mesh in enumerate(self.physical_meshes):
             for worker_idx, worker in enumerate(mesh.workers):
@@ -344,8 +338,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     for idx in range(len(stage.invars)):
                         if donated_invars[idx]:
                             donation_mapping[mesh_idx].update(
-                                zip(list(input_uuids[idx]),
-                                    list(output_uuids[idx])))
+                                list(input_uuids[idx]), list(output_uuids[idx]))
 
                     kwargs = {
                         "skip_grad_sync":
@@ -384,7 +377,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 accumulated_uuids = accumulated_uuids[worker_idx]
             # numpy for (arg, device)
             accumulated_uuids = [[
-                recursive_lookup(donation_mapping[mesh_idx], uuid)
+                donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in list(uuids)
             ]
                                  for uuids in list(accumulated_uuids)]

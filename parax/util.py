@@ -248,6 +248,39 @@ class OrderedSet:
         return f"{cls.__name__}[{item.__name__}]"
 
 
+class DisjointDict:
+
+    def __init__(self):
+        self.values = dict()
+        self.reversed_mapping = dict()
+
+    def update(self, keys, values):
+        for key, value in zip(keys, values):
+            value = self.recursive_lookup(value)
+            self.values[key] = value
+            self._reversed_recursive_update(key, value)
+
+    def _reversed_recursive_update(self, key, value):
+        if key in self.reversed_mapping:
+            reversed_mapping = self.reversed_mapping[key]
+            self.reversed_mapping.setdefault(value,
+                                             set()).update(reversed_mapping)
+            self.reversed_mapping.pop(key)
+            for k in reversed_mapping:
+                self.values[k] = value
+        self.reversed_mapping.setdefault(value, set()).add(key)
+
+    def recursive_lookup(self, key):
+        if key in self.values:
+            value = self.values[key]
+            assert value not in self.values
+            return value
+        return key
+
+    def keys(self):
+        return list(self.values.keys())
+
+
 def cached_property(fn, *args, **kwargs):
     """
     Decorator to make a function a "cached property".

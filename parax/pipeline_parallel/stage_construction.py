@@ -141,6 +141,8 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
 
 
 def get_submesh_choices(mesh: VirtualPhysicalMesh):
+    if global_config.fix_physical_mesh_shape:
+        return [global_config.fix_physical_mesh_shape]
     num_hosts = mesh.num_hosts
     num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []

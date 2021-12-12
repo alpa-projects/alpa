@@ -85,7 +85,7 @@ if __name__ == "__main__":
          use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
 
-        if pipeline_mp_size <= 1 and not auto_pipeline:
+        if pipeline_mp_size <= 1 and pipeline_stage_mode == "uniform_layer_gpipe":
             print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
                   f"Please use `benchmark_gpt_bert_2d.py` "
                   f"since 3d runtime will have a small overhead.")

@@ -80,6 +80,7 @@ class GlobalConfig:
         # This will produce wrong results but is acceptable for
         # data-independent benchmarks.
         self.use_dummy_value_for_benchmarking = False
+        self.fix_physical_mesh_shape = None
 
         ########## Options for logging ##########
         self.print_xla_compilation_time = False

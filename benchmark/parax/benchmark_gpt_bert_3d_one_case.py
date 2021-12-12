@@ -149,14 +149,15 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 num_micro_batches=num_micro_batches,
                                 sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                                 sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
-                                pipeline_parallel_schedule="1f1b",
-                                **overwrite_global_config_dict)
+                                pipeline_parallel_schedule="1f1b")
     else:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
-                                num_micro_batches=num_micro_batches,
-                                **overwrite_global_config_dict)
+                                num_micro_batches=num_micro_batches)
+    global_config_tmp = global_config.backup()
+    global_config_tmp.update(overwrite_global_config_dict)
+    global_config.restore(global_config_tmp)
 
     # Prepare input batch
     # Note: there will be an input conversion.

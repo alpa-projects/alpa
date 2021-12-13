@@ -54,10 +54,20 @@ gpt_inter_only = [
     (1024, *gpt_specs["2.7B"], 1,   1,   1,   1,   8,  256,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["2.7B"], 1,   1,   1,   1,   8,  512,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["2.7B"], 1,   1,   1,   1,   8,  1024, True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 128,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["15B"], 1,   1,   1,   1,   32, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["15B"], 1,   1,   1,   1,   32, 128,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["15B"], 1,   1,   1,   1,   32, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["15B"], 1,   1,   1,   1,   32, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["15B"], 1,   1,   1,   1,   32, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
 ]
 
 moe_inter_only = [
-    # model,                   S_,   LD0, LD1, PD0, PD1, PP, NB,   FM,    Remat, RS,    Other, _
+    # model,                   S_,   LD0, LD1, PD0, PD1, PP, NB,   FM,    Remat, RS,    AP, _
     (1024, *moe_specs["380M"], 2048, 1,   1,   1,   1,   1,  64,   True,  True,  True,  False, _),
     (1024, *moe_specs["380M"], 2048, 1,   1,   1,   1,   1,  128,  True,  True,  True,  False, _),
     (1024, *moe_specs["690M"], 2048, 1,   1,   1,   1,   2,  64,   True,  True,  True,  False, _),
@@ -72,6 +82,13 @@ moe_inter_only = [
     (1024, *moe_specs["2.4B"], 2048, 1,   1,   1,   1,   8,  256,  True,  True,  True,  False, _),
     (1024, *moe_specs["2.4B"], 2048, 1,   1,   1,   1,   8,  512,  True,  True,  True,  False, _),
     (1024, *moe_specs["2.4B"], 2048, 1,   1,   1,   1,   8,  1024, True,  True,  True,  False, _),
+    (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 64,   True,  True,  True,  False, _),
+    (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 128,  True,  True,  True,  False, _),
+    (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 256,  True,  True,  True,  False, _),
+    (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 512,  True,  True,  True,  False, _),
+    (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 1024, True,  True,  True,  False, _),
+    (1024, *moe_specs["27B"],  2048, 1,   1,   1,   1,   32, 64,   True,  True,  True,  False, _),
+    (1024, *moe_specs["27B"],  2048, 1,   1,   1,   1,   32, 512,  True,  True,  True,  False, _),
 ]
 
 wresnet_inter_only = [

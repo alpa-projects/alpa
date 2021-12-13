@@ -189,10 +189,6 @@ def benchmark_wide_resnet_internal(benchmark_case, niter,
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
     global_config.allow_mixed_mesh_shape = False
     global_config.auto_stage_construction_imbalance_tolerance = 0.4
-    # 16GPU， [(1, 4), (1, 4), (1, 8)]
-    # global_config.cache_compute_cost = "compute-cost-2021-12-05-03-36-52.npy"
-    # S-G, signal SR on host: 6.75->72.5s
-    # not S-G, signal SR on mesh
     global_config.use_dummy_value_for_benchmarking = True
     global_config.use_scatter_gather = True
 
@@ -240,14 +236,27 @@ def benchmark_wide_resnet_internal(benchmark_case, niter,
     for i in range(niter):
         state, metrics = train_step(state, batch)
 
+    # for timer_name in ["resharding_send", "resharding_recv", "compute"]:
+    #     latencies = executable.get_execution_time_costs(warmup=2, timer_name=timer_name, return_all_costs=True)
+    #     print(f"{timer_name}: ")
+    #     for i, t in enumerate(latencies):
+    #         pstr = f"Mesh {i}: "
+    #         pstr += f"{np.mean(t)}s. Each iter: {t}"
+    #         print(pstr)
     latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
 
     # Compute statistics
-    num_gpus = sum(device_cluster.num_devices)
+    num_gpus = virtual_mesh.total_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     peak_mem = executable.get_max_memory_allocated() / GB
-    print(executable.profile_all_executables())
+    del state
+    del metrics
+    for i, profiled in enumerate(executable.profile_all_executables()):
+        pstr = f"Mesh {i}: "
+        for k in profiled:
+            pstr += f"Exec {k}: {profiled[k][0]}s; "
+        print(pstr)
     executable.shutdown()
 
     # Restore global config

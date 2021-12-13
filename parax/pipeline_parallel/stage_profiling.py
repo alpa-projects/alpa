@@ -112,9 +112,12 @@ class CompileWorker:
             "grad_acc_num_micro_batches": None,
             "bypass_device_assignment_check": True
         }
-        _, (protos, hooked_proto, strategy_config) = self.compile_with_config(
+        try:
+            _, (protos, hooked_proto, strategy_config) = self.compile_with_config(
             stage_id, global_config_dict, proto, jaxpr_config, mesh_config,
             multiple_stage_config)
+        except:
+            return stage_id, None
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
         if len(protos) > 1 and logical_mesh.total_devices > 1:
@@ -368,6 +371,8 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
 
     for stage_id, (compiled_output,
                    stage) in enumerate(zip(compiled_outputs, stages)):
+        if compiled_output == None:
+            continue
         (proto, config, in_shardings, out_shardings, hooked_proto,
          apply_in_shardings) = compiled_output
         _, _, _, intermediate_vars, profile_info, apply_info = stage

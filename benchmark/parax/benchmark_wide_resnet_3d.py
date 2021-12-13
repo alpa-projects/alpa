@@ -79,7 +79,8 @@ benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
 
     32: [
     #   B,   I,   L,   C,   W,  dtype, NB,     FD,   RS,    CK,
-    (1536, 224, 50,  320,  16, "fp32", 32,  False, False,  True),
+    (1536, 224, 50,  640,   2, "fp32", 32,  False, True,  True),
+    (1520, 224, 50,  320,  16, "fp32", 38,  False, False,  True),
     ],
 
 }

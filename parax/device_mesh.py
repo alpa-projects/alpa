@@ -11,7 +11,6 @@ from typing import Any, List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
-import ray.util.collective as col
 
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
@@ -35,7 +34,8 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
                         jax_tensor_index, OrderedSet)
-from ray.util.collective.collective_group import nccl_util
+import parax.collective as col
+from parax.collective.collective_group import nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

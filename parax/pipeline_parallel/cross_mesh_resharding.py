@@ -6,8 +6,6 @@ from typing import List
 
 import numpy as np
 import ray
-import ray.util.collective as col
-import jax.linear_util as lu
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
@@ -15,6 +13,7 @@ from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.global_env import global_config
 from parax.util import OrderedSet
+import parax.collective as col
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

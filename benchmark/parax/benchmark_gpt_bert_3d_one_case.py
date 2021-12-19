@@ -16,7 +16,8 @@ from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.timer import timers
-from parax.util import print_used_time, run_cmd, disable_tqdm_globally, to_str_round
+from parax.util import print_used_time, run_cmd, disable_tqdm_globally, to_str_round, \
+    get_ray_namespace_str
 
 GB = 1024 ** 3
 
@@ -267,12 +268,14 @@ def benchmark_one_case(model, case, niter,
         disable_tqdm_globally()
 
     if not use_separate_process:
-        ray.init(address="auto", ignore_reinit_error=True)
+        ray.init(address="auto", ignore_reinit_error=True,
+                 namespace=get_ray_namespace_str())
         jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 
         result = benchmark_gpt_bert_internal(model, case, niter,
                                              num_hosts, num_devices_per_host)
+        ray.shutdown()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.

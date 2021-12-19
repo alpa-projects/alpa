@@ -11,7 +11,7 @@ from parax import (parallelize, global_config, set_parallelize_options, DeviceCl
                    mark_pipeline, manual_layer_slicing)
 from parax.model.bert_model import BertConfig, FlaxBertLayerCollection
 from parax.model.model_util import TrainState
-from parax.util import write_tsv, list_gpu_info, print_used_time
+from parax.util import write_tsv, list_gpu_info, print_used_time, get_ray_namespace_str
 
 MB = 1024 ** 2
 GB = 1024 ** 3
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not args.local:
-        ray.init(address="auto")
+        ray.init(address="auto", namespace=get_ray_namespace_str())
         jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True

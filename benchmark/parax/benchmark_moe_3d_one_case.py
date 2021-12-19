@@ -15,7 +15,7 @@ import parax
 from parax import global_config, set_parallelize_options, DeviceCluster
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.util import write_tsv, print_used_time, disable_tqdm_globally, to_str_round
+from parax.util import write_tsv, print_used_time, disable_tqdm_globally, to_str_round, get_ray_namespace_str
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.timer import timers
 from benchmark_gpt_bert_3d_one_case import get_train_step
@@ -198,7 +198,8 @@ def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
         disable_tqdm_globally()
 
     if not use_separate_process:
-        ray.init(address="auto", ignore_reinit_error=True)
+        ray.init(address="auto", ignore_reinit_error=True,
+                 namespace=get_ray_namespace_str())
         jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 

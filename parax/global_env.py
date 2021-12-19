@@ -85,6 +85,10 @@ class GlobalConfig:
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
 
+        ########## Options for Ray ##########
+        self.default_ray_namespace_prefix = "parax-train"
+        self.unittest_ray_namespace_prefix = "parax-unittest"
+
     def backup(self):
         """Backup the configs."""
         return copy.copy(self.__dict__)

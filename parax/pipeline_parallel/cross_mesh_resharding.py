@@ -691,6 +691,9 @@ class CollectiveGroup:
         # Destroy the declared named actor in ray
 
         # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+        self._detroy_info_actor()
+
+    def _detroy_info_actor(self):
         name = "info_" + self.group_name
         try:
             store = ray.get_actor(name)

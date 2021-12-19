@@ -29,6 +29,8 @@ from jax.tree_util import tree_map, tree_flatten
 import numpy as np
 import ray
 
+from parax.global_env import global_config
+
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
 FLAGS.experimental_cpp_jit = False
@@ -861,7 +863,7 @@ def get_num_hosts_and_num_devices(args):
             num_hosts = 1
             num_devices_per_host = list_gpu_info().count("UUID")
         else:
-            ray.init(address="auto")
+            ray.init(address="auto", namespace=global_config.ray_default_namespace_str)
             num_hosts = len(ray.nodes())
             num_devices_per_host = int(
                 ray.cluster_resources()["GPU"]) // num_hosts

@@ -267,7 +267,8 @@ def benchmark_one_case(model, case, niter,
         disable_tqdm_globally()
 
     if not use_separate_process:
-        ray.init(address="auto", ignore_reinit_error=True)
+        ray.init(address="auto", ignore_reinit_error=True,
+                 namespace=global_config.default_ray_namespace_str)
         jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 

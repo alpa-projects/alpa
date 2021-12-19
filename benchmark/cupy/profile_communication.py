@@ -164,7 +164,7 @@ class GpuHost:
 
 
 if __name__ == "__main__":
-    ray.init(address="auto")
+    ray.init(address="auto", namespace="parax-profile")
 
     num_gpus = int(ray.cluster_resources()["GPU"])
 

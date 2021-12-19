@@ -254,7 +254,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not args.local:
-        ray.init(address="auto")
+        ray.init(address="auto", namespace=global_config.default_ray_namespace_str)
         jax.config.update('jax_platform_name', 'cpu')
 
     global_config.use_dummy_value_for_benchmarking = True

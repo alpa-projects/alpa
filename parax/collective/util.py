@@ -3,6 +3,7 @@ import ray
 import logging
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 @ray.remote
@@ -21,6 +22,9 @@ class NCCLUniqueIDStore:
         self.name = name
         self.nccl_id = None
 
+        # A counter for this actor to auto-destory itself.
+        self.access_counter = 1
+
     def set_id(self, uid):
         """
         Initialize the NCCL unique ID for this store.
@@ -37,9 +41,15 @@ class NCCLUniqueIDStore:
     def get_id(self):
         """Get the NCCL unique ID held in this store."""
         if not self.nccl_id:
-            logger.warning("The NCCL ID has not been "
-                           "set yet for store {}.".format(self.name))
-        return self.nccl_id
+            logger.debug("The NCCL ID has not been set yet "
+                        "for store {} by rank-0 process.".format(self.name))
+            return None
+        else:
+            self.access_counter += 1
+            return self.nccl_id
+
+    def get_access_counter(self):
+        return self.access_counter
 
 
 @ray.remote
@@ -54,6 +64,7 @@ class Info:
         self.world_size = -1
         self.rank = -1
         self.backend = None
+        self.access_counter = 0
 
     def set_info(self, ids, world_size, rank, backend):
         """Store collective information."""
@@ -64,4 +75,8 @@ class Info:
 
     def get_info(self):
         """Get previously stored collective information."""
+        self.access_counter += 1
         return self.ids, self.world_size, self.rank, self.backend
+
+    def get_access_counter(self):
+        return self.access_counter

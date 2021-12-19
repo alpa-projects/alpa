@@ -664,8 +664,15 @@ def _check_and_get_group(group_name):
             # if the information is stored in an Info object,
             # get and create the group.
             name = "info_" + group_name
-            mgr = ray.get_actor(name=name)
-            ids, world_size, rank, backend = ray.get(mgr.get_info.remote())
+            info_actor = ray.get_actor(name=name)
+            ids, world_size, rank, backend = ray.get(info_actor.get_info.remote())
+
+            # Recycle the info named actor *pro-activately* to avoid named actor leak.
+            if ray.get(info_actor.get_access_counter.remote()) == world_size:
+                ray.kill(info_actor)
+                logger.debug("Information about the collective group has been broadcasted. "
+                             "The Info actor will go out of context and be destroyed.")
+
             worker = ray.worker.global_worker
             id_ = worker.core_worker.get_actor_id()
             r = rank[ids.index(id_)]

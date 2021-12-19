@@ -514,7 +514,7 @@ class NCCLGroup(BaseGroup):
             # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
             # avoid named actor leak.
             if rendezvous.get_access_counter() == 2:
-                logger.info("NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                logger.debug("NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
                              "will go out of context and be destroyed.")
                 rendezvous.destroy_store()
 

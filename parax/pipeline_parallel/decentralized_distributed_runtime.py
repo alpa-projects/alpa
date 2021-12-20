@@ -940,8 +940,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             return self.hlo_texts_after_spmd_partitioner
         else:
             ret = []
-            for i in range(len(self.stages)):
-                ret.append(self.stages[i].get_hlo_text())
+            for stage in self.stages:
+                ret.append(stage.get_hlo_text())
             return ret
 
     def _check_alive(self):

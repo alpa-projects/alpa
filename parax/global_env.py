@@ -44,6 +44,7 @@ class GlobalConfig:
         self.pipeline_runtime_mode = "paper"  # or "production"
         self.use_hlo_cost_model = False
         self.profiling_database_filename = None
+        self.with_physical_mesh = True
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.

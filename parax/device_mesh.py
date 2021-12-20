@@ -1213,6 +1213,16 @@ class VirtualPhysicalMesh:
         return self.get_logical_mesh((1, self.total_devices))
 
 
+def get_dummy_virtual_mesh(mesh_shape):
+    num_hosts = mesh_shape[0]
+    num_devices_per_host = mesh_shape[1]
+    host_ids = [str(i) for i in range(num_hosts)]
+    host_info = [dict(NodeManagerAddress=str(i)) for i in range(num_hosts)]
+    return VirtualPhysicalMesh(host_ids=host_ids,
+                               host_info=host_info,
+                               num_devices_per_host=num_devices_per_host)
+
+
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 

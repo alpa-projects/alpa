@@ -6,8 +6,6 @@ from typing import List
 
 import numpy as np
 import ray
-import ray.util.collective as col
-import jax.linear_util as lu
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
@@ -15,6 +13,7 @@ from parax.device_mesh import DistributedArray, RemoteBufferRef, VirtualPhysical
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.global_env import global_config
 from parax.util import OrderedSet
+import parax.collective as col
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -97,6 +96,17 @@ class VirtualDistributedArray:
             if isinstance(assignment, Replicated):
                 replicated_maxes.append(maxis)
         return replicated_maxes
+
+    @property
+    def num_replicas(self):
+        if self.tiled:
+            return 1
+        else:
+            num_replicas = 1
+            for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
+                if isinstance(assignment, Replicated):
+                    num_replicas = num_replicas * assignment.replicas
+            return num_replicas
 
     @property
     def tiled(self):
@@ -433,6 +443,10 @@ class ReshardingTask:
                     spec_plan[replica_index][src_tile_index]
                     for src_tile_index, _ in enumerate(src_tiles)
                 ]
+                sender_slices = [
+                    sl[replica_index][src_tile_index]
+                    for src_tile_index, _ in enumerate(src_tiles)
+                ]
                 self.receiver_uuid_plan.append(receiver)
                 receiver_rank, receiver_gpu_idx = \
                     self.collective_group.device_str_to_rank_map[receiver]
@@ -441,12 +455,11 @@ class ReshardingTask:
                     # Sender's task
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                         sender]
-                    # tile = src_tiles[sender_idx]
+                    # tile = src_tiles[i]
                     # self._sender_tasks[sender_worker].append(
                     #     (tile.offset, receiver_rank, receiver_gpu_idx))
                     self._sender_tasks[sender_worker].append(
-                        (src_tiles[sender_idx].offset, receiver_rank,
-                         receiver_gpu_idx))
+                        (sender_slices[i], receiver_rank, receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
@@ -491,6 +504,7 @@ class ReshardingTask:
             return self.allgather_tasks
         # only dst mesh does allgather.
         # is a worker -> ((device_ids), (device_strs), (slices))
+        # FIXME(yonghao): the dst mesh of col group may not be dst mesh of resharding task
         self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
             # TODO(yonghao): create new api for colleceive group instead of directly accessing it
@@ -594,8 +608,8 @@ class ReshardingTask:
         return dst_array
 
     def __str__(self):
-        return f"ReshardingTask(shape:{self.task_spec.aval.shape}, "\
-               f"{self.task_spec.src_sharding_spec} -> {self.task_spec.dst_sharding_spec})"
+        return f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"\
+               f"{self.task_spec.src_sharding_spec} ->\n{self.task_spec.dst_sharding_spec})"
 
 
 @dataclass
@@ -731,6 +745,9 @@ class CollectiveGroup:
         # Destroy the declared named actor in ray
 
         # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+        self._detroy_info_actor()
+
+    def _detroy_info_actor(self):
         name = "info_" + self.group_name
         try:
             store = ray.get_actor(name)
@@ -1165,6 +1182,9 @@ class CrossMeshCommunicator:
             per_spec_plan = np.empty(
                 (len(dst_tile.replica_device_strs), len(src_tileslices)),
                 dtype=object)
+            per_spec_slice_plan = np.empty(
+                (len(dst_tile.replica_device_strs), len(src_tileslices)),
+                dtype=object)
             for receiver_idx, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 for src_tileslice_idx, src_tileslice in enumerate(
@@ -1175,6 +1195,8 @@ class CrossMeshCommunicator:
                     }
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
+                    per_spec_slice_plan[receiver_idx][
+                        src_tileslice_idx] = src_tileslice.offset
                     # upload load on-the-fly
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size

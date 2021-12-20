@@ -384,15 +384,13 @@ class FlaxBertLayerCollection(nn.Module):
         ]
 
         num_layers = self.config.num_hidden_layers
-        self.add_manual_pipeline_markers = self.config.add_manual_pipeline_markers
-        self.pipeline_mp_size = self.config.pipeline_mp_size
+        pipeline_mp_size = self.config.pipeline_mp_size
         self.pipeline_marker_positions = []
-        if self.add_manual_pipeline_markers:
-            num_layer_per_stage, remained = divmod(num_layers,
-                                                   self.pipeline_mp_size)
+        if self.config.add_manual_pipeline_markers:
+            num_layer_per_stage, remained = divmod(num_layers, pipeline_mp_size)
             assert remained == 0
             self.pipeline_marker_positions = [
-                num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)
+                num_layer_per_stage * i for i in range(1, pipeline_mp_size)
             ]
 
     def __call__(
@@ -409,12 +407,13 @@ class FlaxBertLayerCollection(nn.Module):
 
         id = 0
         for i, layer in enumerate(self.layers):
-            if self.add_manual_pipeline_markers:
+            if self.config.add_manual_pipeline_markers:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
                     mark_pipeline(name=str(id), mark_type="end")
                     mark_pipeline(name=str(id + 1), mark_type="start")
                     id = id + 1
+
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 

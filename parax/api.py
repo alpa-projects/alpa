@@ -166,14 +166,12 @@ def parallelize_callable(
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
                                        donated_invars, batch_invars, devices,
                                        memory_budget_per_device, *avals)
-    elif strategy == "local_pipeline_parallel":
-        return local_pipeline_parallel_callable(fun, devices, *avals)
     elif strategy == "3d_parallel":
-        # TODO (zhuohan): Support search_logical_mesh_shape for 3d parallel
-        assert not global_config.search_logical_mesh_shape
         return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
                                          donated_invars, batch_invars, devices,
                                          memory_budget_per_device, *avals)
+    elif strategy == "local_pipeline_parallel":
+        return local_pipeline_parallel_callable(fun, devices, *avals)
     else:
         raise ValueError("Invalid parallel strategy: " + strategy)
 

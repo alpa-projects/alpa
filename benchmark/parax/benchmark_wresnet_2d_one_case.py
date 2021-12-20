@@ -1,5 +1,6 @@
 import argparse
 from functools import partial
+import pickle
 import time
 
 from flax import linen as nn, optim
@@ -14,9 +15,8 @@ import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
 from parax.model.wide_resnet import get_wide_resnet, TrainState
-from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
-                        count_communication_primitives, print_used_time,
-                        compute_param_number)
+from parax.util import (run_cmd, map_to_shape, count_communication_primitives,
+                        print_used_time, compute_param_number)
 
 
 GB = 1024 ** 3
@@ -140,16 +140,16 @@ def get_train_step(learning_rate_fn, use_grad_acc):
     return train_step
 
 
-def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
+def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     # Backup global config
     print_used_time(None)
     backup = global_config.backup()
 
     # Model configs
-    model_type = "wide_resnet"
+    model_type = "wresnet"
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
-        mesh_dim0, mesh_dim1, num_micro_batches, force_data_parallel,\
-        prefer_reduce_scatter, use_remat = benchmark_case
+        mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
+        prefer_reduce_scatter, use_remat, other = benchmark_case
     if dtype == "fp32":
         dtype = jnp.float32
     elif dtype == "fp16":
@@ -160,14 +160,20 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     # Parallel configs
     if num_micro_batches > 1:
         use_grad_acc = True
-        global_config.prefer_reduce_scatter = False
     else:
         use_grad_acc = False
         num_micro_batches = None
 
-    global_config.force_data_parallel = force_data_parallel
+    if force_batch_dim_mapping:
+        # Always map batch dim to mesh dim 0
+        global_config.force_batch_dim_to_mesh_dim = 0
     global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.allow_mixed_mesh_shape = True
+    global_config.allow_mixed_mesh_shape = False
+    if other == "zero-3":
+        global_config.force_zero_stage_3 = True
+    elif other in ["shard-largest"]:
+        global_config.force_simple_heuristic = other
+        global_config.remat_using_while = True
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
@@ -186,7 +192,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Prepare input")
 
     # Init train state
-    if model_type == "wide_resnet":
+    if model_type == "wresnet":
         model = get_wide_resnet(num_layers, width_factor,
                                 num_channels, num_classes,
                                 dtype)
@@ -196,9 +202,9 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
+    param_count = compute_param_number(state.params)
     train_step = get_train_step(learning_rate_fn, use_grad_acc)
     print_used_time("Create train state")
-    param_count = compute_param_number(state.params)
 
     # Compile executable
     executable = train_step.get_executable(state, batch)
@@ -211,7 +217,7 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("last.hlo", "w") as fout:
+    with open("tmp/last_wresnet_2d.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -222,188 +228,88 @@ def benchmark_wide_resnet_internal(physical_mesh, benchmark_case, niter):
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
     # Benchmark step time
-    if alloc_mem > 28 * GB: # out of memory
+    warmup = 2 if niter >= 5 else 1
+
+    if alloc_mem > physical_mesh.get_available_memory():
         latencies = [-1]
     else:
         for i in range(niter):
             state, metrics = train_step(state, batch)
 
-        latencies = executable.get_execution_time_costs(warmup=2)
+        latencies = executable.get_execution_time_costs(warmup=warmup)
     print_used_time("Benchmark")
 
     # Compute statistics
     num_gpus = mesh_dim0 * mesh_dim1
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
+    peak_mem = physical_mesh.get_max_memory_allocated()
 
     # Restore global config
     global_config.restore(backup)
 
-    return latencies, alloc_mem, tflops, param_count, ilp_objective
+    return param_count, ilp_objective, peak_mem, latencies, tflops
 
 
-def benchmark_one_case(case):
-    # Launch physical mesh
-    if args.local:
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
+TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
+
+
+def benchmark_one_case(case, niter,
+                       num_hosts, num_devices_per_host,
+                       local, use_separate_process,
+                       dump_result=False):
+    if not use_separate_process:
+        # Launch physical mesh
+        if local:
+            assert num_hosts == 1
+            physical_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices_per_host])
+        else:
+            ray.init(address="auto", ignore_reinit_error=True)
+            device_cluster = DeviceCluster()
+            physical_mesh = device_cluster.get_physical_mesh(
+                list(range(num_hosts)), num_devices_per_host)
+            jax.config.update('jax_platform_name', 'cpu')
+
+        global_config.use_dummy_value_for_benchmarking = True
+
+        # Run benchmark
+        result = benchmark_wresnet_internal(physical_mesh, case, niter)
+
+        physical_mesh.shutdown()
     else:
-        device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.get_physical_mesh()
+        # Launch a new process for benchmark to isolate errors.
+        # Get the return data via pickle.
+        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
+        ret = run_cmd("python3 benchmark_wresnet_2d_one_case.py "
+                     f"--niter {niter} "
+                     f'--case "{case}" '
+                     f"--num-hosts {num_hosts} "
+                     f"--num-devices-per-host {num_devices_per_host} "
+                     f"{'--local' if local else ''} "
+                     f"--dump-result ")
+        if ret == 0:
+            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
+        else:
+            result = -1, -1, -1, [-1], -1
 
-    # Run benchmark
-    result = benchmark_wide_resnet_internal(physical_mesh, case, args.niter)
-    latencies, alloc_mem, tflops, param_count, ilp_objective = result
+    if dump_result:
+        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
 
-    # Log results
-    heads = ["Model", "Model Config", "Parallel Config", "Param Count", 
-             "Alloc Mem", "ILP Objective", "Mean Latency", "Std Latency", "TFLOPS"]
-    values = ["wide-resnet", case[:-6], case[-6:],
-              f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{ilp_objective:.2f}",
-              f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}", f"{tflops:.2f}"]
-    write_tsv(heads, values, f"result_wide_resnet.tsv")
+    return result
 
-    physical_mesh.shutdown()
-
-
-# B = batch_size, I = image_size,
-# L = num_layers, C = num_base_channels, W = width_factor, 
-# D0 = mesh_dimension_0, D1 = mesh_dimension_1,
-# NB = num_micro_batches, FD = force_data_parallel,
-# RS = prefer_reduce_scatter, CK = use_checkpoint
-
-# benchmark suite for GPUs with 32GB memory
-benchmark_suite_32gb = {  # key = number of gpus, value = a list of cases
-1: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  256, 4, "fp32", 1,  1,  1,  False, True,  False),
-],
-
-4: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    #(32,   224, 50,  512, 2, "fp32", 1,  4,  1,  False, False, False),
-],
-
-8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    #(256,  224, 50,  256, 4, "fp32", 8,  1,  1,  False, True,  False),
-    #(64,   224, 50,  512, 4, "fp32", 2,  4,  1,  False, True,  False),
-    #(128,  224, 50,  512, 4, "fp32", 2,  4,  2,  False, True,  False),
-    #(32,   224, 50,  704, 4, "fp32", 8,  1,  1,  False, True,  False),
-
-    #(64,    224, 50,  512, 2, "fp32", 2,  4,  1,  False, False, False),
-    (128,   224, 50,  512, 2, "fp32", 2,  4,  2,  False, False, False),
-],
-
-16: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (64,   224, 50,  576, 4, "fp32", 2,  8,  1,  False, False, False),
-    (256,  224, 50,  576, 4, "fp32", 2,  8,  4,  False, False, False),
-    (512,  224, 50,  576, 4, "fp32", 2,  8,  8,  False, False, False),
-
-    (64,   224, 50,  576, 4, "fp32", 2,  8,  1,  False, True,  False),
-    (256,  224, 50,  576, 4, "fp32", 2,  8,  4,  False, True,  False),
-    (512,  224, 50,  576, 4, "fp32", 2,  8,  8,  False, True,  False),
-],
-
-}
-
-# benchmark suite for GPUs with 16GB memory
-benchmark_suite_16gb = {  # key = number of gpus, value = a list of cases
-1: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False),
-],
-
-4 : [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False),
-],
-
-8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    # data-parallel
-    #(128,  224, 50,  192, 2, "fp32", 8,  1,  1,  True,  True,  False),
-    #(512,  224, 50,  192, 2, "fp32", 8,  1,  4,  True,  True,  False),
-    #(128,  224, 50,  192, 2, "fp32", 8,  1,  1,  False, True,  False),
-    #(512,  224, 50,  192, 2, "fp32", 8,  1,  4,  False, True,  False),
-
-    # model-parallel
-    #(16,   224, 50,  320, 2, "fp32", 8,  1,  1,  True,   True,  False),
-    #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  True,   True,  False),
-    #(16,   224, 50,  320, 2, "fp32", 8,  1,  1,  False,  True,  False),
-    #(64,   224, 50,  320, 2, "fp32", 8,  1,  4,  False,  True,  False),
-
-    # 2d mesh
-    (64,   224, 50,  320, 2, "fp32", 2,  4,  1,  False, False, False),
-],
-
-16: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FD,    RS,    CK,
-    # 1d mesh
-    # data-parallel
-    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  True,  False, False),
-    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  True,  False, False),
-    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  False, False, False),
-    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  False, False, False),
-    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  True,  True,  False),
-    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  True,  True,  False),
-    #(256,  224, 50,  192, 2, "fp32", 16, 1,  1,  False, True,  False),
-    #(1024, 224, 50,  192, 2, "fp32", 16, 1,  4,  False, True,  False),
-    # model-parallel
-    #(16,   224, 50,  320, 4, "fp32", 16,  1,  1,  False,  False, False),
-    #(16,   224, 50,  320, 4, "fp32", 16,  1,  1,  True,   True,  False),
-    #(16,   224, 50,  320, 4, "fp32", 16,  1,  1,  False,  True,  False),
-    #(64,   224, 50,  320, 4, "fp32", 16,  1,  4,  False,  False, False),
-    #(64,   224, 50,  320, 4, "fp32", 16,  1,  4,  True,   True,  False),
-    #(64,   224, 50,  320, 4, "fp32", 16,  1,  4,  False,  True,  False),
-
-    # 2d mesh
-    #(32,   224, 50,  320, 2, "fp32", 2,  8,  1,  False, False, False),
-    #(32,   224, 50,  320, 2, "fp32", 2,  8,  1,  False, True,  False),
-    #(32,   224, 50,  320, 2, "fp32", 16, 1,  1,  True,  True,  False),
-    #(32,   224, 50,  320, 2, "fp32", 16, 1,  1,  False, True,  False),
-    #(128,  224, 50,  320, 2, "fp32", 2,  8,  4,  False, False, False),
-    #(128,  224, 50,  320, 2, "fp32", 2,  8,  4,  False, True,  False),
-    #(128,  224, 50,  320, 2, "fp32", 16, 1,  4,  True,  True,  False),
-    #(128,  224, 50,  320, 2, "fp32", 16, 1,  4,  False, True,  False),
-],
-
-}
-
-benchmark_suites = {
-    "32gb": benchmark_suite_32gb,
-    "16gb": benchmark_suite_16gb,
-}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use-profiling", action="store_true")
-    parser.add_argument("--niter", type=int, default=4,
-        help="Number of benchmark iteration")
-    parser.add_argument("--suite", choices=["32gb", "16gb"], default="16gb",
-        help="The benchmark suite")
+    parser.add_argument("--niter", type=int)
+    parser.add_argument("--case", type=str)
+    parser.add_argument("--num-hosts", type=int)
+    parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
+    parser.add_argument("--dump-result", action="store_true",
+        help="Dump results into a temporary pickle file")
     args = parser.parse_args()
 
-    # Set global environments
-    if args.local:
-        num_gpus = list_gpu_info().count("UUID")
-    else:
-        ray.init(address="auto")
-        jax.config.update('jax_platform_name', 'cpu')
-        num_gpus = int(ray.cluster_resources()["GPU"])
-
-    global_config.use_dummy_value_for_benchmarking = True
-
-    # Get benchmark suite and run all cases
-    try:
-        suite = benchmark_suites[args.suite][num_gpus]
-    except KeyError:
-        suite = None
-
-    if not suite:
-        print(f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
-        exit()
-
-    for case in suite:
-        benchmark_one_case(case)
+    run_cmd("mkdir -p tmp")
+    case = eval(args.case)
+    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
+                       args.local, False, args.dump_result)

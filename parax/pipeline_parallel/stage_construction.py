@@ -3,80 +3,43 @@ import math
 from time import time
 from typing import Sequence
 
-import tqdm
 import numba
 import numpy as np
 import ray
+import tqdm
 
+from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
+from parax.pipeline_parallel.automatic_layer_slicing import eqn_flops
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
-from parax.device_mesh import VirtualPhysicalMesh
 from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
-    split_global_use_and_donate, generate_stage_info, compile_all,
+    split_global_use_and_donate, generate_stage_info, compile_all, profile_all,
     ProfileWorkerPool)
+from parax.timer import timers
 from parax.util import OrderedSet
+from parax.global_env import global_config
 
-GB = 1024 * 1024 * 1024
 last_compute_cost_file_name = None
 last_forward_stage_layer_ids = None
 last_submesh_shapes = None
+last_logical_mesh_shapes = None
+last_autosharding_global_configs = None
 
 
 def get_last_dp_result():
     global last_compute_cost_file_name
     global last_forward_stage_layer_ids, last_submesh_shapes
+    global last_logical_mesh_shapes, last_autosharding_global_configs
     return (last_compute_cost_file_name, last_forward_stage_layer_ids,
-            last_submesh_shapes)
-
-
-@numba.jit(nopython=True)
-def old_forward_dp_impl(num_layers, num_devices, num_microbatches,
-                        submesh_choices, compute_cost, max_stage_cost):
-    # For f, layer ID start from 1
-    f = np.full((num_layers + 1, num_devices + 1), np.inf, dtype=np.float32)
-    f_stage_max = np.full((num_layers + 1, num_devices + 1),
-                          0.0,
-                          dtype=np.float32)
-    f_argmin = np.full((num_layers + 1, num_devices + 1, 2), -1, dtype=np.int32)
-    f[0, 0] = 0
-    for i in range(1, num_layers + 1):
-        for j in range(1, num_devices + 1):
-            for k in range(1, i + 1):
-                for m, submesh in enumerate(submesh_choices):
-                    s = np.prod(np.array(submesh))
-                    if s <= j:
-                        stage_cost = compute_cost[k - 1, i - 1, m]
-                        new_cost = f[k - 1, j - s] + stage_cost
-                        if stage_cost <= max_stage_cost and new_cost < f[i, j]:
-                            f[i, j] = new_cost
-                            f_stage_max[i, j] = max(f_stage_max[k - 1, j - s],
-                                                    stage_cost)
-                            f_argmin[i, j] = (k, m)
-
-    if np.isinf(f[num_layers, num_devices]):
-        return np.inf, None
-
-    total_cost = f[num_layers, num_devices] + (
-        num_microbatches - 1) * f_stage_max[num_layers, num_devices]
-    current_layer = num_layers
-    current_devices = num_devices
-
-    res = []
-    while current_layer > 0 and current_devices > 0:
-        start_layer, submesh_choice = f_argmin[current_layer, current_devices]
-        assert start_layer != -1 and current_devices != -1
-        res.append(((start_layer - 1, current_layer), submesh_choice))
-        current_layer = start_layer - 1
-        current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
-    assert current_layer == 0 and current_devices == 0
-
-    return total_cost, res
+            last_submesh_shapes, last_logical_mesh_shapes,
+            last_autosharding_global_configs)
 
 
 @numba.jit(nopython=True)
 def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
-            compute_cost, max_n_succ_stages, max_stage_cost):
+            num_autosharding_configs, compute_cost, max_n_succ_stages,
+            max_stage_cost):
     # For f, layer ID start from 0
     # f[#pipeline stages,
     #   layer id that is currently being considered,
@@ -87,7 +50,7 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
     f_stage_max = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
                           0.0,
                           dtype=np.float32)
-    f_argmin = np.full((num_layers + 1, num_layers + 1, num_devices + 1, 2),
+    f_argmin = np.full((num_layers + 1, num_layers + 1, num_devices + 1, 3),
                        -1,
                        dtype=np.int32)
     f[0, num_layers, 0] = 0
@@ -97,19 +60,23 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
                 for k in range(num_layers, i, -1):
                     for m, submesh in enumerate(submesh_choices):
                         n_submesh_devices = np.prod(np.array(submesh))
-                        if (s - 1 <= max_n_succ_stages[i, k - 1, m] and
-                                n_submesh_devices <= j):
-                            stage_cost = compute_cost[i, k - 1, m]
-                            new_cost = f[s - 1, k,
-                                         j - n_submesh_devices] + stage_cost
-                            if (stage_cost <= max_stage_cost and
-                                    new_cost < f[s, i, j]):
-                                f[s, i, j] = new_cost
-                                f_stage_max[s, i, j] = max(
-                                    f_stage_max[s - 1, k,
-                                                j - n_submesh_devices],
-                                    stage_cost)
-                                f_argmin[s, i, j] = (k, m)
+                        if n_submesh_devices <= j:
+                            # TODO(zhuohan): This level of for loop is not
+                            #   necessary. It can be optimized by sorting
+                            #   the logical mesh shapes.
+                            for l in range(num_autosharding_configs):
+                                if s - 1 <= max_n_succ_stages[i, k - 1, m, l]:
+                                    stage_cost = compute_cost[i, k - 1, m, l]
+                                    new_cost = f[s - 1, k, j -
+                                                 n_submesh_devices] + stage_cost
+                                    if (stage_cost <= max_stage_cost and
+                                            new_cost < f[s, i, j]):
+                                        f[s, i, j] = new_cost
+                                        f_stage_max[s, i, j] = max(
+                                            f_stage_max[s - 1, k,
+                                                        j - n_submesh_devices],
+                                            stage_cost)
+                                        f_argmin[s, i, j] = (k, m, l)
 
     best_s = -1
     best_total_cost = np.inf
@@ -129,10 +96,11 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
 
     res = []
     while current_s > 0 and current_layer < num_layers and current_devices > 0:
-        next_start_layer, submesh_choice = f_argmin[current_s, current_layer,
-                                                    current_devices]
+        next_start_layer, submesh_choice, autosharding_choice = (
+            f_argmin[current_s, current_layer, current_devices])
         assert next_start_layer != -1 and current_devices != -1
-        res.append(((current_layer, next_start_layer), submesh_choice))
+        res.append(((current_layer, next_start_layer), submesh_choice,
+                    autosharding_choice))
         current_s -= 1
         current_layer = next_start_layer
         current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
@@ -142,8 +110,10 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
     return total_cost, res
 
 
-def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost,
-       max_n_succ_stages):
+def dp(num_layers, num_devices, num_microbatches, submesh_choices,
+       num_autosharding_configs, compute_cost, max_n_succ_stages):
+    timers("stage-construction-dp").start()
+
     all_possible_stage_costs = np.sort(np.unique(compute_cost))
     best_cost = np.inf
     best_solution = None
@@ -158,16 +128,21 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices, compute_cost,
         if max_stage_cost - last_max_stage_cost < gap:
             continue
         cost, solution = dp_impl(num_layers, num_devices, num_microbatches,
-                                 submesh_choices, compute_cost,
-                                 max_n_succ_stages, max_stage_cost)
+                                 submesh_choices, num_autosharding_configs,
+                                 compute_cost, max_n_succ_stages,
+                                 max_stage_cost)
         if cost < best_cost:
             best_cost = cost
             best_solution = solution
     assert best_solution is not None, "no solution in auto stage construction."
+
+    timers("stage-construction-dp").suspend()
     return best_cost, best_solution
 
 
 def get_submesh_choices(mesh: VirtualPhysicalMesh):
+    if global_config.fix_physical_mesh_shape:
+        return [global_config.fix_physical_mesh_shape]
     num_hosts = mesh.num_hosts
     num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []
@@ -182,30 +157,105 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         "while now num_devices_per_host = {}".format(num_devices_per_host))
 
     # larger meshes:
-    for i in range(2, num_hosts + 1):
-        submesh_choices.append((i, num_devices_per_host))
+    if global_config.submesh_choices_mode == "all":
+        for i in range(2, num_hosts + 1):
+            submesh_choices.append((i, num_devices_per_host))
+    elif global_config.submesh_choices_mode == "power_of_two":
+        i = 2
+        while i <= num_hosts:
+            submesh_choices.append((i, num_devices_per_host))
+            i *= 2
+    else:
+        raise ValueError("Invalid submesh_choices: {}".format(
+            global_config.submesh_choices))
 
-    return submesh_choices
+    return tuple(submesh_choices)
 
 
-def distributed_profile_on_mesh(meshes, layers, donation_mapping,
-                                global_outvars, apply_grad_layers,
-                                apply_grad_global_info):
+def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
+                                                batch_size):
+    """
+    Return a list of logical meshes and autosharding configs for the
+    auto stage construction algorithm.
+
+    Args:
+        option (string): ["all", "single_node_model_parallel", "default"].
+    """
+    results = []
+    num_devices = virtual_submesh.total_devices
+    if option in ["all", "single_node_model_parallel"]:
+        if option == "all":
+            max_mp_dimension = num_devices
+        else:  # option == "single_node_model_parallel"
+            max_mp_dimension = virtual_submesh.num_devices_per_host
+
+        for mp_size in range(1, max_mp_dimension + 1):
+            if num_devices % mp_size == 0:
+                dp_size = num_devices // mp_size
+                if batch_size % dp_size == 0:
+                    results.append((virtual_submesh.get_logical_mesh(
+                        (dp_size, mp_size)), {
+                            "force_batch_dim_to_mesh_dim": 0
+                        }))
+        results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
+    elif option == "default":
+        results.append((virtual_submesh.get_default_logical_mesh(), {}))
+    return results
+
+
+def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
+                                                option, batch_size):
+    # a config is: (logical_mesh, autosharding_global_configs)
+    # each (2D Mesh with force batch dim) + (1D Mesh with mix batch dim)
+    autosharding_configs = []
+    for submesh in submesh_choices:
+        num_hosts, num_devices = submesh
+        virtual_submesh = virtual_mesh.slice_2d(
+            list(range(num_hosts)),
+            [list(range(num_devices)) for _ in range(num_hosts)])
+        submesh_autosharding_configs = (
+            get_one_submesh_autosharding_config_choices(virtual_submesh, option,
+                                                        batch_size))
+        autosharding_configs.append(submesh_autosharding_configs)
+
+    # Pad all submesh to the maximum number of configs
+    max_num_autosharding_configs = max(
+        [len(configs) for configs in autosharding_configs])
+    for configs in autosharding_configs:
+        configs += [None] * (max_num_autosharding_configs - len(configs))
+
+    return autosharding_configs
+
+
+def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
+                                donation_mapping, global_outvars,
+                                apply_grad_layers, apply_grad_global_info,
+                                autosharding_configs, cluster_size,
+                                layer_flops_prefix_sum):
+    timers("stage-construction-compilation").start()
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
+    tot_flops = layer_flops_prefix_sum[2 * num_layers]
+    num_autosharding_configs = len(autosharding_configs)
     indices = list(range(2 * num_layers))
-    compute_cost = np.full((num_layers, num_layers), np.inf)
-    max_n_succ_stages = np.full((num_layers, num_layers), -1)
-    stage_infos = []
-    stage_indices = []
-    stage_intermediate_vars = []
-    profile_infos = []
-    apply_grad_infos = []
+    stages = []
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shapes
+    computation_source_ratio = meshes[0].total_devices / cluster_size
+    is_full_mesh = computation_source_ratio == 1
+    tolerance = global_config.auto_stage_construction_imbalance_tolerance
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
+            if is_full_mesh and not (start == 0 and end == num_layers - 1):
+                continue
+            flops_ratio = (
+                layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
+                + layer_flops_prefix_sum[2 * num_layers - start] -
+                layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
+            if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
+                (computation_source_ratio < flops_ratio / (1 + tolerance))):
+                continue
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
@@ -213,7 +263,7 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
                 apply_grad_layers[idx] for idx in indices[start:end + 1]
             ]
             stage_name = "stage_{}_{}".format(start, end)
-            (stage_info, intermediate_vars, profile_info,
+            (compile_info, intermediate_vars, profile_info,
              apply_info) = generate_stage_info(
                  layers,
                  layer_indices,
@@ -223,60 +273,65 @@ def distributed_profile_on_mesh(meshes, layers, donation_mapping,
                  insert_hook_after=end - start,
                  apply_grad_info=(selected_apply_grad_layers,
                                   *apply_grad_global_info))
-            stage_infos.append(stage_info)
-            stage_indices.append((start, end))
-            stage_intermediate_vars.append(intermediate_vars)
-            profile_infos.append(profile_info)
-            apply_grad_infos.append(apply_info)
+            for config_idx, autosharding_config in enumerate(
+                    autosharding_configs):
+                if autosharding_config is not None:
+                    stage_indices = (start, end, config_idx)
+                    stages.append(
+                        (stage_indices, compile_info, autosharding_config,
+                         intermediate_vars, profile_info, apply_info))
 
-    print("- Compile all stages")
+    if len(stages) == 0:
+        compute_cost = np.full(
+            (num_layers, num_layers, num_autosharding_configs), np.inf)
+        max_n_succ_stages = np.full(
+            (num_layers, num_layers, num_autosharding_configs), -1)
+        # Suspend timers
+        timers("stage-construction-compilation").suspend()
+        timers("stage-construction-profiling").start()
+        timers("stage-construction-profiling").suspend()
+        return compute_cost, max_n_succ_stages
+
     # TODO(zhuohan): set the number of workers as a tunable parameter
-    n_workers = int(max(ray.available_resources()["CPU"] // 2, 1))
-    logical_mesh = meshes[0].get_default_logical_mesh()
-    compiled_outputs = compile_all(stage_infos, logical_mesh, n_workers, 1)
-
-    print("- Start all profiling tasks")
-    profile_workers = ProfileWorkerPool(meshes)
-    for (compiled_output, stage_info, intermediate_vars,
-         apply_info) in zip(compiled_outputs, profile_infos,
-                            stage_intermediate_vars, apply_grad_infos):
-        (proto, config, in_shardings, out_shardings, hooked_proto,
-         apply_in_shardings) = compiled_output
-        intermediate_size = compute_intermediate_size(hooked_proto,
-                                                      intermediate_vars,
-                                                      config.logical_mesh_shape)
-        apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, *apply_info, config.logical_mesh_shape)
-        profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (compiled_output, stage_info, intermediate_size,
-                                apply_grad_input_size))
+    print("- Compile all stages")
+    compiled_outputs = compile_all(stages)
+    timers("stage-construction-compilation").suspend()
 
     print("- Profile all stages")
-    pbar = tqdm.tqdm(stage_indices)
-    for start, end in pbar:
-        cost, max_stage, debug_info = profile_workers.get_next()
-        peak_memory, available_memory, intermediate_size, initial_size = debug_info
-        compute_cost[start, end] = np.mean(cost)
-        max_n_succ_stages[start, end] = max_stage
-        pbar.write(f"cost[{start}, {end}]={compute_cost[start, end]},"
-                   f" max_n_succ_stage={max_stage},"
-                   f" Mem: peak={peak_memory / GB:.3f}GB,"
-                   f" avail={available_memory / GB:.3f}GB,"
-                   f" intermediate={intermediate_size / GB:.3f}GB,"
-                   f" initial={initial_size / GB:.3f}GB")
-    profile_workers.shutdown()
+    # shape of compute_cost and max_n_succ_stages:
+    # (num_layers, num_layers, num_autosharding_configs)
+    timers("stage-construction-profiling").start()
+    compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs,
+                                                  meshes, num_layers,
+                                                  num_autosharding_configs)
+    timers("stage-construction-profiling").suspend()
     return compute_cost, max_n_succ_stages
 
 
-def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
+def _get_layer_flops_prefix_sum(layers):
+    layer_flops_prefix_sum = [0]
+    for layer in layers:
+        layer_flops = sum([eqn_flops(eqn) for eqn in layer.eqns])
+        layer_flops_prefix_sum.append(layer_flops_prefix_sum[-1] + layer_flops)
+    return layer_flops_prefix_sum
+
+
+def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
+                     autosharding_configs, layers, donation_mapping,
                      global_outvars, apply_grad_layers, apply_grad_global_info):
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
-    compute_cost = np.full((num_layers, num_layers, num_submesh_choices),
-                           np.inf)
-    max_n_succ_stages = np.full((num_layers, num_layers, num_submesh_choices),
-                                -1)
+    num_autosharding_configs = len(autosharding_configs[0])
+    cluster_size = virtual_mesh.total_devices
+    layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
+
+    compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf)
+    max_n_succ_stages = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        -1)
     print("-" * 20 + " Automatic stage clustering " + "-" * 20)
     print(f"submesh_choices: {submesh_choices}")
 
@@ -285,14 +340,22 @@ def get_compute_cost(virtual_mesh, submesh_choices, layers, donation_mapping,
         print(f"- Profiling for submesh {mesh_id} {submesh}:")
         num_hosts, num_devices = submesh
         tic = time()
-        sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
-            num_hosts, num_devices)
+        if global_config.profile_with_whole_ray_cluster:
+            whole_cluster_virtual_mesh = DeviceCluster(
+            ).get_virtual_physical_mesh()
+            sliced_virtual_meshes = (
+                whole_cluster_virtual_mesh.slice_profiling_submeshes(
+                    num_hosts, num_devices))
+        else:
+            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+                num_hosts, num_devices)
         mesh_compute_cost, mesh_max_n_succ_stages = distributed_profile_on_mesh(
             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
-            apply_grad_layers, apply_grad_global_info)
+            apply_grad_layers, apply_grad_global_info,
+            autosharding_configs[mesh_id], cluster_size, layer_flops_prefix_sum)
 
-        compute_cost[:, :, mesh_id] = mesh_compute_cost
-        max_n_succ_stages[:, :, mesh_id] = mesh_max_n_succ_stages
+        compute_cost[:, :, mesh_id, :] = mesh_compute_cost
+        max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
         toc = time()
         print(f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
               f' seconds')
@@ -446,12 +509,16 @@ def cluster_layers_and_slice_mesh(layers,
                                   donation_mapping,
                                   global_outvars,
                                   num_micro_batches,
+                                  batch_size,
                                   jax_apply_layers=None,
                                   apply_grad_global_info=None,
                                   pipeline_stage_mode="uniform_layer_gpipe",
+                                  logical_mesh_search_space="default",
                                   cache_compute_cost=None,
                                   forward_stage_layer_ids=None,
-                                  submesh_shapes=None):
+                                  submesh_shapes=None,
+                                  logical_mesh_shapes=None,
+                                  autosharding_global_configs=None):
     """
     Cluster pipeline layers into stages, slice the device mesh
     into multiple submeshes, and assign the stages to the submeshes.
@@ -473,36 +540,68 @@ def cluster_layers_and_slice_mesh(layers,
         stage_layer_ids (List[List[int]]): The layer IDs of each stage.
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
-    # For mesh-slicing's profiling, we can use the create_donation_mapping
-    # to get a sketchy donation_mapping: only accumulate grad, no applygrad
+    timers("stage-construction").start()
+
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
         # Assume each forward layer corresponds to a backward layer
         assert len(layers) % 2 == 0
         num_layers = len(layers) // 2
         submesh_choices = get_submesh_choices(mesh)
+
         if pipeline_stage_mode == "auto_gpipe":
-            # use DP to find the optimal solution
+            autosharding_configs = get_all_submesh_autosharding_config_choices(
+                mesh,
+                submesh_choices,
+                option=logical_mesh_search_space,
+                batch_size=batch_size)
+            num_autosharding_configs = len(autosharding_configs[0])
+
+            # Use DP to find the optimal solution.
             if cache_compute_cost is not None:
                 # FIXME(zhuohan): load max_n_succ_stages
                 compute_cost, max_n_succ_stages = np.load(cache_compute_cost,
                                                           allow_pickle=True)
             else:
                 compute_cost, max_n_succ_stages = get_compute_cost(
-                    mesh, submesh_choices, layers, donation_mapping,
-                    global_outvars, jax_apply_layers, apply_grad_global_info)
+                    mesh, submesh_choices, autosharding_configs, layers,
+                    donation_mapping, global_outvars, jax_apply_layers,
+                    apply_grad_global_info)
             cost, solution = dp(num_layers, mesh.total_devices,
                                 num_micro_batches, submesh_choices,
-                                compute_cost, max_n_succ_stages)
+                                num_autosharding_configs, compute_cost,
+                                max_n_succ_stages)
+
+            # Parse solution
             forward_stage_layer_ids = [
                 list(range(start_id, end_id))
-                for (start_id, end_id), _ in solution
+                for (start_id, end_id), _, _ in solution
             ]
-            submesh_shapes = [submesh_choices[i] for _, i in solution]
+            submesh_shapes = [
+                submesh_choices[submesh_id] for _, submesh_id, _ in solution
+            ]
+            selected_autosharding_configs = [
+                autosharding_configs[submesh_id][autosharding_config_id]
+                for _, submesh_id, autosharding_config_id in solution
+            ]
+            logical_mesh_shapes = [
+                mesh.shape for mesh, _ in selected_autosharding_configs
+            ]
+            autosharding_global_configs = [
+                config for _, config in selected_autosharding_configs
+            ]
+
+            # Print and store the results
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
             print("Result meshes:", submesh_shapes)
+            print("Result logical_mesh_shapes:", logical_mesh_shapes)
+            print("Result autosharding_global_configs:",
+                  autosharding_global_configs)
             global last_forward_stage_layer_ids, last_submesh_shapes
+            global last_logical_mesh_shapes, last_autosharding_global_configs
             last_forward_stage_layer_ids = forward_stage_layer_ids
             last_submesh_shapes = submesh_shapes
+            last_logical_mesh_shapes = logical_mesh_shapes
+            last_autosharding_global_configs = autosharding_global_configs
         elif pipeline_stage_mode == "manual_gpipe":
             # Manual-GPipe: use the user-provided solution
             # Sanity check that the user-provided solution is valid
@@ -544,14 +643,15 @@ def cluster_layers_and_slice_mesh(layers,
             merged_stages.append(merged_stage)
         stages = merged_stages
     elif pipeline_stage_mode == "uniform_layer_gpipe":
-        # this mode resembles Megatron in terms of the uniformity of mesh shapes.
+        # This mode resembles Megatron in terms of the uniformity of mesh shapes.
         num_acc_grad_stages = len(layers)
+        assert num_acc_grad_stages % 2 == 0
+
         stage_to_mesh = {
             i:
             (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
             for i, _ in enumerate(layers)
         }
-        assert num_acc_grad_stages % 2 == 0
         num_meshes = num_acc_grad_stages // 2
         stages = layers
         if submesh_shapes != None:
@@ -560,8 +660,32 @@ def cluster_layers_and_slice_mesh(layers,
                                            num_meshes,
                                            submesh_shapes=submesh_shapes)
     else:
-        raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
-    return stages, stage_to_mesh, sliced_meshes
+        raise ValueError(f"Unknown pipeline_stage_mode {pipeline_stage_mode}")
+
+    # Check logical mesh shapes or assign default logical mesh shapes
+    if logical_mesh_shapes is not None:
+        assert len(logical_mesh_shapes) == len(sliced_meshes)
+        for logical_mesh_shape, submesh in zip(logical_mesh_shapes,
+                                               sliced_meshes):
+            assert np.prod(logical_mesh_shape) == submesh.total_devices
+    else:
+        logical_mesh_shapes = [
+            submesh.get_default_logical_mesh().shape
+            for submesh in sliced_meshes
+        ]
+    if autosharding_global_configs is not None:
+        assert len(autosharding_global_configs) == len(sliced_meshes)
+    else:
+        autosharding_global_configs = [{}] * len(sliced_meshes)
+
+    for name in [
+            "stage-construction", "stage-construction-dp",
+            "stage-construction-compilation", "stage-construction-profiling"
+    ]:
+        if name in timers.timers:
+            timers(name).stop()
+    return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
+            autosharding_global_configs)
 
 
 def get_stage_outvars(layers: Sequence[JaxPipelineComputation],

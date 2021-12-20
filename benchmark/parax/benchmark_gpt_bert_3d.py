@@ -1,14 +1,14 @@
 import argparse
 from datetime import datetime
+import time
 
 import numpy as np
 import ray
 
-from parax.util import write_tsv, run_cmd
+from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round
 from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
 from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
-from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite
-from parax.pipeline_parallel.stage_construction import get_last_dp_result
+from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite, result_auto_gpt_suite
 
 GB = 1024 ** 3
 
@@ -16,23 +16,19 @@ GB = 1024 ** 3
 # #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
 # PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter
+# RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
 
 # yapf: disable
 
 default_suite = {
 4: [
-    #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Auto-pipeline
-    (32,   1024,  1024, 4, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False),
-    (32,   1024,  1024, 8, 1024//64, 1024,   2,   1,   1,   2,   2,  8,   True,  True,  False, False),
+    #B,   S,     H     L,   #head,   V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,      LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Auto-pipeline
-    (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, False), # 0.323
-    (64,   1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  16,  False, True,  False, False), # 0.380
-    (128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  True,  True,  False, False), # 0.323
-    (128,  1024,  1024, 12, 1024//64, 51200, 4,   1,   1,   4,   2,  32,  False, True,  False, False), # 0.380
+    #B,   S,     H     L,  #head,    V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
+    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "uniform_layer_gpipe", None),
+    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "auto_gpipe",          None),
 ]
 }
 
@@ -44,26 +40,32 @@ benchmark_suites = {
     "test_gpt": test_gpt_suite,
     "paper_auto_gpt": paper_auto_gpt_suite,
     "test_auto_gpt": test_auto_gpt_suite,
+    "result_auto_gpt": result_auto_gpt_suite,
 }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=7)  # 2 warmup + 5 actual run.
+    parser.add_argument("--niter", type=int, default=5)  # 2 warmup + 5 actual run.
     parser.add_argument("--suite", choices=list(benchmark_suites.keys()),
                         default="paper_gpt")
+    parser.add_argument("--num-hosts", type=int, default=None)
+    parser.add_argument("--num-devices-per-host", type=int, default=None)
     parser.add_argument("--no-separate-process", action='store_false',
                         help="Do not launch separate processes for benchmark."
                              "Errors in a single case will terminate this script.",
                         dest='use_separate_process')
     parser.add_argument("--exp_name", type=str, default="default")
+    parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     print(f"- Use separate process: {args.use_separate_process}")
 
-    ray.init(address="auto")
-    num_gpus = int(ray.cluster_resources()["GPU"])
+    # Get the benchmark suite
+    num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
+    num_gpus = num_hosts * num_devices_per_host
+
     try:
         suite = benchmark_suites[args.suite][num_gpus]
     except KeyError:
@@ -73,46 +75,60 @@ if __name__ == "__main__":
         exit()
     run_cmd("mkdir -p tmp")
 
-    # Run all cases
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
-    for case in suite:
-        dp, mp, pp = case[6], case[7], case[10]
-        auto_layer_and_stage = case[15]
-        if pp <= 1 and not auto_layer_and_stage:
-            print(f"Skipping the case: {str(case)}, because PP <= 1. Please use `benchmark_gpt_bert_2d.py` "
-                  f"since 3d will have a small overhead.")
-            continue
-        print("Working on case: {}".format(str(case)))
-        result = benchmark_one_case(args.model, case, args.niter,
-                                    use_separate_process=args.use_separate_process)
-        (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
-         tflops_ckpt, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes) = result
 
-        if not auto_layer_and_stage:
+    # Run all cases
+    for benchmark_case in suite:
+        (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
+         use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+        model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
+
+        if pipeline_mp_size <= 1 and pipeline_stage_mode == "uniform_layer_gpipe":
+            print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
+                  f"Please use `benchmark_gpt_bert_2d.py` "
+                  f"since 3d runtime will have a small overhead.")
+            continue
+
+        # Run one case
+        print("Working on case: {}".format(str(benchmark_case)))
+        result = benchmark_one_case(args.model, benchmark_case, args.niter,
+                                    num_hosts, num_devices_per_host,
+                                    use_separate_process=args.use_separate_process,
+                                    disable_tqdm=args.disable_tqdm)
+        (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
+         tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
+         submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
+
+        if pipeline_stage_mode == "uniform_layer_gpipe":
             heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                     "#Microbatch", "Force DP", "Remat", "Reduce-scatter",
+                     "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
-                     "TFLOPs (ckpt)", "Peak Mem",]
-            parallel_config = (dp, mp, pp)
-            values = [args.model, str(case[:6]), str(parallel_config), str(case[8:10]),
-                      str(case[11]), str(case[12]), str(case[13]), str(case[14]),
+                     "TFLOPs (ckpt)", "Peak Mem", "overwrite_global_config_dict"]
+            parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
+            values = [args.model, model_config, parallel_config, (p_dim0, p_dim1),
+                      num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                      f"{max_mem_allocated/GB:.3f}G"]
+                      f"{max_mem_allocated/GB:.3f}G", overwrite_global_config_dict]
             write_tsv(heads, values, output_name)
         else:
             heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)",
                      "#Microbatch", "Remat", "Reduce-scatter",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
                      "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
-                     "Layer->Stage Mapping", "Submesh Shapes"]
-            values = [args.model + "-auto", str(case[:6]), str(num_gpus), str(pp),
-                      str(case[11]), str(case[13]), str(case[14]),
+                     "Layer->Stage Mapping", "Submesh Shapes",
+                     "Logical Mesh Shapes", "Autosharding Global Configs",
+                     "overwrite_global_config_dict", "compilation times"]
+            values = [args.model + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
+                      num_micro_batches, use_remat, prefer_reduce_scatter,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                      f"{max_mem_allocated/GB:.3f}G", str(compute_cost_file_name),
-                      str(forward_stage_layer_ids), str(submesh_shapes)]
+                      f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
+                      forward_stage_layer_ids, submesh_shapes,
+                      logical_mesh_shapes, autosharding_global_configs,
+                      overwrite_global_config_dict, to_str_round(compilation_times, 2)]
             write_tsv(heads, values, output_name)
 
+        time.sleep(0.1)  # for ctrl+c to work

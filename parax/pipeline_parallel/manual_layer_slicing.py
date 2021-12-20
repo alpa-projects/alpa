@@ -11,6 +11,7 @@ import numpy as np
 
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
+from parax.pipeline_parallel.layer_stats import log_layer_slicing_stats
 from parax.util import slices_to_jaxpr, OrderedSet
 
 
@@ -77,6 +78,7 @@ def transform_pipeline_forward(fn: Callable,
     @wraps(fn)
     def wrapped(*args):
         origin_jaxpr, sliced_eqns, out_shape_tree = get_sliced(*args)
+        log_layer_slicing_stats(origin_jaxpr, sliced_eqns)
         new_jaxpr = transform_fn(origin_jaxpr, sliced_eqns)
         flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)

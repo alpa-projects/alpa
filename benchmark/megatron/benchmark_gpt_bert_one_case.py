@@ -154,6 +154,7 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     sys.argv += ["--loss-scale", "8"]
     if checkpoint_activations:
         sys.argv += ["--checkpoint-activations"]
+    sys.argv += ["--no-scatter-gather-tensors-in-pipeline"]
     initialize_megatron()
     args = get_args()
     args.padded_vocab_size = vocab_size

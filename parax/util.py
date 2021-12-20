@@ -1,14 +1,18 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
 from collections import OrderedDict
+from datetime import datetime
+
 from functools import partial
 import functools
 import itertools as it
 import os
 import subprocess
 import time
+import tqdm
 from typing import Sequence
 from warnings import warn
+from functools import partialmethod
 
 import cupy as cp
 import flax
@@ -25,6 +29,9 @@ from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
 import numpy as np
+import ray
+
+from parax.global_env import global_config
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
@@ -243,6 +250,39 @@ class OrderedSet:
 
     def __class_getitem__(cls, item):
         return f"{cls.__name__}[{item.__name__}]"
+
+
+class DisjointDict:
+
+    def __init__(self):
+        self.values = dict()
+        self.reversed_mapping = dict()
+
+    def update(self, keys, values):
+        for key, value in zip(keys, values):
+            value = self.recursive_lookup(value)
+            self.values[key] = value
+            self._reversed_recursive_update(key, value)
+
+    def _reversed_recursive_update(self, key, value):
+        if key in self.reversed_mapping:
+            reversed_mapping = self.reversed_mapping[key]
+            self.reversed_mapping.setdefault(value,
+                                             set()).update(reversed_mapping)
+            self.reversed_mapping.pop(key)
+            for k in reversed_mapping:
+                self.values[k] = value
+        self.reversed_mapping.setdefault(value, set()).add(key)
+
+    def recursive_lookup(self, key):
+        if key in self.values:
+            value = self.values[key]
+            assert value not in self.values
+            return value
+        return key
+
+    def keys(self):
+        return list(self.values.keys())
 
 
 def cached_property(fn, *args, **kwargs):
@@ -494,18 +534,24 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
                                  raw_avals):
     """Trace the jaxpr of the computation of a micro batch."""
     avals = []
+    batch_size = None
     for aval, is_batch_var in zip(raw_avals, batch_invars):
         if is_batch_var:
             assert aval.shape[0] % num_micro_batches == 0,\
                 "The batch dimension must be divisable by num_micro_batches."
-            shape = (aval.shape[0] // num_micro_batches,) + aval.shape[1:]
+            if batch_size is None:
+                batch_size = aval.shape[0] // num_micro_batches
+            else:
+                assert batch_size == aval.shape[0] // num_micro_batches,\
+                    "The batch dimension must be the same for all batch vars."
+            shape = (batch_size,) + aval.shape[1:]
             avals.append(aval.update(shape=shape))
         else:
             avals.append(aval)
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    return closed_jaxpr, avals
+    return closed_jaxpr, avals, batch_size
 
 
 def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
@@ -805,6 +851,35 @@ def list_gpu_info():
     return ret
 
 
+def disable_tqdm_globally():
+    tqdm.tqdm.__init__ = partialmethod(tqdm.tqdm.__init__, disable=True)
+
+
+def get_num_hosts_and_num_devices(args):
+    """Get the number of hosts and the number of devices per host for benchmark scripts."""
+    if args.num_hosts is not None or args.num_devices_per_host is not None:
+        assert args.num_hosts is not None and args.num_devices_per_host is not None
+        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
+    else:
+        if hasattr(args, "local") and args.local:
+            num_hosts = 1
+            num_devices_per_host = list_gpu_info().count("UUID")
+        else:
+            ray.init(address="auto", namespace=get_ray_namespace_str())
+            num_hosts = len(ray.nodes())
+            num_devices_per_host = int(
+                ray.cluster_resources()["GPU"]) // num_hosts
+    return num_hosts, num_devices_per_host
+
+
+def get_ray_namespace_str(prefix="parax-train"):
+    """Get a unique ray namespace str to avoid some annoyed warnings."""
+    prefix = global_config.default_ray_namespace_prefix
+    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    namespace_str = f"{prefix}-{date_str}"
+    return namespace_str
+
+
 def write_tsv(heads, values, filename, print_line=True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
@@ -829,12 +904,15 @@ def to_str_round(x, decimal=6):
         return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
                                ]) + "]"
     if isinstance(x, dict):
-        return str({k: eval(to_str_round(v)) for k, v in x.items()})
+        return str(
+            {k: eval(to_str_round(v, decimal=decimal)) for k, v in x.items()})
     if isinstance(x, int):
         return str(x)
     if isinstance(x, float):
         format_str = "%%.%df" % decimal
         return format_str % x
+    if x is None:
+        return str(x)
     raise ValueError("Invalid value: " + str(x))
 
 

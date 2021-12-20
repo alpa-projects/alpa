@@ -20,6 +20,7 @@ from parax.model.model_util import TrainState
 from parax.pipeline_parallel.automatic_layer_slicing import automatic_layer_slicing
 from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing, remat
 from parax.pipeline_parallel.primitive_def import mark_pipeline
+from parax.util import get_ray_namespace_str
 
 # Store last compiled executables for unit tests.
 last_compiled_executable = None
@@ -184,7 +185,8 @@ def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat,
 class PipelineBasicTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto")
+        ray.init(address="auto", namespace=get_ray_namespace_str(
+            prefix=global_config.unittest_ray_namespace_prefix))
         jax.config.update('jax_platform_name', 'cpu')
 
         # Backup global config

@@ -3,36 +3,37 @@
 gpt_specs = {
 # Note: that head_size = hidden_size / #head
         # S，    H，    #L,   #head,  V,
-"125M": (1024,  768,   12,    12,   51200, ),
-"350M": (1024,  1024,  24,    16,   51200, ),
-"760M": (1024,  1536,  24,    16,   51200, ),
-"1.3B": (1024,  2048,  24,    32,   51200, ),
-"2.7B": (1024,  2560,  32,    32,   51200, ),
-"6.7B": (1024,  4096,  32,    32,   51200, ),
-"15B":  (1024,  5120,  48,    40,   51200, ),
-"39B":  (1024,  8192,  48,    64,   51200, ),
-"76B":  (1024,  10240, 60,    80,   51200, ),
+"125M": (1024,  768,   12,    12,   51200,),
+"350M": (1024,  1024,  24,    16,   51200,),
+"760M": (1024,  1536,  24,    16,   51200,),
+"1.3B": (1024,  2048,  24,    32,   51200,),
+"2.7B": (1024,  2560,  32,    32,   51200,),
+"6.7B": (1024,  4096,  32,    32,   51200,),
+"15B":  (1024,  5120,  48,    40,   51200,),
+"39B":  (1024,  8192,  48,    64,   51200,),
+"76B":  (1024,  10240, 60,    80,   51200,),
 
-"6.7B-half": (1024,  4096,  16,    32,   51200, ),
-"2.7B-half": (1024,  2560,  4,    32,   51200, ),
-
-"15B-":  (1024,  5120,  4,    40,   51200, ),
+# for debugging purpose
+"6.7B-half": (1024,  4096,  16,   32,   51200,),
+"2.7B-half": (1024,  2560,  4,    32,   51200,),
+"15B-":      (1024,  5120,  4,    40,   51200,),
 }
 
-
-fixed_params = (True, True, False)
+              # Remat, RS,   pipeline_stage_mode,   overwrite_global_config_dict
+fixed_params = (True,  True, "uniform_layer_gpipe", None)
 max_global_batch_size = 1024
 
 test_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,  ...
 1: [
 ],
 
 4: [
+    (256,  *gpt_specs["760M"], 4,   1,   1,   4,   1,  32,  True,  *fixed_params),
 ],
 
 8: [
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
     # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
     # (32,  *gpt_specs["2.7B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
 
@@ -45,24 +46,18 @@ test_gpt_suite = {
 ],
 
 16: [
-    # (512, *gpt_specs["2.7B-half"], 1,   4,   1,   4,   4,  32,    True,  *fixed_params),
-
-    # (512, *gpt_specs["2.7B"], 1,   4,   1,   4,   4,  32,    True,  *fixed_params)
-    (512, *gpt_specs["6.7B"], 1,   4,   1,   4,   4,  64, True, *fixed_params)
+    (1024,  *gpt_specs["6.7B"],  2,   1,   1,   2,   8,  256,    True,  *fixed_params),
 ],
 
 32: [
-
-    # (1024, *gpt_specs["15B"], 1,  4,  1,  4,  8,  256, True, *fixed_params),
-
-    (1024, *gpt_specs["15B"], 2,  4,  1,  8,  4,  256, True, *fixed_params),
+    (1024,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  32,    True,  *fixed_params),
 ]
 
 }
 
 
 paper_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    Auto-pipeline
+    #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
 1: [
     # 125M
     (2,   *gpt_specs["125M"],  1,   1,   1,   1,   1,  1,    1,  *fixed_params),
@@ -731,6 +726,84 @@ paper_gpt_suite = {
     (256,  *gpt_specs["15B"],  1,   2,   1,   2,   16,  64,    False,  *fixed_params),
     (512,  *gpt_specs["15B"],  1,   2,   1,   2,   16,  128,    False,  *fixed_params),
     (1024,  *gpt_specs["15B"],  1,   2,   1,   2,   16,  256,    False,  *fixed_params),
+
+    # ==================
+    # Parax suites
+    # ==================
+    # 6.7B model
+    # DP = 32 does not work
+    # DP = 16, MP = 2 does not work
+    # DP = 16, PP = 2 does not work
+    #
+    # DP = 8, MP = 4
+    (1024,  *gpt_specs["6.7B"],  8,   4,   1,   1,   1,  64,    False,  *fixed_params),
+    # DP = 4, MP = 8
+    (1024,  *gpt_specs["6.7B"],  4,   8,   1,   1,   1,  16,    False,  *fixed_params),
+
+    # PP at least = 4, otherwise MP or DP will cross noe.
+    # DP = 8, PP = 4
+    (1024,  *gpt_specs["6.7B"],  8,   1,   1,   8,   4,  128,    True,  *fixed_params),
+
+    # DP = 8, MP = 2, PP = 2, I think this will be bad because DP is crossing nodes.
+    (1024,  *gpt_specs["6.7B"],  8,   2,   2,   8,   2,  128,    False,  *fixed_params),
+
+    # DP = 4, PP = 8
+    (1024,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  64,    True,  *fixed_params),
+
+    # dp = 4, mp = 2, pp = 4
+    (1024,  *gpt_specs["6.7B"],  4,   2,   1,   8,   4,  32,    False,  *fixed_params),
+
+    # DP = 2, PP = 16
+    (1024,  *gpt_specs["6.7B"],  2,   1,   1,   2,   16,  128,    True,  *fixed_params),
+
+    # DP = 2, MP = 2, PP = 8
+    (1024,  *gpt_specs["6.7B"],  2,   2,   1,   4,   8,  64,    False,  *fixed_params),
+
+    # DP = 2, MP = 4, PP = 4, bad
+    # MP = 8, PP = 4, bad
+    # MP = 4, PP = 8, bad
+    # MP = 2, PP = 16, bad
+
+    # PP = 32
+    # microbatch_size = 32 does not work.
+    (1024,  *gpt_specs["6.7B"],  1,   1,   1,   1,   32,  512,    True,  *fixed_params),
+
+    #===================
+    # 15B model
+    # DP = 32 does not work
+    # DP = 16, MP = 2 does not work
+    # DP = 16, PP = 2 does not work
+    # DP = 8, MP = 4 impossible
+    # DP = 8, PP = 4, impossible
+    # DP = 8, MP = 2, PP = 2, impossible
+    # DP = 4, MP = 8, bad because DP cross nodes
+    # DP = 4, PP = 8, impossible
+
+    # DP = 4, mp = 4, pp = 2
+    (64,  *gpt_specs["15B"],  4,   4,   2,   8,   2,  2,    True,  *fixed_params), # buggy
+
+    # dp = 4, mp = 2, pp = 4, impoosible
+    # DP = 2, PP = 16, impossible
+
+    # DP = 2, MP = 2, PP = 8
+    (64,  *gpt_specs["15B"],  2,   2,   1,   4,   8,  2,    False,  *fixed_params),
+
+    # DP = 2, MP = 4, PP = 4
+    (1024,  *gpt_specs["15B"],  2,   4,   1,   8,   4,  256,    False,  *fixed_params),
+
+    # DP = 2, MP = 8, PP = 2, bad
+    (64,  *gpt_specs["15B"],  2,   8,   2,   8,   2,  2,    False,  *fixed_params),
+
+    # MP = 8, PP = 4
+    (1024,  *gpt_specs["15B"],  1,   8,   1,   8,   4,  256,    False,  *fixed_params),
+
+    # MP = 4, PP = 8
+    (8,  *gpt_specs["15B"],  1,   4,   1,   4,   8,   2,    False,  *fixed_params),
+
+    # MP = 2, PP = 16
+    (1024,  *gpt_specs["15B"],  1,   2,   1,   2,   16,  512,    False,  *fixed_params),
+
+    # PP = 32, impossible, needs either 32 or 64 layers
 ],
 
 64: [

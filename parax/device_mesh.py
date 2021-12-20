@@ -268,6 +268,7 @@ class MeshHostWorker:
         for uuid, cupy_buffer in zip(uuids, cupy_buffers):
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
+    # TODO(yonghao): replace dict by named tuple or class
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 

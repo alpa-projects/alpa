@@ -443,10 +443,6 @@ class ReshardingTask:
                     spec_plan[replica_index][src_tile_index]
                     for src_tile_index, _ in enumerate(src_tiles)
                 ]
-                sender_slices = [
-                    sl[replica_index][src_tile_index]
-                    for src_tile_index, _ in enumerate(src_tiles)
-                ]
                 self.receiver_uuid_plan.append(receiver)
                 receiver_rank, receiver_gpu_idx = \
                     self.collective_group.device_str_to_rank_map[receiver]
@@ -459,7 +455,8 @@ class ReshardingTask:
                     # self._sender_tasks[sender_worker].append(
                     #     (tile.offset, receiver_rank, receiver_gpu_idx))
                     self._sender_tasks[sender_worker].append(
-                        (sender_slices[i], receiver_rank, receiver_gpu_idx))
+                        (src_tiles[sender_idx].offset, receiver_rank,
+                         receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
@@ -1182,9 +1179,6 @@ class CrossMeshCommunicator:
             per_spec_plan = np.empty(
                 (len(dst_tile.replica_device_strs), len(src_tileslices)),
                 dtype=object)
-            per_spec_slice_plan = np.empty(
-                (len(dst_tile.replica_device_strs), len(src_tileslices)),
-                dtype=object)
             for receiver_idx, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 for src_tileslice_idx, src_tileslice in enumerate(
@@ -1195,8 +1189,6 @@ class CrossMeshCommunicator:
                     }
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
-                    per_spec_slice_plan[receiver_idx][
-                        src_tileslice_idx] = src_tileslice.offset
                     # upload load on-the-fly
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size

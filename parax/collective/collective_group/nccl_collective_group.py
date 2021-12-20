@@ -111,6 +111,15 @@ class Rendezvous:
                 "Unable to get the NCCLUniqueID from the store.")
         return uid
 
+    def get_access_counter(self):
+        """Return how many times the NCCLUniqueID has been accessed."""
+        return ray.get(self._store.get_access_counter.remote())
+
+    def destroy_store(self):
+        """Delete the named actor."""
+        ray.kill(self._store)
+        self._store = None
+
 
 class NCCLGroup(BaseGroup):
     def __init__(self, world_size, rank, group_name):
@@ -409,6 +418,13 @@ class NCCLGroup(BaseGroup):
             rendezvous.meet()
             nccl_uid = rendezvous.get_nccl_id()
 
+            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
+            # named actor leak.
+            if rendezvous.get_access_counter() == self.world_size:
+                logger.debug("NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                             "will go out of context and be destroyed.")
+                rendezvous.destroy_store()
+
         # Now create the communicators
         actual_world_size = len(device_list) * self.world_size
         comms = [None] * len(device_list)
@@ -488,11 +504,19 @@ class NCCLGroup(BaseGroup):
 
         group_key = self._generate_group_key(comm_key)
         if my_p2p_rank == 0:
+            logger.info("Rank-0 process to put the NCCL unique ID")
             nccl_uid = self._generate_nccl_uid(group_key)
         else:
             rendezvous = Rendezvous(group_key)
             rendezvous.meet()
             nccl_uid = rendezvous.get_nccl_id()
+
+            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+            # avoid named actor leak.
+            if rendezvous.get_access_counter() == 2:
+                logger.debug("NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                             "will go out of context and be destroyed.")
+                rendezvous.destroy_store()
 
         # create the p2p communicators
         with nccl_util.Device(my_gpu_idx):
@@ -525,9 +549,12 @@ class NCCLGroup(BaseGroup):
             None
         """
         store_name = get_store_name(group_key)
-        store = ray.get_actor(store_name)
-        # ray.get([store.__ray_terminate__.remote()])
-        ray.kill(store)
+        try:
+            store = ray.get_actor(store_name)
+            ray.kill(store)
+        except ValueError:
+            logger.info("The store with name {} has been destroyed somewhere else.")
+            pass
 
     def _generate_nccl_uid(self, key):
         """Generate an NCCL unique ID for initializing communicators.

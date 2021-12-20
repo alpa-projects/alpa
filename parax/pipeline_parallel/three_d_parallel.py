@@ -9,6 +9,7 @@ import numpy as np
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.global_env import global_config
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
+from parax.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from parax.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages,
                                                PipeDreamFlush)
@@ -36,6 +37,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               donated_invars, batch_invars, devices,
                               memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
+
+    if not global_config.with_physical_mesh:
+        assert not (global_config.pipeline_stage_mode == "auto_gpipe" and
+                    global_config.cache_compute_cost
+                    == None), "no physical mesh, cannot do auto gpipe without cached cost"
 
     if not isinstance(devices, VirtualPhysicalMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "
@@ -166,6 +172,13 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         memory_budget_per_device, gensym_func, logical_mesh_shapes,
         autosharding_global_configs)
     total_flops *= num_micro_batches
+
+    # Debug use: only compile Hlo, even without enough device.
+    if not global_config.with_physical_mesh:
+        return LocalRuntime(pipeline_stages=xla_stages,
+                            global_invars=global_invars,
+                            global_outvars=global_outvars,
+                            get_hlo_texts=True)
 
     # Wrap all things into a distributed runtime
     physical_meshes = [mesh.get_physical_mesh() for mesh in sliced_meshes]

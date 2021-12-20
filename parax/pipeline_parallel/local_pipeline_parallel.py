@@ -9,7 +9,7 @@ from jax.core import Var, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
 
 from parax.pipeline_parallel.computation import (
-    PipelineComputation, XlaPipelineComputation,
+    PipelineComputation, XlaPipelineComputation, XlaShardedPipelineComputation,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)
 from parax.pipeline_parallel.base_runtime import BaseRuntime
@@ -68,7 +68,8 @@ class LocalRuntime(BaseRuntime):
                  pipeline_stages: Sequence[PipelineComputation],
                  global_invars: Sequence[Var],
                  global_outvars: Sequence[Var],
-                 physical_meshes: Sequence[PhysicalDeviceMesh] = None):
+                 physical_meshes: Sequence[PhysicalDeviceMesh] = None,
+                 get_hlo_texts=False):
         """
         Return a runtime that runs all pipeline stages on a single local device.
 
@@ -77,15 +78,26 @@ class LocalRuntime(BaseRuntime):
                 executed.
             global_invars (Sequence[Var]): Global input variables.
             global_outvars (Sequence[Var]): Global output variables.
+            get_hlo_texts (bool): Whether to record hlo_texts. If True, input stages
+                should be XlaShardedComputation
         """
         super(LocalRuntime, self).__init__(pipeline_stages=pipeline_stages,
                                            global_invars=global_invars,
                                            global_outvars=global_outvars,
                                            physical_meshes=physical_meshes)
 
+        if get_hlo_texts:
+            self.hlo_texts_after_spmd_partitioner = []
+            for stage in self.stages:
+                assert isinstance(stage, XlaShardedPipelineComputation)
+                compiled = stage.get_compiled(is_distributed=True)
+                hlo_module = compiled.hlo_modules()[0]
+                self.hlo_texts_after_spmd_partitioner.append(hlo_module.to_string())
+
     def run(self, *args, **kwargs):
         """Run function."""
         assert not kwargs, "kwargs not supported"
+        assert self.physical_meshes is not None
         global_invals = dict(zip(self.global_invars, args))
         runners = {}
 
@@ -142,6 +154,19 @@ class LocalRuntime(BaseRuntime):
         """Shutdown the pipeline runtime."""
         pass
 
+    def get_hlo_text(self, after_spmd_partitioner=True):
+        """Return the HLO text for all stages."""
+        if after_spmd_partitioner:
+            return self.hlo_texts_after_spmd_partitioner
+        else:
+            ret = []
+            for stage in self.stages:
+                assert isinstance(stage, XlaShardedPipelineComputation)
+                ret.append(stage.get_hlo_text())
+            return ret
+
+    def get_executable(self):
+        return self
 
 @lu.cache
 def local_pipeline_parallel_callable(fun: lu.WrappedFun,

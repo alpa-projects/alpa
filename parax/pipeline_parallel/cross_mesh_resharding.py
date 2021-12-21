@@ -9,7 +9,7 @@ import ray
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
-from parax.device_mesh import DistributedArray, RemoteBufferRef, VirtualPhysicalMesh
+from parax.device_mesh import DistributedArray, RemoteBufferRef
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.global_env import global_config
 from parax.util import OrderedSet
@@ -261,9 +261,11 @@ class ReshardingTask:
 
     def _allgather_receiver_step_and_offset(self, receiver):
         tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
+        # the dst mesh of col group may not be dst mesh of resharding task
         host_idx, device_idx = self.collective_group.device_str_to_rank_map[
             receiver]
-        host_idx = host_idx - self.collective_group.src_mesh.num_hosts
+        if host_idx >= self.collective_group.src_mesh.num_hosts:
+            host_idx = host_idx - self.collective_group.src_mesh.num_hosts
         flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
         # Reconstruct logical mesh info
         dst_spec = self.task_spec.dst_sharding_spec
@@ -501,14 +503,10 @@ class ReshardingTask:
             return self.allgather_tasks
         # only dst mesh does allgather.
         # is a worker -> ((device_ids), (device_strs), (slices))
-        # FIXME(yonghao): the dst mesh of col group may not be dst mesh of resharding task
         self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
-            # TODO(yonghao): create new api for colleceive group instead of directly accessing it
-            worker_id = flatten_id // self.dst_mesh.num_devices_per_host
-            participant_worker = self.collective_group.mesh_workers[
-                worker_id + self.src_mesh.num_hosts]
-            receiver = self.collective_group.dst_mesh.device_strs[flatten_id]
+            receiver = self.dst_mesh.device_strs[flatten_id]
+            participant_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
             (step, offset, group_idx, dst_mesh_shape
             ) = self._allgather_receiver_step_and_offset(receiver)
             post_allgather_indices = self._indices_in_dst_post_allgather(
@@ -1021,7 +1019,6 @@ class CrossMeshCommunicator:
             return dst_sharding_spec, None
         tot_sharding = 1
         extra_slice = None
-        # TODO(yonghao): len(spec.chunks) can be larger than 1
         dim_spec_chunk_value = lambda spec: (spec.chunks[0] if isinstance(
             spec, pxla.Chunked) else 1)
         shard_axises = dict()  # tensor axis->mesh axis

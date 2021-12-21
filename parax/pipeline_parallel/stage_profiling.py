@@ -1,4 +1,5 @@
 import gc
+import logging
 from typing import Dict, OrderedDict, Sequence, Tuple
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 
@@ -6,6 +7,7 @@ import tqdm
 import numpy as np
 import ray
 from abc import ABC, abstractmethod
+from ray.exceptions import RayActorError
 from ray.util import ActorPool
 
 import jax.numpy as jnp
@@ -30,6 +32,9 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 sharding_proto_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 INFINITY_N_STAGES = 4096
 GB = 1024**3
 
@@ -48,7 +53,8 @@ class BaseWorkerPoolWrapper(ABC):
         return self.pool.get_next()
 
     def get_next_unordered(self):
-        return self.pool.get_next_unordered()
+        return self.pool.get_next_unordered(
+            timeout=global_config.profile_timeout)
 
     def shutdown(self, force=True):
         for w in self.actors:
@@ -111,9 +117,14 @@ class CompileWorker:
             "grad_acc_num_micro_batches": None,
             "bypass_device_assignment_check": True
         }
-        _, (protos, hooked_proto, strategy_config) = self.compile_with_config(
-            stage_id, global_config_dict, proto, jaxpr_config, mesh_config,
-            multiple_stage_config)
+        try:
+            _, (protos, hooked_proto,
+                strategy_config) = self.compile_with_config(
+                    stage_id, global_config_dict, proto, jaxpr_config,
+                    mesh_config, multiple_stage_config)
+        except:
+            logger.warning("Unexpected error in compile time")
+            return stage_id, None
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
         if len(protos) > 1 and logical_mesh.total_devices > 1:
@@ -171,16 +182,17 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
         self.local_worker = CompileWorker() if debug_mode else None
 
     def local_get(self, fn, *value):
-        return fn(self.local_worker, value)
+        return fn(self.local_worker, *value)
 
 
 class ProfileWorker:
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
+        self.virtual_mesh = virtual_mesh
 
-    def profile(self, stage_id, compiled_output, profile_info,
-                intermediate_size, initial_size):
+    def profile_impl(self, stage_id, compiled_output, profile_info,
+                     intermediate_size, initial_size):
 
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
         proto, config, in_shardings, out_shardings, _, _ = compiled_output
@@ -208,6 +220,26 @@ class ProfileWorker:
 
         return stage_id, cost, max_stage, (peak_memory, available_memory,
                                            intermediate_size, initial_size)
+
+    def profile(self, stage_id, compiled_output, profile_info,
+                intermediate_size, initial_size):
+        for _ in range(global_config.profile_maximum_retry):
+            try:
+                return self.profile_impl(stage_id, compiled_output,
+                                         profile_info, intermediate_size,
+                                         initial_size)
+            except RayActorError:
+                logger.warning("Meet ray actor error in profiling")
+                self.restart(forced=True)
+            except:
+                logger.warning("Meet unexpected error in profiling")
+                self.restart(forced=True)
+                break
+        return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
+
+    def restart(self, forced):
+        self.mesh.shutdown(forced=forced)
+        self.mesh = self.virtual_mesh.get_physical_mesh()
 
 
 class ProfileWorkerPool(BaseWorkerPoolWrapper):
@@ -347,6 +379,8 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
 
     for stage_id, (compiled_output,
                    stage) in enumerate(zip(compiled_outputs, stages)):
+        if compiled_output == None:
+            continue
         (proto, config, in_shardings, out_shardings, hooked_proto,
          apply_in_shardings) = compiled_output
         _, _, _, intermediate_vars, profile_info, apply_info = stage
@@ -361,8 +395,19 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
 
     pbar = tqdm.tqdm(stages)
     for _ in pbar:
-        stage_id, cost, max_stage, debug_info = profile_workers.get_next_unordered(
-        )
+        try:
+            (stage_id, cost, max_stage,
+             debug_info) = profile_workers.get_next_unordered()
+        except TimeoutError:
+            profile_workers.shutdown(force=True)
+            logger.warning("After waiting for too long, "
+                           "all profile workers are forcely killed")
+            return compute_cost, max_n_succ_stages
+        except:
+            profile_workers.shutdown(force=True)
+            logger.warning("Meet unexpected error, "
+                           "all profile workers are forcely killed")
+            return compute_cost, max_n_succ_stages
         (start, end,
          config_idx), _, auto_sharding_config, _, _, _ = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config

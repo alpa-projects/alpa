@@ -45,6 +45,8 @@ class GlobalConfig:
         self.use_hlo_cost_model = False
         self.profiling_database_filename = None
         self.with_physical_mesh = True
+        self.profile_timeout = 600
+        self.profile_maximum_retry = 2
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.

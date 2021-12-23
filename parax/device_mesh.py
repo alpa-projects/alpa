@@ -248,14 +248,14 @@ class MeshHostWorker:
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
-    def allgather(self, uuids, device_ids, slices):
+    def allgather(self, uuids, device_ids, tensor_slices):
         # TODO(Hao): implement a better allgather
         cupy_buffers = []
         nccl_util.groupStart()
         for i, (uuid, device_id) in enumerate(zip(uuids, device_ids)):
             xla_buffer = self.buffers[uuid]
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
-            ind, n_elements = infer_offset_and_n_elements(slices[i])
+            ind, n_elements = infer_offset_and_n_elements(tensor_slices[i])
             cupy_slice = cupy_buffer[ind]
             self.allgather_communicators[device_id].allGather(
                 nccl_util.get_tensor_ptr(cupy_slice),
@@ -267,6 +267,7 @@ class MeshHostWorker:
         for uuid, cupy_buffer in zip(uuids, cupy_buffers):
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
+    # TODO(yonghao): replace dict by named tuple or class
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 
@@ -297,8 +298,11 @@ class MeshHostWorker:
     def run_allgather_task(self, uuid, buffer_uuids):
         task = self.allgather_tasks[uuid]
         allgather_details = task["tasks"]
-        device_ids, slices = allgather_details
-        self.allgather(buffer_uuids, device_ids, slices)
+        for group_idx in allgather_details:
+            detail = allgather_details[group_idx]
+            device_ids = detail["participant_device_ids"]
+            tensor_slices = detail["slices"]
+            self.allgather(buffer_uuids, device_ids, tensor_slices)
         return
 
     ##### Profiling Related Functions #####

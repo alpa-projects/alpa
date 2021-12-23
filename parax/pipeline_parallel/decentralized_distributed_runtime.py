@@ -75,12 +75,20 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(cls, task_uuid, output_uuids, set_empty_buffer, info=""):
+    def Recv(cls,
+             task_uuid,
+             output_uuids,
+             set_empty_buffer,
+             allgather_uuid=None,
+             info=""):
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
                    output_uuids=output_uuids,
-                   opaques={"set_empty_buffer": set_empty_buffer},
+                   opaques={
+                       "set_empty_buffer": set_empty_buffer,
+                       "allgather_uuid": allgather_uuid
+                   },
                    info=info)
 
     @classmethod
@@ -698,8 +706,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # add recv task for each worker
         for w, task_uuid in resharding_task.recv_worker_task_ids.items():
             output_uuids = recv_buf_uuids[w]
+            allgather_uuid = (resharding_task.allgather_task_ids[w] if
+                              resharding_task.is_scatter_gather_task else None)
             self.instruction_lists[w].append(
-                PipelineInstruction.Recv(task_uuid, output_uuids, False))
+                PipelineInstruction.Recv(task_uuid, output_uuids, False,
+                                         allgather_uuid))
 
     def _compile_free(self, worker, used_outside, donated):
         """Add FREE PipelineInstruction to recycle memory
@@ -1108,6 +1119,10 @@ class PipelineMeshWorkerExecutable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques["set_empty_buffer"])
+                if instruction.opaques["allgather_uuid"] is not None:
+                    self.worker.run_allgather_task(
+                        instruction.opaques["allgather_uuid"],
+                        instruction.output_uuids)
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()

@@ -234,8 +234,9 @@ class ReshardingTask:
             else:
                 return False
         else:
-            if self._sender_tasks is not None and self._receiver_tasks is not None \
-                and self._allgather_tasks is not None:
+            if (self._sender_tasks is not None and
+                    self._receiver_tasks is not None and
+                    self._allgather_tasks is not None):
                 return True
             else:
                 return False
@@ -257,6 +258,59 @@ class ReshardingTask:
         if not self.has_initialized_tasks:
             raise RuntimeError("Allgather tasks have not been initialized.")
         return self._allgather_tasks
+
+    def _allgather_receiver_step_and_offset(self, receiver):
+        tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
+        # the dst mesh of col group may not be dst mesh of resharding task
+        host_idx, device_idx = self.collective_group.device_str_to_rank_map[
+            receiver]
+        if host_idx >= self.collective_group.src_mesh.num_hosts:
+            host_idx = host_idx - self.collective_group.src_mesh.num_hosts
+        flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
+        # Reconstruct logical mesh info
+        dst_spec = self.task_spec.dst_sharding_spec
+        dst_mesh_shape = [(dst_spec.sharding[mesh_map.axis].chunks[0]
+                           if isinstance(mesh_map, pxla.ShardedAxis) else 1)
+                          for mesh_map in dst_spec.mesh_mapping]
+        assert len(dst_mesh_shape) < 3, "Only support 1D and 2D mesh"
+        # rewrite indices
+        if mesh_axis == 0:
+            step = dst_mesh_shape[1]
+            offset = (flatten_idx // dst_mesh_shape[1]) % extra_sharding
+            group_idx = (flatten_idx // dst_mesh_shape[1]) // extra_sharding
+        else:
+            assert mesh_axis == 1
+            step = 1
+            offset = (flatten_idx % dst_mesh_shape[1]) % extra_sharding
+            group_idx = (flatten_idx % dst_mesh_shape[1]) // extra_sharding
+        return step, offset, group_idx, dst_mesh_shape
+
+    def _indices_in_dst_post_allgather(self,
+                                       indices,
+                                       receiver,
+                                       from_relative=True):
+        if self.task_spec.allgather_slice is None:
+            return indices
+        tensor_axis, mesh_axis, _ = self.task_spec.allgather_slice
+        _, offset, _, dst_mesh_shape = self._allgather_receiver_step_and_offset(
+            receiver)
+        allgather_dim_size = (self.task_spec.aval.shape[tensor_axis] //
+                              dst_mesh_shape[mesh_axis])
+        indices = list(indices)
+        if from_relative:
+            indices[tensor_axis] = slice(
+                offset * allgather_dim_size + indices[tensor_axis].start,
+                offset * allgather_dim_size + indices[tensor_axis].stop, None)
+        else:
+            indices[tensor_axis] = slice(offset * allgather_dim_size,
+                                         (offset + 1) * allgather_dim_size,
+                                         None)
+        shape = self.task_spec.aval.shape
+        for idx, tensor_slice in enumerate(indices):
+            if tensor_slice.start == None:
+                assert tensor_slice.stop == None
+                indices[idx] = slice(0, shape[idx], None)
+        return indices
 
     def do(self, src_array):
         """According to the task_spec, launch send/recv operations.
@@ -376,8 +430,7 @@ class ReshardingTask:
         self.receiver_uuid_plan = []
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
                 self.task_spec.dst_tile_to_src_tiles_map):
-            s = self.task_spec.strategy.per_spec_plans[i]
-            sl = self.task_spec.strategy.per_spec_slice_plans[i]
+            spec_plan = self.task_spec.strategy.per_spec_plans[i]
             for replica_index, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 # Get args for an empty buffer
@@ -389,18 +442,14 @@ class ReshardingTask:
                 receiver_task = [receiver_device_id, dst_tile.tile_shape, dtype]
                 # Get args for send/recv
                 senders = [
-                    s[replica_index][src_tile_index]
-                    for src_tile_index, _ in enumerate(src_tiles)
-                ]
-                sender_slices = [
-                    sl[replica_index][src_tile_index]
+                    spec_plan[replica_index][src_tile_index]
                     for src_tile_index, _ in enumerate(src_tiles)
                 ]
                 self.receiver_uuid_plan.append(receiver)
                 receiver_rank, receiver_gpu_idx = \
                     self.collective_group.device_str_to_rank_map[receiver]
                 receiver_subtasks = []
-                for i, sender in enumerate(senders):
+                for sender_idx, sender in enumerate(senders):
                     # Sender's task
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                         sender]
@@ -408,17 +457,17 @@ class ReshardingTask:
                     # self._sender_tasks[sender_worker].append(
                     #     (tile.offset, receiver_rank, receiver_gpu_idx))
                     self._sender_tasks[sender_worker].append(
-                        (sender_slices[i], receiver_rank, receiver_gpu_idx))
+                        (src_tiles[sender_idx].offset, receiver_rank,
+                         receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
                         self.collective_group.device_str_to_rank_map[sender]
-                    # indices_in_dst_tile = indices_in_dst_tiles[i]
+                    # indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
                     # TODO(Hao): this is just a heurestic, won't work in more complex models.
-                    indices_in_dst_tile = indices_in_dst_tiles[i]
-                    if indices_in_dst_tile[0].stop - indices_in_dst_tile[0].start != \
-                            sender_slices[i][0].stop - sender_slices[i][0].start:
-                        indices_in_dst_tile = sender_slices[i]
+                    indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
+                    indices_in_dst_tile = self._indices_in_dst_post_allgather(
+                        indices_in_dst_tile, receiver)
                     receiver_subtasks.append(
                         (indices_in_dst_tile, sender_rank, sender_gpu_idx))
                 receiver_task.append(receiver_subtasks)
@@ -454,21 +503,21 @@ class ReshardingTask:
             return self.allgather_tasks
         # only dst mesh does allgather.
         # is a worker -> ((device_ids), (device_strs), (slices))
-        self._allgather_tasks = {host: () for host in self.dst_mesh.workers}
-        for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
-                self.task_spec.dst_tile_to_src_tiles_map):
-            sl = self.task_spec.strategy.per_spec_slice_plans[i]
-            participant_device_ids = []
-            allgather_participants = []
-            participant_worker = self.collective_group.device_str_to_mesh_worker_map[
-                dst_tile.replica_device_strs[0]]
-            dtype = self.task_spec.src.aval.dtype
-            for replica_index, allgather_participant in enumerate(
-                    dst_tile.replica_device_strs):
-                participant_device_ids.append(self.collective_group.\
-                    device_str_to_device_id_map[allgather_participant])
-            self._allgather_tasks[participant_worker] = (
-                participant_device_ids, dst_tile.replica_device_strs, sl, dtype)
+        self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
+        for flatten_id, indices in enumerate(self.task_spec.dst_indices):
+            receiver = self.dst_mesh.device_strs[flatten_id]
+            participant_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
+            (step, offset, group_idx, dst_mesh_shape
+            ) = self._allgather_receiver_step_and_offset(receiver)
+            post_allgather_indices = self._indices_in_dst_post_allgather(
+                indices, receiver, False)
+            group_details = self._allgather_tasks[
+                participant_worker].setdefault(
+                    group_idx, dict(participant_device_ids=list(),
+                                    slices=list()))
+            group_details["participant_device_ids"].append(
+                flatten_id % self.dst_mesh.num_devices_per_host)
+            group_details["slices"].append(post_allgather_indices)
         return self._allgather_tasks
 
     def put_allgather_tasks(self):
@@ -711,11 +760,12 @@ class ReshardingTaskSpec:
         dst_array (VirtualDistributedArray): the destination distributed array, in virtual.
     """
 
-    def __init__(self, src_array, dst_array):
+    def __init__(self, src_array, dst_array, allgather_slice=None):
         self.src = src_array
         self.dst = dst_array
         self._dst_tile_to_src_tiles_map = None
         self._strategy = None
+        self.allgather_slice = allgather_slice
 
     @property
     def src_sharding_spec(self):
@@ -906,9 +956,8 @@ def unflatten_tile_index(index, shape):
 
 class ReshardingStrategy:
 
-    def __init__(self, per_spec_plans, per_spec_slice_plans, is_scatter_gather):
+    def __init__(self, per_spec_plans, is_scatter_gather):
         self.per_spec_plans = per_spec_plans
-        self.per_spec_slice_plans = per_spec_slice_plans
         self.is_scatter_gather = is_scatter_gather
 
 
@@ -965,6 +1014,81 @@ class CrossMeshCommunicator:
         """Number of meshes in the schedule."""
         return self._schedule.num_mesh
 
+    def _rewrite_allgather_specs(self, dst_sharding_spec, dst_mesh, var):
+        if not global_config.use_scatter_gather:
+            return dst_sharding_spec, None
+        tot_sharding = 1
+        extra_slice = None
+        dim_spec_chunk_value = lambda spec: (spec.chunks[0] if isinstance(
+            spec, pxla.Chunked) else 1)
+        shard_axes = dict()  # tensor axis->mesh axis
+        for dim_idx, mesh_dim in enumerate(dst_sharding_spec.mesh_mapping):
+            if isinstance(mesh_dim, pxla.ShardedAxis):
+                shard_axes[mesh_dim.axis] = dim_idx
+
+        for dim_spec in dst_sharding_spec.sharding:
+            tot_sharding *= dim_spec_chunk_value(dim_spec)
+
+        if tot_sharding == dst_mesh.total_devices:
+            return dst_sharding_spec, extra_slice
+
+        assert dst_mesh.total_devices % tot_sharding == 0
+        extra_sharding = dst_mesh.total_devices // tot_sharding
+        # TODO(yonghao): Cannot do allgather cross node. Need to support it.
+        first_mesh_dim = dst_sharding_spec.mesh_mapping[0]
+        if (isinstance(first_mesh_dim, pxla.Replicated) or
+            (dim_spec_chunk_value(
+                dst_sharding_spec.sharding[first_mesh_dim.axis]) <
+             dst_mesh.num_hosts)):
+            if dst_mesh.num_hosts > 1:
+                return dst_sharding_spec, None
+
+        assert len(shard_axes) < 2, "Only support 1D and 2D Mesh"
+
+        # TODO(yonghao): support allgather in multiple dimensions
+        cur_dst_sharding = dst_sharding_spec.sharding
+        dim = 0
+        while dim < len(cur_dst_sharding):
+            dim_spec = dst_sharding_spec.sharding[dim]
+            dim_chunked_value = dim_spec_chunk_value(dim_spec)
+            new_chunked_value = (extra_sharding * dim_chunked_value)
+            if (var.aval.shape[dim] % new_chunked_value == 0):
+                # TODO(yonghao): handle this case:
+                # Mesh:         Tensor After all-gather:    Tensor Before all-gather:
+                # [[0,1,2],     [[0,1], [2,3], [4,5],       [[0],[2],[4],
+                #  [3,4,5]]      [0,1], [2,3], [4,5]]        [1],[3],[5]]
+                if dim in shard_axes and shard_axes[dim] != 0:
+                    dim += 1
+                    continue
+                new_sharding = list(cur_dst_sharding)
+                new_sharding[dim] = pxla.Chunked([new_chunked_value])
+                if dim not in shard_axes:
+                    if 0 in set(shard_axes.values()):
+                        shard_axes[dim] = 1
+                    else:
+                        shard_axes[dim] = 0
+                shard_axes_reversed = {v: k for k, v in shard_axes.items()}
+                # Should be always sharded
+                new_mapping = [
+                    pxla.ShardedAxis(shard_axes_reversed[i])
+                    if i in shard_axes_reversed else pxla.Replicated(1)
+                    for i in range(2)
+                ]
+                assert len(new_mapping) < 3, "Only support 1D and 2D mesh"
+
+                dst_sharding_spec = pxla.ShardingSpec(new_sharding, new_mapping)
+                logger.debug("output sharding spec rewritten to {}".format(
+                    dst_sharding_spec))
+                extra_slice = (dim, shard_axes[dim], extra_sharding)
+                break
+            dim += 1
+        if extra_slice == None:
+            logger.warning(
+                "ReshardingTask is not fully sharded, this causes redundant communication."
+                "Receiver sharding spec is {}".format(dst_sharding_spec))
+
+        return dst_sharding_spec, extra_slice
+
     def _create_resharding_specs(self):
         stages = self._sharded_stages
         meshes = self._schedule.meshes
@@ -1012,13 +1136,16 @@ class CrossMeshCommunicator:
                     zip(resharding_vars, out_var_indices, in_var_indices):
                 src_sharding_spec = out_sharding_specs[out_var_index]
                 dst_sharding_spec = in_sharding_specs[in_var_index]
+                dst_sharding_spec, extra_slice = self._rewrite_allgather_specs(
+                    dst_sharding_spec, dst_mesh, var)
                 src_array = VDA(device_mesh=src_mesh,
                                 aval=var.aval,
                                 sharding_spec=src_sharding_spec)
                 dst_array = VDA(device_mesh=dst_mesh,
                                 aval=var.aval,
                                 sharding_spec=dst_sharding_spec)
-                task_spec = ReshardingTaskSpec(src_array, dst_array)
+                task_spec = ReshardingTaskSpec(src_array, dst_array,
+                                               extra_slice)
                 self.resharding_specs[src_mesh_index][dst_mesh_index][repr(
                     var)] = task_spec
 
@@ -1032,83 +1159,7 @@ class CrossMeshCommunicator:
 
     def _generate_resharding_strategy(self, spec):
         """Look at the sharding specs and generate the fastest sharding strategy."""
-        if global_config.use_scatter_gather and spec.dst.replicated_maxes and \
-                spec.dst.replicated_maxes == spec.src.replicated_maxes and \
-                spec.dst.num_replicas > 1:
-            print(">>>> Scatter-allgather optimization enabled.")
-            return self._generate_scatter_gather_resharding_strategy(spec)
-        else:
-            # pure send/recv
-            return self._generate_send_recv_resharding_strategy_by_loads(spec)
-
-    def _generate_scatter_gather_resharding_strategy(self, spec):
-        """scatter-gather optimization."""
-        is_scatter_gather = True
-        per_spec_plans = []
-        per_spec_slice_plans = []
-        for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
-            num_dst_replica = len(dst_tile.replica_device_strs)
-            per_spec_plan = np.empty((num_dst_replica, len(src_tileslices)),
-                                     dtype=object)
-            per_spec_slice_plan = np.empty(
-                (num_dst_replica, len(src_tileslices)), dtype=object)
-            for receiver_idx, receiver in enumerate(
-                    dst_tile.replica_device_strs):
-                for src_tileslice_idx, src_tileslice in enumerate(
-                        src_tileslices):
-                    loads = {
-                        sender: self._sender_loads[sender]
-                        for sender in src_tileslice.replica_device_strs
-                    }
-                    sender = min(loads, key=loads.get)
-                    per_spec_plan[receiver_idx][src_tileslice_idx] = sender
-                    new_region = []
-
-                    # TODO(Hao): this is not general enough
-                    dim_0_length = src_tileslice.offset[
-                        0].stop - src_tileslice.offset[0].start
-                    dim_1_length = src_tileslice.offset[
-                        1].stop - src_tileslice.offset[1].start
-                    if dim_0_length < num_dst_replica:
-                        # look at the second dim
-                        assert dim_0_length * dim_1_length >= num_dst_replica, "cannot support partitioning over the third dim."
-                        dim_1_remained = num_dst_replica // dim_0_length
-                        dim_0_index = receiver_idx // dim_1_remained
-                        dim_1_index = receiver_idx % dim_1_remained
-                        for dim, s in enumerate(src_tileslice.offset):
-                            if dim == 0:
-                                new_region.append(
-                                    slice(dim_0_index, dim_0_index + 1, s.step))
-                            elif dim == 1:
-                                ind = dim_1_length // dim_1_remained
-                                new_region.append(
-                                    slice(ind * dim_1_index,
-                                          ind * (dim_1_index + 1), None))
-                            else:
-                                new_region.append(s)
-                    else:
-                        for dim, s in enumerate(src_tileslice.offset):
-                            if dim == 0:
-                                assert (s.stop - s.start) % num_dst_replica == 0, \
-                                    "cannot equally partition for scatter-gather optimization."
-                                region_length = (s.stop -
-                                                 s.start) // num_dst_replica
-                                new_s = slice(
-                                    s.start + receiver_idx * region_length,
-                                    s.start +
-                                    (receiver_idx + 1) * region_length, s.step)
-                                new_region.append(new_s)
-                            else:
-                                new_region.append(s)
-                    per_spec_slice_plan[receiver_idx][
-                        src_tileslice_idx] = new_region
-                    self._sender_loads[sender] += src_tileslice.slice_size
-                    self._receiver_loads[receiver] += src_tileslice.slice_size
-            per_spec_plans.append(per_spec_plan)
-            per_spec_slice_plans.append(per_spec_slice_plan)
-        strategy = ReshardingStrategy(per_spec_plans, per_spec_slice_plans,
-                                      is_scatter_gather)
-        return strategy
+        return self._generate_send_recv_resharding_strategy_by_loads(spec)
 
     def _generate_send_recv_resharding_strategy_by_loads(self, spec):
         """
@@ -1118,15 +1169,11 @@ class CrossMeshCommunicator:
         each array is with shape [len(dst_tile.devices), len(src_tiles)]; it specifies for each
         replica of a dst tile, how (src tile replicas) it should get the data from src_tiles.
         """
-        is_scatter_gather = False
+        is_scatter_gather = spec.allgather_slice is not None
         per_spec_plans = []
-        per_spec_slice_plans = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array
             per_spec_plan = np.empty(
-                (len(dst_tile.replica_device_strs), len(src_tileslices)),
-                dtype=object)
-            per_spec_slice_plan = np.empty(
                 (len(dst_tile.replica_device_strs), len(src_tileslices)),
                 dtype=object)
             for receiver_idx, receiver in enumerate(
@@ -1139,15 +1186,11 @@ class CrossMeshCommunicator:
                     }
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
-                    per_spec_slice_plan[receiver_idx][
-                        src_tileslice_idx] = src_tileslice.offset
                     # upload load on-the-fly
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
-            per_spec_slice_plans.append(per_spec_slice_plan)
-        strategy = ReshardingStrategy(per_spec_plans, per_spec_slice_plans,
-                                      is_scatter_gather)
+        strategy = ReshardingStrategy(per_spec_plans, is_scatter_gather)
         return strategy
 
     @staticmethod

@@ -1021,10 +1021,10 @@ class CrossMeshCommunicator:
         extra_slice = None
         dim_spec_chunk_value = lambda spec: (spec.chunks[0] if isinstance(
             spec, pxla.Chunked) else 1)
-        shard_axises = dict()  # tensor axis->mesh axis
+        shard_axes = dict()  # tensor axis->mesh axis
         for dim_idx, mesh_dim in enumerate(dst_sharding_spec.mesh_mapping):
             if isinstance(mesh_dim, pxla.ShardedAxis):
-                shard_axises[mesh_dim.axis] = dim_idx
+                shard_axes[mesh_dim.axis] = dim_idx
 
         for dim_spec in dst_sharding_spec.sharding:
             tot_sharding *= dim_spec_chunk_value(dim_spec)
@@ -1043,7 +1043,7 @@ class CrossMeshCommunicator:
             if dst_mesh.num_hosts > 1:
                 return dst_sharding_spec, None
 
-        assert len(shard_axises) < 2, "Only support 1D and 2D Mesh"
+        assert len(shard_axes) < 2, "Only support 1D and 2D Mesh"
 
         # TODO(yonghao): support allgather in multiple dimensions
         cur_dst_sharding = dst_sharding_spec.sharding
@@ -1057,21 +1057,21 @@ class CrossMeshCommunicator:
                 # Mesh:         Tensor After all-gather:    Tensor Before all-gather:
                 # [[0,1,2],     [[0,1], [2,3], [4,5],       [[0],[2],[4],
                 #  [3,4,5]]      [0,1], [2,3], [4,5]]        [1],[3],[5]]
-                if dim in shard_axises and shard_axises[dim] != 0:
+                if dim in shard_axes and shard_axes[dim] != 0:
                     dim += 1
                     continue
                 new_sharding = list(cur_dst_sharding)
                 new_sharding[dim] = pxla.Chunked([new_chunked_value])
-                if dim not in shard_axises:
-                    if 0 in set(shard_axises.values()):
-                        shard_axises[dim] = 1
+                if dim not in shard_axes:
+                    if 0 in set(shard_axes.values()):
+                        shard_axes[dim] = 1
                     else:
-                        shard_axises[dim] = 0
-                shard_axises_reversed = {v: k for k, v in shard_axises.items()}
+                        shard_axes[dim] = 0
+                shard_axes_reversed = {v: k for k, v in shard_axes.items()}
                 # Should be always sharded
                 new_mapping = [
-                    pxla.ShardedAxis(shard_axises_reversed[i])
-                    if i in shard_axises_reversed else pxla.Replicated(1)
+                    pxla.ShardedAxis(shard_axes_reversed[i])
+                    if i in shard_axes_reversed else pxla.Replicated(1)
                     for i in range(2)
                 ]
                 assert len(new_mapping) < 3, "Only support 1D and 2D mesh"
@@ -1079,7 +1079,7 @@ class CrossMeshCommunicator:
                 dst_sharding_spec = pxla.ShardingSpec(new_sharding, new_mapping)
                 logger.debug("output sharding spec rewritten to {}".format(
                     dst_sharding_spec))
-                extra_slice = (dim, shard_axises[dim], extra_sharding)
+                extra_slice = (dim, shard_axes[dim], extra_sharding)
                 break
             dim += 1
         if extra_slice == None:

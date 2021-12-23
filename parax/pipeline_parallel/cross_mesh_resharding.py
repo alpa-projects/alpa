@@ -26,7 +26,15 @@ def next_resharding_task_uuid():
 
 
 class ReshardingTask:
-    """A task that addresses cross-mesh resharding between two meshes."""
+    """
+    A task that addresses cross-mesh resharding between two meshes.
+
+    Args:
+        task_spec (ReshardingTaskSpec): the task spec of this task.
+        collective_group (CollectiveGroup): the collective group information.
+        src_mesh (PhysicalMesh): the source mesh to send.
+        dst_mesh (PhysicalMesh): the destination mesh to receive.
+    """
 
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         self.task_spec = task_spec
@@ -39,14 +47,14 @@ class EagerReshardingTask(ReshardingTask):
     """An eager resharding task.
 
     It does not put task info into remote workers. Instead, it provides
-    a do() interface to execute the task eagerly.
+    a do() interface to execute the task immediately.
     """
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         super(EagerReshardingTask, self).__init__(task_spec, collective_group,
                                                   src_mesh, dst_mesh)
 
     def do(self, src_array):
-        """According to the task_spec, launch send/recv operations, eagerly.
+        """According to the task_spec, launch send/recv operations eagerly.
 
         Used in centralized distributed runtime.
 
@@ -93,14 +101,12 @@ class EagerReshardingTask(ReshardingTask):
                                          dst_tile, indices_in_dst_tiles,
                                          receiver):
         """P2P Communication accounting for multiple senders and one receiver (a destination tile)."""
-        # construct a remote buf for this tile
         receiver_host_id = self.collective_group.device_str_to_host_id_map[
             receiver]
         receiver_device_id = self.collective_group.device_str_to_device_id_map[
             receiver]
         receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
             receiver]
-
         dtype = src_array.remote_buffers[0].dtype
         result_buf = RemoteBufferRef(self.dst_mesh,
                                      receiver_host_id,
@@ -704,12 +710,12 @@ class CrossMeshCommunicator:
     """
     Communicator for cross-mesh resharding.
 
-    Given the pipeline schedule and stages, the class analyzes them and generate:
+    Given the pipeline schedule and stages, the class analyzes them and generates:
     - resharding specs (see docstring of `ReshardingTaskSpec`)
     - resharding strategies (see docstring of `_generate_resharding_strategy_by_loads()`)
 
     This communicator only takes care of compilation-time work, and does not get involved
-    with physical meshes, buffer creations, or other execution-time work.
+    with physical meshes, buffer creations, or other runtime work.
 
     Args:
         sharded_stages (List[XlaShardedPipelineComputation]): list of stages to form the pipeline.

@@ -20,9 +20,9 @@ from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysi
 from parax.global_env import global_config
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
-from parax.pipeline_parallel.cross_mesh_resharding import (
-    CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
-    as VDA)
+from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, CollectiveGroup
+from parax.pipeline_parallel.resharding_tensor import VDA
+
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
     merge_computation_jaxprs, rearrange_vars)
@@ -673,9 +673,9 @@ def profile_layer_communication_cost(
                                                  src_phy_mesh, input_indices)
             val = DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                                    remote_buffers, input_indices)
-            task = ReshardingTask(task_spec, collective_group,
-                                  collective_group.src_mesh,
-                                  collective_group.dst_mesh)
+            task = SymbolicReshardingTask(task_spec, collective_group,
+                                          collective_group.src_mesh,
+                                          collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:

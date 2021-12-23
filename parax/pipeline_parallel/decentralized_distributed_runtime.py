@@ -21,7 +21,7 @@ from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    next_mesh_executable_uuid, get_uuid_np_array,
                                    next_remote_buffer_uuid, RemoteBufferRef)
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
+from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask
 from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.timer import timers
@@ -311,7 +311,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         src_idx, src_uuids = list(var_at[key].items())[0]
                         resharding_task = self._resharding_tasks[src_idx][
                             mesh_idx][var_key]
-                        resharding_task: ReshardingTask
                         self._compile_resharding_task(src_idx, mesh_idx,
                                                       src_uuids,
                                                       resharding_task,
@@ -658,7 +657,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.mesh_output_indices.append(mesh_out_indices)
 
     def _compile_resharding_task(self, src_mesh_idx, dst_mesh_idx, src_uuids,
-                                 resharding_task: ReshardingTask, recv_uuids):
+                                 resharding_task: SymbolicReshardingTask, recv_uuids):
         """
         Add SEND and RECV PipelineInstructions for a ReshardingTask.
         Args:

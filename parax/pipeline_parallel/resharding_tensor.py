@@ -92,6 +92,7 @@ class VirtualDistributedArray:
 
     @property
     def num_replicas(self):
+        """Number of replicas if replicated or partially tiled."""
         if self.tiled:
             return 1
         else:

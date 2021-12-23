@@ -8,7 +8,7 @@ import ray
 from parax.util import OrderedSet
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import (
-    CrossMeshCommunicator, CollectiveGroup, ReshardingTask)
+    CrossMeshCommunicator, CollectiveGroup, SymbolicReshardingTask)
 from parax.pipeline_parallel.computation import (PipelineComputation,
                                                  XlaShardedPipelineComputation)
 
@@ -202,7 +202,7 @@ class BaseDistributedRuntime(BaseRuntime):
                 cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]
                 dst_mesh = self.physical_meshes[dst_mesh_idx]
-                t = ReshardingTask(spec, cg, src_mesh, dst_mesh)
+                t = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
                 t.get_send_recv_tasks()
                 t.get_allgather_tasks()
                 self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t

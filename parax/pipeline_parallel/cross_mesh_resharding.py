@@ -6,8 +6,6 @@ from typing import List
 
 import numpy as np
 import ray
-import ray.util.collective as col
-import jax.linear_util as lu
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated
 
@@ -15,6 +13,7 @@ from parax.device_mesh import DistributedArray, RemoteBufferRef, VirtualPhysical
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.global_env import global_config
 from parax.util import OrderedSet
+import parax.collective as col
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -97,6 +96,17 @@ class VirtualDistributedArray:
             if isinstance(assignment, Replicated):
                 replicated_maxes.append(maxis)
         return replicated_maxes
+
+    @property
+    def num_replicas(self):
+        if self.tiled:
+            return 1
+        else:
+            num_replicas = 1
+            for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
+                if isinstance(assignment, Replicated):
+                    num_replicas = num_replicas * assignment.replicas
+            return num_replicas
 
     @property
     def tiled(self):
@@ -251,14 +261,12 @@ class ReshardingTask:
 
     def _allgather_receiver_step_and_offset(self, receiver):
         tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
+        # the dst mesh of col group may not be dst mesh of resharding task
         host_idx, device_idx = self.collective_group.device_str_to_rank_map[
             receiver]
-        is_reversed = host_idx < self.collective_group.src_mesh.num_hosts
-        if not is_reversed:
+        if host_idx >= self.collective_group.src_mesh.num_hosts:
             host_idx = host_idx - self.collective_group.src_mesh.num_hosts
-            flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
-        else:
-            flatten_idx = host_idx * self.src_mesh.num_devices_per_host + device_idx
+        flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
         # Reconstruct logical mesh info
         dst_spec = self.task_spec.dst_sharding_spec
         dst_mesh_shape = [(dst_spec.sharding[mesh_map.axis].chunks[0]
@@ -497,39 +505,18 @@ class ReshardingTask:
         # is a worker -> ((device_ids), (device_strs), (slices))
         self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
-            # TODO(yonghao): create new api for colleceive group instead of directly accessing it
-            try:
-                worker_id = flatten_id // self.dst_mesh.num_devices_per_host
-                participant_worker = self.collective_group.mesh_workers[
-                    worker_id + self.src_mesh.num_hosts]
-                receiver = self.collective_group.dst_mesh.device_strs[worker_id]
-                (step, offset, group_idx, dst_mesh_shape
-                ) = self._allgather_receiver_step_and_offset(receiver)
-                post_allgather_indices = self._indices_in_dst_post_allgather(
-                    indices, receiver, False)
-                group_details = self._allgather_tasks[
-                        participant_worker].setdefault(
-                            group_idx,
-                            dict(participant_device_ids=list(), slices=list()))
-                is_Reversed = False
-            except:
-                worker_id = flatten_id // self.src_mesh.num_devices_per_host
-                participant_worker = self.collective_group.mesh_workers[
-                    worker_id]
-                receiver = self.collective_group.src_mesh.device_strs[
-                    flatten_id]
-                (step, offset, group_idx, dst_mesh_shape
-                ) = self._allgather_receiver_step_and_offset(receiver)
-                post_allgather_indices = self._indices_in_dst_post_allgather(
-                    indices, receiver, False)
-                group_details = self._allgather_tasks[
-                    participant_worker].setdefault(
-                        group_idx,
-                        dict(participant_device_ids=list(), slices=list()))
-                is_Reversed = True
+            receiver = self.dst_mesh.device_strs[flatten_id]
+            participant_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
+            (step, offset, group_idx, dst_mesh_shape
+            ) = self._allgather_receiver_step_and_offset(receiver)
+            post_allgather_indices = self._indices_in_dst_post_allgather(
+                indices, receiver, False)
+            group_details = self._allgather_tasks[
+                participant_worker].setdefault(
+                    group_idx, dict(participant_device_ids=list(),
+                                    slices=list()))
             group_details["participant_device_ids"].append(
-                flatten_id % (self.src_mesh.num_devices_per_host if is_Reversed
-                              else self.dst_mesh.num_devices_per_host))
+                flatten_id % self.dst_mesh.num_devices_per_host)
             group_details["slices"].append(post_allgather_indices)
         return self._allgather_tasks
 
@@ -753,6 +740,9 @@ class CollectiveGroup:
         # Destroy the declared named actor in ray
 
         # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+        self._detroy_info_actor()
+
+    def _detroy_info_actor(self):
         name = "info_" + self.group_name
         try:
             store = ray.get_actor(name)
@@ -1029,13 +1019,12 @@ class CrossMeshCommunicator:
             return dst_sharding_spec, None
         tot_sharding = 1
         extra_slice = None
-        # TODO(yonghao): len(spec.chunks) can be larger than 1
         dim_spec_chunk_value = lambda spec: (spec.chunks[0] if isinstance(
             spec, pxla.Chunked) else 1)
-        shard_axises = dict()  # tensor axis->mesh axis
+        shard_axes = dict()  # tensor axis->mesh axis
         for dim_idx, mesh_dim in enumerate(dst_sharding_spec.mesh_mapping):
             if isinstance(mesh_dim, pxla.ShardedAxis):
-                shard_axises[mesh_dim.axis] = dim_idx
+                shard_axes[mesh_dim.axis] = dim_idx
 
         for dim_spec in dst_sharding_spec.sharding:
             tot_sharding *= dim_spec_chunk_value(dim_spec)
@@ -1054,7 +1043,7 @@ class CrossMeshCommunicator:
             if dst_mesh.num_hosts > 1:
                 return dst_sharding_spec, None
 
-        assert len(shard_axises) < 2, "Only support 1D and 2D Mesh"
+        assert len(shard_axes) < 2, "Only support 1D and 2D Mesh"
 
         # TODO(yonghao): support allgather in multiple dimensions
         cur_dst_sharding = dst_sharding_spec.sharding
@@ -1068,21 +1057,21 @@ class CrossMeshCommunicator:
                 # Mesh:         Tensor After all-gather:    Tensor Before all-gather:
                 # [[0,1,2],     [[0,1], [2,3], [4,5],       [[0],[2],[4],
                 #  [3,4,5]]      [0,1], [2,3], [4,5]]        [1],[3],[5]]
-                if dim in shard_axises and shard_axises[dim] != 0:
+                if dim in shard_axes and shard_axes[dim] != 0:
                     dim += 1
                     continue
                 new_sharding = list(cur_dst_sharding)
                 new_sharding[dim] = pxla.Chunked([new_chunked_value])
-                if dim not in shard_axises:
-                    if 0 in set(shard_axises.values()):
-                        shard_axises[dim] = 1
+                if dim not in shard_axes:
+                    if 0 in set(shard_axes.values()):
+                        shard_axes[dim] = 1
                     else:
-                        shard_axises[dim] = 0
-                shard_axises_reversed = {v: k for k, v in shard_axises.items()}
+                        shard_axes[dim] = 0
+                shard_axes_reversed = {v: k for k, v in shard_axes.items()}
                 # Should be always sharded
                 new_mapping = [
-                    pxla.ShardedAxis(shard_axises_reversed[i])
-                    if i in shard_axises_reversed else pxla.Replicated(1)
+                    pxla.ShardedAxis(shard_axes_reversed[i])
+                    if i in shard_axes_reversed else pxla.Replicated(1)
                     for i in range(2)
                 ]
                 assert len(new_mapping) < 3, "Only support 1D and 2D mesh"
@@ -1090,7 +1079,7 @@ class CrossMeshCommunicator:
                 dst_sharding_spec = pxla.ShardingSpec(new_sharding, new_mapping)
                 logger.debug("output sharding spec rewritten to {}".format(
                     dst_sharding_spec))
-                extra_slice = (dim, shard_axises[dim], extra_sharding)
+                extra_slice = (dim, shard_axes[dim], extra_sharding)
                 break
             dim += 1
         if extra_slice == None:

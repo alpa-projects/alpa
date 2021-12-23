@@ -37,12 +37,16 @@ class GlobalConfig:
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
         self.submesh_autosharding_global_configs = None
+        self.submesh_choices_mode = "power_of_two"
         self.logical_mesh_search_space = "default"
         self.auto_stage_construction_imbalance_tolerance = np.inf
         self.pipeline_parallel_schedule = "1f1b"
         self.pipeline_runtime_mode = "paper"  # or "production"
         self.use_hlo_cost_model = False
         self.profiling_database_filename = None
+        self.with_physical_mesh = True
+        self.profile_timeout = 600
+        self.profile_maximum_retry = 2
 
         ########## Options for auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
@@ -79,9 +83,14 @@ class GlobalConfig:
         # This will produce wrong results but is acceptable for
         # data-independent benchmarks.
         self.use_dummy_value_for_benchmarking = False
+        self.fix_physical_mesh_shape = None
 
         ########## Options for logging ##########
         self.print_xla_compilation_time = False
+
+        ########## Options for Ray ##########
+        self.default_ray_namespace_prefix = "parax-train"
+        self.unittest_ray_namespace_prefix = "parax-unittest"
 
     def backup(self):
         """Backup the configs."""

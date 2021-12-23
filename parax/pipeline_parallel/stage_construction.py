@@ -16,6 +16,7 @@ from parax.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size, compute_intermediate_size,
     split_global_use_and_donate, generate_stage_info, compile_all, profile_all,
     ProfileWorkerPool)
+from parax.timer import timers
 from parax.util import OrderedSet
 from parax.global_env import global_config
 
@@ -111,6 +112,8 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
 
 def dp(num_layers, num_devices, num_microbatches, submesh_choices,
        num_autosharding_configs, compute_cost, max_n_succ_stages):
+    timers("stage-construction-dp").start()
+
     all_possible_stage_costs = np.sort(np.unique(compute_cost))
     best_cost = np.inf
     best_solution = None
@@ -132,10 +135,14 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
             best_cost = cost
             best_solution = solution
     assert best_solution is not None, "no solution in auto stage construction."
+
+    timers("stage-construction-dp").suspend()
     return best_cost, best_solution
 
 
 def get_submesh_choices(mesh: VirtualPhysicalMesh):
+    if global_config.fix_physical_mesh_shape:
+        return [global_config.fix_physical_mesh_shape]
     num_hosts = mesh.num_hosts
     num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []
@@ -150,10 +157,19 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         "while now num_devices_per_host = {}".format(num_devices_per_host))
 
     # larger meshes:
-    for i in range(2, num_hosts + 1):
-        submesh_choices.append((i, num_devices_per_host))
+    if global_config.submesh_choices_mode == "all":
+        for i in range(2, num_hosts + 1):
+            submesh_choices.append((i, num_devices_per_host))
+    elif global_config.submesh_choices_mode == "power_of_two":
+        i = 2
+        while i <= num_hosts:
+            submesh_choices.append((i, num_devices_per_host))
+            i *= 2
+    else:
+        raise ValueError("Invalid submesh_choices: {}".format(
+            global_config.submesh_choices))
 
-    return submesh_choices
+    return tuple(submesh_choices)
 
 
 def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
@@ -224,9 +240,10 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 apply_grad_layers, apply_grad_global_info,
                                 autosharding_configs, cluster_size,
                                 layer_flops_prefix_sum):
+    timers("stage-construction-compilation").start()
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
-    tot_flops = layer_flops_prefix_sum[num_layers]
+    tot_flops = layer_flops_prefix_sum[2 * num_layers]
     num_autosharding_configs = len(autosharding_configs)
     indices = list(range(2 * num_layers))
     stages = []
@@ -240,8 +257,10 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             if is_full_mesh and not (start == 0 and end == num_layers - 1):
                 continue
-            flops_ratio = (layer_flops_prefix_sum[end + 1] -
-                           layer_flops_prefix_sum[start]) / tot_flops
+            flops_ratio = (
+                layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
+                + layer_flops_prefix_sum[2 * num_layers - start] -
+                layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
             if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
                 (computation_source_ratio < flops_ratio / (1 + tolerance))):
                 continue
@@ -278,16 +297,25 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
             (num_layers, num_layers, num_autosharding_configs), np.inf)
         max_n_succ_stages = np.full(
             (num_layers, num_layers, num_autosharding_configs), -1)
+        # Suspend timers
+        timers("stage-construction-compilation").suspend()
+        timers("stage-construction-profiling").start()
+        timers("stage-construction-profiling").suspend()
         return compute_cost, max_n_succ_stages
+
+    # TODO(zhuohan): set the number of workers as a tunable parameter
     print("- Compile all stages")
     compiled_outputs = compile_all(stages)
+    timers("stage-construction-compilation").suspend()
 
     print("- Profile all stages")
     # shape of compute_cost and max_n_succ_stages:
     # (num_layers, num_layers, num_autosharding_configs)
+    timers("stage-construction-profiling").start()
     compute_cost, max_n_succ_stages = profile_all(stages, compiled_outputs,
                                                   meshes, num_layers,
                                                   num_autosharding_configs)
+    timers("stage-construction-profiling").suspend()
     return compute_cost, max_n_succ_stages
 
 
@@ -523,6 +551,8 @@ def cluster_layers_and_slice_mesh(layers,
         stage_layer_ids (List[List[int]]): The layer IDs of each stage.
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
+    timers("stage-construction").start()
+
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
         # Assume each forward layer corresponds to a backward layer
         assert len(layers) % 2 == 0
@@ -641,7 +671,7 @@ def cluster_layers_and_slice_mesh(layers,
                                            num_meshes,
                                            submesh_shapes=submesh_shapes)
     else:
-        raise ValueError("Unknown pipeline_stage_mode", pipeline_stage_mode)
+        raise ValueError(f"Unknown pipeline_stage_mode {pipeline_stage_mode}")
 
     # Check logical mesh shapes or assign default logical mesh shapes
     if logical_mesh_shapes is not None:
@@ -658,6 +688,13 @@ def cluster_layers_and_slice_mesh(layers,
         assert len(autosharding_global_configs) == len(sliced_meshes)
     else:
         autosharding_global_configs = [{}] * len(sliced_meshes)
+
+    for name in [
+            "stage-construction", "stage-construction-dp",
+            "stage-construction-compilation", "stage-construction-profiling"
+    ]:
+        if name in timers.timers:
+            timers(name).stop()
     return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
             autosharding_global_configs)
 

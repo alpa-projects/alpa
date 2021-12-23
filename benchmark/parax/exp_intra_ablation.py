@@ -1,3 +1,4 @@
+"""Intra operator ablation study"""
 import time
 
 import numpy as np
@@ -6,11 +7,16 @@ import ray
 from parax import DeviceCluster, global_config
 from parax.util import write_tsv, to_str_round
 from benchmark_gpt_bert_2d_one_case import benchmark_one_case as benchmark_one_case_gpt_raw
-from benchmark_wide_resnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
+from benchmark_moe_2d_one_case import benchmark_one_case as benchmark_one_case_moe_raw
+from benchmark_wresnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
 
 benchmark_one_case_gpt = lambda case, niter, num_host, num_devices_per_host: \
     benchmark_one_case_gpt_raw("gpt", case, niter, num_host, num_devices_per_host,
                                local=False, use_separate_process=True)
+
+benchmark_one_case_moe = lambda case, niter, num_host, num_devices_per_host: \
+    benchmark_one_case_moe_raw(case, niter, num_host, num_devices_per_host,
+                                   local=False, use_separate_process=True)
 
 benchmark_one_case_wresnet = lambda case, niter, num_host, num_devices_per_host: \
     benchmark_one_case_wresnet_raw(case, niter, num_host, num_devices_per_host,
@@ -30,55 +36,103 @@ gpt_1_spec = [
 _ = None
 
 gpt_auto_sharding = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  _),
-
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 2,   2,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  _),
-
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 4,   2,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 2,   4,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  _),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[1], 1,   2,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 2,   2,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 1,   4,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 4,   2,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 2,   4,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 1,   8,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 ]
 
 gpt_data_parallel = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  False, _),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  False, _),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  False, _,     _),
 ]
 
 gpt_zero_2 = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  _,     _),
 ]
 
 gpt_zero_3 = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3"),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other,    _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  True,  True,  True,  "zero-3", _),
 ]
 
 gpt_heuristic = [
-    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other
-    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "shard-largest"),
-    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
-    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
-    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest"),
+    # model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,    Remat, RS,    Other, _
+    (*gpt_1_spec[0], 1,   1,   _,   _,    _,   1,  True,  True,  True,  "shard-largest", _),
+    (*gpt_1_spec[1], 2,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest", _),
+    (*gpt_1_spec[2], 4,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest", _),
+    (*gpt_1_spec[3], 8,   1,   _,   _,    _,   1,  False, True,  False, "shard-largest", _),
 ]
 
-wresnet1_spec = [
+moe_1_spec = [
+    #B, S,    H     L, #head,    V,     E,  S_,
+    (8, 1024, 1024, 8, 1024//32, 51200, 8,  1024),
+    (8, 1024, 1280, 8, 1280//32, 51200, 16, 1024),
+    (8, 1024, 1536, 8, 1536//64, 51200, 16, 1024),
+    (8, 1024, 1536, 8, 1536//64, 51200, 32, 1024),
+]
+
+moe_auto_sharding = [
+    #model,          LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe_1_spec[0], 1,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe_1_spec[1], 2,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe_1_spec[2], 4,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe_1_spec[2], 2,   2,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe_1_spec[3], 8,   1,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe_1_spec[3], 4,   2,   _,   _,   _,  1,  False, True,  True,  _,  _),
+    (*moe_1_spec[3], 2,   4,   _,   _,   _,  1,  False, True,  True,  _,  _),
+]
+
+moe_data_parallel = [
+    #model,          LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe_1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+    (*moe_1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+    (*moe_1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+    (*moe_1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  False, _,  _),
+]
+
+moe_zero_2 = [
+    #model,          LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe_1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+    (*moe_1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+    (*moe_1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+    (*moe_1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  True,  _,  _),
+]
+
+moe_zero_3 = [
+    #model,          LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe_1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+    (*moe_1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+    (*moe_1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+    (*moe_1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  True,  "zero-3", _),
+]
+
+moe_heuristic = [
+    #model,          LD0, LD1, PD0, PD1, PP, NB, FM,    Remat, RS,    Other, _
+    (*moe_1_spec[0], 1,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+    (*moe_1_spec[1], 2,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+    (*moe_1_spec[2], 4,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+    (*moe_1_spec[3], 8,   1,   _,   _,   _,  1,  True,  True,  True,  "shard-largest", _),
+]
+
+wresnet_1_spec = [
     #B,   I,   L,  C,   W, dtype,  
     (32,  224, 50, 160, 2, "fp32"), 
     (32,  224, 50, 224, 2, "fp32"), 
@@ -87,62 +141,70 @@ wresnet1_spec = [
 ]
 
 wresnet_auto_sharding = [
-    #model,             D0, D1, NB, FM,    RS,   Remat, other
-    (*wresnet1_spec[0], 1,  1,  1,  False, True, _,     _),
-    (*wresnet1_spec[1], 2,  1,  1,  False, True, _,     _),
-    (*wresnet1_spec[2], 4,  1,  1,  False, True, _,     _),
-    (*wresnet1_spec[2], 2,  2,  1,  False, True, _,     _),
-    (*wresnet1_spec[3], 8,  1,  1,  False, True, _,     _),
-    (*wresnet1_spec[3], 4,  2,  1,  False, True, _,     _),
-    (*wresnet1_spec[3], 2,  4,  1,  False, True, _,     _),
+    #model,              D0, D1, NB, FM,    RS,   Remat, other
+    (*wresnet_1_spec[0], 1,  1,  1,  False, True, _,     _),
+    (*wresnet_1_spec[1], 2,  1,  1,  False, True, _,     _),
+    (*wresnet_1_spec[2], 4,  1,  1,  False, True, _,     _),
+    (*wresnet_1_spec[2], 2,  2,  1,  False, True, _,     _),
+    (*wresnet_1_spec[3], 8,  1,  1,  False, True, _,     _),
+    (*wresnet_1_spec[3], 4,  2,  1,  False, True, _,     _),
+    (*wresnet_1_spec[3], 2,  4,  1,  False, True, _,     _),
 ]
 
 wresnet_data_parallel = [
-    #model,             D0, D1, NB, FD,    RS,   Remat, other
-    (*wresnet1_spec[0], 1,  1,  1,  True,  False, _,     _),
-    (*wresnet1_spec[1], 2,  1,  1,  True,  False, _,     _),
-    (*wresnet1_spec[2], 4,  1,  1,  True,  False, _,     _),
-    (*wresnet1_spec[3], 8,  1,  1,  True,  False, _,     _),
+    #model,              D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet_1_spec[0], 1,  1,  1,  True,  False, _,     _),
+    (*wresnet_1_spec[1], 2,  1,  1,  True,  False, _,     _),
+    (*wresnet_1_spec[2], 4,  1,  1,  True,  False, _,     _),
+    (*wresnet_1_spec[3], 8,  1,  1,  True,  False, _,     _),
 ]
 
 wresnet_zero_2 = [
-    #model,             D0, D1, NB, FD,    RS,   Remat, other
-    (*wresnet1_spec[0], 1,  1,  1,  True,  True, _,     _),
-    (*wresnet1_spec[1], 2,  1,  1,  True,  True, _,     _),
-    (*wresnet1_spec[2], 4,  1,  1,  True,  True, _,     _),
-    (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     _),
+    #model,              D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet_1_spec[0], 1,  1,  1,  True,  True, _,     _),
+    (*wresnet_1_spec[1], 2,  1,  1,  True,  True, _,     _),
+    (*wresnet_1_spec[2], 4,  1,  1,  True,  True, _,     _),
+    (*wresnet_1_spec[3], 8,  1,  1,  True,  True, _,     _),
 ]
 
 wresnet_zero_3 = [
-    #model,             D0, D1, NB, FD,    RS,   Remat, other
-    (*wresnet1_spec[0], 1,  1,  1,  True,  True, _,     "zero-3"),
-    (*wresnet1_spec[1], 2,  1,  1,  True,  True, _,     "zero-3"),
-    (*wresnet1_spec[2], 4,  1,  1,  True,  True, _,     "zero-3"),
-    (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     "zero-3"),
+    #model,              D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet_1_spec[0], 1,  1,  1,  True,  True, _,     "zero-3"),
+    (*wresnet_1_spec[1], 2,  1,  1,  True,  True, _,     "zero-3"),
+    (*wresnet_1_spec[2], 4,  1,  1,  True,  True, _,     "zero-3"),
+    (*wresnet_1_spec[3], 8,  1,  1,  True,  True, _,     "zero-3"),
 ]
 
 wresnet_heuristic = [
-    #model,             D0, D1, NB, FD,    RS,   Remat, other
-    (*wresnet1_spec[0], 1,  1,  1,  True,  True, _,     "shard-largest"),
-    (*wresnet1_spec[1], 2,  1,  1,  True,  True, _,     "shard-largest"),
-    (*wresnet1_spec[2], 4,  1,  1,  True,  True, _,     "shard-largest"),
-    (*wresnet1_spec[3], 8,  1,  1,  True,  True, _,     "shard-largest"),
+    #model,              D0, D1, NB, FD,    RS,   Remat, other
+    (*wresnet_1_spec[0], 1,  1,  1,  True,  True, _,     "shard-largest"),
+    (*wresnet_1_spec[1], 2,  1,  1,  True,  True, _,     "shard-largest"),
+    (*wresnet_1_spec[2], 4,  1,  1,  True,  True, _,     "shard-largest"),
+    (*wresnet_1_spec[3], 8,  1,  1,  True,  True, _,     "shard-largest"),
 ]
+
 
 suites = [
     # GPT
-    ("GPT-1", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
-    ("GPT-1", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
-    ("GPT-1", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
-    ("GPT-1", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
-    ("GPT-1", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
+    ("gpt", "parax.auto_sharding", gpt_auto_sharding, benchmark_one_case_gpt),
+    ("gpt", "parax.data_parallel", gpt_data_parallel, benchmark_one_case_gpt),
+    ("gpt", "parax.zero_2", gpt_zero_2, benchmark_one_case_gpt),
+    ("gpt", "parax.zero_3", gpt_zero_3, benchmark_one_case_gpt),
+    ("gpt", "parax.heuristic", gpt_heuristic, benchmark_one_case_gpt),
 
-    # W-resnet
-    ("W-ResNet-1", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
-    ("W-ResNet-1", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
+    # MoE
+    ("moe", "parax.auto_sharding", moe_auto_sharding, benchmark_one_case_moe),
+    ("moe", "parax.data_parallel", moe_data_parallel, benchmark_one_case_moe),
+    ("moe", "parax.zero_2", moe_zero_2, benchmark_one_case_moe),
+    ("moe", "parax.zero_3", moe_zero_3, benchmark_one_case_moe),
+    ("moe", "parax.heuristic", moe_heuristic, benchmark_one_case_moe), # need to set NCCL_LAUNCH_MODE
+
+    # Wide-ResNet
+    ("wresnet", "parax.auto_sharding", wresnet_auto_sharding, benchmark_one_case_wresnet),
+    ("wresnet", "parax.data_parallel", wresnet_data_parallel, benchmark_one_case_wresnet),
+    ("wresnet", "parax.zero_2", wresnet_zero_2, benchmark_one_case_wresnet),
+    ("wresnet", "parax.zero_3", wresnet_zero_3, benchmark_one_case_wresnet),
+    ("wresnet", "parax.heuristic", wresnet_heuristic, benchmark_one_case_wresnet),
 ]
 
 
@@ -154,7 +216,10 @@ def build_cases():
     for suite in suites:
         model_name, method, args_list, benchmark_func = suite
         for i, args in enumerate(args_list):
-            num_devices = args[6] * args[7]
+            if "moe" in model_name:
+                num_devices = args[8] * args[9]
+            else: # GPT and W-ResNet
+                num_devices = args[6] * args[7]
             num_hosts = ((num_devices + 7) // 8)
             num_devices_per_host = min(num_devices, 8)
             cases.append((exp_name, instance, num_hosts, num_devices_per_host,

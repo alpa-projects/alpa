@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 INFINITY_COST = 1e13
+ALLREDUCE_THRESHOLD = 1 << 60
 
 
 class HloProtoStatus(enum.IntEnum):
@@ -169,7 +170,8 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 "auto_sharding::grad_acc_num_micro_batches":
                     grad_acc_num_micro_batches or 1,
                 "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
-                "auto_sharding::force_simple_heuristic": global_config.force_simple_heuristic,
+                "auto_sharding::force_simple_heuristic":
+                    global_config.force_simple_heuristic,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
@@ -183,7 +185,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
 
                 # Communication combiner options
                 "combiner::all_gather_threshold": all_gather_threshold,
-                "combiner::all_reduce_threshold": 1 << 60,
+                "combiner::all_reduce_threshold": ALLREDUCE_THRESHOLD,
                 "combiner::use_continuous_buffer": True,
 
                 # Debug options
@@ -334,7 +336,7 @@ def compile_with_given_strategy(backend,
 
             # Communication combiner options
             "combiner::all_gather_threshold": 1 << 60,
-            "combiner::all_reduce_threshold": 1 << 60,
+            "combiner::all_reduce_threshold": ALLREDUCE_THRESHOLD,
             "combiner::use_continuous_buffer": True,
 
             # Other useless but required arguments

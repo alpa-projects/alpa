@@ -47,7 +47,8 @@ class MoEConfig:
             tie_word_embeddings=True,
             expert_group_size=8192,  # S in the paper
             expert_number=128,  # E in the paper
-            pipeline_mp_size=1,
+            add_manual_pipeline_markers=False,
+            pipeline_mp_size=0,
             **kwargs):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -64,9 +65,10 @@ class MoEConfig:
         self.gradient_checkpointing = gradient_checkpointing
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
-        self.tie_word_embeddings = tie_word_embeddings
         self.expert_group_size = expert_group_size
         self.expert_number = expert_number
+        self.tie_word_embeddings = tie_word_embeddings
+        self.add_manual_pipeline_markers = add_manual_pipeline_markers
         self.pipeline_mp_size = pipeline_mp_size
 
 
@@ -252,14 +254,14 @@ class FlaxMoELayerCollection(nn.Module):
                                               dtype=self.dtype))
         self.layers = layers
 
-        self.pipeline_mp_size = self.config.pipeline_mp_size
+        num_layers = self.config.num_hidden_layers
+        pipeline_mp_size = self.config.pipeline_mp_size
         self.pipeline_marker_positions = []
-        if self.pipeline_mp_size > 1:
-            num_layer_per_stage, remained = divmod(
-                self.config.num_hidden_layers, self.pipeline_mp_size)
+        if self.config.add_manual_pipeline_markers:
+            num_layer_per_stage, remained = divmod(num_layers, pipeline_mp_size)
             assert remained == 0
             self.pipeline_marker_positions = [
-                num_layer_per_stage * i for i in range(1, self.pipeline_mp_size)
+                num_layer_per_stage * i for i in range(1, pipeline_mp_size)
             ]
 
     def __call__(
@@ -276,7 +278,7 @@ class FlaxMoELayerCollection(nn.Module):
 
         id = 0
         for i, layer in enumerate(self.layers):
-            if self.pipeline_mp_size > 1:
+            if self.config.add_manual_pipeline_markers:
                 if id < len(self.pipeline_marker_positions) and \
                         i == self.pipeline_marker_positions[id]:
                     mark_pipeline(name=str(id), mark_type="end")

@@ -10,6 +10,7 @@ import ray
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
 from parax.testing import MLPModel, assert_allclose
+from parax.util import get_ray_namespace_str
 
 
 class PipelineMLPTest(unittest.TestCase):
@@ -18,7 +19,7 @@ class PipelineMLPTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         assert len(jax.local_devices()) >= 4
 
-        ray.init(address='auto')
+        ray.init(address='auto', namespace=get_ray_namespace_str(prefix="parax-unittest"))
         device_cluster = DeviceCluster()
         mesh = device_cluster.get_virtual_physical_mesh()
         self.devices = mesh

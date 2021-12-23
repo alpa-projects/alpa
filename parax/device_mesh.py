@@ -11,7 +11,6 @@ from typing import Any, List, Union, Sequence, Tuple
 
 import numpy as np
 import ray
-import ray.util.collective as col
 
 from jax import core, xla, eval_shape, device_put
 from jax._src.util import unzip3
@@ -35,7 +34,8 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
                         jax_tensor_index, OrderedSet)
-from ray.util.collective.collective_group import nccl_util
+import parax.collective as col
+from parax.collective.collective_group import nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -250,14 +250,12 @@ class MeshHostWorker:
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
     def allgather(self, uuids, device_ids, tensor_slices):
-        # TODO(yonghao): check allgather happens only in single node
+        # TODO(Hao): implement a better allgather
         cupy_buffers = []
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
-            xla_buffer = self.buffers[uuid]
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
-            # FIXME(Hao): seems like a redundant level of list 
             ind, n_elements = infer_offset_and_n_elements(tensor_slice)
             cupy_slice = cupy_buffer[ind]
             self.allgather_communicators[device_id].allGather(
@@ -270,7 +268,7 @@ class MeshHostWorker:
         for uuid, cupy_buffer in zip(uuids, cupy_buffers):
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
-
+    # TODO(yonghao): replace dict by named tuple or class
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 
@@ -472,7 +470,8 @@ class PhysicalDeviceMesh:
             env_vars = {
                 "PARAX_IS_WORKER": "True",
                 "NCCL_USE_MULTISTREAM": "False",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".9",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
+                #"NCCL_LAUNCH_MODE": "PARALLEL",
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 # "NCCL_SHM_DISABLE": "1",
@@ -1217,6 +1216,16 @@ class VirtualPhysicalMesh:
     def get_1d_logical_mesh(self):
         """Return a 1D logical mesh."""
         return self.get_logical_mesh((1, self.total_devices))
+
+
+def get_dummy_virtual_mesh(mesh_shape):
+    num_hosts = mesh_shape[0]
+    num_devices_per_host = mesh_shape[1]
+    host_ids = [str(i) for i in range(num_hosts)]
+    host_info = [dict(NodeManagerAddress=str(i)) for i in range(num_hosts)]
+    return VirtualPhysicalMesh(host_ids=host_ids,
+                               host_info=host_info,
+                               num_devices_per_host=num_devices_per_host)
 
 
 class DeviceCluster:

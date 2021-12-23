@@ -1,6 +1,8 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
 from collections import OrderedDict
+from datetime import datetime
+
 from functools import partial
 import functools
 import itertools as it
@@ -28,6 +30,8 @@ from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.tree_util import tree_map, tree_flatten
 import numpy as np
 import ray
+
+from parax.global_env import global_config
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
@@ -246,6 +250,39 @@ class OrderedSet:
 
     def __class_getitem__(cls, item):
         return f"{cls.__name__}[{item.__name__}]"
+
+
+class DisjointDict:
+
+    def __init__(self):
+        self.values = dict()
+        self.reversed_mapping = dict()
+
+    def update(self, keys, values):
+        for key, value in zip(keys, values):
+            value = self.recursive_lookup(value)
+            self.values[key] = value
+            self._reversed_recursive_update(key, value)
+
+    def _reversed_recursive_update(self, key, value):
+        if key in self.reversed_mapping:
+            reversed_mapping = self.reversed_mapping[key]
+            self.reversed_mapping.setdefault(value,
+                                             set()).update(reversed_mapping)
+            self.reversed_mapping.pop(key)
+            for k in reversed_mapping:
+                self.values[k] = value
+        self.reversed_mapping.setdefault(value, set()).add(key)
+
+    def recursive_lookup(self, key):
+        if key in self.values:
+            value = self.values[key]
+            assert value not in self.values
+            return value
+        return key
+
+    def keys(self):
+        return list(self.values.keys())
 
 
 def cached_property(fn, *args, **kwargs):
@@ -828,10 +865,19 @@ def get_num_hosts_and_num_devices(args):
             num_hosts = 1
             num_devices_per_host = list_gpu_info().count("UUID")
         else:
-            ray.init(address="auto")
+            ray.init(address="auto", namespace=get_ray_namespace_str())
             num_hosts = len(ray.nodes())
-            num_devices_per_host = int(ray.cluster_resources()["GPU"]) // num_hosts
+            num_devices_per_host = int(
+                ray.cluster_resources()["GPU"]) // num_hosts
     return num_hosts, num_devices_per_host
+
+
+def get_ray_namespace_str(prefix="parax-train"):
+    """Get a unique ray namespace str to avoid some annoyed warnings."""
+    prefix = global_config.default_ray_namespace_prefix
+    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    namespace_str = f"{prefix}-{date_str}"
+    return namespace_str
 
 
 def write_tsv(heads, values, filename, print_line=True):
@@ -858,12 +904,15 @@ def to_str_round(x, decimal=6):
         return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
                                ]) + "]"
     if isinstance(x, dict):
-        return str({k: eval(to_str_round(v)) for k, v in x.items()})
+        return str(
+            {k: eval(to_str_round(v, decimal=decimal)) for k, v in x.items()})
     if isinstance(x, int):
         return str(x)
     if isinstance(x, float):
         format_str = "%%.%df" % decimal
         return format_str % x
+    if x is None:
+        return str(x)
     raise ValueError("Invalid value: " + str(x))
 
 
@@ -936,4 +985,3 @@ def get_cross_slice_vars(jaxpr, slices):
         for invar in invars:
             print(invar, invar.aval.shape, 'from layer', defined[invar])
     return
-

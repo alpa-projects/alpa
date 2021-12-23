@@ -302,15 +302,19 @@ class XlaShardedPipelineComputation(PipelineComputation):
         for invar in donated_invars:
             self.donated_invars[var_indices[invar]] = True
 
-    def get_compiled(self, mesh=None):
+    def get_compiled(self, mesh=None, is_distributed=None):
         # TODO(yonghao): use more general cache functions
         if self.compiled is not None:
             return self.compiled
 
-        if not isinstance(mesh, PhysicalDeviceMesh):
+        if (not isinstance(mesh, PhysicalDeviceMesh) and
+                is_distributed is None):
             raise RuntimeError(
                 "Require a pre-allocated physical mesh to compile the runnable."
             )
+
+        is_distributed = (mesh.is_distributed
+                          if mesh is not None else is_distributed)
 
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
@@ -325,7 +329,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             xla_computation,
             self.strategy_config,
             num_devices,
-            mesh.is_distributed,
+            is_distributed,
             HloProtoStatus.SHARDING_ANNOTATED,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)

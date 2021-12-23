@@ -7,6 +7,7 @@ from . import monkey_patch
 from . import pipeline_parallel
 from . import shard_parallel
 from . import util
+from . import collective
 
 # Shortcut
 from parax.api import clear_callable_cache, grad, parallelize

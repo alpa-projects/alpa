@@ -1,10 +1,12 @@
 import gc
+import logging
 from typing import Dict, OrderedDict, Sequence, Tuple
 
 import tqdm
 import numpy as np
 import ray
 from abc import ABC, abstractmethod
+from ray.exceptions import RayActorError
 from ray.util import ActorPool
 
 import jax.numpy as jnp
@@ -31,6 +33,9 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 sharding_proto_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 INFINITY_N_STAGES = 4096
 GB = 1024**3
 
@@ -49,7 +54,8 @@ class BaseWorkerPoolWrapper(ABC):
         return self.pool.get_next()
 
     def get_next_unordered(self):
-        return self.pool.get_next_unordered(timeout=600)
+        return self.pool.get_next_unordered(
+            timeout=global_config.profile_timeout)
 
     def shutdown(self, force=True):
         for w in self.actors:
@@ -113,10 +119,12 @@ class CompileWorker:
             "bypass_device_assignment_check": True
         }
         try:
-            _, (protos, hooked_proto, strategy_config) = self.compile_with_config(
-            stage_id, global_config_dict, proto, jaxpr_config, mesh_config,
-            multiple_stage_config)
+            _, (protos, hooked_proto,
+                strategy_config) = self.compile_with_config(
+                    stage_id, global_config_dict, proto, jaxpr_config,
+                    mesh_config, multiple_stage_config)
         except:
+            logger.warning("Unexpected error in compile time")
             return stage_id, None
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
@@ -182,10 +190,10 @@ class ProfileWorker:
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
-        self.v_mesh = virtual_mesh
+        self.virtual_mesh = virtual_mesh
 
     def profile_impl(self, stage_id, compiled_output, profile_info,
-                intermediate_size, initial_size):
+                     intermediate_size, initial_size):
 
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
         proto, config, in_shardings, out_shardings, _, _ = compiled_output
@@ -216,26 +224,23 @@ class ProfileWorker:
 
     def profile(self, stage_id, compiled_output, profile_info,
                 intermediate_size, initial_size):
-        # TODO(yonghao): find out why the below happens:
-        # 16GPU WResNet with config:
-        # (1536, 224, 50,  640,   2, "fp32", 32,  False, False,  True),
-        # When profiling start=[9], end=[14,15], the profile fails because cublas error
-        for _ in range(2):
+        for _ in range(global_config.profile_maximum_retry):
             try:
-                return self.profile_impl(stage_id, compiled_output, profile_info,
-                    intermediate_size, initial_size)
+                return self.profile_impl(stage_id, compiled_output,
+                                         profile_info, intermediate_size,
+                                         initial_size)
             except RayActorError:
-                print("Meet ray actor error in profiling")
+                logger.warning("Meet ray actor error in profiling")
                 self.restart(forced=True)
-            except AssertionError:
-                print("Meet assertion error in profiling")
+            except:
+                logger.warning("Meet unexpected error in profiling")
                 self.restart(forced=True)
                 break
         return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
 
     def restart(self, forced):
         self.mesh.shutdown(forced=forced)
-        self.mesh = self.v_mesh.get_physical_mesh()
+        self.mesh = self.virtual_mesh.get_physical_mesh()
 
 
 class ProfileWorkerPool(BaseWorkerPoolWrapper):
@@ -262,13 +267,17 @@ class HloCostModelProfileWorker:
         xla_computation = xla_client.XlaComputation(proto)
 
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
-        compiled = compile_with_given_strategy(self.backend,
-                                               xla_computation,
-                                               config,
-                                               self.num_devices,
-                                               True,
-                                               hlo_proto_status,
-                                               run_backend_codegen=True)
+        try:
+            compiled = compile_with_given_strategy(self.backend,
+                                                   xla_computation,
+                                                   config,
+                                                   self.num_devices,
+                                                   True,
+                                                   hlo_proto_status,
+                                                   run_backend_codegen=True)
+        except RuntimeError:
+            return stage_id, np.inf, -1, (0, 0, 0, 0)
+
         hlo_module = compiled.hlo_modules()[0]
         grad_sync_channel_ids = ""
         if acc_grad_indices:
@@ -388,15 +397,17 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
     pbar = tqdm.tqdm(stages)
     for _ in pbar:
         try:
-            stage_id, cost, max_stage, debug_info = profile_workers.get_next_unordered(
-            )
+            (stage_id, cost, max_stage,
+             debug_info) = profile_workers.get_next_unordered()
         except TimeoutError:
-            print("FATAL: after waiting for too long, all profile workers are forcely killed")
             profile_workers.shutdown(force=True)
+            logger.warning("After waiting for too long, "
+                           "all profile workers are forcely killed")
             return compute_cost, max_n_succ_stages
         except:
-            print("FATAL: other error, all profile workers are forcely killed")
             profile_workers.shutdown(force=True)
+            logger.warning("Meet unexpected error, "
+                           "all profile workers are forcely killed")
             return compute_cost, max_n_succ_stages
         (start, end,
          config_idx), _, auto_sharding_config, _, _, _ = stages[stage_id]

@@ -17,25 +17,24 @@ _ = None
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, AP = auto_pipeline
+# RS = prefer_reduce_scatter
 
 default_benchmark_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
-    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _,   _,    1,   1,  True, True,  False, _),
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
+    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
 ],
 
 4: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
-    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _,   _,    1,   1,  True, True,  False, _),
+    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
+    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _, _,  1,   1,  True, True,  False, _, _),
 ],
 
 16: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, PD0, PD1,  PP,  NB, FM,   Remat, RS,    AP
 ]
 }
 
@@ -83,7 +82,7 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
          l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-         use_remat, prefer_reduce_scatter, auto_pipeline) = benchmark_case
+         use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
         model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
 

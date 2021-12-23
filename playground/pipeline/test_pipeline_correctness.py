@@ -91,7 +91,7 @@ class PipelineCorrectnessTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
         # Note(Hao): I tested on my own cluster.
         assert len(jax.local_devices()) >= 4
-        ray.init(address='auto')
+        ray.init(address='auto', namespace="parax-unittest")
         device_cluster = DeviceCluster()
         mesh = device_cluster.get_virtual_physical_mesh()
         self.devices = mesh

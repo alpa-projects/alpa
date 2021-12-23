@@ -161,35 +161,15 @@ class SymbolicReshardingTask(ReshardingTask):
         return False
 
     @property
-    def has_initialized_tasks(self):
-        if not self.is_scatter_gather_task:
-            if self._sender_tasks is not None and self._receiver_tasks is not None:
-                return True
-            else:
-                return False
-        else:
-            if self._sender_tasks is not None and self._receiver_tasks is not None \
-                and self._allgather_tasks is not None:
-                return True
-            else:
-                return False
-
-    @property
     def sender_tasks(self):
-        if not self.has_initialized_tasks:
-            raise RuntimeError("Sender tasks have not been initialized.")
         return self._sender_tasks
 
     @property
     def receiver_tasks(self):
-        if not self.has_initialized_tasks:
-            raise RuntimeError("Receiver tasks have not been initialized.")
         return self._receiver_tasks
 
     @property
     def allgather_tasks(self):
-        if not self.has_initialized_tasks:
-            raise RuntimeError("Allgather tasks have not been initialized.")
         return self._allgather_tasks
 
     def _indices_in_dst_post_allgather(self,
@@ -247,7 +227,7 @@ class SymbolicReshardingTask(ReshardingTask):
 
     def get_send_recv_tasks(self):
         """Init send/recv tasks if not yet."""
-        if self.has_initialized_tasks:
+        if self.sender_tasks != None and self.receiver_tasks != None:
             return self.sender_tasks, self.receiver_tasks
 
         self._sender_tasks = {host: list() for host in self.src_mesh.workers}
@@ -325,9 +305,8 @@ class SymbolicReshardingTask(ReshardingTask):
     def get_allgather_tasks(self):
         if not self.is_scatter_gather_task:
             return
-
-        if self.has_initialized_tasks:
-            return self.allgather_tasks
+        if self._allgather_tasks != None:
+            return self._allgather_tasks
         # only dst mesh does allgather.
         # is a worker -> ((device_ids), (device_strs), (slices))
         self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}

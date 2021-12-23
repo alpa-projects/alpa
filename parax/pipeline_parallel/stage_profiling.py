@@ -14,7 +14,6 @@ from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, jaxpr_as_fun,
                       new_jaxpr_eqn, named_call_p)
 from jax.interpreters import pxla
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
-from ray.exceptions import RayActorError
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config

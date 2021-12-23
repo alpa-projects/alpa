@@ -206,7 +206,6 @@ class MeshHostWorker:
             raise RuntimeError("Buffer has not been created.")
 
         if global_config.pipeline_use_signal_send_recv:
-            # print(">>>>> recv: Use signal send recv")
             signal = self.signal_tensors[uuid % len(self.local_devices)]
             col.recv_multigpu(signal, src_rank, src_gpu_idx, group_name)
             return

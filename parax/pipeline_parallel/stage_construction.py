@@ -190,10 +190,6 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
             max_mp_dimension = virtual_submesh.num_devices_per_host
 
         for mp_size in range(1, max_mp_dimension + 1):
-            if num_devices % 3 == 0:
-                continue
-            if mp_size == 8 and mp_size == num_devices:
-                    continue
             if num_devices % mp_size == 0:
                 dp_size = num_devices // mp_size
                 if batch_size % dp_size == 0:
@@ -291,7 +287,6 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                         (stage_indices, compile_info, autosharding_config,
                          intermediate_vars, profile_info, apply_info))
 
-    # TODO(zhuohan): set the number of workers as a tunable parameter
     if len(stages) == 0:
         compute_cost = np.full(
             (num_layers, num_layers, num_autosharding_configs), np.inf)

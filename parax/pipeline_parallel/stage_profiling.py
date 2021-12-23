@@ -1,7 +1,6 @@
 import gc
 import logging
 from typing import Dict, OrderedDict, Sequence, Tuple
-from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 
 import tqdm
 import numpy as np
@@ -26,6 +25,7 @@ from parax.pipeline_parallel.cross_mesh_resharding import (
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
     merge_computation_jaxprs, rearrange_vars)
+from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,

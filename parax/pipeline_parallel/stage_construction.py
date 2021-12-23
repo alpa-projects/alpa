@@ -200,6 +200,10 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
+    elif option == "only_dp":
+        results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
+            "force_batch_dim_to_mesh_dim": 0
+        }))
     return results
 
 
@@ -273,6 +277,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                  insert_hook_after=end - start,
                  apply_grad_info=(selected_apply_grad_layers,
                                   *apply_grad_global_info))
+            if is_full_mesh:
+                intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
                     autosharding_configs):
                 if autosharding_config is not None:

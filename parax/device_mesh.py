@@ -252,10 +252,10 @@ class MeshHostWorker:
         # TODO(Hao): implement a better allgather
         cupy_buffers = []
         nccl_util.groupStart()
-        for i, (uuid, device_id) in enumerate(zip(uuids, device_ids)):
-            xla_buffer = self.buffers[uuid]
+        for device_id, tensor_slice in zip(device_ids, tensor_slices):
+            uuid = uuids[device_id]
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
-            ind, n_elements = infer_offset_and_n_elements(tensor_slices[i])
+            ind, n_elements = infer_offset_and_n_elements(tensor_slice)
             cupy_slice = cupy_buffer[ind]
             self.allgather_communicators[device_id].allGather(
                 nccl_util.get_tensor_ptr(cupy_slice),

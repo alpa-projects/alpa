@@ -453,7 +453,7 @@ class ReshardingTask:
                     # Sender's task
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                         sender]
-                    # tile = src_tiles[i]
+                    # tile = src_tiles[sender_idx]
                     # self._sender_tasks[sender_worker].append(
                     #     (tile.offset, receiver_rank, receiver_gpu_idx))
                     self._sender_tasks[sender_worker].append(

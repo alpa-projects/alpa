@@ -2,7 +2,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 import logging
-from typing import List
+from typing import List, Any
 
 import numpy as np
 import ray
@@ -194,20 +194,74 @@ class VirtualDistributedArray:
         return device_str_to_flat_index_map
 
 
+@dataclass
+class Tile:
+    """
+    Representing a full tile (shard) on the original distributed array.
+
+    Args:
+        index (List[int]): the index of this shard in the tile_assignments matrix of the VDA.
+        index_flat (int): flattend index, row-majored.
+        replica_device_ids (List[int]): the device ids this shard is replicated on.
+        replica_device_strs (List[str]): the device strs this shard is replicated on.
+        indices (List[slice]): a list of slices that expresses its indices in the original array.
+    """
+
+    index: List[int]
+    index_flat: int
+    replica_device_ids: List[int]
+    replica_device_strs: List[str]
+    indices: List[slice]
+
+    @property
+    def tile_size(self):
+        """Return the size (number of elements) of the tile."""
+        size = 1
+        for s in self.indices:
+            size = size * (s.stop - s.start)
+        return size
+
+    @property
+    def tile_shape(self):
+        """Return the shape of the tile."""
+        return [s.stop - s.start for s in self.indices]
+
+
+@dataclass
+class TileSlice(Tile):
+    """
+    Representing a slice of a tile of the array using an offset.
+
+    TileSlice subsets Tile, and Tile subsets VDA.
+
+    Args:
+        offset (List[slice]): a list of slice objects to represent the offset made on the shard.
+    """
+
+    offset: List[slice]
+
+    def __init__(self, tile, offset):
+        self.index = tile.index
+        self.index_flat = tile.index
+        self.replica_device_ids = tile.replica_device_ids
+        self.replica_device_strs = tile.replica_device_strs
+        self.indices = tile.indices
+        self.offset = offset
+
+    @property
+    def slice_size(self):
+        """Return the size (number of elements) of this tile slice."""
+        size = 1
+        for o in self.offset:
+            size = size * (o.stop - o.start)
+        return size
+
+
 VDA = VirtualDistributedArray
 
 
-# TODO(Hao): maybe we should derive two classes: Eager and Lazy Resharding tasks.
 class ReshardingTask:
-    """
-    A helper class that launch the NCCL communication based on a resharding task spec.
-
-    Args:
-        task_spec (ReshardingTaskSpec): the task spec of this task.
-        collective_group (CollectiveGroup): the collective group information.
-        src_mesh (PhysicalMesh): the source mesh to send.
-        dst_mesh (PhysicalMesh): the destiantion mesh to receive.
-    """
+    """A task that addresses cross-mesh resharding between two meshes."""
 
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         self.task_spec = task_spec
@@ -215,107 +269,21 @@ class ReshardingTask:
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
 
-        # internal states
-        self._sender_tasks = None
-        self._receiver_tasks = None
-        self._allgather_tasks = None
 
-    @property
-    def is_scatter_gather_task(self):
-        if self.task_spec.strategy.is_scatter_gather:
-            return True
-        return False
+class EagerReshardingTask(ReshardingTask):
+    """An eager resharding task.
 
-    @property
-    def has_initialized_tasks(self):
-        if not self.is_scatter_gather_task:
-            if self._sender_tasks is not None and self._receiver_tasks is not None:
-                return True
-            else:
-                return False
-        else:
-            if (self._sender_tasks is not None and
-                    self._receiver_tasks is not None and
-                    self._allgather_tasks is not None):
-                return True
-            else:
-                return False
-
-    @property
-    def sender_tasks(self):
-        if not self.has_initialized_tasks:
-            raise RuntimeError("Sender tasks have not been initialized.")
-        return self._sender_tasks
-
-    @property
-    def receiver_tasks(self):
-        if not self.has_initialized_tasks:
-            raise RuntimeError("Receiver tasks have not been initialized.")
-        return self._receiver_tasks
-
-    @property
-    def allgather_tasks(self):
-        if not self.has_initialized_tasks:
-            raise RuntimeError("Allgather tasks have not been initialized.")
-        return self._allgather_tasks
-
-    def _allgather_receiver_step_and_offset(self, receiver):
-        tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
-        # the dst mesh of col group may not be dst mesh of resharding task
-        host_idx, device_idx = self.collective_group.device_str_to_rank_map[
-            receiver]
-        if host_idx >= self.collective_group.src_mesh.num_hosts:
-            host_idx = host_idx - self.collective_group.src_mesh.num_hosts
-        flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
-        # Reconstruct logical mesh info
-        dst_spec = self.task_spec.dst_sharding_spec
-        dst_mesh_shape = [(dst_spec.sharding[mesh_map.axis].chunks[0]
-                           if isinstance(mesh_map, pxla.ShardedAxis) else 1)
-                          for mesh_map in dst_spec.mesh_mapping]
-        assert len(dst_mesh_shape) < 3, "Only support 1D and 2D mesh"
-        # rewrite indices
-        if mesh_axis == 0:
-            step = dst_mesh_shape[1]
-            offset = (flatten_idx // dst_mesh_shape[1]) % extra_sharding
-            group_idx = (flatten_idx // dst_mesh_shape[1]) // extra_sharding
-        else:
-            assert mesh_axis == 1
-            step = 1
-            offset = (flatten_idx % dst_mesh_shape[1]) % extra_sharding
-            group_idx = (flatten_idx % dst_mesh_shape[1]) // extra_sharding
-        return step, offset, group_idx, dst_mesh_shape
-
-    def _indices_in_dst_post_allgather(self,
-                                       indices,
-                                       receiver,
-                                       from_relative=True):
-        if self.task_spec.allgather_slice is None:
-            return indices
-        tensor_axis, mesh_axis, _ = self.task_spec.allgather_slice
-        _, offset, _, dst_mesh_shape = self._allgather_receiver_step_and_offset(
-            receiver)
-        allgather_dim_size = (self.task_spec.aval.shape[tensor_axis] //
-                              dst_mesh_shape[mesh_axis])
-        indices = list(indices)
-        if from_relative:
-            indices[tensor_axis] = slice(
-                offset * allgather_dim_size + indices[tensor_axis].start,
-                offset * allgather_dim_size + indices[tensor_axis].stop, None)
-        else:
-            indices[tensor_axis] = slice(offset * allgather_dim_size,
-                                         (offset + 1) * allgather_dim_size,
-                                         None)
-        shape = self.task_spec.aval.shape
-        for idx, tensor_slice in enumerate(indices):
-            if tensor_slice.start == None:
-                assert tensor_slice.stop == None
-                indices[idx] = slice(0, shape[idx], None)
-        return indices
+    It does not put task info into remote workers. Instead, it provides
+    a do() interface to execute the task eagerly.
+    """
+    def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
+        super(EagerReshardingTask, self).__init__(task_spec, collective_group,
+                                                  src_mesh, dst_mesh)
 
     def do(self, src_array):
-        """According to the task_spec, launch send/recv operations.
+        """According to the task_spec, launch send/recv operations, eagerly.
 
-        Used in dynamic mode.
+        Used in centralized distributed runtime.
 
         Args:
             src_array (DistributedArray): the source array to be resharded.
@@ -323,9 +291,9 @@ class ReshardingTask:
         if src_array.device_mesh != self.src_mesh:
             raise RuntimeError("The src array locates on a different mesh `{}` "
                                "than self.src_mesh `{}`.".format(
-                                   src_array.device_mesh, self.src_mesh))
+                src_array.device_mesh, self.src_mesh))
 
-        bufs = [None] * len(self.task_spec.dst_indices)
+        bufs: List[Any] = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
                 self.task_spec.dst_tile_to_src_tiles_map):
@@ -341,8 +309,8 @@ class ReshardingTask:
                 ]
                 device_str_to_buf_map[
                     receiver] = self.same_destination_group_send_recv(
-                        src_array, senders, src_tiles, dst_tile,
-                        indices_in_dst_tiles, receiver)
+                    src_array, senders, src_tiles, dst_tile,
+                    indices_in_dst_tiles, receiver)
         # Assemble the buffer based on the order present in indices
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):
@@ -374,19 +342,10 @@ class ReshardingTask:
                                      receiver_device_id,
                                      dtype=dtype)
         # Put an empty buffer first.
-        if global_config.pipeline_aggressively_sync:
-            ray.get(
-                receiver_worker.put_non_zero_buffer.remote(
-                    result_buf.uuid, result_buf.device_id, dst_tile.tile_shape,
-                    result_buf.dtype))
-            logger.debug("We are synchronizing for `put_empty_buffer`.")
-        else:
-            receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
-                                                       result_buf.device_id,
-                                                       dst_tile.tile_shape,
-                                                       result_buf.dtype)
-            logger.debug("We are NOT synchronizing for `put_empty_buffer`.")
-
+        ray.get(
+            receiver_worker.put_non_zero_buffer.remote(
+                result_buf.uuid, result_buf.device_id, dst_tile.tile_shape,
+                result_buf.dtype))
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
             receiver]
         for i, sender in enumerate(senders):
@@ -408,15 +367,112 @@ class ReshardingTask:
             recv_done_ref = receiver_worker.recv_tile.remote(
                 result_buf.uuid, result_buf.device_id, indices_in_dst_tile,
                 sender_rank, sender_gpu_idx, self.collective_group.group_name)
-
-            if global_config.pipeline_aggressively_sync:
-                ray.get([send_done_ref, recv_done_ref])
-                logger.debug(
-                    "We are synchronizing for `send_tile`/`recv_tile`.")
-            else:
-                logger.debug(
-                    "We are NOT synchronizing for `send_tile`/`recv_tile`.")
+            ray.get([send_done_ref, recv_done_ref])
         return result_buf
+
+
+class SymbolicReshardingTask(ReshardingTask):
+    """A symbolic resharding task that puts task info in remote workers."""
+
+    def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
+        super(SymbolicReshardingTask, self).__init__(task_spec, collective_group,
+                                                     src_mesh, dst_mesh)
+
+        # internal states
+        self._sender_tasks = None
+        self._receiver_tasks = None
+        self._allgather_tasks = None
+
+    @property
+    def is_scatter_gather_task(self):
+        if self.task_spec.strategy.is_scatter_gather:
+            return True
+        return False
+
+    @property
+    def has_initialized_tasks(self):
+        if not self.is_scatter_gather_task:
+            if self._sender_tasks is not None and self._receiver_tasks is not None:
+                return True
+            else:
+                return False
+        else:
+            if self._sender_tasks is not None and self._receiver_tasks is not None \
+                and self._allgather_tasks is not None:
+                return True
+            else:
+                return False
+
+    @property
+    def sender_tasks(self):
+        if not self.has_initialized_tasks:
+            raise RuntimeError("Sender tasks have not been initialized.")
+        return self._sender_tasks
+
+    @property
+    def receiver_tasks(self):
+        if not self.has_initialized_tasks:
+            raise RuntimeError("Receiver tasks have not been initialized.")
+        return self._receiver_tasks
+
+    @property
+    def allgather_tasks(self):
+        if not self.has_initialized_tasks:
+            raise RuntimeError("Allgather tasks have not been initialized.")
+        return self._allgather_tasks
+
+    def _indices_in_dst_post_allgather(self,
+                                       indices,
+                                       receiver,
+                                       from_relative=True):
+        if self.task_spec.allgather_slice is None:
+            return indices
+        tensor_axis, mesh_axis, _ = self.task_spec.allgather_slice
+        _, offset, _, dst_mesh_shape = self._allgather_receiver_step_and_offset(
+            receiver)
+        allgather_dim_size = (self.task_spec.aval.shape[tensor_axis] //
+                              dst_mesh_shape[mesh_axis])
+        indices = list(indices)
+        if from_relative:
+            indices[tensor_axis] = slice(
+                offset * allgather_dim_size + indices[tensor_axis].start,
+                offset * allgather_dim_size + indices[tensor_axis].stop, None)
+        else:
+            indices[tensor_axis] = slice(offset * allgather_dim_size,
+                                         (offset + 1) * allgather_dim_size,
+                                         None)
+        shape = self.task_spec.aval.shape
+        for idx, tensor_slice in enumerate(indices):
+            if tensor_slice.start == None:
+                assert tensor_slice.stop == None
+                indices[idx] = slice(0, shape[idx], None)
+        return indices
+
+    def _allgather_receiver_step_and_offset(self, receiver):
+        tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
+        # the dst mesh of col group may not be dst mesh of resharding task
+        host_idx, device_idx = self.collective_group.device_str_to_rank_map[
+            receiver]
+        if host_idx >= self.collective_group.src_mesh.num_hosts:
+            host_idx = host_idx - self.collective_group.src_mesh.num_hosts
+        flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
+        # Reconstruct logical mesh info
+        dst_spec = self.task_spec.dst_sharding_spec
+        dst_mesh_shape = [(dst_spec.sharding[mesh_map.axis].chunks[0]
+                           if isinstance(mesh_map, pxla.ShardedAxis) else 1)
+                          for mesh_map in dst_spec.mesh_mapping]
+        assert len(dst_mesh_shape) < 3, "Only support 1D and 2D mesh"
+        # rewrite indices
+        if mesh_axis == 0:
+            step = dst_mesh_shape[1]
+            offset = (flatten_idx // dst_mesh_shape[1]) % extra_sharding
+            group_idx = (flatten_idx // dst_mesh_shape[1]) // extra_sharding
+        else:
+            assert mesh_axis == 1
+            step = 1
+            offset = (flatten_idx % dst_mesh_shape[1]) % extra_sharding
+            group_idx = (flatten_idx % dst_mesh_shape[1]) // extra_sharding
+        return step, offset, group_idx, dst_mesh_shape
 
     def get_send_recv_tasks(self):
         """Init send/recv tasks if not yet."""
@@ -533,10 +589,11 @@ class ReshardingTask:
         ray.get(task_dones)
 
     def do_prepared(self, src_array, profiling=False):
+        """Execute a task which has been put in the remote workers."""
         send_buf_uuids = {host: list() for host in self.src_mesh.workers}
         recv_buf_uuids = {host: list() for host in self.dst_mesh.workers}
 
-        bufs = [None] * len(self.task_spec.dst_indices)
+        bufs: List[Any] = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = dict()
 
         dtype = self.task_spec.src.aval.dtype
@@ -571,7 +628,6 @@ class ReshardingTask:
                 results.append(
                     worker.profile_resharding_recv_task.remote(
                         uuid, recv_buf_uuids[worker]))
-            ray.get(results)
         else:
             for worker, uuid in self.send_worker_task_ids.items():
                 results.append(
@@ -582,18 +638,12 @@ class ReshardingTask:
                     worker.run_resharding_recv_task.remote(
                         uuid, recv_buf_uuids[worker]))
             logger.debug("Precompiled tasks launched.")
-            if global_config.pipeline_aggressively_sync:
-                ray.get(results)
-                logger.debug("Using precompiled tasks in sync mode.")
-            else:
-                logger.debug("Using precomipled tasks in async mode.")
-
+            ray.get(results)
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):
             # for each replica
             bufs[self.task_spec.dst.device_str_to_flat_index[
                 device_str]] = device_str_to_buf_map[device_str]
-
         # Now construct the distributed array
         dst_array = DistributedArray(self.dst_mesh, src_array.aval,
                                      self.task_spec.dst_sharding_spec, bufs,
@@ -605,69 +655,6 @@ class ReshardingTask:
     def __str__(self):
         return f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"\
                f"{self.task_spec.src_sharding_spec} ->\n{self.task_spec.dst_sharding_spec})"
-
-
-@dataclass
-class Tile:
-    """
-    Representing a full tile (shard) on the original distributed array.
-
-    Args:
-        index (List[int]): the index of this shard in the tile_assignments matrix of the VDA.
-        index_flat (int): flattend index, row-majored.
-        replica_device_ids (List[int]): the device ids this shard is replicated on.
-        replica_device_strs (List[str]): the device strs this shard is replicated on.
-        indices (List[slice]): a list of slices that expresses its indices in the original array.
-    """
-
-    index: List[int]
-    index_flat: int
-    replica_device_ids: List[int]
-    replica_device_strs: List[str]
-    indices: List[slice]
-
-    @property
-    def tile_size(self):
-        """Return the size (number of elements) of the tile."""
-        size = 1
-        for s in self.indices:
-            size = size * (s.stop - s.start)
-        return size
-
-    @property
-    def tile_shape(self):
-        """Return the shape of the tile."""
-        return [s.stop - s.start for s in self.indices]
-
-
-@dataclass
-class TileSlice(Tile):
-    """
-    Representing a slice of a tile of the array using an offset.
-
-    TileSlice subsets Tile, and Tile subsets VDA.
-
-    Args:
-        offset (List[slice]): a list of slice objects to represent the offset made on the shard.
-    """
-
-    offset: List[slice]
-
-    def __init__(self, tile, offset):
-        self.index = tile.index
-        self.index_flat = tile.index
-        self.replica_device_ids = tile.replica_device_ids
-        self.replica_device_strs = tile.replica_device_strs
-        self.indices = tile.indices
-        self.offset = offset
-
-    @property
-    def slice_size(self):
-        """Return the size (number of elements) of this tile slice."""
-        size = 1
-        for o in self.offset:
-            size = size * (o.stop - o.start)
-        return size
 
 
 class CollectiveGroup:
@@ -696,7 +683,7 @@ class CollectiveGroup:
 
         # arranged following the rank order
         num_host = len(self.src_mesh.host_ips) + len(self.dst_mesh.host_ips)
-        self.mesh_workers = [None] * num_host
+        self.mesh_workers: List[Any] = [None] * num_host
         for i, _ in enumerate(src_mesh.host_ips):
             self.mesh_workers[i] = self.src_mesh.workers[i]
             for j in range(src_mesh.num_devices_per_host):
@@ -738,8 +725,6 @@ class CollectiveGroup:
             # This remote call will remove ray named actors (hence it is necessary)
             ray.get(worker.destroy_collective_group.remote(self.group_name))
         # Destroy the declared named actor in ray
-
-        # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
         self._detroy_info_actor()
 
     def _detroy_info_actor(self):

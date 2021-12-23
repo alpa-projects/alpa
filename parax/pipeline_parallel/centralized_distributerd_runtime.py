@@ -9,7 +9,7 @@ import ray
 from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
+from parax.pipeline_parallel.cross_mesh_resharding import EagerReshardingTask
 from parax.global_env import global_config
 from parax.timer import timers
 
@@ -309,7 +309,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                         task_spec = self._communicator.resharding_specs[
                             src_mesh_idx][mesh_idx][key]
                         assert task_spec
-                        task = ReshardingTask(
+                        task = EagerReshardingTask(
                             task_spec,
                             self._collective_groups[src_mesh_idx][mesh_idx],
                             self.physical_meshes[src_mesh_idx],

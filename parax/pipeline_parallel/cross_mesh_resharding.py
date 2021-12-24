@@ -7,7 +7,9 @@ import ray
 from jax.interpreters import pxla
 
 import parax.collective as col
-from parax.device_mesh import DistributedArray, RemoteBufferRef, ReshardingRecvSpec, ReshardingTileSpec
+from parax.device_mesh import (DistributedArray, RemoteBufferRef,
+                               ReshardingAllGatherSpec, ReshardingRecvSpec,
+                               ReshardingTileSpec)
 from parax.global_env import global_config
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 from parax.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_tile_index
@@ -321,13 +323,13 @@ class SymbolicReshardingTask(ReshardingTask):
             ) = self._allgather_receiver_step_and_offset(receiver)
             post_allgather_indices = self._indices_in_dst_post_allgather(
                 indices, receiver, False)
-            group_details = self._allgather_tasks[
-                participant_worker].setdefault(
-                    group_idx, dict(participant_device_ids=list(),
-                                    slices=list()))
-            group_details["participant_device_ids"].append(
-                flatten_id % self.dst_mesh.num_devices_per_host)
-            group_details["slices"].append(post_allgather_indices)
+            group_spec = self._allgather_tasks[participant_worker].setdefault(
+                group_idx,
+                ReshardingAllGatherSpec(device_ids=list(),
+                                        tensor_slices=list()))
+            group_spec.device_ids.append(flatten_id %
+                                         self.dst_mesh.num_devices_per_host)
+            group_spec.tensor_slices.append(post_allgather_indices)
         return self._allgather_tasks
 
     def put_allgather_tasks(self):

@@ -54,6 +54,10 @@ ReshardingRecvSpec = namedtuple("ReshardingRecvSpec",
                                 ["device_id", "shape", "dtype", "tile_specs"])
 ReshardingRecvTask = namedtuple("ReshardingRecvTask",
                                 ["recv_specs", "group_name"])
+ReshardingAllGatherSpec = namedtuple("ReshardingAllGatherSpec",
+                                     ["device_ids", "tensor_slices"])
+ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
+                                     ["allgather_specs"])
 
 
 class MeshHostWorker:
@@ -287,8 +291,7 @@ class MeshHostWorker:
                                                    group_name=group_name)
 
     def run_resharding_send_task(self, uuid, buf_uuids):
-        task = self.send_tasks[uuid]
-        task: ReshardingSendTask
+        task: ReshardingSendTask = self.send_tasks[uuid]
         for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
             send_tile_spec: ReshardingTileSpec
             self.send_tile(buf_uuid, send_tile_spec.offset, send_tile_spec.rank,
@@ -308,16 +311,15 @@ class MeshHostWorker:
                                recv_tile_spec.gpu_idx, task.group_name)
 
     def put_resharding_allgather_task(self, uuid, tasks):
-        self.allgather_tasks[uuid] = {"tasks": tasks}
+        self.allgather_tasks[uuid] = ReshardingAllGatherTask(tasks)
 
     def run_allgather_task(self, uuid, buffer_uuids):
-        task = self.allgather_tasks[uuid]
-        allgather_details = task["tasks"]
-        for group_idx in allgather_details:
-            detail = allgather_details[group_idx]
-            device_ids = detail["participant_device_ids"]
-            tensor_slices = detail["slices"]
-            self.allgather(buffer_uuids, device_ids, tensor_slices)
+        task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
+        allgather_specs = task.allgather_specs
+        for group_idx in allgather_specs:
+            allgather_spec: ReshardingAllGatherSpec = allgather_specs[group_idx]
+            self.allgather(buffer_uuids, allgather_spec.device_ids,
+                           allgather_spec.tensor_slices)
         return
 
     ##### Profiling Related Functions #####

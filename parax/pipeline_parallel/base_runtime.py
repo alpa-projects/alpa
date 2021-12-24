@@ -107,10 +107,10 @@ class BaseDistributedRuntime(BaseRuntime):
         self._resharding_tasks = [
             [dict() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
-        # pre-setup
+
+        # TODO(Hao): this establish_nccl_groups needs to be improved to cover allgather.
         self._establish_nccl_groups()
-        self._create_resharding_and_get_send_recv_tasks()
-        self._put_resharding_tasks()
+        self._compile_resharding_tasks()
 
     def run(self, *args, **kwargs):
         raise NotImplementedError()
@@ -186,43 +186,16 @@ class BaseDistributedRuntime(BaseRuntime):
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
 
-    def _create_resharding_and_get_send_recv_tasks(self):
-        """
-        Initialize all resharding (send/recv) tasks.
-
-        In this function, we do the following:
-        1. we create a resharding task for each resharding spec
-        2. for each resharding task, we generate all related send/recv tasks.
-        """
-
-        # Create resharding tasks for each var
+    def _compile_resharding_tasks(self):
+        """Create and compile all resharding (send/recv/allgather) tasks."""
         for src_mesh_idx, dst_mesh_idx, var_spec_map \
                 in self._communicator.task_spec_iter():
             for key, spec in var_spec_map.items():
                 cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]
                 dst_mesh = self.physical_meshes[dst_mesh_idx]
-                t = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
-                t.get_send_recv_tasks()
-                t.get_allgather_tasks()
-                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = t
-
-    def _put_resharding_tasks(self):
-        """
-        Setup all send/recv tasks on the remote workers.
-
-        for each resharding task, we put task-related info (rank, group) in
-        the corresponded remote workers *in advance*. At runtime, we use the
-        source distributed array to index the task and perform cross-mesh
-        communication; in this way, we avoid creating/transferring task info
-        at runtime loop.
-        """
-        for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                for _, task in self._resharding_tasks[i][j].items():
-                    task.put_send_recv_tasks()
-                    if task.is_scatter_gather_task:
-                        task.put_allgather_tasks()
+                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][key] = \
+                    SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
 
     def _destroy_collective_groups(self):
         for i in range(self.num_mesh):

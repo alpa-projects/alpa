@@ -1,4 +1,5 @@
 """Cross mesh resharding for pipeline parallelism."""
+import dataclasses
 import logging
 from typing import List, Any
 
@@ -43,6 +44,10 @@ class ReshardingTask:
         self.collective_group = collective_group
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
+
+    def is_local_allgather_task(self):
+        """If this task involves a post scatter-allgather task."""
+        return self.task_spec.strategy.is_local_allgather
 
 
 class EagerReshardingTask(ReshardingTask):
@@ -150,19 +155,28 @@ class SymbolicReshardingTask(ReshardingTask):
     """A symbolic resharding task that puts task info in remote workers."""
 
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
-        super(SymbolicReshardingTask,
-              self).__init__(task_spec, collective_group, src_mesh, dst_mesh)
+        super(SymbolicReshardingTask, self).__init__(task_spec, collective_group,
+                                                     src_mesh, dst_mesh)
+        # Dict of worker -> ((offset, rank, gpu index))
+        self._sender_tasks = {w: list() for w in self.src_mesh.workers}
+        # Dict of worker -> ((indices, rank, gpu index))
+        self._receiver_tasks = {w: list() for w in self.dst_mesh.workers}
+        # Dict of worker -> ((device_ids), (device_strs), (slices))
+        self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
 
-        # internal states
-        self._sender_tasks = None
-        self._receiver_tasks = None
-        self._allgather_tasks = None
+        self.sender_uuid_plan = []
+        self.receiver_uuid_plan = []
+        self.send_worker_task_ids = dict()
+        self.recv_worker_task_ids = dict()
+        self.allgather_worker_task_ids = dict()
+
+        # generate the above states
+        self._compile()
 
     @property
-    def is_scatter_gather_task(self):
-        if self.task_spec.strategy.is_scatter_gather:
-            return True
-        return False
+    def is_local_allgather_task(self):
+        """If this task involves a post scatter-allgather"""
+        return self.task_spec.strategy.is_scatter_gather
 
     @property
     def sender_tasks(self):
@@ -229,16 +243,45 @@ class SymbolicReshardingTask(ReshardingTask):
             group_idx = (flatten_idx % dst_mesh_shape[1]) // extra_sharding
         return step, offset, group_idx, dst_mesh_shape
 
-    def get_send_recv_tasks(self):
-        """Init send/recv tasks if not yet."""
-        if self.sender_tasks != None and self.receiver_tasks != None:
-            return self.sender_tasks, self.receiver_tasks
+    def _compile(self):
+        """
+        Generate all send, recv, and allgather tasks.
 
-        self._sender_tasks = {host: list() for host in self.src_mesh.workers}
-        self._receiver_tasks = {host: list() for host in self.dst_mesh.workers}
+        This function does the following:
+        (1) generate send, recv, and allgather tasks (if needed),
+        (2) put all tasks to their corresponding MeshHostWorkers.
+        """
+        self._compile_send_recv_tasks()
+        if self.is_local_allgather_task:
+            self._compile_allgather_tasks()
 
-        self.sender_uuid_plan = []
-        self.receiver_uuid_plan = []
+        # put send and recv tasks
+        task_dones = []
+        for worker, task in self.sender_tasks.items():
+            uuid = next_resharding_task_uuid()
+            self.send_worker_task_ids[worker] = uuid
+            task_dones.append(
+                worker.put_resharding_send_task.remote(uuid, task,
+                    self.collective_group.group_name))
+        for worker, task in self.receiver_tasks.items():
+            uuid = next_resharding_task_uuid()
+            self.recv_worker_task_ids[worker] = uuid
+            task_dones.append(
+                worker.put_resharding_recv_task.remote(uuid, task,
+                    self.collective_group.group_name))
+        ray.get(task_dones)
+
+        # put allgather tasks
+        task_dones = []
+        for worker, task in self._allgather_tasks.items():
+            uuid = next_resharding_task_uuid()
+            self.allgather_worker_task_ids[worker] = uuid
+            task_dones.append(
+                worker.put_resharding_allgather_task.remote(uuid, task))
+        ray.get(task_dones)
+
+    def _compile_send_recv_tasks(self):
+        """Generate all send/recv tasks."""
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
                 self.task_spec.dst_tile_to_src_tiles_map):
             spec_plan = self.task_spec.strategy.per_spec_plans[i]
@@ -263,9 +306,6 @@ class SymbolicReshardingTask(ReshardingTask):
                     # Sender's task
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                         sender]
-                    # tile = src_tiles[i]
-                    # self._sender_tasks[sender_worker].append(
-                    #     (tile.offset, receiver_rank, receiver_gpu_idx))
                     self._sender_tasks[sender_worker].append(
                         ReshardingTileSpec(src_tiles[sender_idx].offset,
                                            receiver_rank, receiver_gpu_idx))
@@ -273,48 +313,19 @@ class SymbolicReshardingTask(ReshardingTask):
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
                         self.collective_group.device_str_to_rank_map[sender]
-                    # indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
-                    indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
                     indices_in_dst_tile = self._indices_in_dst_post_allgather(
-                        indices_in_dst_tile, receiver)
+                        indices_in_dst_tiles[sender_idx], receiver)
                     recv_tile_specs.append(
                         ReshardingTileSpec(indices_in_dst_tile, sender_rank,
                                            sender_gpu_idx))
                 receiver_task = ReshardingRecvSpec(receiver_device_id,
                                                    dst_tile.tile_shape, dtype,
                                                    recv_tile_specs)
-
                 self._receiver_tasks[receiver_worker].append(receiver_task)
-        # return read-only
-        return self._sender_tasks, self._receiver_tasks
 
-    def put_send_recv_tasks(self):
-        """Put send recv tasks to remote worker."""
-        sender_tasks, receiver_tasks = self.get_send_recv_tasks()
-        group_name = self.collective_group.group_name
-        self.send_worker_task_ids = dict()
-        task_dones = []
-        for worker, task in sender_tasks.items():
-            uuid = next_resharding_task_uuid()
-            self.send_worker_task_ids[worker] = uuid
-            task_dones.append(
-                worker.put_resharding_send_task.remote(uuid, task, group_name))
-        self.recv_worker_task_ids = dict()
-        for worker, task in receiver_tasks.items():
-            uuid = next_resharding_task_uuid()
-            self.recv_worker_task_ids[worker] = uuid
-            task_dones.append(
-                worker.put_resharding_recv_task.remote(uuid, task, group_name))
-        ray.get(task_dones)
-
-    def get_allgather_tasks(self):
-        if not self.is_scatter_gather_task:
-            return
-        if self._allgather_tasks != None:
-            return self._allgather_tasks
-        # only dst mesh does allgather.
+    def _compile_allgather_tasks(self):
+        """Compile allgather tasks on destination mesh."""
         # is a worker -> ((device_ids), (device_strs), (slices))
-        self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
             receiver = self.dst_mesh.device_strs[flatten_id]
             participant_worker = self.collective_group.device_str_to_mesh_worker_map[
@@ -344,6 +355,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 worker.put_resharding_allgather_task.remote(uuid, task))
         ray.get(task_dones)
 
+    # FIXME(Hao): test the function below; it might be buggy.
     def do_prepared(self, src_array, profiling=False):
         """Execute a task which has been put in the remote workers."""
         send_buf_uuids = {host: list() for host in self.src_mesh.workers}
@@ -474,7 +486,7 @@ class CollectiveGroup:
         col.create_collective_group(self.mesh_workers, **options)
 
     def destroy(self):
-        """Destroy the nccl collective group at exit."""
+        """Destroy the NCCL collective group at exit."""
         logger.debug("Recycling the collective group: {}.".format(
             self.group_name))
         for worker in self.mesh_workers:
@@ -497,8 +509,8 @@ class ReshardingTaskSpec:
     A helper class specifies how to perform cross-mesh resharding for two arrays.
 
     Args:
-        src_array (VirtualDistributedArray): the source distributed array, in virtual.
-        dst_array (VirtualDistributedArray): the destination distributed array, in virtual.
+        src_array (VirtualDistributedArray): the source VDA.
+        dst_array (VirtualDistributedArray): the destination VDA.
     """
 
     def __init__(self, src_array, dst_array, allgather_slice=None):
@@ -521,7 +533,6 @@ class ReshardingTaskSpec:
     @property
     def aval(self):
         """Return the abstract value of the array."""
-        assert self.src.aval == self.dst.aval
         return self.src.aval
 
     @property
@@ -658,14 +669,14 @@ class ReshardingTaskSpec:
         return src_tileslices, indices_in_dst_tile
 
     def set_resharding_strategy(self, strategy):
-        """Now the strategy is an np.array(dtype=str) to specify connections between src tiles and dst tile."""
+        """Now the strategy is np.array(dtype=str) to specify connections between src tiles and dst tile."""
         self._strategy = strategy
 
     @property
     def strategy(self):
         """Return the communication strategy for this resharding task spec."""
         if not self._strategy:
-            raise RuntimeError("Generate and set strategy first.")
+            raise RuntimeError("Generate and set strategy in the cross-mesh communicator first.")
         return self._strategy
 
     def get_participant_device_strs(self):
@@ -684,10 +695,18 @@ class ReshardingTaskSpec:
 
 
 class ReshardingStrategy:
+    """A data class for storing resharding communication information.
 
-    def __init__(self, per_spec_plans, is_scatter_gather):
+    Args:
+        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a np array, with
+            length as len(spec.dst_tile_to_src_tiles_map), each array is with shape
+            [len(dst_tile.devices), len(src_tiles)]; it specifies for each replica of
+            a dst tile, how it should get the data from src_tiles (src tile replicas).
+        is_local_allgather (bool): if this strategy involves post allgather operations.
+    """
+    def __init__(self, per_spec_plans, is_local_allgather):
         self.per_spec_plans = per_spec_plans
-        self.is_scatter_gather = is_scatter_gather
+        self.is_local_allgather = is_local_allgather
 
 
 class CrossMeshCommunicator:
@@ -695,14 +714,14 @@ class CrossMeshCommunicator:
     Communicator for cross-mesh resharding.
 
     Given the pipeline schedule and stages, the class analyzes them and generates:
-    - resharding specs (see docstring of `ReshardingTaskSpec`)
-    - resharding strategies (see docstring of `_generate_resharding_strategy_by_loads()`)
-
+    - resharding specs (see docstring of `ReshardingTaskSpec`),
+    - resharding strategies (see docstring of `ReshardingStrategy`).
     This communicator only takes care of compilation-time work, and does not get involved
     with physical meshes, buffer creations, or other runtime work.
 
     Args:
-        sharded_stages (List[XlaShardedPipelineComputation]): list of stages to form the pipeline.
+        sharded_stages (Sequence[XlaShardedPipelineComputation]): list of stages to
+            form the pipeline.
         schedule (Any): the pipelining schedule for these stages.
     """
 
@@ -732,10 +751,10 @@ class CrossMeshCommunicator:
 
         # Initialize all resharding specs
         self._create_resharding_specs()
-        #Generate a send/recv strategies for all resharding tasks by looking at their load.
+        # Generate a send/recv strategies for all resharding tasks by looking at their load.
         for _, _, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
-                strategy = self._generate_resharding_strategy(spec)
+                strategy = self._generate_send_recv_resharding_strategy_by_loads(spec)
                 spec.set_resharding_strategy(strategy)
 
     @property
@@ -886,19 +905,9 @@ class CrossMeshCommunicator:
                     continue
                 yield i, j, self.resharding_specs[i][j]
 
-    def _generate_resharding_strategy(self, spec):
-        """Look at the sharding specs and generate the fastest sharding strategy."""
-        return self._generate_send_recv_resharding_strategy_by_loads(spec)
-
     def _generate_send_recv_resharding_strategy_by_loads(self, spec):
-        """
-        Generate the resharding strategy for a resharding task spec.
-
-        Strategy is a list a np array, with length as len(spec.dst_tile_to_src_tiles_map)
-        each array is with shape [len(dst_tile.devices), len(src_tiles)]; it specifies for each
-        replica of a dst tile, how (src tile replicas) it should get the data from src_tiles.
-        """
-        is_scatter_gather = spec.allgather_slice is not None
+        """Generate the resharding strategy by balancing loads."""
+        is_local_allgather = spec.allgather_slice is not None
         per_spec_plans = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array
@@ -919,7 +928,7 @@ class CrossMeshCommunicator:
                     self._sender_loads[sender] += src_tileslice.slice_size
                     self._receiver_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
-        strategy = ReshardingStrategy(per_spec_plans, is_scatter_gather)
+        strategy = ReshardingStrategy(per_spec_plans, is_local_allgather)
         return strategy
 
     @staticmethod

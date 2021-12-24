@@ -705,8 +705,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # add recv task for each worker
         for w, task_uuid in resharding_task.recv_worker_task_ids.items():
             output_uuids = recv_buf_uuids[w]
-            allgather_uuid = (resharding_task.allgather_task_ids[w] if
-                              resharding_task.is_scatter_gather_task else None)
+            allgather_uuid = (resharding_task.allgather_worker_task_ids[w] if
+                              resharding_task.is_local_allgather_task else None)
             self.instruction_lists[w].append(
                 PipelineInstruction.Recv(task_uuid, output_uuids, False,
                                          allgather_uuid))

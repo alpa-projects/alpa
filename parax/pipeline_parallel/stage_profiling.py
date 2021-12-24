@@ -20,7 +20,7 @@ from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysi
 from parax.global_env import global_config
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
-from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, CollectiveGroup
+from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTaskSpec, SymbolicReshardingTask, CollectiveGroup
 from parax.pipeline_parallel.resharding_tensor import VDA
 
 from parax.pipeline_parallel.computation import (

@@ -97,7 +97,6 @@ class LocalRuntime(BaseRuntime):
     def run(self, *args, **kwargs):
         """Run function."""
         assert not kwargs, "kwargs not supported"
-        assert self.physical_meshes is not None
         global_invals = dict(zip(self.global_invars, args))
         runners = {}
 

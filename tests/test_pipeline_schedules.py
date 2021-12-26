@@ -6,7 +6,7 @@ from parax.pipeline_parallel.schedules import gen_linear_pipeline_dependency, \
 
 class PipelineScheduleTest(unittest.TestCase):
 
-    def test_schedule_basics(self, schedule_type, num_stage, num_mesh,
+    def run_schedule_basics(self, schedule_type, num_stage, num_mesh,
                              num_batch):
         deps = gen_linear_pipeline_dependency(num_stage)
         meshes = [None] * num_mesh
@@ -47,7 +47,7 @@ class PipelineScheduleTest(unittest.TestCase):
             assert f == 2 * num_mesh - 1 - b
             assert a == num_stage + f
 
-    def test_1f1b(self, num_stage, num_mesh, num_batch):
+    def run_1f1b(self, num_stage, num_mesh, num_batch):
         deps = gen_linear_pipeline_dependency(num_stage)
         meshes = [None] * num_mesh
         num_fwd_stage = num_stage // 2
@@ -86,17 +86,10 @@ class PipelineScheduleTest(unittest.TestCase):
                     print(
                         "Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}."
                         .format(type, num_stage, num_mesh, num_batch))
-                    self.test_schedule_basics(type, num_stage, num_mesh,
+                    self.run_schedule_basics(type, num_stage, num_mesh,
                                               num_batch)
                     if type == "1f1b":
-                        self.test_1f1b(num_stage, num_mesh, num_batch)
-
-    def test_one_case(self):
-        type = "1f1b"
-        num_stage = 6
-        num_mesh = 3
-        num_batch = 3
-        self.test_schedule_basics(type, num_stage, num_mesh, num_batch)
+                        self.run_1f1b(num_stage, num_mesh, num_batch)
 
 
 def suite():

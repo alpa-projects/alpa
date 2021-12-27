@@ -98,3 +98,9 @@ Then use prospector to run linting for the folder ``parax/``:
 ```bash
 prospector parax/
 ```
+
+Style guidelines:
+- We follow Google Python Style Guide: https://google.github.io/styleguide/pyguide.html.
+- **Avoid using backslash line continuation as much as possible.** yapf will not format well lines with backslash line continuation.
+  Make use of [Python’s implicit line joining inside parentheses, brackets and braces.](http://docs.python.org/reference/lexical_analysis.html#implicit-line-joining)
+  If necessary, you can add an extra pair of parentheses around an expression.

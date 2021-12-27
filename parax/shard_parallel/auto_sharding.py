@@ -291,18 +291,18 @@ def compile_with_given_strategy(backend,
     # 2. make sure the annotaed sharding is not modified by other passes.
     if hlo_proto_status == HloProtoStatus.UNOPTIMIZED:
         run_hlo_passes = True
-        run_hlo_optimization_pipeline = True
+        run_pre_spmd_partitioner_passes = True
         run_auto_sharding = True
         solution_vector = strategy_config.auto_sharding_solution_vector
     elif hlo_proto_status == HloProtoStatus.SHARDING_ANNOTATED:
         run_hlo_passes = True
-        run_hlo_optimization_pipeline = False
+        run_pre_spmd_partitioner_passes = False
         run_auto_sharding = False
         solution_vector = []
     elif hlo_proto_status == HloProtoStatus.FULLY_OPTIMIZED:
         run_hlo_passes = False
         run_auto_sharding = False
-        run_hlo_optimization_pipeline = False
+        run_pre_spmd_partitioner_passes = False
         solution_vector = []
     else:
         raise ValueError(f"Invalid status: {hlo_proto_status}")
@@ -322,7 +322,7 @@ def compile_with_given_strategy(backend,
             # Build options
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
             "build_option::run_hlo_passes": run_hlo_passes,
-            "build_option::run_hlo_optimization_pipeline": run_hlo_optimization_pipeline,
+            "build_option::run_pre_spmd_partitioner_passes": run_pre_spmd_partitioner_passes,
             "build_option::run_backend_codegen": run_backend_codegen,
 
             # Auto-sharding solver options
@@ -370,8 +370,8 @@ def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
     if num_devices != 1:
         input_shardings = hlo_module.spmd_parameters_shardings()
         input_sharding_specs = [
-            hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
-            for (proto_tuple, aval) in zip(input_shardings, avals)
+            hlo_sharding_to_sharding_spec(proto, aval, logical_mesh_shape)
+            for (proto, aval) in zip(input_shardings, avals)
         ]
         output_shardings = hlo_module.spmd_output_sharding()
         output_sharding_specs = hlo_sharding_to_sharding_spec(
@@ -388,10 +388,10 @@ def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
     return input_sharding_specs, output_sharding_specs
 
 
-def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
+def _hlo_sharding_to_sharding_spec_no_tuple(proto, aval, logical_mesh):
     """The internal function of hlo_sharding_to_sharding_spec."""
-    (sharding_type, tile_assignment_dimensions, tile_assignment_devices, _,
-     _) = proto_tuple
+    sharding_type, tile_assignment_dimensions, tile_assignment_devices = (
+        proto.type, proto.tile_assignment_dimensions, proto.tile_assignment_devices)
 
     sharding = []
     mesh_mapping = []
@@ -461,8 +461,8 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
     logical_mesh = LogicalDeviceMesh(
         None,
         np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
-    proto_tuple = hlo_sharding.proto_tuple()
-    sharding_type, _, _, tuple_shardings, _ = proto_tuple
+    proto = hlo_sharding.proto_tuple()
+    sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
         return [
@@ -470,15 +470,15 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
             for (shard, aval) in zip(tuple_shardings, avals)
         ]
     else:
-        return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval,
+        return _hlo_sharding_to_sharding_spec_no_tuple(proto, aval,
                                                        logical_mesh)
 
 
-def sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape):
+def sharding_proto_to_sharding_spec(proto, aval, logical_mesh_shape):
     logical_mesh = LogicalDeviceMesh(
         None,
         np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
-    sharding_type, _, _, tuple_shardings, _ = proto_tuple
+    sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
         return [
@@ -486,7 +486,7 @@ def sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape):
             for (shard, aval) in zip(tuple_shardings, avals)
         ]
     else:
-        return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval,
+        return _hlo_sharding_to_sharding_spec_no_tuple(proto, aval,
                                                        logical_mesh)
 
 

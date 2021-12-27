@@ -195,8 +195,8 @@ def copy_tensor(dst_tensor, src_tensor):
         None
     """
     copied = True
-    if isinstance(dst_tensor, numpy.ndarray) \
-            and isinstance(src_tensor, numpy.ndarray):
+    if (isinstance(dst_tensor, numpy.ndarray)
+            and isinstance(src_tensor, numpy.ndarray)):
         numpy.copyto(dst_tensor, src_tensor)
     elif torch_available():
         if isinstance(dst_tensor, torch.Tensor) and isinstance(

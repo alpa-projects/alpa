@@ -42,13 +42,13 @@ class MeshProfilingResult:
         pass
 
     def estimate_all_gather(self, group, size, dtype):
-        ret = self._estimate_internal(group, size, dtype, self.all_gather_cost_dict) -\
-            self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
+        ret = (self._estimate_internal(group, size, dtype, self.all_gather_cost_dict) -
+            self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict))
         return ret
 
     def estimate_all_reduce(self, group, size, dtype):
-        ret = self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -\
-            self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
+        ret = (self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -
+            self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict))
         return ret
 
     def multiply_scale(self, factor):
@@ -433,8 +433,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
 
     # Run profiling
-    device_inputs[0] = \
-        [backend.buffer_from_pyval(np.int32(number), local_devices[k])
+    device_inputs[0] = [backend.buffer_from_pyval(np.int32(number), local_devices[k])
             for k in range(len(local_devices))]
 
     [d.synchronize_all_activity() for d in local_devices]
@@ -568,7 +567,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
 
         # Slice a mesh
         tmp_mesh = virtual_mesh.slice_2d(list(range(num_hosts)),
-                                         np.arange(num_hosts * num_devices_per_host).\
+                                         np.arange(num_hosts * num_devices_per_host).
                                          reshape((num_hosts, num_devices_per_host)))
         all_specs = enumerate_all_collective_spec(num_hosts,
                                                   num_devices_per_host,

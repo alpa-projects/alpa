@@ -196,8 +196,8 @@ class BaseDistributedRuntime(BaseRuntime):
         """
 
         # Create resharding tasks for each var
-        for src_mesh_idx, dst_mesh_idx, var_spec_map \
-                in self._communicator.task_spec_iter():
+        for src_mesh_idx, dst_mesh_idx, var_spec_map in (
+                self._communicator.task_spec_iter()):
             for key, spec in var_spec_map.items():
                 cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]

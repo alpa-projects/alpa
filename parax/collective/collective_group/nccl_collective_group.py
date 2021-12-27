@@ -7,15 +7,13 @@ import cupy
 
 from parax.collective.const import ENV
 from parax.collective.collective_group import nccl_util
-from parax.collective.collective_group.base_collective_group \
-    import BaseGroup
+from parax.collective.collective_group.base_collective_group import BaseGroup
 from parax.collective.const import get_store_name
-from parax.collective.types import AllReduceOptions, \
-    BarrierOptions, Backend, ReduceOptions, BroadcastOptions, \
-    AllGatherOptions, ReduceScatterOptions, SendOptions, \
-    RecvOptions
-from parax.collective.collective_group.cuda_stream import \
-    get_stream_pool
+from parax.collective.types import (AllReduceOptions,
+    BarrierOptions, Backend, ReduceOptions, BroadcastOptions,
+    AllGatherOptions, ReduceScatterOptions, SendOptions,
+    RecvOptions)
+from parax.collective.collective_group.cuda_stream import get_stream_pool
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +221,8 @@ class NCCLGroup(BaseGroup):
         Returns:
             None
         """
-        root_rank = len(tensors) * reduce_options.root_rank \
-            + reduce_options.root_tensor
+        root_rank = (len(tensors) * reduce_options.root_rank
+            + reduce_options.root_tensor)
 
         def collective_fn(input_tensor, output_tensor, comm, stream):
             comm.reduce(
@@ -247,8 +245,8 @@ class NCCLGroup(BaseGroup):
         Returns:
             None
         """
-        root_rank = len(tensors) * broadcast_options.root_rank \
-            + broadcast_options.root_tensor
+        root_rank = (len(tensors) * broadcast_options.root_rank
+            + broadcast_options.root_tensor)
 
         def collective_fn(input_tensor, output_tensor, comm, stream):
             comm.broadcast(

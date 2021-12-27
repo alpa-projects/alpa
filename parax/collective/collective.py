@@ -13,8 +13,8 @@ _GLOO_AVAILABLE = True
 logger = logging.getLogger(__name__)
 
 try:
-    from parax.collective.collective_group.\
-        nccl_collective_group import NCCLGroup
+    from parax.collective.collective_group.nccl_collective_group import (
+        NCCLGroup)
 except ImportError:
     _NCCL_AVAILABLE = False
     logger.warning("NCCL seems unavailable. Please install Cupy "
@@ -22,8 +22,8 @@ except ImportError:
                    "https://docs.cupy.dev/en/stable/install.html.")
 
 try:
-    from parax.collective.collective_group.\
-        gloo_collective_group import GLOOGroup
+    from parax.collective.collective_group.gloo_collective_group import (
+        GLOOGroup)
 except ImportError:
     _GLOO_AVAILABLE = False
 
@@ -680,8 +680,8 @@ def _check_and_get_group(group_name):
                                                group_name)
         except ValueError as exc:
             # check if this group is initialized using options()
-            if "collective_group_name" in os.environ and \
-                    os.environ["collective_group_name"] == group_name:
+            if ("collective_group_name" in os.environ and
+                    os.environ["collective_group_name"] == group_name):
                 rank = int(os.environ["collective_rank"])
                 world_size = int(os.environ["collective_world_size"])
                 backend = os.environ["collective_backend"]

@@ -208,8 +208,7 @@ def get_tensor_device(tensor):
         try:
             device = tensor.device.id
         except AttributeError as exec:
-            raise RuntimeError("The tensor is not on a valid GPU.") \
-                from exec
+            raise RuntimeError("The tensor is not on a valid GPU.") from exec
     elif torch_available() and isinstance(tensor, torch.Tensor):
         device = tensor.device.index
         if not isinstance(device, int):
@@ -231,8 +230,8 @@ def copy_tensor(dst_tensor, src_tensor):
         None
     """
     copied = True
-    if isinstance(dst_tensor, cupy.ndarray) \
-            and isinstance(src_tensor, cupy.ndarray):
+    if (isinstance(dst_tensor, cupy.ndarray)
+            and isinstance(src_tensor, cupy.ndarray)):
         cupy.copyto(dst_tensor, src_tensor)
     elif torch_available():
         if isinstance(dst_tensor, torch.Tensor) and isinstance(

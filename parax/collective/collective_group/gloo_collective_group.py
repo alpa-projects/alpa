@@ -10,12 +10,11 @@ import pygloo
 import numpy
 
 from parax.collective.collective_group import gloo_util
-from parax.collective.collective_group.base_collective_group \
-    import BaseGroup
-from parax.collective.types import AllReduceOptions, \
-    BarrierOptions, Backend, ReduceOptions, BroadcastOptions, \
-    AllGatherOptions, ReduceScatterOptions, SendOptions, \
-    RecvOptions
+from parax.collective.collective_group.base_collective_group import BaseGroup
+from parax.collective.types import (AllReduceOptions,
+    BarrierOptions, Backend, ReduceOptions, BroadcastOptions,
+    AllGatherOptions, ReduceScatterOptions, SendOptions,
+    RecvOptions)
 from parax.collective.const import get_store_name
 
 logger = logging.getLogger(__name__)
@@ -37,10 +36,9 @@ class Rendezvous:
     def __init__(self, group_name, context, store_type, device_type):
         self._group_name = group_name
         self._context = context
-        self._redis_ip_address, self._redis_port = \
-            ray.worker._global_node.redis_address.split(":")
-        self._process_ip_address = \
-            ray.util.get_node_ip_address()
+        self._redis_ip_address, self._redis_port = (ray.worker._global_node.redis_address.split(":"))
+        self._process_ip_address = (
+            ray.util.get_node_ip_address())
         logger.debug("Redis address: {}, port: {}, this actor address: {}."
                      .format(self._redis_ip_address, self._redis_port,
                              self._process_ip_address))

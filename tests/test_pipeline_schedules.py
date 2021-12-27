@@ -1,13 +1,13 @@
 import unittest
 
-from parax.pipeline_parallel.schedules import gen_linear_pipeline_dependency, \
-    GpipeSchedule, PipeDreamFlush
+from parax.pipeline_parallel.schedules import (gen_linear_pipeline_dependency,
+                                               GpipeSchedule, PipeDreamFlush)
 
 
 class PipelineScheduleTest(unittest.TestCase):
 
     def run_schedule_basics(self, schedule_type, num_stage, num_mesh,
-                             num_batch):
+                            num_batch):
         deps = gen_linear_pipeline_dependency(num_stage)
         meshes = [None] * num_mesh
         num_fwd_stage = num_stage // 2
@@ -26,20 +26,21 @@ class PipelineScheduleTest(unittest.TestCase):
                          num_batch=num_batch)
 
         # check num_clock
-        assert s.num_clock == (num_mesh + num_batch - 1) * 2 + 1, \
-            "clock number wrong."
+        assert s.num_clock == (num_mesh + num_batch - 1) * 2 + 1, (
+            "clock number wrong.")
 
         # check no stage is on > 1 meshes
         for i in range(num_stage):
             mesh_indices = s.stage_placement(i)
-            assert len(mesh_indices) == 1, "we only support each stage placed on" \
-                                           "one mesh."
+            assert len(mesh_indices) == 1, (
+                "we only support each stage placed on one mesh.")
 
         # check no mesh owns > 3 stages (forward, backward, apply_grad)
         for i in range(num_mesh):
             stage_indices = s.mesh_placement(i)
-            assert len(stage_indices) == 3, "One mesh at most owns three stages: forward, backward, " \
-                                            "and apply_grad stages."
+            assert len(stage_indices) == 3, (
+                "One mesh at most owns three stages: forward, backward,"
+                " and apply_grad stages.")
             stage_indices_list = list(stage_indices)
             stage_indices_list.sort()
             f, b, a = stage_indices_list[0], stage_indices_list[
@@ -72,8 +73,8 @@ class PipelineScheduleTest(unittest.TestCase):
                         max_in_flight[mesh_idx] = in_flight[mesh_idx]
 
         for i in range(num_mesh):
-            assert max_in_flight[i] <= num_mesh - i, \
-                "max number of in-flight is incorrect."
+            assert max_in_flight[i] <= num_mesh - i, (
+                "max number of in-flight is incorrect.")
 
     def test_schedules(self):
         schedule_types = ["gpipe", "1f1b"]
@@ -87,7 +88,7 @@ class PipelineScheduleTest(unittest.TestCase):
                         "Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}."
                         .format(type, num_stage, num_mesh, num_batch))
                     self.run_schedule_basics(type, num_stage, num_mesh,
-                                              num_batch)
+                                             num_batch)
                     if type == "1f1b":
                         self.run_1f1b(num_stage, num_mesh, num_batch)
 

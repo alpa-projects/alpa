@@ -92,7 +92,8 @@ class LocalRuntime(BaseRuntime):
                 assert isinstance(stage, XlaShardedPipelineComputation)
                 compiled = stage.get_compiled(is_distributed=True)
                 hlo_module = compiled.hlo_modules()[0]
-                self.hlo_texts_after_spmd_partitioner.append(hlo_module.to_string())
+                self.hlo_texts_after_spmd_partitioner.append(
+                    hlo_module.to_string())
 
     def run(self, *args, **kwargs):
         """Run function."""
@@ -166,6 +167,7 @@ class LocalRuntime(BaseRuntime):
 
     def get_executable(self):
         return self
+
 
 @lu.cache
 def local_pipeline_parallel_callable(fun: lu.WrappedFun,

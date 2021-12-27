@@ -125,8 +125,8 @@ class VirtualDistributedArray:
     @property
     def partial_tiled(self):
         """Whether this distributed array is mixed sharded and replicated."""
-        if self.replicated_maxes and len(self.replicated_maxes) \
-                < len(self.sharding_spec.mesh_mapping):
+        if (self.replicated_maxes and len(self.replicated_maxes) < len(
+                self.sharding_spec.mesh_mapping)):
             return True
         return False
 
@@ -434,10 +434,10 @@ class ReshardingTask:
             for replica_index, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 # Get args for an empty buffer
-                receiver_device_id = \
-                    self.collective_group.device_str_to_device_id_map[receiver]
-                receiver_worker = \
-                    self.collective_group.device_str_to_mesh_worker_map[receiver]
+                receiver_device_id = (
+                    self.collective_group.device_str_to_device_id_map[receiver])
+                receiver_worker = (self.collective_group.
+                                   device_str_to_mesh_worker_map[receiver])
                 dtype = self.task_spec.src.aval.dtype
                 receiver_task = [receiver_device_id, dst_tile.tile_shape, dtype]
                 # Get args for send/recv
@@ -446,8 +446,8 @@ class ReshardingTask:
                     for src_tile_index, _ in enumerate(src_tiles)
                 ]
                 self.receiver_uuid_plan.append(receiver)
-                receiver_rank, receiver_gpu_idx = \
-                    self.collective_group.device_str_to_rank_map[receiver]
+                receiver_rank, receiver_gpu_idx = (
+                    self.collective_group.device_str_to_rank_map[receiver])
                 receiver_subtasks = []
                 for sender_idx, sender in enumerate(senders):
                     # Sender's task
@@ -461,8 +461,8 @@ class ReshardingTask:
                          receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
-                    sender_rank, sender_gpu_idx = \
-                        self.collective_group.device_str_to_rank_map[sender]
+                    sender_rank, sender_gpu_idx = (
+                        self.collective_group.device_str_to_rank_map[sender])
                     # indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
                     # TODO(Hao): this is just a heurestic, won't work in more complex models.
                     indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
@@ -506,7 +506,8 @@ class ReshardingTask:
         self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
             receiver = self.dst_mesh.device_strs[flatten_id]
-            participant_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
+            participant_worker = self.collective_group.device_str_to_mesh_worker_map[
+                receiver]
             (step, offset, group_idx, dst_mesh_shape
             ) = self._allgather_receiver_step_and_offset(receiver)
             post_allgather_indices = self._indices_in_dst_post_allgather(
@@ -603,8 +604,9 @@ class ReshardingTask:
         return dst_array
 
     def __str__(self):
-        return f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"\
-               f"{self.task_spec.src_sharding_spec} ->\n{self.task_spec.dst_sharding_spec})"
+        return (f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"
+                f"{self.task_spec.src_sharding_spec} ->\n"
+                f"{self.task_spec.dst_sharding_spec})")
 
 
 @dataclass
@@ -905,8 +907,9 @@ class ReshardingTaskSpec:
                     # meaning it is a fully involved tile
                     offset = related_tile_offset[i][0]
                     offsets.append(slice(0, tile_length_on_this_dim))
-                    left_in_dst_tile = tile_length_on_this_dim - offset + \
-                        (tile_index_relative[i] - 1) * tile_length_on_this_dim
+                    left_in_dst_tile = (
+                        tile_length_on_this_dim - offset +
+                        (tile_index_relative[i] - 1) * tile_length_on_this_dim)
                     right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
@@ -1126,14 +1129,15 @@ class CrossMeshCommunicator:
             # find out variables that need resharding, and get their
             # (1) out_sharding_spec in the src stage
             # (2) in_sharding_spec in the destination stage.
-            resharding_vars, out_var_indices, in_var_indices = \
-                self._args_between(src_stage, dst_stage)
+            resharding_vars, out_var_indices, in_var_indices = (
+                self._args_between(src_stage, dst_stage))
             out_sharding_specs = src_stage.output_sharding_specs
             in_sharding_specs = dst_stage.input_sharding_specs
 
             # Make a ReshardSpec for each VDA
-            for var, out_var_index, in_var_index in \
-                    zip(resharding_vars, out_var_indices, in_var_indices):
+            for var, out_var_index, in_var_index in zip(resharding_vars,
+                                                        out_var_indices,
+                                                        in_var_indices):
                 src_sharding_spec = out_sharding_specs[out_var_index]
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 dst_sharding_spec, extra_slice = self._rewrite_allgather_specs(

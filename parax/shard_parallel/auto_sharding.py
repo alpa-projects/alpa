@@ -226,8 +226,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 time_costs = (objective,)
 
             if np.mean(time_costs) < best_time_cost:
-                best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
-                    logical_mesh, compiled, solution_vector, objective
+                (best_logical_mesh, best_compiled, best_solution_vector,
+                 best_objective) = (logical_mesh, compiled, solution_vector,
+                                    objective)
                 best_time_cost = np.mean(time_costs)
 
             # Save records to file
@@ -238,8 +239,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 save_to_file([inp], [res], record_file)
             #print(logical_mesh.shape, objective, np.mean(time_costs))
 
-        logical_mesh, compiled, solution_vector, objective = \
-            best_logical_mesh, best_compiled, best_solution_vector, best_objective
+        logical_mesh, compiled, solution_vector, objective = (
+            best_logical_mesh, best_compiled, best_solution_vector,
+            best_objective)
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
@@ -388,8 +390,8 @@ def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
 
 def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     """The internal function of hlo_sharding_to_sharding_spec."""
-    sharding_type, tile_assignment_dimensions, tile_assignment_devices, \
-        _, _ = proto_tuple
+    (sharding_type, tile_assignment_dimensions, tile_assignment_devices, _,
+     _) = proto_tuple
 
     sharding = []
     mesh_mapping = []
@@ -732,8 +734,9 @@ def _call_solver_serialized_args(
 
     msg = verbose
     time_limit = 2000
-    assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), \
+    assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), (
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
+    )
     solver = pulp.COIN_CMD(
         mip=True,
         msg=msg,

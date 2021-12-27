@@ -46,8 +46,8 @@ def assert_data_parallel_cost(state,
     assert_close(objective, expected, atol=0.05)
 
     # Check number of communication primitives
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-        count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+        count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 
     if global_config.prefer_reduce_scatter:
         assert n_all_reduce == num_batch_norm * 2
@@ -209,8 +209,9 @@ class AutoShardingConvTest(unittest.TestCase):
             state, hlo_ir, objective = self.run_n_layer_conv(
                 num_layers, batch_size, image_size, channel, device_mesh)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(hlo_ir,
+                                               ignore_scalar_all_reduce=True))
 
             assert n_all_reduce == num_layers - 1
             assert n_total == n_all_reduce
@@ -227,8 +228,9 @@ class AutoShardingConvTest(unittest.TestCase):
         state, hlo_ir, objective = self.run_n_layer_conv(
             num_layers, batch_size, image_size, channel, device_mesh)
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-            count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
+            count_communication_primitives(hlo_ir,
+                                           ignore_scalar_all_reduce=True))
         #print(hlo_ir)
         #print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
         #      f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
@@ -267,8 +269,9 @@ class AutoShardingConvTest(unittest.TestCase):
                                                              device_mesh,
                                                              is_depthwise=True)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(hlo_ir,
+                                               ignore_scalar_all_reduce=True))
             assert n_all_reduce == 1
             assert n_total == n_all_reduce
 

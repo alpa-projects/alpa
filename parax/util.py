@@ -537,13 +537,13 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
     batch_size = None
     for aval, is_batch_var in zip(raw_avals, batch_invars):
         if is_batch_var:
-            assert aval.shape[0] % num_micro_batches == 0,\
-                "The batch dimension must be divisable by num_micro_batches."
+            assert aval.shape[0] % num_micro_batches == 0, (
+                "The batch dimension must be divisable by num_micro_batches.")
             if batch_size is None:
                 batch_size = aval.shape[0] // num_micro_batches
             else:
-                assert batch_size == aval.shape[0] // num_micro_batches,\
-                    "The batch dimension must be the same for all batch vars."
+                assert batch_size == aval.shape[0] // num_micro_batches, (
+                    "The batch dimension must be the same for all batch vars.")
             shape = (batch_size,) + aval.shape[1:]
             avals.append(aval.update(shape=shape))
         else:

@@ -468,12 +468,13 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
                     0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
     else:
         num_required_host, num_required_device_per_host = submesh_shapes[0]
-        assert num_required_host <= num_host, \
-            "cannot satisfy physical mesh requirement, require {} hosts given {} hosts."\
-                .format(num_required_host, num_host)
-        assert num_required_device_per_host <= num_device_per_host, \
-            "cannot satisfy physical mesh requirement, require {} gpus per host given {} gpus per host."\
-                .format(num_required_device_per_host, num_device_per_host)
+        assert num_required_host <= num_host, (
+            "cannot satisfy physical mesh requirement, require {} hosts "
+            "given {} hosts.".format(num_required_host, num_host))
+        assert num_required_device_per_host <= num_device_per_host, (
+            "cannot satisfy physical mesh requirement, require {} "
+            "gpus per host given {} gpus per host.".format(
+                num_required_device_per_host, num_device_per_host))
         # doing assignment
         if num_required_device_per_host == num_device_per_host:
             # allocate all devices of a host

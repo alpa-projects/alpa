@@ -52,8 +52,9 @@ class MeshHostWorker:
     def __init__(self, server_address, num_hosts, host_id):
         self.num_hosts = num_hosts
         self.host_id = host_id
-        self.distributed_client = \
-            xla_client._xla.get_distributed_runtime_client(server_address, host_id)
+        self.distributed_client = (
+            xla_client._xla.get_distributed_runtime_client(
+                server_address, host_id))
         logger.debug(
             "Trying to connect to xla runtime at {}...".format(server_address))
         status = self.distributed_client.connect()
@@ -84,8 +85,8 @@ class MeshHostWorker:
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         assert uuid not in self.buffers
-        self.buffers[uuid] = \
-            self.backend.buffer_from_pyval(data, self.local_devices[device_id])
+        self.buffers[uuid] = (self.backend.buffer_from_pyval(
+            data, self.local_devices[device_id]))
 
     def put_non_zero_buffer(self,
                             uuid: int,
@@ -672,8 +673,9 @@ class PhysicalDeviceMesh:
                 else:  # Slow path
                     # FIXME(yonghao): by get memory allocated there is an implicit sync between driver
                     # and worker devices. If not so, the total memory allocated drastically increases.
-                    expected = np.prod(arg.shape) * np.dtype(arg.dtype).itemsize \
-                        if hasattr(arg, "shape") else 1
+                    expected = (np.prod(arg.shape) *
+                                np.dtype(arg.dtype).itemsize if hasattr(
+                                    arg, "shape") else 1)
                     before_memory_usage = ray.get(
                         self.workers[0].get_memory_allocated.remote())
                     before_memory_peak = ray.get(
@@ -923,10 +925,9 @@ class LogicalDeviceMesh:
                      self.mesh_beta))
 
     def __eq__(self, other):
-        return (self.flatten_ids, self.id_mesh.shape,
-                self.mesh_alpha, self.mesh_beta) == \
-               (other.flatten_ids, other.id_mesh.shape,
-                other.mesh_alpha, other.mesh_beta)
+        return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
+                 self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
+                                     other.mesh_alpha, other.mesh_beta))
 
 
 class DistributedArray:

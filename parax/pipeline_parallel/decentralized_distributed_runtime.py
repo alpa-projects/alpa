@@ -770,9 +770,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 mesh_args)
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
-            input_uuids[mesh_idx] = get_uuid_np_array(input_bufs[mesh_idx])\
-                .reshape(len(mesh_args), num_hosts, num_devices_per_host) \
-                .transpose([1, 0, 2])
+            input_uuids[mesh_idx] = (get_uuid_np_array(
+                input_bufs[mesh_idx]).reshape(len(mesh_args), num_hosts,
+                                              num_devices_per_host).transpose(
+                                                  [1, 0, 2]))
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)

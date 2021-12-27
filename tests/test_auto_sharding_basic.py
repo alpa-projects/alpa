@@ -39,12 +39,11 @@ class AutoShardingBasicTest(unittest.TestCase):
         hlo_ir = hlo_module.to_string()
 
         # Assert b is sharded
-        assert b.sharding_spec == pxla.ShardingSpec(
+        assert (b.sharding_spec == pxla.ShardingSpec(
             sharding=(NoSharding(), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0),)) or\
-               b.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([4]), NoSharding()),
-            mesh_mapping=(ShardedAxis(0),))
+            mesh_mapping=(ShardedAxis(0),)) or b.sharding_spec
+                == pxla.ShardingSpec(sharding=(Chunked([4]), NoSharding()),
+                                     mesh_mapping=(ShardedAxis(0),)))
 
     def test_dot_reshape_transpose(self):
         set_parallelize_options(memory_budget_per_device=1 * MB)

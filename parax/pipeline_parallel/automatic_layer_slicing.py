@@ -39,8 +39,8 @@ def get_stat(jaxpr):
         tot = 0
         for r in range(k + 1, length + 1):
             for invar in jaxpr.eqns[r - 1].invars:
-                if isinstance(invar, Var) and invar in outvars\
-                  and invar not in invars:
+                if (isinstance(invar, Var) and invar in outvars and
+                        invar not in invars):
                     invars.add(invar)
                     tot += invar.aval.size
             Cost[k, r] = tot

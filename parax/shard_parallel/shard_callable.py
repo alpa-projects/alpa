@@ -212,8 +212,8 @@ def shard_parallel_internal_gradient_accumulation(
     closed_jaxpr, avals, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, raw_avals)
 
-    closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads =\
-        add_gradient_accumulation(closed_jaxpr, num_micro_batches)
+    closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads = (
+        add_gradient_accumulation(closed_jaxpr, num_micro_batches))
     in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[:-num_grads]]
     out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
     grad_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[-num_grads:]]
@@ -250,13 +250,14 @@ def shard_parallel_internal_gradient_accumulation(
     apply_grad = xc.XlaComputation(hlo_protos[1])
 
     ## donate old_grad to make the gradient accumulation in-place
-    tmp_donate_invars = (False,) * len(accumulate_grad_invar_indices) + (
-        True,) * num_grads
+    tmp_donate_invars = ((False,) * len(accumulate_grad_invar_indices) +
+                         (True,) * num_grads)
     setup_computation_alias(accumulate_grad, tmp_donate_invars)
 
     ## donate old opt_state and params to make the weight update in-place
-    tmp_donate_invars = tuple(donated_invars[i] for i in apply_grad_invar_indices) +\
-        (False,) * num_grads
+    tmp_donate_invars = (
+        tuple(donated_invars[i] for i in apply_grad_invar_indices) +
+        (False,) * num_grads)
     setup_computation_alias(apply_grad, tmp_donate_invars)
 
     bypass_device_assignment_check = physical_mesh.is_distributed

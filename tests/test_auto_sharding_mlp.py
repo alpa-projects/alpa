@@ -119,8 +119,8 @@ def assert_data_parallel_cost(state,
     assert_close(objective, expected)
 
     # Check number of communication primitives
-    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-        count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+    n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+        count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 
     # Special case 1 : adafactor
     if optimizer_type == "adafactor" and global_config.prefer_reduce_scatter:
@@ -266,12 +266,13 @@ class AutoShardingMLPTest(unittest.TestCase):
                 device_mesh)
 
             # Check communication cost
-            expected = (num_layers - 1) *\
-              device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i)
+            expected = (
+                (num_layers - 1) *
+                device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, i))
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(hlo_ir)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(hlo_ir))
             if global_config.prefer_reduce_scatter:
                 assert n_all_reduce + n_reduce_scatter == num_layers - 1
                 assert n_reduce_scatter == n_all_gather
@@ -301,15 +302,16 @@ class AutoShardingMLPTest(unittest.TestCase):
                                                         hidden_dim, device_mesh)
 
         # Check communication cost
-        expected = num_layers * (
-            device_mesh.all_reduce_cost(hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) +
-            device_mesh.all_reduce_cost(hidden_dim * 4, 0)) +\
-            (num_layers - 1) *\
-            device_mesh.all_reduce_cost(batch_size * hidden_dim * 4 / mesh_shape[0], 1)
+        expected = (num_layers *
+                    (device_mesh.all_reduce_cost(
+                        hidden_dim * hidden_dim * 4 / mesh_shape[1], 0) +
+                     device_mesh.all_reduce_cost(hidden_dim * 4, 0)) +
+                    (num_layers - 1) * device_mesh.all_reduce_cost(
+                        batch_size * hidden_dim * 4 / mesh_shape[0], 1))
         assert_close(objective, expected)
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-            count_communication_primitives(hlo_ir)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_ir))
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == num_layers - 1
             assert n_all_gather == 1
@@ -366,8 +368,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         state, hlo_ir, objective = self.run_n_layer_mlp(num_layers, batch_size,
                                                         hidden_dim, hidden_dim,
                                                         hidden_dim, device_mesh)
-        expected = (num_layers - 1) *\
-          device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, 1)
+        expected = ((num_layers - 1) *
+                    device_mesh.all_reduce_cost(batch_size * hidden_dim * 4, 1))
         assert_close(objective, expected)
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):

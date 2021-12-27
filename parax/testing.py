@@ -185,8 +185,9 @@ def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat,
 class PipelineBasicTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto", namespace=get_ray_namespace_str(
-            prefix=global_config.unittest_ray_namespace_prefix))
+        ray.init(address="auto",
+                 namespace=get_ray_namespace_str(
+                     prefix=global_config.unittest_ray_namespace_prefix))
         jax.config.update('jax_platform_name', 'cpu')
 
         # Backup global config

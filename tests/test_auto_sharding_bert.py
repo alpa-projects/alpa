@@ -191,7 +191,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
             if global_config.prefer_reduce_scatter:
                 assert n_total == num_layers * 4 - 1
@@ -236,14 +236,17 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # Check communication cost
         params = jax.tree_util.tree_leaves(optimizer.target)
-        expected = (sum(device_mesh.all_reduce_cost(
-            np.prod(x.shape) * 4 / mesh_shape[1], 0) for x in params) +
+        expected = (sum(
             device_mesh.all_reduce_cost(
-            batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1) * (num_layers * 4 - 1))
+                np.prod(x.shape) * 4 / mesh_shape[1], 0)
+            for x in params) + device_mesh.all_reduce_cost(
+                batch_size * seq_len * hidden_size * 4 / mesh_shape[0], 1) *
+                    (num_layers * 4 - 1))
         assert_close(objective, expected)
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_ir,
+                                           ignore_scalar_all_reduce=True))
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
             assert n_reduce_scatter == 2
@@ -425,10 +428,12 @@ class AutoShardingAttentionTest(unittest.TestCase):
             # The SPMD partitioner will eliminate some unnecessary communication in favor of
             # redundant computation (e.g., it will elimiate the all-reduce in embed.backward).
             expected = (
-              device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * 5 +
-              device_mesh.all_reduce_cost(hidden_size * hidden_size * 4, i) +
-              device_mesh.all_reduce_cost(batch_size * seq_len * 4, i) * 2 +
-              device_mesh.all_reduce_cost(batch_size * seq_len * hidden_size * 4, i) * num_layers * 4)
+                device_mesh.all_reduce_cost(
+                    batch_size * seq_len * hidden_size * 4, i) * 5 +
+                device_mesh.all_reduce_cost(hidden_size * hidden_size * 4, i) +
+                device_mesh.all_reduce_cost(batch_size * seq_len * 4, i) * 2 +
+                device_mesh.all_reduce_cost(
+                    batch_size * seq_len * hidden_size * 4, i) * num_layers * 4)
             assert_close(objective, expected)
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
@@ -485,8 +490,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
             deterministic, device_mesh)
 
         # Check communication cost.
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_ir,
+                                           ignore_scalar_all_reduce=True))
         if global_config.prefer_reduce_scatter:
             assert n_all_reduce == 4 * num_layers + 2 + 2
             assert n_reduce_scatter <= 3  # The correct number should be 2,
@@ -514,9 +520,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert num_not_sharded <= 2
         else:
             embed_weight = (optimizer.target["params"]["bert"]["embeddings"]
-                                           ["word_embeddings"]["embedding"])
+                            ["word_embeddings"]["embedding"])
             lm_head = (optimizer.target["params"]["cls"]["predictions"]
-                                      ["transform"]["dense"]["kernel"])
+                       ["transform"]["dense"]["kernel"])
 
             assert_replicated_row_partitioned(embed_weight, mesh_shape)
             assert_all_replicated(lm_head, np.prod(mesh_shape))
@@ -590,7 +596,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size * seq_len * hidden_size * 4, i)
             assert_close(objective, expected)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
             assert n_total == num_layers * 6 - 1
             assert n_all_reduce == num_layers * 6 - 1

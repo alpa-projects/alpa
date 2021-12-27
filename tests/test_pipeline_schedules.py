@@ -1,13 +1,13 @@
 import unittest
 
 from parax.pipeline_parallel.schedules import (gen_linear_pipeline_dependency,
-    GpipeSchedule, PipeDreamFlush)
+                                               GpipeSchedule, PipeDreamFlush)
 
 
 class PipelineScheduleTest(unittest.TestCase):
 
     def run_schedule_basics(self, schedule_type, num_stage, num_mesh,
-                             num_batch):
+                            num_batch):
         deps = gen_linear_pipeline_dependency(num_stage)
         meshes = [None] * num_mesh
         num_fwd_stage = num_stage // 2
@@ -88,7 +88,7 @@ class PipelineScheduleTest(unittest.TestCase):
                         "Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}."
                         .format(type, num_stage, num_mesh, num_batch))
                     self.run_schedule_basics(type, num_stage, num_mesh,
-                                              num_batch)
+                                             num_batch)
                     if type == "1f1b":
                         self.run_1f1b(num_stage, num_mesh, num_batch)
 

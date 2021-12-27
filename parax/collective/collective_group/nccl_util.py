@@ -230,8 +230,8 @@ def copy_tensor(dst_tensor, src_tensor):
         None
     """
     copied = True
-    if (isinstance(dst_tensor, cupy.ndarray)
-            and isinstance(src_tensor, cupy.ndarray)):
+    if (isinstance(dst_tensor, cupy.ndarray) and
+            isinstance(src_tensor, cupy.ndarray)):
         cupy.copyto(dst_tensor, src_tensor)
     elif torch_available():
         if isinstance(dst_tensor, torch.Tensor) and isinstance(
@@ -250,9 +250,10 @@ def copy_tensor(dst_tensor, src_tensor):
     else:
         copied = False
     if not copied:
-        raise ValueError("Unsupported tensor type. Got: {} and {}. Supported "
-                         "GPU tensor types are: torch.Tensor, cupy.ndarray."
-                         .format(type(dst_tensor), type(src_tensor)))
+        raise ValueError(
+            "Unsupported tensor type. Got: {} and {}. Supported "
+            "GPU tensor types are: torch.Tensor, cupy.ndarray.".format(
+                type(dst_tensor), type(src_tensor)))
 
 
 def get_tensor_device_list(tensors):

@@ -13,28 +13,34 @@ class PipelineReduceScatterTest(PipelineBasicTest):
         hlo_text = self.run_mlp(do_numerical_test=True)
 
         # Check number of communication primitives
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_text[0], ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_text[0],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == 0
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_text[1], ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_text[1],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == 0
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_text[2], ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_text[2],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_reduce == 1
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_text[3], ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_text[3],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_reduce == 1
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_text[4], ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_text[4],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_gather == 1
 
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =(
-            count_communication_primitives(hlo_text[5], ignore_scalar_all_reduce=True))
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+            count_communication_primitives(hlo_text[5],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_gather == 1
 
     def test_bert_grad_acc_friendly(self):
@@ -44,27 +50,33 @@ class PipelineReduceScatterTest(PipelineBasicTest):
 
         # Check number of communication primitives
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_text[0], ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_text[0],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == 0
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_text[1], ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_text[1],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == 0
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_text[2], ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_text[2],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_reduce == 1
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_text[3], ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_text[3],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_reduce == 1
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_text[4], ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_text[4],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_gather == 1
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
-            count_communication_primitives(hlo_text[5], ignore_scalar_all_reduce=True))
+            count_communication_primitives(hlo_text[5],
+                                           ignore_scalar_all_reduce=True))
         assert n_total == n_all_gather == 1
 
 

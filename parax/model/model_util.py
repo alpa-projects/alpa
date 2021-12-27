@@ -257,7 +257,7 @@ def optax_adafactor(
     The same as optax.adafactor but adds the mask for weight decay.
     """
     from optax._src.alias import (combine, clipping, factorized, transform,
-            _scale_by_learning_rate)
+                                  _scale_by_learning_rate)
 
     # The core of the algorithm is a procedure for rescaling gradients
     # by a factored estimate of the root mean squared gradients.

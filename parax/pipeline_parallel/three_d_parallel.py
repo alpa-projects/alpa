@@ -39,9 +39,10 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     """3d parallel combining pipelining and 2d sharding."""
 
     if not global_config.with_physical_mesh:
-        assert not (global_config.pipeline_stage_mode == "auto_gpipe" and
-                    global_config.cache_compute_cost
-                    == None), "no physical mesh, cannot do auto gpipe without cached cost"
+        assert not (
+            global_config.pipeline_stage_mode == "auto_gpipe" and
+            global_config.cache_compute_cost == None
+        ), "no physical mesh, cannot do auto gpipe without cached cost"
 
     if not isinstance(devices, VirtualPhysicalMesh):
         raise RuntimeError("Unrecognized type of `devices`, got: {}, "

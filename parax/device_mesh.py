@@ -254,6 +254,7 @@ class MeshHostWorker:
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
+            xla_buffer = self.buffers[uuid]
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
             ind, n_elements = infer_offset_and_n_elements(tensor_slice)
             cupy_slice = cupy_buffer[ind]
@@ -264,7 +265,8 @@ class MeshHostWorker:
                 cupy.cuda.Stream.null.ptr)
             cupy_buffers.append(cupy_buffer)
         nccl_util.groupEnd()
-        for uuid, cupy_buffer in zip(uuids, cupy_buffers):
+        for device_id, cupy_buffer in zip(device_ids, cupy_buffers):
+            uuid = uuids[device_id]
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
     # TODO(yonghao): replace dict by named tuple or class

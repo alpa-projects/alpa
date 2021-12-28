@@ -228,7 +228,7 @@ class AutoShardingConvTest(unittest.TestCase):
             num_layers, batch_size, image_size, channel, device_mesh)
 
         # Check numbers of communication primitives
-        (n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
             count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
         if global_config.prefer_reduce_scatter:
             assert n_reduce_scatter > 0

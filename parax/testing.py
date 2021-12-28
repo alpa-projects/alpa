@@ -94,8 +94,8 @@ class BertLayerModel(nn.Module):
         return x
 
 
-def create_train_state(rngkey, model, params):
-    params = model.init(rngkey, *params)
+def create_train_state(rngkey, model, inputs):
+    params = model.init(rngkey, *inputs)
     tx = optax.adam(learning_rate=1e-2)
     state = TrainState.create(apply_fn=model.apply,
                               params=params,
@@ -104,8 +104,8 @@ def create_train_state(rngkey, model, params):
     return state
 
 
-def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
-    params = model.init_dummy(rngkey, *params)
+def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
+    params = model.init_dummy(rngkey, *inputs)
     tx = optax.adam(learning_rate=1e-2)
     mixed_precision = (dtype == jnp.float16)
     state = TrainState.create(apply_fn=model.apply,

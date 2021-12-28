@@ -10,7 +10,7 @@ def call_to_xla_computation(eqn: JaxprEqn):
     """Convert a jaxpr equation to a XLA computation for FLOP analysis."""
     xe = xc._xla
     prim = eqn.primitive
-    backend = xc.get_local_backend("gpu")
+    backend = xb.get_backend("gpu")
 
     c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
 
@@ -47,7 +47,7 @@ def eqn_flops(eqn: JaxprEqn) -> float:
         xla_computation = xla.primitive_subcomputation(
             eqn.primitive, *map(lambda x: x.aval, eqn.invars), **eqn.params)
     hlo_module = xla_computation.as_hlo_module()
-    properties = xc._xla.hlo_module_cost_analysis(xc.get_local_backend("gpu"),
+    properties = xc._xla.hlo_module_cost_analysis(xb.get_backend("gpu"),
                                                   hlo_module)
     return properties["flops"] if "flops" in properties else 0.0
 

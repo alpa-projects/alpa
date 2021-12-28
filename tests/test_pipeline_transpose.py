@@ -15,15 +15,11 @@ class PipelineTransposeTest(unittest.TestCase):
         def f(x):
             x, = parax.mark_pipeline(x, mark_type="start", name="1")
             x = jnp.transpose(x, axes=(1, 0))
-            # x, = parax.mark_pipeline(x, mark_type="end", name="1")
             return x
 
         x = np.random.rand(2, 4)
-        # print(x)
         no_jit_result = f(x)
         jit_result = jax.jit(f)(x)
-        # print(no_jit_result)
-        # print(jit_result)
         assert_allclose(no_jit_result, jit_result)
 
 

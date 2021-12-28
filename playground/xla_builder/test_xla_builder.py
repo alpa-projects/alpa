@@ -15,7 +15,7 @@ def test_sin_cos():
 
     c = jax.xla_computation(f)(np.ones((10,8)))
 
-    gpu_backend = xla_client.get_local_backend("gpu")
+    gpu_backend = xla_bridge.get_backend("gpu")
     compiled_computation = gpu_backend.compile(c)
 
     print(c.as_hlo_text())
@@ -41,7 +41,7 @@ def test_alias():
     d = parameter(c, 2, (8 * MB//4,), np.float32)
     e = parameter(c, 3, (8 * MB//4,), np.float32)
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
 
     #z = ops.Add(a, b)
     z = ops.Constant(c, 0.1)
@@ -68,14 +68,14 @@ def test_shard():
     c = xla_client.XlaBuilder("shard")
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.REPLICATED
-    sharding.tile_assignment_dimensions.extend([1])
-    sharding.tile_assignment_devices.extend([0])
+    sharding.tile_assignment_dimensions = [1]
+    sharding.tile_assignment_devices = [0]
     c.set_sharding(sharding)
     x = ops.Parameter(c, 0, xla_client.shape_from_pyval(np.ones((10, 8), dtype=np.float32)))
     c.clear_sharding()
     y = ops.Parameter(c, 1, xla_client.shape_from_pyval(np.ones((10, 8), dtype=np.float32)))
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
 
     z = ops.Add(x, y)
     z = ops.Add(z, y)
@@ -139,7 +139,7 @@ def test_manual_construct_replica():
     build_options.use_spmd_partitioning = use_spmd_partitioning
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     compiled_computation = backend.compile(c, compile_options)
 
     host_input = np.ones((2,2), dtype=np.float32)
@@ -158,8 +158,8 @@ def test_manual_construct_spmd_shard():
     # Set input sharding
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([2, 1])
-    sharding.tile_assignment_devices.extend([0, 1])
+    sharding.tile_assignment_dimensions = [2, 1]
+    sharding.tile_assignment_devices = [0, 1]
     c.set_sharding(sharding)
     x = parameter(c, 0, (2, 2), np.float32)
     c.clear_sharding()
@@ -194,7 +194,7 @@ def test_manual_construct_spmd_shard():
     build_options.use_spmd_partitioning = True
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     compiled_computation = backend.compile(c, compile_options)
 
     # Print spmd partitioned HLO
@@ -216,8 +216,8 @@ def test_manual_construct_spmd_one_device():
     # Build a computational graph on device 0
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([1, 1])
-    sharding.tile_assignment_devices.extend([0,])
+    sharding.tile_assignment_dimensions = [1, 1]
+    sharding.tile_assignment_devices = [0,]
     c.set_sharding(sharding)
     x = parameter(c, 0, (2, 2), np.float32)
 
@@ -229,8 +229,8 @@ def test_manual_construct_spmd_one_device():
     # Build a computational graph on device 1
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([1, 1])
-    sharding.tile_assignment_devices.extend([1,])
+    sharding.tile_assignment_dimensions = [1, 1]
+    sharding.tile_assignment_devices = [1,]
     c.set_sharding(sharding)
     z = ops.Add(z, z)
     z = ops.Add(z, z)
@@ -254,7 +254,7 @@ def test_manual_construct_spmd_one_device():
     build_options.use_spmd_partitioning = True
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     compiled_computation = backend.compile(c, compile_options)
 
     # Print spmd partitioned HLO
@@ -276,8 +276,8 @@ def test_reshard_multi_allgather():
     # Set input sharding
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([8, 2])
-    sharding.tile_assignment_devices.extend(list(range(16)))
+    sharding.tile_assignment_dimensions = [8, 2]
+    sharding.tile_assignment_devices = list(range(16))
     c.set_sharding(sharding)
     x = parameter(c, 0, (32, 32), np.float32)
     c.clear_sharding()
@@ -290,9 +290,9 @@ def test_reshard_multi_allgather():
     # Set output sharding
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.REPLICATED
-    #sharding.tile_assignment_dimensions.extend([2, 2])
+    #sharding.tile_assignment_dimensions = [2, 2]
     ##sharding.replicate_on_last_tile_dim = True
-    #sharding.tile_assignment_devices.extend([0, 1, 2, 3])
+    #sharding.tile_assignment_devices = [0, 1, 2, 3]
 
     sharding2 = xla_client.OpSharding()
     sharding2.type = sharding.type.TUPLE
@@ -318,7 +318,7 @@ def test_reshard_multi_allgather():
     build_options.use_spmd_partitioning = True
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     import parax
     with parax.XlaPassContext({
         "build_option::bypass_device_assignment_check": True,
@@ -335,8 +335,8 @@ def test_reshard_all_to_all():
     # Set input sharding
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([4, 1])
-    sharding.tile_assignment_devices.extend(list(range(4)))
+    sharding.tile_assignment_dimensions = [4, 1]
+    sharding.tile_assignment_devices = list(range(4))
     c.set_sharding(sharding)
     x = parameter(c, 0, (32, 32), np.float32)
     c.clear_sharding()
@@ -346,14 +346,14 @@ def test_reshard_all_to_all():
         z = ops.Reshape(x, (2, 16, 32))
         sharding = xla_client.OpSharding()
         sharding.type = sharding.type.OTHER
-        sharding.tile_assignment_dimensions.extend([2, 1, 2])
-        sharding.tile_assignment_devices.extend(list(range(4)))
+        sharding.tile_assignment_dimensions = [2, 1, 2]
+        sharding.tile_assignment_devices = list(range(4))
     else:
         z = x
         sharding = xla_client.OpSharding()
         sharding.type = sharding.type.OTHER
-        sharding.tile_assignment_dimensions.extend([2, 2])
-        sharding.tile_assignment_devices.extend(list(range(4)))
+        sharding.tile_assignment_dimensions = [2, 2]
+        sharding.tile_assignment_devicesi = list(range(4))
 
     sharding2 = xla_client.OpSharding()
     sharding2.type = sharding.type.TUPLE
@@ -379,7 +379,7 @@ def test_reshard_all_to_all():
     build_options.use_spmd_partitioning = True
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     import parax
     with parax.XlaPassContext({
         "build_option::bypass_device_assignment_check": True,
@@ -396,8 +396,8 @@ def test_reshard_change_mesh_shape():
     # Set input sharding
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([1, 2, 2])
-    sharding.tile_assignment_devices.extend([0, 1, 2, 3])
+    sharding.tile_assignment_dimensions = [1, 2, 2]
+    sharding.tile_assignment_devices = [0, 1, 2, 3]
     sharding.replicate_on_last_tile_dim = True
     c.set_sharding(sharding)
     x = parameter(c, 0, (32, 32), np.float32)
@@ -407,8 +407,8 @@ def test_reshard_change_mesh_shape():
     z = x
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([4, 1])
-    sharding.tile_assignment_devices.extend([0, 1, 2, 3])
+    sharding.tile_assignment_dimensions = [4, 1]
+    sharding.tile_assignment_devices = [0, 1, 2, 3]
 
     sharding2 = xla_client.OpSharding()
     sharding2.type = sharding.type.TUPLE
@@ -434,7 +434,7 @@ def test_reshard_change_mesh_shape():
     build_options.use_spmd_partitioning = True
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     import parax
     with parax.XlaPassContext({
         "build_option::bypass_device_assignment_check": True,
@@ -453,8 +453,8 @@ def test_skip_hlo_passes():
     # Set input sharding
     sharding = xla_client.OpSharding()
     sharding.type = sharding.type.OTHER
-    sharding.tile_assignment_dimensions.extend([2, 1])
-    sharding.tile_assignment_devices.extend([0, 1])
+    sharding.tile_assignment_dimensions = [2, 1]
+    sharding.tile_assignment_devices = [0, 1]
     c.set_sharding(sharding)
     x = parameter(c, 0, (2, 2), np.float32)
     c.clear_sharding()
@@ -489,7 +489,7 @@ def test_skip_hlo_passes():
     build_options.use_spmd_partitioning = True
     build_options.device_assignment = device_assignment
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     with XlaPassContext({"build_option::skip_backend_codegen": True}):
         compiled_computation = backend.compile(c, compile_options)
 
@@ -536,7 +536,7 @@ def test_create_zero_buffers():
         compiled_computation = backend.compile(c, compile_options)
         return compiled_computation
 
-    backend = xla_client.get_local_backend("gpu")
+    backend = xla_bridge.get_backend("gpu")
     num_devices = 8
     get_zero_buffers = compile_get_zero_buffers(backend, num_devices)
 

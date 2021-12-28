@@ -337,7 +337,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-            compiled.hlo_modules()[0], num_devices, avals, out_avals,
+            compiled.hlo_modules()[0], avals, out_avals, num_devices,
             strategy_config.logical_mesh_shape)
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs

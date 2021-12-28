@@ -114,11 +114,12 @@ def assert_data_parallel_cost(state,
     replicated_penalty = int(
         device_mesh.all_reduce_cost(1, 0) + device_mesh.all_reduce_cost(1, 1))
     expected = sum(
-        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim) +
-        replicated_penalty for x in params)
+        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
+        for x in params)
+    expected += replicated_penalty * (len(params) + len(opt_state))
     assert_close(objective, expected)
 
-    # Check number of communication primitives
+    # Check numbers of communication primitives
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 
@@ -376,12 +377,6 @@ class AutoShardingMLPTest(unittest.TestCase):
         global_config.prefer_reduce_scatter = True
         self.test_n_layer_mlp_data_parallel()
 
-    def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
-        global_config.force_zero_stage_3 = True
-        global_config.force_zero_stage_3_all_gather_threshold = (32 * 32 +
-                                                                 32) * 6 * 4
-        self.test_n_layer_mlp_data_parallel()
-
     def test_n_layer_mlp_model_parallel_reduce_scatter(self):
         global_config.prefer_reduce_scatter = True
         self.test_n_layer_mlp_model_parallel()
@@ -397,6 +392,12 @@ class AutoShardingMLPTest(unittest.TestCase):
     def test_n_layer_mlp_data_parallel_reduce_scatter_adafactor(self):
         global_config.prefer_reduce_scatter = True
         self.optimizer_type = "adafactor"
+        self.test_n_layer_mlp_data_parallel()
+
+    def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
+        global_config.force_zero_stage_3 = True
+        global_config.force_zero_stage_3_all_gather_threshold = (32 * 32 +
+                                                                 32) * 6 * 4
         self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):
@@ -448,10 +449,6 @@ def suite():
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))
     suite.addTest(
-        AutoShardingMLPTest(
-            "test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3"))
-
-    suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
@@ -459,6 +456,10 @@ def suite():
     suite.addTest(
         AutoShardingMLPTest(
             "test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
+
+    suite.addTest(
+        AutoShardingMLPTest(
+            "test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3"))
 
     suite.addTest(AutoShardingMLPTest("test_weight_init"))
 

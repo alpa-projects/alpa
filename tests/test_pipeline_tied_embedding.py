@@ -2,13 +2,14 @@ import unittest
 import os
 
 from flax import linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
+import optax
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
+from parax.model.model_util import TrainState
 from parax.testing import assert_allclose
 from parax.util import get_ray_namespace_str
 
@@ -19,11 +20,10 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         assert len(jax.local_devices()) >= 4
 
-        ray.init(address='auto',
+        ray.init(address="auto",
                  namespace=get_ray_namespace_str(prefix="parax-unittest"))
         device_cluster = DeviceCluster()
-        mesh = device_cluster.get_virtual_physical_mesh()
-        self.devices = mesh
+        self.devices = device_cluster.get_virtual_physical_mesh()
 
     def tearDown(self):
         ray.shutdown()
@@ -51,19 +51,18 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                 x = x @ embed.T
                 return x
 
-        def train_step(optimizer, x, y, apply_fn, use_manual_pipeline=False):
+        def train_step(state, x, y):
 
             def loss_func(params, x, y):
-                out = apply_fn(params, x)
+                out = state.apply_fn(params, x)
                 y_ = jax.nn.one_hot(y, out.shape[-1])
                 loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1),
                                 axis=-1).sum()
                 mark_pipeline(name='2', mark_type='end')
                 return loss
 
-            if use_manual_pipeline:
-                loss_func = manual_layer_slicing(loss_func)
-            grad = jax.grad(loss_func)(optimizer.target, x, y)
+            loss_func = manual_layer_slicing(loss_func)
+            grad = jax.grad(loss_func)(state.params, x, y)
             return grad
 
         x = jnp.ones((batch_size, seq_len), jnp.int32)
@@ -73,18 +72,19 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        optimizer = optim.Adam(1e-2).create(params)
+        tx = optax.adam(learning_rate=1e-2)
+        state = TrainState.create(apply_fn=model.apply,
+                                  params=params,
+                                  tx=tx,
+                                  dynamic_scale=None)
 
         # Run and check results
-        gradients = train_step(optimizer, x, y, model.apply)
-        pipelined_train_step = parallelize(
-            donate_argnums=())(lambda optimizer, x, y, apply_fn: train_step(
-                optimizer, x, y, apply_fn, use_manual_pipeline=True))
-        gradients_with_pipeline = pipelined_train_step(optimizer, x, y,
-                                                       model.apply)
+        pipelined_train_step = parallelize(donate_argnums=())(train_step)
+        gradients = train_step(state, x, y)
+        gradients_with_pipeline = pipelined_train_step(state, x, y)
         assert_allclose(gradients, gradients_with_pipeline)
-        pipelined_train_step.get_executable(optimizer, x, y,
-                                            model.apply).shutdown()
+
+        pipelined_train_step.get_executable(state, x, y).shutdown()
 
     def test_tied_embedding_local_pipeline_parallel(self):
         self.train_tied_embedding(self.devices, "local_pipeline_parallel")

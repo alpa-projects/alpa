@@ -452,17 +452,16 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     return mean_time
 
 
-def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
+def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
+                    cache_filename):
     results = []
     num_devices_per_node = 8
     save_every = 15
 
-    # Must use an absolute efs path due to distributed ray workers
-    TMP_CACHE_FILE = "/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl"
-    if os.path.exists(TMP_CACHE_FILE):
+    if os.path.exists(cache_filename):
         rank_0_print(host_id,
-                     f"Load cached hlo op cost dict from {TMP_CACHE_FILE}...")
-        cache_dict = pickle.load(open(TMP_CACHE_FILE, "rb"))
+                     f"Load cached hlo op cost dict from {cache_filename}...")
+        cache_dict = pickle.load(open(cache_filename, "rb"))
     else:
         cache_dict = {}
 
@@ -481,12 +480,12 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         if host_id == 0 and ((i + 1) % save_every == 0 or
                              i == len(op_infos) - 1):
             rank_0_print(host_id, "Save cache...")
-            pickle.dump(cache_dict, open(TMP_CACHE_FILE, "wb"))
+            pickle.dump(cache_dict, open(cache_filename, "wb"))
 
     return np.array(results)
 
 
-def profile_dot(device_cluster):
+def profile_dot(device_cluster, cache_filename):
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
@@ -496,7 +495,7 @@ def profile_dot(device_cluster):
         for i in range(0, 48):
             n = 128 * i
             op_infos.append(("dot", (n, n, n, dtype)))
-    results = physical_mesh.profile_hlo_ops(op_infos)
+    results = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
 
     dot_cost_dict = defaultdict(list)
     for i in range(len(op_infos)):
@@ -547,13 +546,13 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
     return list(all_specs)
 
 
-def profile_all(device_cluster, cluster_key, comm_size_range):
+def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
     """Profile costs for all dot and comuniation primitives."""
     from parax.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
     ##### Profile compute cost
-    dot_cost_dict = profile_dot(device_cluster)
+    dot_cost_dict = profile_dot(device_cluster, cache_filename)
     print_used_time("Profile dot")
 
     ##### Profile communication cost
@@ -598,7 +597,9 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         while s < len(op_infos):
             try:
                 batch_result = physical_mesh.profile_hlo_ops(
-                    op_infos[s:s + batch_size], timeout=batch_timeout)
+                    op_infos[s:s + batch_size],
+                    cache_filename,
+                    timeout=batch_timeout)
             except ray.exceptions.RayError:
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None

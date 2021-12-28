@@ -17,7 +17,7 @@ from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config
-from parax.mesh_executable import PartialGradAccMeshDriverExecutable, ProtoAndSharding, get_grad_sync_channel_ids_with_hint
+from parax.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTask, ReshardingTaskSpec, VirtualDistributedArray
@@ -29,7 +29,7 @@ from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
-                                                sharding_proto_to_sharding_spec)
+                                                hlo_sharding_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,21 @@ class BaseWorkerPoolWrapper(ABC):
         gc.collect()
 
 
+def get_input_output_sharding_proto(proto, num_devices):
+    if num_devices <= 1:
+        return None, None
+    computation = xla_client.XlaComputation(proto)
+    hlo_module = computation.as_hlo_module()
+    hlo_module.infer_spmd_shardings()
+    input_shardings = hlo_module.spmd_parameters_shardings()
+    output_sharding = hlo_module.spmd_output_sharding()
+    input_sharding_protos = [
+        x.proto_tuple().SerializeToString() for x in input_shardings
+    ]
+    output_sharding_proto = output_sharding.proto_tuple().SerializeToString()
+    return input_sharding_protos, output_sharding_proto
+
+
 class CompileWorker:
     """
     A ray actor to distributedly compile Jaxpr to HLO Proto.
@@ -74,19 +89,6 @@ class CompileWorker:
     def __init__(self):
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
-
-    def _get_input_output_sharding(self, sharding_annotated_proto):
-        sharding_annotated_computation = xla_client.XlaComputation(
-            sharding_annotated_proto)
-        hlo_module = sharding_annotated_computation.as_hlo_module()
-        hlo_module.infer_spmd_shardings()
-        input_shardings = hlo_module.spmd_parameters_shardings()
-        output_sharding = hlo_module.spmd_output_sharding()
-        input_sharding_protos = [
-            sharding.proto_tuple() for sharding in input_shardings
-        ]
-        output_sharding_proto = output_sharding.proto_tuple()
-        return input_sharding_protos, output_sharding_proto
 
     def compile_stage_with_search(self, stage_id, global_config_dict,
                                   logical_mesh, proto, avals, out_avals,
@@ -117,33 +119,35 @@ class CompileWorker:
             "grad_acc_num_micro_batches": None,
             "bypass_device_assignment_check": True
         }
+
         try:
             _, (protos, hooked_proto,
                 strategy_config) = self.compile_with_config(
                     stage_id, global_config_dict, proto, jaxpr_config,
                     mesh_config, multiple_stage_config)
-        except:
+        except RuntimeError:
             logger.warning("Unexpected error in compile time")
             return stage_id, None
+
         assert (len(protos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
-        if len(protos) > 1 and logical_mesh.total_devices > 1:
+
+        # Read input/output shardings
+        acc_grad_proto = protos[0]
+        sharding_annotated_computation = xla_client.XlaComputation(
+            acc_grad_proto)
+        (input_sharding_protos,
+         output_sharding_proto) = get_input_output_sharding_proto(
+             acc_grad_proto, logical_mesh.total_devices)
+
+        if len(protos) > 1:
             apply_grad_proto = protos[1]
-            (apply_grad_input_sharding_protos,
-             _) = self._get_input_output_sharding(apply_grad_proto)
+            apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
+                apply_grad_proto, logical_mesh.total_devices)
         else:
             apply_grad_input_sharding_protos = None
-        sharded_proto = protos[0]
 
-        # Get the accumulate_grad part and compile to fully optimized.
-        sharding_annotated_computation = xla_client.XlaComputation(
-            sharded_proto)
-        if logical_mesh.total_devices > 1:
-            (input_sharding_protos, output_sharding_proto
-            ) = self._get_input_output_sharding(sharded_proto)
-        else:
-            input_sharding_protos = None
-            output_sharding_proto = None
+        # Compile accumulate_grad part to fully optimized
         rewrite_for_grad_acc = len(output_acc_grad_indices) > 0
         compiled = compile_with_given_strategy(
             self.backend,
@@ -193,18 +197,21 @@ class ProfileWorker:
 
     def profile_impl(self, stage_id, compiled_output, profile_info,
                      intermediate_size, initial_size):
-
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
-        proto, config, in_shardings, out_shardings, _, _ = compiled_output
-        compiled = ProtoAndSharding(proto=proto,
-                                    input_shardings=in_shardings,
-                                    output_shardings=out_shardings)
+        proto, config, input_shardings, output_sharding, _, _ = compiled_output
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
+        hlo_module = xla_client.XlaComputation(proto).as_hlo_module()
+        if input_shardings is not None:
+            hlo_module.set_spmd_parameters_shardings(
+                [_xla.HloSharding(x) for x in input_shardings])
+            hlo_module.set_spmd_output_sharding(
+                _xla.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, compiled, config, avals, out_avals, donated_invars,
+            self.mesh, hlo_module, config, avals, out_avals, donated_invars,
             output_acc_grad_indices)
 
+        # Run profiling
         self.mesh.reset_memory_stats()
         peak_memory = executable.get_total_allocation_size()
         available_memory = self.mesh.get_available_memory()
@@ -231,7 +238,7 @@ class ProfileWorker:
             except RayActorError:
                 logger.warning("Meet ray actor error in profiling")
                 self.restart(forced=True)
-            except:
+            except RuntimeError:
                 logger.warning("Meet unexpected error in profiling")
                 self.restart(forced=True)
                 break
@@ -381,8 +388,7 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
                    stage) in enumerate(zip(compiled_outputs, stages)):
         if compiled_output == None:
             continue
-        (proto, config, in_shardings, out_shardings, hooked_proto,
-         apply_in_shardings) = compiled_output
+        proto, config, _, _, hooked_proto, apply_in_shardings = compiled_output
         _, _, _, intermediate_vars, profile_info, apply_info = stage
         intermediate_size = compute_intermediate_size(hooked_proto,
                                                       intermediate_vars,
@@ -403,7 +409,7 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
             logger.warning("After waiting for too long, "
                            "all profile workers are forcely killed")
             return compute_cost, max_n_succ_stages
-        except:
+        except RuntimeError:
             profile_workers.shutdown(force=True)
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
@@ -706,10 +712,9 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
     if np.prod(logical_mesh_shape) == 1:
         tot = sum([get_byte(aval) for aval in avals])
         return tot
-    hlo_sharding = _xla.HloSharding(serialized_proto[0]).proto_tuple()
-    assert len(hlo_sharding[3]) == len(intermediate_vars), hlo_sharding
-    sharding_specs = sharding_proto_to_sharding_spec(hlo_sharding, avals,
-                                                     logical_mesh_shape)
+    hlo_sharding = _xla.HloSharding(serialized_proto[0])
+    sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
+                                                   logical_mesh_shape)
     sharded_shapes = [
         get_shard_shape(aval, spec)
         for aval, spec in zip(avals, sharding_specs)
@@ -737,8 +742,8 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
         return tot
     assert len(input_sharding_protos) == len(invars), input_sharding_protos
     sharding_specs = [
-        sharding_proto_to_sharding_spec(sharding_proto, aval,
-                                        logical_mesh_shape)
+        hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto), aval,
+                                      logical_mesh_shape)
         for sharding_proto, aval in zip(input_sharding_protos, avals)
     ]
     sharded_shapes = [

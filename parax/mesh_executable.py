@@ -21,6 +21,10 @@ from jax.lib import xla_client, xla_bridge, xla_extension
 import jax.numpy as jnp
 
 from parax.measure_record import StrategyConfig
+from parax.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
+                                                make_replicated_spec,
+                                                compile_with_given_strategy,
+                                                HloProtoStatus)
 from parax.timer import timers
 from parax.util import (compile_allocate_zero_buffers,
                         compile_memset_zero_buffers, get_shard_shape,
@@ -32,9 +36,6 @@ logger.setLevel(logging.INFO)
 # The global executable and buffer counter.
 mesh_executable_counter = 0
 remote_buffer_counter = 0
-
-ProtoAndSharding = namedtuple("HloProtoAndSharding",
-                              ["proto", "input_shardings", "output_shardings"])
 
 
 def next_mesh_executable_uuid():
@@ -144,10 +145,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  flop_count: Optional[int] = None):
-        from parax.shard_parallel.auto_sharding import (
-            get_input_output_sharding_specs, sharding_proto_to_sharding_spec,
-            make_replicated_spec)
-
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
@@ -155,34 +152,13 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.flop_count = flop_count
 
         # Read sharding specs
-        if isinstance(compiled, ProtoAndSharding):
-            proto = compiled.proto
-            input_sharding_protos = compiled.input_shardings
-            output_sharding_protos = compiled.output_shardings
-            self.hlo_module = xla_client.XlaComputation(proto).as_hlo_module()
-            logical_mesh_shape = strategy_config.logical_mesh_shape
-            if physical_mesh.total_devices != 1:
-                self.input_sharding_specs = [
-                    sharding_proto_to_sharding_spec(proto_tuple, aval,
-                                                    logical_mesh_shape)
-                    for (proto_tuple, aval) in zip(input_sharding_protos, avals)
-                ]
-                self.output_sharding_specs = sharding_proto_to_sharding_spec(
-                    output_sharding_protos, out_avals, logical_mesh_shape)
-            else:
-                self.input_sharding_specs = [
-                    make_replicated_spec(aval, logical_mesh_shape)
-                    for aval in avals
-                ]
-                self.output_sharding_specs = [
-                    make_replicated_spec(aval, logical_mesh_shape)
-                    for aval in out_avals
-                ]
+        if isinstance(compiled, xla_extension.HloModule):
+            self.hlo_module = compiled
         else:
             self.hlo_module = compiled.hlo_modules()[0]
-            self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
-                self.hlo_module, physical_mesh.total_devices, avals, out_avals,
-                strategy_config.logical_mesh_shape)
+        self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
+            self.hlo_module, avals, out_avals, physical_mesh.total_devices,
+            strategy_config.logical_mesh_shape)
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -349,9 +325,6 @@ class NormalMeshWorkerExecutable:
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig):
-        from parax.shard_parallel.auto_sharding import (
-            compile_with_given_strategy, HloProtoStatus)
-
         xla_computation = xla_client.XlaComputation(hlo_proto)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
@@ -422,15 +395,6 @@ def get_grad_sync_channel_ids(hlo_module) -> str:
     (e.g., ".0.12." means channel id 0 and 12)
     """
     return xla_extension.get_grad_sync_channel_ids(hlo_module)
-    #hlo_ir = hlo_module.to_string()
-    #import re
-    #ids = []
-    #for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=\{\{0,4", hlo_ir):
-    ##for item in re.findall("all-reduce\(.*channel_id=(.*), replica_groups=", hlo_ir):
-    #    ids.append(item)
-
-    #ids = "." + ".".join(ids) + "."
-    #return ids
 
 
 class GradAccMeshDriverExecutable:
@@ -450,9 +414,6 @@ class GradAccMeshDriverExecutable:
                  apply_grad_invar_indices: Sequence[int],
                  num_micro_batches: int,
                  flop_count: Optional[int] = None):
-        from parax.shard_parallel.auto_sharding import (
-            get_input_output_sharding_specs, make_replicated_spec)
-
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
@@ -473,13 +434,14 @@ class GradAccMeshDriverExecutable:
                               ] + grad_avals
         accumulate_grad_input_sharding_specs, grad_sharding_specs = (
             get_input_output_sharding_specs(accumulate_grad.hlo_modules()[0],
-                                            physical_mesh.total_devices,
                                             accumulate_grad_in_avals,
-                                            grad_avals, logical_mesh_shape))
+                                            grad_avals,
+                                            physical_mesh.total_devices,
+                                            logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (
             get_input_output_sharding_specs(apply_grad.hlo_modules()[0],
-                                            physical_mesh.total_devices,
                                             apply_grad_in_avals, out_avals,
+                                            physical_mesh.total_devices,
                                             logical_mesh_shape))
         num_grads = len(grad_avals)
         assert accumulate_grad_input_sharding_specs[
@@ -739,9 +701,6 @@ class GradAccMeshWorkerExecutable:
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
                  num_grads: int, num_micro_batches: int,
                  grad_sync_channel_ids: str):
-        from parax.shard_parallel.auto_sharding import (
-            compile_with_given_strategy, HloProtoStatus)
-
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
@@ -853,11 +812,11 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  out_acc_grad_indices: Sequence[int]):
-        if isinstance(compiled, ProtoAndSharding):
-            hlo_module = hlo_module = xla_client.XlaComputation(
-                compiled.proto).as_hlo_module()
+        if isinstance(compiled, xla_extension.HloModule):
+            hlo_module = compiled
         else:
             hlo_module = compiled.hlo_modules()[0]
+
         if physical_mesh.total_devices > 1:
             self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
                 hlo_module, out_acc_grad_indices)

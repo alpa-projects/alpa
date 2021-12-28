@@ -45,7 +45,7 @@ def assert_data_parallel_cost(state,
 
     assert_close(objective, expected, atol=0.05)
 
-    # Check number of communication primitives
+    # Check numbers of communication primitives
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 
@@ -223,18 +223,14 @@ class AutoShardingConvTest(unittest.TestCase):
         channel = 8
         global_config.allow_mixed_mesh_shape = False
 
-        # Test on different device meshes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
         state, hlo_ir, objective = self.run_n_layer_conv(
             num_layers, batch_size, image_size, channel, device_mesh)
 
+        # Check numbers of communication primitives
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        #print(hlo_ir)
-        #print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
-        #      f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
-        #      f"#all-to-all: {n_all_to_all}")
         if global_config.prefer_reduce_scatter:
             assert n_reduce_scatter > 0
         if global_config.allow_mixed_mesh_shape:

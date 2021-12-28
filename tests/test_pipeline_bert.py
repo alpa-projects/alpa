@@ -5,12 +5,14 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
+import optax
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
                    DeviceCluster, manual_layer_slicing)
 from parax.testing import BertLayerModel, assert_allclose
-from parax.model.bert_model import BertConfig, FlaxBertLayer
+from parax.model.model_util import TrainState
+from parax.model.bert_model import BertConfig
 from parax.util import get_ray_namespace_str
 
 
@@ -20,11 +22,10 @@ class PipelineBERTTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         assert len(jax.local_devices()) >= 4
 
-        ray.init(address='auto',
+        ray.init(address="auto",
                  namespace=get_ray_namespace_str(prefix="parax-unittest"))
         device_cluster = DeviceCluster()
-        mesh = device_cluster.get_virtual_physical_mesh()
-        self.devices = mesh
+        self.devices = device_cluster.get_virtual_physical_mesh()
 
     def tearDown(self):
         ray.shutdown()
@@ -32,22 +33,18 @@ class PipelineBERTTest(unittest.TestCase):
     def train_2_layer_bert(self, devices, strategy):
         set_parallelize_options(devices=devices, strategy=strategy)
 
-        def train_step(optimizer, batch, apply_fn):
+        def train_step(state, batch):
 
             def loss_func(params, x, y, attention_mask):
-                out = apply_fn(params, x, attention_mask)
+                out = state.apply_fn(params, x, attention_mask)
                 loss = jnp.mean((out - y)**2)
-                mark_pipeline(name='2', mark_type='end')
+                mark_pipeline(name="2", mark_type="end")
                 return loss
 
             loss_func = manual_layer_slicing(loss_func)
-
-            grad_param = jax.grad(loss_func)(optimizer.target, batch['x'],
-                                             batch['y'],
-                                             batch['attention_mask'])
-
-            # new_optimizer = optimizer.apply_gradient(grad_param)
-            return grad_param
+            grads = jax.grad(loss_func)(state.params, batch["x"], batch["y"],
+                                        batch["attention_mask"])
+            return grads
 
         batch_size = 16
         seq_len = 8
@@ -70,28 +67,21 @@ class PipelineBERTTest(unittest.TestCase):
                                                  num_hidden_layers=2))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, attention_mask)
-        optimizer = optim.GradientDescent(1e-2).create(params)
+        tx = optax.sgd(learning_rate=1e-2)
+        state = TrainState.create(apply_fn=model.apply,
+                                  params=params,
+                                  tx=tx,
+                                  dynamic_scale=None)
 
         # Train step
-        gradients = train_step(optimizer, {
-            "x": x,
-            "y": y,
-            "attention_mask": attention_mask
-        }, model.apply)
-        pipelined_train_step = parallelize(
-            donate_argnums=())(lambda optimizer, batch, apply_fn: train_step(
-                optimizer, batch, apply_fn))
-        args = (optimizer, {
-            "x": x,
-            "y": y,
-            "attention_mask": attention_mask
-        }, model.apply)
-        executable = pipelined_train_step.get_executable(*args)
-        gradients_with_pipeline = pipelined_train_step(*args)
+        batch = {"x": x, "y": y, "attention_mask": attention_mask}
+        gradients = train_step(state, batch)
+        pipelined_train_step = parallelize(donate_argnums=())(train_step)
+        gradients_with_pipeline = pipelined_train_step(state, batch)
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
-        executable.shutdown()
+        pipelined_train_step.get_executable(state, batch).shutdown()
 
     def test_2_layer_bert_local_pipeline_parallel(self):
         self.train_2_layer_bert(self.devices, "local_pipeline_parallel")

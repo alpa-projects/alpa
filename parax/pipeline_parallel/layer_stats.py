@@ -1,9 +1,10 @@
 from typing import List
+
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import JaxprEqn, Var, CallPrimitive
+from jax.core import JaxprEqn, Var, CallPrimitive, DropVar
 from jax.interpreters import xla
-from parax.util import get_cross_slice_vars, OrderedSet
+from parax.util import OrderedSet
 
 
 def call_to_xla_computation(eqn: JaxprEqn):
@@ -85,6 +86,32 @@ def heavy_count(eqn):
 
 def is_nontrivial(eqn):
     return heavy_count(eqn) > 0
+
+
+def get_cross_slice_vars(jaxpr, slices):
+    defined = dict()
+    stage_invars = [OrderedSet() for _ in slices]
+    for invar in jaxpr.invars:
+        defined[invar] = -1
+    for invar in jaxpr.constvars:
+        defined[invar] = -1
+    for i, sliced in enumerate(slices):
+        for eqn in sliced:
+            for outvar in eqn.outvars:
+                if isinstance(outvar, DropVar):
+                    continue
+                defined[outvar] = i
+    for i, sliced in enumerate(slices):
+        for eqn in sliced:
+            for invar in eqn.invars:
+                if not isinstance(invar, Var):
+                    continue
+                if defined[invar] >= 0 and defined[invar] != i:
+                    stage_invars[i].add(invar)
+    for i, invars in enumerate(stage_invars):
+        print(f'Layer {i} has inputs:')
+        for invar in invars:
+            print(invar, invar.aval.shape, 'from layer', defined[invar])
 
 
 def log_layer_slicing_stats(origin_jaxpr, slices):

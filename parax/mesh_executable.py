@@ -432,13 +432,13 @@ class GradAccMeshDriverExecutable:
                               ] + grad_avals
         accumulate_grad_input_sharding_specs, grad_sharding_specs = (
             get_input_output_sharding_specs(accumulate_grad.hlo_modules()[0],
+                                            accumulate_grad_in_avals, grad_avals,
                                             physical_mesh.total_devices,
-                                            accumulate_grad_in_avals,
-                                            grad_avals, logical_mesh_shape))
+                                            logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (
             get_input_output_sharding_specs(apply_grad.hlo_modules()[0],
-                                            physical_mesh.total_devices,
                                             apply_grad_in_avals, out_avals,
+                                            physical_mesh.total_devices,
                                             logical_mesh_shape))
         num_grads = len(grad_avals)
         assert accumulate_grad_input_sharding_specs[

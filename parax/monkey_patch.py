@@ -14,7 +14,7 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.primitive_def import xla_identity
 
 ########################################
-##### Monkey patch the backend
+##### Monkey patch the Jax backend
 ########################################
 
 override_backend = None

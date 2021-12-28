@@ -17,8 +17,7 @@ from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
-                                   Replicated, ShardedAxis, _as_slice_indices,
+from jax.interpreters.pxla import (ShardingSpec, _as_slice_indices,
                                    _hashable_index, ShardedDeviceArray, Index)
 from jax.lib import xla_client
 import jax.numpy as jnp

@@ -113,7 +113,9 @@ def assert_data_parallel_cost(state,
     # Check communication cost
     replicated_penalty = int(
         device_mesh.all_reduce_cost(1, 0) + device_mesh.all_reduce_cost(1, 1))
-    expected = sum(device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim) for x in params)
+    expected = sum(
+        device_mesh.all_reduce_cost(np.prod(x.shape) * 4, mesh_dim)
+        for x in params)
     expected += replicated_penalty * (len(params) + len(opt_state))
     assert_close(objective, expected)
 
@@ -441,7 +443,8 @@ def suite():
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh"))
     suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_force_data_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_force_batch_dim_mapping"))
+    suite.addTest(
+        AutoShardingMLPTest("test_n_layer_mlp_force_batch_dim_mapping"))
 
     suite.addTest(
         AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))

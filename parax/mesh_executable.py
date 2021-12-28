@@ -22,7 +22,9 @@ import jax.numpy as jnp
 
 from parax.measure_record import StrategyConfig
 from parax.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
-    make_replicated_spec, compile_with_given_strategy, HloProtoStatus)
+                                                make_replicated_spec,
+                                                compile_with_given_strategy,
+                                                HloProtoStatus)
 from parax.timer import timers
 from parax.util import (compile_allocate_zero_buffers,
                         compile_memset_zero_buffers, get_shard_shape,
@@ -155,8 +157,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         else:
             self.hlo_module = compiled.hlo_modules()[0]
         self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
-            self.hlo_module, avals, out_avals,
-            physical_mesh.total_devices, strategy_config.logical_mesh_shape)
+            self.hlo_module, avals, out_avals, physical_mesh.total_devices,
+            strategy_config.logical_mesh_shape)
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -432,7 +434,8 @@ class GradAccMeshDriverExecutable:
                               ] + grad_avals
         accumulate_grad_input_sharding_specs, grad_sharding_specs = (
             get_input_output_sharding_specs(accumulate_grad.hlo_modules()[0],
-                                            accumulate_grad_in_avals, grad_avals,
+                                            accumulate_grad_in_avals,
+                                            grad_avals,
                                             physical_mesh.total_devices,
                                             logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (

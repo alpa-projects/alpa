@@ -452,7 +452,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     return mean_time
 
 
-def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices, cache_filename):
+def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
+                    cache_filename):
     results = []
     num_devices_per_node = 8
     save_every = 15
@@ -596,7 +597,9 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
         while s < len(op_infos):
             try:
                 batch_result = physical_mesh.profile_hlo_ops(
-                    op_infos[s:s + batch_size], cache_filename, timeout=batch_timeout)
+                    op_infos[s:s + batch_size],
+                    cache_filename,
+                    timeout=batch_timeout)
             except ray.exceptions.RayError:
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None

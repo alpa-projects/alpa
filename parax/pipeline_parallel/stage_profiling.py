@@ -28,7 +28,8 @@ from parax.pipeline_parallel.computation import (
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
-                                                HloProtoStatus, hlo_sharding_to_sharding_spec)
+                                                HloProtoStatus,
+                                                hlo_sharding_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,9 @@ def get_input_output_sharding_proto(proto, num_devices):
     hlo_module.infer_spmd_shardings()
     input_shardings = hlo_module.spmd_parameters_shardings()
     output_sharding = hlo_module.spmd_output_sharding()
-    input_sharding_protos = [x.proto_tuple().SerializeToString() for x in input_shardings]
+    input_sharding_protos = [
+        x.proto_tuple().SerializeToString() for x in input_shardings
+    ]
     output_sharding_proto = output_sharding.proto_tuple().SerializeToString()
     return input_sharding_protos, output_sharding_proto
 
@@ -131,9 +134,11 @@ class CompileWorker:
 
         # Read input/output shardings
         acc_grad_proto = protos[0]
-        sharding_annotated_computation = xla_client.XlaComputation(acc_grad_proto)
-        (input_sharding_protos, output_sharding_proto 
-            ) = get_input_output_sharding_proto(acc_grad_proto, logical_mesh.total_devices)
+        sharding_annotated_computation = xla_client.XlaComputation(
+            acc_grad_proto)
+        (input_sharding_protos,
+         output_sharding_proto) = get_input_output_sharding_proto(
+             acc_grad_proto, logical_mesh.total_devices)
 
         if len(protos) > 1:
             apply_grad_proto = protos[1]
@@ -153,7 +158,8 @@ class CompileWorker:
             hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=output_acc_grad_indices)
-        optimized_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        optimized_proto = compiled.hlo_modules(
+        )[0].as_serialized_hlo_module_proto()
         return stage_id, (optimized_proto, strategy_config,
                           input_sharding_protos, output_sharding_proto,
                           hooked_proto, apply_grad_input_sharding_protos)
@@ -199,7 +205,8 @@ class ProfileWorker:
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
                 [_xla.HloSharding(x) for x in input_shardings])
-            hlo_module.set_spmd_output_sharding(_xla.HloSharding(output_sharding))
+            hlo_module.set_spmd_output_sharding(
+                _xla.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
             self.mesh, hlo_module, config, avals, out_avals, donated_invars,
             output_acc_grad_indices)
@@ -706,7 +713,8 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
         tot = sum([get_byte(aval) for aval in avals])
         return tot
     hlo_sharding = _xla.HloSharding(serialized_proto[0])
-    sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals, logical_mesh_shape)
+    sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
+                                                   logical_mesh_shape)
     sharded_shapes = [
         get_shard_shape(aval, spec)
         for aval, spec in zip(avals, sharding_specs)
@@ -734,8 +742,8 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
         return tot
     assert len(input_sharding_protos) == len(invars), input_sharding_protos
     sharding_specs = [
-        hlo_sharding_to_sharding_spec(
-            _xla.HloSharding(sharding_proto), aval, logical_mesh_shape)
+        hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto), aval,
+                                      logical_mesh_shape)
         for sharding_proto, aval in zip(input_sharding_protos, avals)
     ]
     sharded_shapes = [

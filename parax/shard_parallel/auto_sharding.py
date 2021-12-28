@@ -413,8 +413,8 @@ def compile_with_given_strategy(backend,
     return compiled
 
 
-def get_input_output_sharding_specs(hlo_module, avals, out_avals,
-                                    num_devices, logical_mesh_shape):
+def get_input_output_sharding_specs(hlo_module, avals, out_avals, num_devices,
+                                    logical_mesh_shape):
     """Get the sharding specs of input/output tensors from an HloModule.
 
     Args:
@@ -452,7 +452,8 @@ def get_input_output_sharding_specs(hlo_module, avals, out_avals,
 def _hlo_sharding_to_sharding_spec_no_tuple(proto, aval, logical_mesh):
     """The internal function of hlo_sharding_to_sharding_spec."""
     sharding_type, tile_assignment_dimensions, tile_assignment_devices = (
-        proto.type, proto.tile_assignment_dimensions, proto.tile_assignment_devices)
+        proto.type, proto.tile_assignment_dimensions,
+        proto.tile_assignment_devices)
 
     sharding = []
     mesh_mapping = []

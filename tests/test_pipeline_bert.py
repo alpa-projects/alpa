@@ -42,9 +42,7 @@ class PipelineBERTTest(unittest.TestCase):
                 return loss
 
             loss_func = manual_layer_slicing(loss_func)
-            grads = jax.grad(loss_func)(state.params,
-                                        batch["x"],
-                                        batch["y"],
+            grads = jax.grad(loss_func)(state.params, batch["x"], batch["y"],
                                         batch["attention_mask"])
             return grads
 

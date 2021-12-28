@@ -250,7 +250,6 @@ class MeshHostWorker:
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
     def allgather(self, uuids, device_ids, tensor_slices):
-        # TODO(Hao): implement a better allgather
         cupy_buffers = []
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
@@ -309,10 +308,9 @@ class MeshHostWorker:
     ##### Profiling Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename):
         num_devices = self.num_hosts * len(self.local_devices)
-        return mesh_profiling.profile_hlo_ops(op_infos,
-                                              self.backend, self.local_devices,
-                                              self.host_id, num_devices,
-                                              cache_filename)
+        return mesh_profiling.profile_hlo_ops(op_infos, self.backend,
+                                              self.local_devices, self.host_id,
+                                              num_devices, cache_filename)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
@@ -736,7 +734,10 @@ class PhysicalDeviceMesh:
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
     ##### Profiling related Functions #####
-    def profile_hlo_ops(self, op_infos: Sequence[Tuple], cache_filename, timeout=None):
+    def profile_hlo_ops(self,
+                        op_infos: Sequence[Tuple],
+                        cache_filename,
+                        timeout=None):
         assert self.is_distributed
         tasks = []
         for w in self.workers:

@@ -10,11 +10,9 @@ import numpy as np
 from jax.interpreters import xla, pxla
 from jaxlib.xla_client import OpSharding
 
-from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file)
-from parax.mesh_executable import NormalMeshDriverExecutable
 from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
@@ -31,6 +29,69 @@ class HloProtoStatus(enum.IntEnum):
     SHARDING_ANNOTATED = 1  # A HLO with sharding annotation attached.
     FULLY_OPTIMIZED = 2  # A fully optimized HLO which is already partitioned by
     # the SPMD partitioner.
+
+
+class LogicalDeviceMesh:
+    """
+    A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
+
+    A physical mesh can have multiple logical views. (e.g., a 2x8 physical mesh can be viewed
+    as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
+    We use alpha-beta model to model the communication cost.
+    """
+
+    def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
+        self.physical_mesh = physical_mesh
+        self.id_mesh = np.array(id_mesh)
+        self.flatten_ids = tuple(int(x) for x in self.id_mesh.flatten())
+        self.is_multi_host = False
+
+        # coefficient for alpha-beta communication model
+        if mesh_alpha is None:
+            mesh_alpha = [1] * len(self.id_mesh.shape)
+        if mesh_beta is None:
+            mesh_beta = [1] * len(self.id_mesh.shape)
+        self.mesh_alpha = tuple(mesh_alpha)
+        self.mesh_beta = tuple(mesh_beta)
+
+    @property
+    def shape(self):
+        return self.id_mesh.shape
+
+    @property
+    def total_devices(self):
+        return np.prod(self.id_mesh.shape)
+
+    def all_gather_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices * num_bytes + 0.1)
+
+    def all_reduce_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] * 2 *
+                (num_devices - 1) / num_devices * num_bytes + 0.01)
+
+    def reduce_scatter_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices * num_bytes + 0.001)
+
+    def all_to_all_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        penalty_factor = num_devices / 2.0
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices / num_devices * num_bytes *
+                penalty_factor + 0.001)
+
+    def __hash__(self):
+        return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
+                     self.mesh_beta))
+
+    def __eq__(self, other):
+        return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
+                 self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
+                                     other.mesh_alpha, other.mesh_beta))
 
 
 def compile_with_search(backend, xla_computation, avals, out_avals,
@@ -204,8 +265,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
         if multiple_stages:
             hlo_stages = get_auto_sharded_hlo_stages()
-            sharded_proto = get_hooked_sharding_protos()
+            hooked_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
+        from parax.mesh_executable import NormalMeshDriverExecutable
         assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
         best_time_cost = float("inf")
@@ -237,7 +299,6 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 inp = MeasureInput(search_task, strategy_config)
                 res = MeasureResult(time_costs, objective, 0, int(time.time()))
                 save_to_file([inp], [res], record_file)
-            #print(logical_mesh.shape, objective, np.mean(time_costs))
 
         logical_mesh, compiled, solution_vector, objective = (
             best_logical_mesh, best_compiled, best_solution_vector,
@@ -248,7 +309,7 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
                                      solution_vector)
     if multiple_stages == "stage_and_hooked":
-        return hlo_stages, sharded_proto, strategy_config
+        return hlo_stages, hooked_proto, strategy_config
     if multiple_stages:
         return hlo_stages, strategy_config
     return compiled, strategy_config
@@ -352,15 +413,15 @@ def compile_with_given_strategy(backend,
     return compiled
 
 
-def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
-                                    logical_mesh_shape):
+def get_input_output_sharding_specs(hlo_module, avals, out_avals,
+                                    num_devices, logical_mesh_shape):
     """Get the sharding specs of input/output tensors from an HloModule.
 
     Args:
       hlo_module (xla_extension.HloModule): The sharded HLO module.
-      num_devices (int): The total number of devices.
       avals (List[ShapedArray]: The abstract values of input tensors.
-      avals (List[ShapedArray]: The abstract values of output tensors.
+      out_avals (List[ShapedArray]: The abstract values of output tensors.
+      num_devices (int): The total number of devices.
       logical_mesh_shape (Tuple[int]): The shape of logical mesh.
 
     Returns:
@@ -462,22 +523,6 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
         None,
         np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
     proto = hlo_sharding.proto_tuple()
-    sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
-    if sharding_type == OpSharding.Type.TUPLE:
-        avals = aval
-        return [
-            _hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
-            for (shard, aval) in zip(tuple_shardings, avals)
-        ]
-    else:
-        return _hlo_sharding_to_sharding_spec_no_tuple(proto, aval,
-                                                       logical_mesh)
-
-
-def sharding_proto_to_sharding_spec(proto, aval, logical_mesh_shape):
-    logical_mesh = LogicalDeviceMesh(
-        None,
-        np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
     sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval

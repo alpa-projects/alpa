@@ -23,10 +23,13 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding,
 from jax.lib import xla_client
 import jax.numpy as jnp
 
+from parax import mesh_profiling
+import parax.collective as col
+from parax.collective.collective_group import nccl_util
 from parax.global_env import global_config
 from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
-from parax import mesh_profiling
 from parax.monkey_patch import set_override_backend
+from parax.shard_parallel.auto_sharding import LogicalDeviceMesh
 from parax.timer import timers
 from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
@@ -34,8 +37,6 @@ from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
                         jax_tensor_index, OrderedSet)
-import parax.collective as col
-from parax.collective.collective_group import nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -816,119 +817,6 @@ class PhysicalDeviceMesh:
             self.launched = False
         else:
             self.sync_workers()
-
-
-class LogicalDeviceMesh:
-    """
-    A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
-
-    A physical mesh can have multiple logical views. (e.g., a 2x8 physical mesh can be viewed
-    as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
-    We use alpha-beta model to model the communication cost.
-    """
-
-    def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
-        self.physical_mesh = physical_mesh
-        self.id_mesh = np.array(id_mesh)
-        self.flatten_ids = tuple(int(x) for x in self.id_mesh.flatten())
-        self.is_multi_host = False
-
-        # coefficient for alpha-beta communication model
-        if mesh_alpha is None:
-            mesh_alpha = [1] * len(self.id_mesh.shape)
-        if mesh_beta is None:
-            mesh_beta = [1] * len(self.id_mesh.shape)
-        self.mesh_alpha = tuple(mesh_alpha)
-        self.mesh_beta = tuple(mesh_beta)
-
-    @property
-    def shape(self):
-        return self.id_mesh.shape
-
-    def all_gather_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices * num_bytes + 0.1)
-
-    def all_reduce_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] * 2 *
-                (num_devices - 1) / num_devices * num_bytes + 0.01)
-
-    def reduce_scatter_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices * num_bytes + 0.001)
-
-    def all_to_all_cost(self, num_bytes, mesh_dim):
-        num_devices = self.id_mesh.shape[mesh_dim]
-        penalty_factor = num_devices / 2.0
-        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
-                (num_devices - 1) / num_devices / num_devices * num_bytes *
-                penalty_factor + 0.001)
-
-    def get_tensor_dim_to_mesh_dim(self, tensor_rank,
-                                   tile_assignment_dimensions,
-                                   tile_assignment_devices):
-        tile_assignment = np.array(tile_assignment_devices).reshape(
-            tile_assignment_dimensions)
-
-        tensor_dim_vals = tuple(
-            get_dim_last_value(tile_assignment, i) for i in range(tensor_rank))
-
-        mesh_dim_vals = tuple(
-            get_dim_last_value(self.id_mesh, j)
-            for j in range(len(self.id_mesh.shape)))
-
-        ret = [-1] * tensor_rank
-        for i in range(tensor_rank):
-            if tile_assignment_dimensions[i] != 1:
-                found = False
-                for j in range(len(self.id_mesh.shape)):
-                    if tensor_dim_vals[i] == mesh_dim_vals[j]:
-                        ret[i] = j
-                        found = True
-                if not found:
-                    return None
-
-        return ret
-
-    def make_replicated_spec(self, array):
-        sharding = (NoSharding(),) * len(array.shape)
-        mesh_mapping = (Replicated(len(self.flatten_ids)),)
-        return ShardingSpec(sharding, mesh_mapping)
-
-    def make_tile_spec(self, array, tensor_dims, mesh_dims):
-        shape = array.shape
-        sharding = [
-            NoSharding(),
-        ] * len(shape)
-        mesh_mapping = [
-            None,
-        ] * len(self.id_mesh.shape)
-
-        for i, (tensor_dim, mesh_dim) in enumerate(zip(tensor_dims, mesh_dims)):
-            sharding[tensor_dim] = Chunked([self.id_mesh.shape[mesh_dim]],)
-            mesh_mapping[mesh_dim] = ShardedAxis(i)
-
-        for i, _ in enumerate(mesh_mapping):
-            if mesh_mapping[i] is None:
-                mesh_mapping[i] = Replicated(self.id_mesh.shape[i])
-
-        return ShardingSpec(sharding, mesh_mapping)
-
-    @property
-    def total_devices(self):
-        return np.prod(self.id_mesh.shape)
-
-    def __hash__(self):
-        return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
-                     self.mesh_beta))
-
-    def __eq__(self, other):
-        return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
-                 self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
-                                     other.mesh_alpha, other.mesh_beta))
 
 
 class DistributedArray:

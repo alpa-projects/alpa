@@ -80,16 +80,16 @@ class PipelineScheduleTest(unittest.TestCase):
         schedule_types = ["gpipe", "1f1b"]
         num_stages = [4, 6, 8, 12, 16, 32, 64]
         num_batches = [1, 2, 4, 8, 16, 32, 64, 128]
-        for type in schedule_types:
+        for schedule_type in schedule_types:
             for num_stage in num_stages:
                 for num_batch in num_batches:
                     num_mesh = num_stage // 2
-                    print(
-                        "Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}."
-                        .format(type, num_stage, num_mesh, num_batch))
-                    self.run_schedule_basics(type, num_stage, num_mesh,
+                    #print(
+                    #    "Testing case: type {}, num_stage {}, num_mesh {}, num_batch {}."
+                    #    .format(schedule_type, num_stage, num_mesh, num_batch))
+                    self.run_schedule_basics(schedule_type, num_stage, num_mesh,
                                              num_batch)
-                    if type == "1f1b":
+                    if schedule_type == "1f1b":
                         self.run_1f1b(num_stage, num_mesh, num_batch)
 
 

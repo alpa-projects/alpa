@@ -117,7 +117,7 @@ def assert_data_parallel_cost(state,
     expected += replicated_penalty * (len(params) + len(opt_state))
     assert_close(objective, expected)
 
-    # Check number of communication primitives
+    # Check numbers of communication primitives
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 

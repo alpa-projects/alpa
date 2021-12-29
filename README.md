@@ -1,3 +1,5 @@
+![Build](https://github.com/zhihan-lu/parax/actions/workflows/python-test.yml/badge.svg)
+
 Parax
 =======
 Parax automatically parallelizes your python numerical computing code and neural networks

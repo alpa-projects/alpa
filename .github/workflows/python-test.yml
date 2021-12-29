@@ -1,0 +1,113 @@
+# Script to run CI/CD workflow
+# To successfully run the workflow, you need to register and add a self-hosted server.
+# Follow instructions here: https://docs.github.com/en/actions/hosting-your-own-runners/adding-self-hosted-runners
+# The server should be pre-installed with CUDA-11.1, CUDNN, gcc, and g++.
+name: Lint and test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  cupy_version: "cupy-cuda110"
+  cuda_version: "11.0"
+
+
+jobs:
+  build-linux:
+    runs-on: self-hosted
+    strategy:
+      max-parallel: 5
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        path: ./parax
+    - name: Set up Python 3.70
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.70
+    - name: Clone jax-parax
+      uses: actions/checkout@v2
+      with:
+        repository: parax-project/jax-parax
+        # You need to add a secret to the parax project to download other repositories
+        token: ${{ secrets.PARAX_ACCESS }} 
+        path: ./jax-parax
+    - name: Clone tensorflow-parax
+      uses: actions/checkout@v2
+      with:
+        repository: parax-project/tensorflow-parax
+        token: ${{ secrets.PARAX_ACCESS }}
+        path: ./tensorflow-parax
+    - name: Add conda to system path
+      run: |
+        echo $CONDA/bin >> $GITHUB_PATH
+    - name: Install dependencies
+      run: |
+        pip3 install cmake numpy scipy flax==0.3.5 numba pybind11 ${{ env.cupy_version }}
+        pip3 install ray[default]
+        sudo apt install -y coinor-cbc glpk-utils
+        pip3 install pulp
+        pip3 install prospector yapf
+        pip3 install pytest
+        pip3 install tqdm      
+        pip3 install pytest-cov  
+        pip install coverage
+        pip install coverage-badge
+    - name: Build jaxlib 1
+      working-directory: ./jax-parax
+      run: |
+        export TF_PATH=/home/zhihan/actions-runner/_work/parax/parax/tensorflow-parax # Change TF_PATH as needed
+        export CUDA_HOME=/usr/local/cuda/
+        export PATH=/usr/local/cuda-${{ env.cuda_version }}/bin:/usr/local/cuda/bin${PATH:+:${PATH}}
+        python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
+    - name: Build jaxlib 2
+      working-directory: ./jax-parax/dist
+      run: pip3 install -e .
+    - name: Install jax
+      working-directory: ./jax-parax
+      run: pip3 install -e .
+    - name: Install parax
+      working-directory: ./parax
+      run: pip3 install -e .
+    - name: build XLA
+      working-directory: ./parax/parax/pipeline_parallel/xla_custom_call_marker
+      run: |
+        CUDACXX=/usr/local/cuda-${{ env.cuda_version }}/bin/nvcc bash build.sh
+    - name: Format with format.sh
+      working-directory: ./parax
+      run: ./format.sh
+    - name: Lint with prospector
+      working-directory: ./parax
+      run: prospector parax/
+    - name: Install cupy library
+      run: |
+        export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
+        python -m cupyx.tools.install_library --library nccl --cuda ${{ env.cuda_version }}
+    - name: Test with pytest
+      if: always()
+      working-directory: ./parax
+      run: |
+        export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
+        export CUDA_HOME=/usr/local/cuda/
+        export PATH=/usr/local/cuda-${{ env.cuda_version }}/bin:/usr/local/cuda/bin${PATH:+:${PATH}}         
+        ray start --head                 
+        coverage run -m unittest discover -s tests -p "test_auto_sharding_*.py" # Select the tests to run
+    - name: Generate coverage badge
+      if: always()
+      working-directory: ./parax    
+      run: coverage-badge -o coverage.svg
+    - name: Run GPT benchmark
+      if: always()
+      working-directory: ./parax
+      run: |
+        export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
+        python ./benchmark/parax/benchmark_gpt_bert_2d.py --local # Select the benchmark to run
+    - name: Stop ray
+      if: always()
+      uses: webiny/action-post-run@2.0.1
+      with:
+        run: ray stop

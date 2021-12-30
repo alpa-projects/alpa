@@ -513,7 +513,8 @@ def profile_dot(device_cluster, cache_filename):
     return dot_cost_dict
 
 
-def enumerate_all_collective_spec(num_hosts, num_devices_per_host, size_configs):
+def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
+                                  size_configs):
     """Enumerate all possible collective groups."""
     # Enumerate all possible logical meshes
     logical_mesh_shapes = []

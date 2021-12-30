@@ -29,8 +29,8 @@ from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.auto_sharding import LogicalDeviceMesh
 from parax.timer import timers
-from parax.util import (benchmark_func, list_gpu_info,
-                        jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
+from parax.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
+                        cupy_to_jax_tensor, jax_tensor_set,
                         xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
@@ -149,7 +149,8 @@ class MeshHostWorker:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
-    def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int, dst_gpu_idx: int, group_name: str):
+    def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
+                  dst_gpu_idx: int, group_name: str):
         """
         Send a slice of a source buffer to a target GPU.
 
@@ -189,7 +190,8 @@ class MeshHostWorker:
             to_send = jax_tensor_to_cupy(src_buffer)
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
 
-    def recv_tile(self, uuid: int, device_id: int, indices_in_dst_tile: Sequence[slice], src_rank: int,
+    def recv_tile(self, uuid: int, device_id: int,
+                  indices_in_dst_tile: Sequence[slice], src_rank: int,
                   src_gpu_idx: int, group_name: str):
         """
         Receive a slice from a source GPU and in-place write it on the target buffer.
@@ -248,7 +250,8 @@ class MeshHostWorker:
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
-    def allgather(self, uuids: Sequence[int], device_ids: Sequence[int], tensor_slices: Sequence[slice]):
+    def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
+                  tensor_slices: Sequence[slice]):
         cupy_buffers = []
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
@@ -269,10 +272,12 @@ class MeshHostWorker:
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
     # TODO(yonghao): replace dict by named tuple or class
-    def put_resharding_send_task(self, uuid: int, tasks: Sequence[Tuple], group_name: str):
+    def put_resharding_send_task(self, uuid: int, tasks: Sequence[Tuple],
+                                 group_name: str):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 
-    def put_resharding_recv_task(self, uuid: int, tasks: Sequence[Tuple], group_name: str):
+    def put_resharding_recv_task(self, uuid: int, tasks: Sequence[Tuple],
+                                 group_name: str):
         self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 
     def run_resharding_send_task(self, uuid: int, buf_uuids: Sequence[int]):
@@ -282,7 +287,10 @@ class MeshHostWorker:
                            *tile_detail,
                            group_name=task['group_name'])
 
-    def run_resharding_recv_task(self, uuid: int, buf_uuids: Sequence[int], set_empty_buffer: bool = True):
+    def run_resharding_recv_task(self,
+                                 uuid: int,
+                                 buf_uuids: Sequence[int],
+                                 set_empty_buffer: bool = True):
         task = self.recv_tasks[uuid]
         for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             if set_empty_buffer:
@@ -1134,7 +1142,9 @@ class DeviceCluster:
         return sum(
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
 
-    def get_physical_mesh(self, host_ids: Sequence[int] = None, num_devices_per_host: int = None):
+    def get_physical_mesh(self,
+                          host_ids: Sequence[int] = None,
+                          num_devices_per_host: int = None):
         """
         Slice a subset of hosts and devices to form a physical device mesh.
 
@@ -1161,7 +1171,9 @@ class DeviceCluster:
                                   head_ip=self.head_ip,
                                   use_ray=True)
 
-    def get_virtual_physical_mesh(self, host_ids: Sequence[int] = None, num_devices_per_host: int = None):
+    def get_virtual_physical_mesh(self,
+                                  host_ids: Sequence[int] = None,
+                                  num_devices_per_host: int = None):
         """
         Slice a subset of hosts and devices to form a virtual physical mesh.
 

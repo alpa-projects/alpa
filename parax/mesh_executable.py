@@ -7,7 +7,7 @@ For each type of mesh executable, there is a driver part and a worker part.
 """
 import logging
 import os
-from typing import Sequence
+from typing import Sequence, Union
 
 import numpy as np
 import ray
@@ -92,6 +92,7 @@ class RemoteBufferRef:
     def __del__(self):
         if not self.is_deleted_on_workers:
             self.device_mesh.delete_remote_buffers((self,))
+
 
 class MeshDriverExecutable:
     """The base class of the driver part of a mesh executable."""
@@ -399,7 +400,8 @@ def get_grad_sync_channel_ids(hlo_module: xla_extension.HloModule) -> str:
     return xla_extension.get_grad_sync_channel_ids(hlo_module)
 
 
-def get_grad_sync_channel_ids_with_hint(hlo_module: xla_extension.HloModule, hint: Sequence[int]) -> str:
+def get_grad_sync_channel_ids_with_hint(hlo_module: xla_extension.HloModule,
+                                        hint: Sequence[int]) -> str:
     """Return the channel ids of all-reduces that are used for gradient synchronization.
     see also get_grad_sync_channel_ids.
     """
@@ -890,7 +892,8 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
 class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
     """The driver part of a buffer-allocation executable."""
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh", grad_vars: Sequence[ShapedArray],
+    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
+                 grad_vars: Sequence[ShapedArray],
                  grad_sharding_specs: Sequence[pxla.ShardingSpec]):
         self.physical_mesh = physical_mesh
         grad_avals = [var.aval for var in grad_vars]

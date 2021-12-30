@@ -283,8 +283,10 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
-def get_compile_options(num_replicas: int, num_partitions: int, device_assignment: np.ndarray,
-                        use_spmd_partitioning: bool, parameter_is_tupled_arguments: int,
+def get_compile_options(num_replicas: int, num_partitions: int,
+                        device_assignment: np.ndarray,
+                        use_spmd_partitioning: bool,
+                        parameter_is_tupled_arguments: int,
                         build_random_seed: int):
     """Return CompileOptions for XLA compilation."""
     compile_options = xb.get_compile_options(
@@ -298,7 +300,8 @@ def get_compile_options(num_replicas: int, num_partitions: int, device_assignmen
     return compile_options
 
 
-def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr, donated_invars: Sequence[bool], backend):
+def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
+                             donated_invars: Sequence[bool], backend):
     """Convert a jaxpr to a XLA HLO computation."""
     backend_name = backend.platform
     in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
@@ -335,7 +338,8 @@ def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr, donated_invar
     return built
 
 
-def setup_computation_alias(xla_computation: xc.XlaComputation, donated_invars: Sequence[bool]):
+def setup_computation_alias(xla_computation: xc.XlaComputation,
+                            donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
     Assume the tensors in output tuple strictly match the donated parameters.
@@ -367,7 +371,8 @@ def setup_computation_alias(xla_computation: xc.XlaComputation, donated_invars: 
         p_in += 1
 
 
-def count_communication_primitives(hlo_ir: str, ignore_scalar_all_reduce: bool = False):
+def count_communication_primitives(hlo_ir: str,
+                                   ignore_scalar_all_reduce: bool = False):
     """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
     all_reduce = hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")
@@ -409,7 +414,9 @@ def compile_dummy_zero_constant(backend, num_devices: int):
     return compiled
 
 
-def compile_allocate_zero_buffers(backend, num_devices: int, shapes: Sequence[Sequence[int]], dtypes: Sequence[jnp.dtype]):
+def compile_allocate_zero_buffers(backend, num_devices: int,
+                                  shapes: Sequence[Sequence[int]],
+                                  dtypes: Sequence[jnp.dtype]):
     """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
     c = xc.XlaBuilder("allocate_zero_buffers")
     sharding = xc.OpSharding()
@@ -433,7 +440,9 @@ def compile_allocate_zero_buffers(backend, num_devices: int, shapes: Sequence[Se
     return compiled
 
 
-def compile_memset_zero_buffers(backend, num_devices: int, shapes: Sequence[Sequence[int]], dtypes: Sequence[jnp.dtype]):
+def compile_memset_zero_buffers(backend, num_devices: int,
+                                shapes: Sequence[Sequence[int]],
+                                dtypes: Sequence[jnp.dtype]):
     """
     Compile an XLA executable that memset zero buffers with given shape and dtypes.
     Try to avoid memcpy
@@ -856,7 +865,10 @@ def get_ray_namespace_str():
     return namespace_str
 
 
-def write_tsv(heads: Sequence[str], values: Sequence[Any], filename: str, print_line: bool = True):
+def write_tsv(heads: Sequence[str],
+              values: Sequence[Any],
+              filename: str,
+              print_line: bool = True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
 

@@ -24,7 +24,9 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
 from parax.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias
 
 
-def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef, donated_invars: Sequence[bool], *aval: Sequence[ShapedArray]):
+def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
+                    donated_invars: Sequence[bool],
+                    *aval: Sequence[ShapedArray]):
     """Return a unique string as the query key of a computation definition."""
 
     # Algorithm:
@@ -126,11 +128,13 @@ def shard_parallel_callable(
                                    record_file, strategy_config, *avals)
 
 
-def shard_parallel_internal(fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
-                            donated_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
-                            logical_mesh_choices: Sequence[Sequence[int]],
-                            logical_mesh_search_mode: str, memory_budget_per_device: float,
-                            search_task: Optional[SearchTask], record_file: str, strategy_config: StrategyConfig, *avals: Sequence[ShapedArray]):
+def shard_parallel_internal(
+        fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
+        donated_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: str, memory_budget_per_device: float,
+        search_task: Optional[SearchTask], record_file: str,
+        strategy_config: StrategyConfig, *avals: Sequence[ShapedArray]):
     """
     Compile a callable with auto-sharding pass.
 
@@ -207,10 +211,14 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thu
 
 
 def shard_parallel_internal_gradient_accumulation(
-        fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable, donated_invars: Sequence[bool],
-        batch_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh, logical_mesh_choices: Sequence[Sequence[int]],
-        logical_mesh_search_mode: Sequence[str], memory_budget_per_device: float, search_task: SearchTask,
-        record_file: str, strategy_config: StrategyConfig, *raw_avals: Sequence[ShapedArray]):
+        fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
+        donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+        physical_mesh: PhysicalDeviceMesh,
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: Sequence[str],
+        memory_budget_per_device: float, search_task: SearchTask,
+        record_file: str, strategy_config: StrategyConfig,
+        *raw_avals: Sequence[ShapedArray]):
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches

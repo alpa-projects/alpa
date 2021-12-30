@@ -4,7 +4,7 @@ import logging
 import multiprocessing
 import time
 import traceback
-from typing import Sequence, Optional, Union
+from typing import Sequence, Optional, Union, Tuple
 from warnings import warn
 
 import numpy as np
@@ -100,19 +100,18 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-def compile_with_search(backend: xla_extension.Client,
-                        xla_computation: xla_extension.XlaComputation,
-                        avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-                        donated_invars: Sequence[bool],
-                        physical_mesh: "PhysicalDeviceMesh",
-                        logical_mesh_choices: Sequence[Sequence[int]],
-                        logical_mesh_search_mode: str,
-                        memory_budget_per_device: Optional[float],
-                        search_task: Optional[SearchTask],
-                        record_file: Optional[str],
-                        multiple_stages: Union[str, bool],
-                        grad_acc_num_micro_batches: Optional[int],
-                        bypass_device_assignment_check: bool):
+def compile_with_search(
+        backend: xla_extension.Client,
+        xla_computation: xla_extension.XlaComputation,
+        avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
+        donated_invars: Sequence[bool], physical_mesh: "PhysicalDeviceMesh",
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: str,
+        memory_budget_per_device: Optional[float],
+        search_task: Optional[SearchTask], record_file: Optional[str],
+        multiple_stages: Union[str,
+                               bool], grad_acc_num_micro_batches: Optional[int],
+        bypass_device_assignment_check: bool):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
@@ -327,15 +326,16 @@ def compile_with_search(backend: xla_extension.Client,
     return compiled, strategy_config
 
 
-def compile_with_given_strategy(backend: xla_extension.Client,,
-                                xla_computation: xla_extension.XlaComputation,
-                                strategy_config: StrategyConfig,
-                                num_devices: int,
-                                bypass_device_assignment_check: bool,
-                                hlo_proto_status: HloProtoStatus,
-                                rewrite_for_grad_acc: bool = False,
-                                rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
-                                run_backend_codegen: Union[str, bool] = "auto"):
+def compile_with_given_strategy(
+        backend: xla_extension.Client,
+        xla_computation: xla_extension.XlaComputation,
+        strategy_config: StrategyConfig,
+        num_devices: int,
+        bypass_device_assignment_check: bool,
+        hlo_proto_status: HloProtoStatus,
+        rewrite_for_grad_acc: bool = False,
+        rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
+        run_backend_codegen: Union[str, bool] = "auto"):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
@@ -427,11 +427,11 @@ def compile_with_given_strategy(backend: xla_extension.Client,,
     return compiled
 
 
-def get_input_output_sharding_specs(hlo_module: xla_extension.HloModule,
-                                    avals: Sequence[ShapedArray],
-                                    out_avals: Sequence[ShapedArray],
-                                    num_devices: int,
-                                    logical_mesh_shape: Sequence[int]) ->Tuple[Sequence[pxla.ShardingSpec], Sequence[pxla.ShardingSpec]]:
+def get_input_output_sharding_specs(
+    hlo_module: xla_extension.HloModule, avals: Sequence[ShapedArray],
+    out_avals: Sequence[ShapedArray], num_devices: int,
+    logical_mesh_shape: Sequence[int]
+) -> Tuple[Sequence[pxla.ShardingSpec], Sequence[pxla.ShardingSpec]]:
     """Get the sharding specs of input/output tensors from an HloModule.
 
     Args:
@@ -466,7 +466,9 @@ def get_input_output_sharding_specs(hlo_module: xla_extension.HloModule,
     return input_sharding_specs, output_sharding_specs
 
 
-def _hlo_sharding_to_sharding_spec_no_tuple(proto: bytes, aval: ShapedArray, logical_mesh: Sequence[int]) -> pxla.ShardingSpec:
+def _hlo_sharding_to_sharding_spec_no_tuple(
+        proto: bytes, aval: ShapedArray,
+        logical_mesh: Sequence[int]) -> pxla.ShardingSpec:
     """The internal function of hlo_sharding_to_sharding_spec."""
     sharding_type, tile_assignment_dimensions, tile_assignment_devices = (
         proto.type, proto.tile_assignment_dimensions,
@@ -535,9 +537,9 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto: bytes, aval: ShapedArray, log
     return pxla.ShardingSpec(sharding, mesh_mapping)
 
 
-def hlo_sharding_to_sharding_spec(hlo_sharding: xla_extension.HloSharding,
-                                  aval: ShapedArray,
-                                  logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
+def hlo_sharding_to_sharding_spec(
+        hlo_sharding: xla_extension.HloSharding, aval: ShapedArray,
+        logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Convert hlo sharding to sharding spec."""
     logical_mesh = LogicalDeviceMesh(
         None,
@@ -555,7 +557,9 @@ def hlo_sharding_to_sharding_spec(hlo_sharding: xla_extension.HloSharding,
                                                        logical_mesh)
 
 
-def make_replicated_spec(aval: ShapedArray, logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
+def make_replicated_spec(
+        aval: ShapedArray,
+        logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Make a replicated ShardingSpec."""
     sharding = (pxla.NoSharding(),) * len(aval.shape)
     mesh_mapping = (pxla.Replicated(np.prod(logical_mesh_shape)),)

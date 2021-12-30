@@ -110,21 +110,22 @@ class CompileWorker:
         self.cnt += 1
 
         # Compile with search to get sharding annotations.
-        jaxpr_config = (avals, out_avals, donate_invars)
-        mesh_config = (None, [logical_mesh
-                             ], global_config.mesh_shape_search_mode,
-                       global_config.memory_budget_per_device, None, None)
-        multiple_stage_config = {
-            "multiple_stages": "stage_and_hooked",
+        jaxpr_args = (avals, out_avals, donate_invars)
+        mesh_kwargs = {
+            "logical_mesh_choices": [logical_mesh],
+            "return_mode": "stage_and_hook_protos",
             "grad_acc_num_micro_batches": None,
-            "bypass_device_assignment_check": True
+            "bypass_device_assignment_check": True,
+            "memory_budget_per_device": global_config.memory_budget_per_device,
+            "logical_mesh_search_mode": global_config.mesh_shape_search_mode,
+            "search_task": None,
+            "record_file": None,
         }
-
         try:
             _, (protos, hooked_proto,
                 strategy_config) = self.compile_with_config(
-                    stage_id, global_config_dict, proto, jaxpr_config,
-                    mesh_config, multiple_stage_config)
+                    stage_id, global_config_dict, proto, jaxpr_args,
+                    mesh_kwargs)
         except RuntimeError:
             logger.warning("Unexpected error in compile time")
             return stage_id, None
@@ -154,8 +155,8 @@ class CompileWorker:
             sharding_annotated_computation,
             strategy_config,
             logical_mesh.num_devices,
+            HloProtoStatus.SHARDING_ANNOTATED,
             bypass_device_assignment_check=True,
-            hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=output_acc_grad_indices)
         optimized_proto = compiled.hlo_modules(
@@ -165,12 +166,11 @@ class CompileWorker:
                           hooked_proto, apply_grad_input_sharding_protos)
 
     def compile_with_config(self, stage_id, global_config_dict, proto,
-                            jaxpr_config, mesh_config, multiple_stage_config):
+                            jaxpr_args, mesh_kwargs):
         global_config.restore(global_config_dict)
         built = xla_client.XlaComputation(proto)
-        return stage_id, compile_with_search(self.backend, built, *jaxpr_config,
-                                             *mesh_config,
-                                             **multiple_stage_config)
+        return stage_id, compile_with_search(self.backend, built, *jaxpr_args,
+                                             **mesh_kwargs)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -278,8 +278,8 @@ class HloCostModelProfileWorker:
                                                    xla_computation,
                                                    config,
                                                    self.num_devices,
-                                                   True,
                                                    hlo_proto_status,
+                                                   bypass_device_assignment_check=True,
                                                    run_backend_codegen=True)
         except RuntimeError:
             return stage_id, np.inf, -1, (0, 0, 0, 0)

@@ -66,7 +66,7 @@ def assert_data_parallel_cost(state,
         assert num_not_sharded == 0
     else:
         for weight in params:
-            assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
+            assert_all_replicated(weight, np.prod(device_mesh.shape))
 
 
 class AutoShardingConvTest(unittest.TestCase):

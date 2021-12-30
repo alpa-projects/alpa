@@ -328,8 +328,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
             xla_computation,
             self.strategy_config,
             num_devices,
-            is_distributed,
             HloProtoStatus.SHARDING_ANNOTATED,
+            bypass_device_assignment_check=is_distributed,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
 
@@ -832,6 +832,7 @@ def generate_sharded_xla_computations(
         name, jax_computations, computation_donate_invars)
     built = xc.XlaComputation(proto)
     in_avals, out_avals, donated_invars = jaxpr_config
+    num_micro_batches = 1  # TOOD(lmzheng): use the correct value.
 
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
@@ -841,15 +842,15 @@ def generate_sharded_xla_computations(
         in_avals,
         out_avals,
         donated_invars,
-        None,
         logical_mesh_choices,
-        logical_mesh_search_mode,
-        memory_budget_per_device,
-        search_task,
-        record_file,
-        multiple_stages=True,
-        grad_acc_num_micro_batches=None,
-        bypass_device_assignment_check=True)
+        "stage_protos",
+        num_micro_batches,
+        bypass_device_assignment_check=True,
+        memory_budget_per_device=memory_budget_per_device,
+        logical_mesh_search_mode=logical_mesh_search_mode,
+        logical_mesh_search_physical_mesh=None,
+        search_task=search_task,
+        record_file=record_file)
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,

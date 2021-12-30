@@ -208,7 +208,7 @@ class AutoShardingMoETest(unittest.TestCase):
             assert n_total == n_all_reduce + n_all_to_all
 
             # Check sharding specification
-            num_devices = np.prod(device_mesh.id_mesh.shape)
+            num_devices = np.prod(device_mesh.shape)
             assert_all_replicated(
                 optimizer.target["params"]["attention"]["output"]["dense"]
                 ["kernel"], num_devices)

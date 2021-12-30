@@ -336,8 +336,9 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         self.compiled = compile_with_given_strategy(worker.backend,
                                                     xla_computation,
                                                     strategy_config,
-                                                    num_devices, False,
-                                                    hlo_proto_status)
+                                                    num_devices,
+                                                    hlo_proto_status,
+                                                    bypass_device_assignment_check=False)
         self.worker = worker
 
         # Set up timers
@@ -719,10 +720,10 @@ class GradAccMeshWorkerExecutable:
 
         self.accumulate_grad = compile_with_given_strategy(
             worker.backend, xla_client.XlaComputation(accumulate_grad_proto),
-            strategy_config, num_devices, False, hlo_proto_status)
+            strategy_config, num_devices, hlo_proto_status, bypass_device_assignment_check=False)
         self.apply_grad = compile_with_given_strategy(
             worker.backend, xla_client.XlaComputation(apply_grad_proto),
-            strategy_config, num_devices, False, hlo_proto_status)
+            strategy_config, num_devices, hlo_proto_status, bypass_device_assignment_check=False)
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
             worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices

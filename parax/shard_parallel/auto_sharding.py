@@ -104,14 +104,16 @@ def compile_with_search(
         backend: xla_extension.Client,
         xla_computation: xla_extension.XlaComputation,
         avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-        donated_invars: Sequence[bool], physical_mesh: "PhysicalDeviceMesh",
-        logical_mesh_choices: Sequence[Sequence[int]],
-        logical_mesh_search_mode: str,
-        memory_budget_per_device: Optional[float],
-        search_task: Optional[SearchTask], record_file: Optional[str],
-        multiple_stages: Union[str,
-                               bool], grad_acc_num_micro_batches: Optional[int],
-        bypass_device_assignment_check: bool):
+        donated_invars: Sequence[bool],
+        logical_mesh_choices: Sequence[LogicalDeviceMesh],
+        return_mode: str,
+        grad_acc_num_micro_batches: int,
+        bypass_device_assignment_check: bool,
+        memory_budget_per_device: Optional[float] = None,
+        logical_mesh_search_mode: Optional[str] = None,
+        logical_mesh_search_physical_mesh: Optional["PhysicalDeviceMesh"] = None,
+        search_task: Optional[SearchTask] = None,
+        record_file: Optional[str] = None):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
@@ -121,30 +123,41 @@ def compile_with_search(
       avals: The abstract values of input arguments.
       out_avals: The abstract values of outputs.
       donated_invars: Whether the arguments are donated.
-      physical_mesh: The physical device mesh.
       logical_mesh_choices: The candidates of logical mesh shape.
         If there is only one choice, use the given one. If there are multiple choices,
         we will try all of them and pick the best.
-      logical_mesh_search_mode: The choices are {"measurement", "cost_model"}.
-        If is "measurement", use real profiling to pick the best logical mesh shape.
-        If is "cost_model", use cost estimation in HLO IR to pick the best one.
-        This is ignored if len(logical_mesh_choices) == 1.
-      memory_budget_per_device: The memory budget per device in bytes.
-      search_task: Only used when doing logical mesh shape search.
-        Used when dumping measurement records to the file.
-      record_file: If is not None, dump measurement records into
-        this file.
-      multiple_stages: Whether to return multiple stages sliced by xla_pipeline_maker.
+      return_mode: The mode of return value. The choices are {"executable", "stage_protos", "stage_and_hook_protos"}.
+        If it is "executable", return the compiled xla executable.
+        If it is "stage_protos", return the HLO Module proto of multiple pipeline stages.
+        If it is "stage_and_hook_protos", return the HLO Module proto of multiple pipeline stages and the hooked hlo sharding.
       grad_acc_num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
       bypass_device_assignment_check: Whether to compile without exact devices.
+      memory_budget_per_device: The memory budget per device in bytes.
+      logical_mesh_search_mode: Only used when doing logical mesh shape search.
+        The choices are {"measurement", "cost_model"}.
+        If it is "measurement", use real profiling to pick the best logical mesh shape.
+        If it is "cost_model", use cost estimation in HLO IR to pick the best one.
+        This is ignored if len(logical_mesh_choices) == 1.
+      logical_mesh_search_physical_mesh: Only used when doing logical mesh shape search.
+        The physical device mesh used for logical mesh search.
+      search_task: Only used when doing logical mesh shape search.
+        Used when dumping measurement records to the file.
+      record_file: Only used when doing logical mesh shape search.
+        If is not None, dump measurement records into this file.
     """
     from parax import testing
 
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
+
+    if return_mode in ["stage_protos", "stage_and_hook_protos"]:
+        multiple_stages = True
+    else:
+        multiple_stages = False
+
     run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
     return_after_slice_auto_sharded_stages = bool(multiple_stages)
 
@@ -214,6 +227,7 @@ def compile_with_search(
         else:
             reduce_scatter_grad_acc_friendly = False
 
+        # Temporarily disable this.
         grad_acc_num_micro_batches = None
 
         with XlaPassContext({
@@ -290,7 +304,8 @@ def compile_with_search(
                                              solution_vector)
 
             if logical_mesh_search_mode == "measurement":
-                mesh_exe = NormalMeshDriverExecutable(physical_mesh, compiled,
+                mesh_exe = NormalMeshDriverExecutable(logical_mesh_search_physical_mesh,
+                                                      compiled,
                                                       strategy_config, avals,
                                                       out_avals, donated_invars)
                 time_costs = tuple(mesh_exe.profile_with_dummy_inputs())
@@ -319,11 +334,15 @@ def compile_with_search(
     testing.last_compiled_auto_sharding_objective = objective
     strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
                                      solution_vector)
-    if multiple_stages == "stage_and_hooked":
-        return hlo_stages, hooked_proto, strategy_config
-    if multiple_stages:
+
+    if return_mode == "executable":
+        return compiled, strategy_config
+    elif return_mode == "stage_protos":
         return hlo_stages, strategy_config
-    return compiled, strategy_config
+    elif return_mode == "stage_and_hook_protos":
+        return hlo_stages, hooked_proto, strategy_config
+    else:
+        raise ValueError("Invalid return mode:" + return_mode)
 
 
 def compile_with_given_strategy(
@@ -331,8 +350,8 @@ def compile_with_given_strategy(
         xla_computation: xla_extension.XlaComputation,
         strategy_config: StrategyConfig,
         num_devices: int,
-        bypass_device_assignment_check: bool,
         hlo_proto_status: HloProtoStatus,
+        bypass_device_assignment_check: bool,
         rewrite_for_grad_acc: bool = False,
         rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
         run_backend_codegen: Union[str, bool] = "auto"):
@@ -348,9 +367,9 @@ def compile_with_given_strategy(
         on the driver node in the multi-host setting.
       hlo_proto_status: The optimization status of the
         input xla computation. see docs in the definition of `HloProtoStatus`.
-      rewrite_for_grad_acc: Whether do rewriting for gradient accumulation.
+      rewrite_for_grad_acc: Whether to do rewriting for gradient accumulation.
       rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
-      run_backend_codegen: Whether run the backend codegen to generate cuda binaries.
+      run_backend_codegen: Whether to run the backend codegen to generate cuda binaries.
     """
     compile_options = get_compile_options(
         num_replicas=1,

@@ -247,7 +247,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:
             xla_stages[i] = XlaShardedPipelineComputation.dummy_computation(
-                jax_all_stages[i].name, logical_mesh_choices[0].id_mesh.shape,
+                jax_all_stages[i].name, logical_mesh_choices[0].shape,
                 gensym_func)
 
         stage_donate_invars = [
@@ -257,18 +257,21 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         search_task = None
         record_file = None
         if global_config.pipeline_distributed_compile:
-            proto, jaxpr_config, flops = generate_sharded_xla_computations_compile_config(
+            proto, jaxpr_args, flops = generate_sharded_xla_computations_compile_config(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
-            mesh_config = (None, logical_mesh_choices, logical_mesh_search_mode,
-                           memory_budget_per_device, search_task, record_file)
-            multiple_stage_config = {
-                "multiple_stages": True,
+            mesh_kwargs = {
+                "logical_mesh_choices": logical_mesh_choices,
+                "return_mode": "stage_protos",
                 "grad_acc_num_micro_batches": None,
-                "bypass_device_assignment_check": True
+                "bypass_device_assignment_check": True,
+                "memory_budget_per_device": memory_budget_per_device,
+                "logical_mesh_search_mode": logical_mesh_search_mode,
+                "search_task": search_task,
+                "record_file": record_file,
             }
             compile_workers.submit(
-                compile_fn, (mesh_idx, mesh_global_config, proto, jaxpr_config,
-                             mesh_config, multiple_stage_config))
+                compile_fn, (mesh_idx, mesh_global_config, proto, jaxpr_args,
+                             mesh_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops

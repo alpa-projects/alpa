@@ -131,7 +131,7 @@ def shard_parallel_callable(
 def shard_parallel_internal(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
         donated_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
-        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_choices: Sequence[LogicalDeviceMesh],
         logical_mesh_search_mode: str, memory_budget_per_device: float,
         search_task: Optional[SearchTask], record_file: str,
         strategy_config: StrategyConfig, *avals: Sequence[ShapedArray]):
@@ -181,20 +181,20 @@ def shard_parallel_internal(
             avals,
             out_avals,
             donated_invars,
-            physical_mesh,
             logical_mesh_choices,
-            logical_mesh_search_mode,
-            memory_budget_per_device,
-            search_task,
-            record_file,
-            multiple_stages=False,
-            grad_acc_num_micro_batches=None,
-            bypass_device_assignment_check=physical_mesh.is_distributed)
+            "executable",
+            1,
+            bypass_device_assignment_check=physical_mesh.is_distributed,
+            memory_budget_per_device=memory_budget_per_device,
+            logical_mesh_search_mode=logical_mesh_search_mode,
+            logical_mesh_search_physical_mesh=physical_mesh,
+            search_task=search_task,
+            record_file=record_file)
     else:
         compiled = compile_with_given_strategy(backend, built, strategy_config,
                                                physical_mesh.num_devices,
-                                               physical_mesh.is_distributed,
-                                               HloProtoStatus.UNOPTIMIZED)
+                                               HloProtoStatus.UNOPTIMIZED,
+                                               bypass_device_assignment_check=physical_mesh.is_distributed)
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
@@ -214,8 +214,8 @@ def shard_parallel_internal_gradient_accumulation(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
         donated_invars: Sequence[bool], batch_invars: Sequence[bool],
         physical_mesh: PhysicalDeviceMesh,
-        logical_mesh_choices: Sequence[Sequence[int]],
-        logical_mesh_search_mode: Sequence[str],
+        logical_mesh_choices: Sequence[LogicalDeviceMesh],
+        logical_mesh_search_mode: str,
         memory_budget_per_device: float, search_task: SearchTask,
         record_file: str, strategy_config: StrategyConfig,
         *raw_avals: Sequence[ShapedArray]):
@@ -247,15 +247,15 @@ def shard_parallel_internal_gradient_accumulation(
         avals,
         out_avals,
         donated_invars,
-        physical_mesh,
         logical_mesh_choices,
-        logical_mesh_search_mode,
-        memory_budget_per_device,
-        search_task,
-        record_file,
-        multiple_stages=True,
-        grad_acc_num_micro_batches=num_micro_batches,
-        bypass_device_assignment_check=physical_mesh.is_distributed)
+        "stage_protos",
+        num_micro_batches,
+        bypass_device_assignment_check=physical_mesh.is_distributed,
+        memory_budget_per_device=memory_budget_per_device,
+        logical_mesh_search_mode=logical_mesh_search_mode,
+        logical_mesh_search_physical_mesh=physical_mesh,
+        search_task=search_task,
+        record_file=record_file)
     assert len(hlo_protos) == 2
 
     # Compile these two HLOs separately to get two XLA executables
@@ -279,14 +279,14 @@ def shard_parallel_internal_gradient_accumulation(
         accumulate_grad,
         strategy_config,
         physical_mesh.num_devices,
-        bypass_device_assignment_check,
         HloProtoStatus.SHARDING_ANNOTATED,
+        bypass_device_assignment_check,
         rewrite_for_grad_acc=True)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,
                                              physical_mesh.num_devices,
-                                             bypass_device_assignment_check,
-                                             HloProtoStatus.SHARDING_ANNOTATED)
+                                             HloProtoStatus.SHARDING_ANNOTATED,
+                                             bypass_device_assignment_check)
 
     # Compile them to a single mesh executable
     mesh_executable = GradAccMeshDriverExecutable(physical_mesh,

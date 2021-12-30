@@ -958,3 +958,11 @@ def compute_param_number(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
+
+
+def get_var_mapping(mapping, var):
+    """map the var to a new value if var is Var and in the mapping."""
+    if isinstance(var, Var) and var in mapping:
+        return mapping[var]
+    else:
+        return var

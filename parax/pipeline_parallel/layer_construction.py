@@ -3,7 +3,7 @@ Do rematerialization at the boundary of layer."""
 
 from functools import partial, wraps
 import logging
-from typing import Callable
+from typing import Callable, Union
 
 from jax._src.tree_util import tree_unflatten
 from jax import tree_flatten
@@ -19,17 +19,10 @@ from parax.pipeline_parallel.layer_stats import (is_nontrivial, eqn_flops,
                                                  log_layer_slicing_stats)
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
-from parax.util import slices_to_jaxpr, OrderedSet
+from parax.util import slices_to_jaxpr, OrderedSet, get_var_mapping
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-
-def get_var_mapping(mapping, var):
-    if isinstance(var, Var) and var in mapping:
-        return mapping[var]
-    else:
-        return var
 
 
 def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
@@ -364,7 +357,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
         k = A_argmin[r, q]
         reversed_sliced_eqns.append(jaxpr.eqns[k:r])
         r = k
-    assert r == 0, "no solution for layer clustering" if r == -1 else "unknown error"
+    assert r == 0, ("no solution for layer clustering" if r == -1 else "unknown error")
     solution = list(reversed(reversed_sliced_eqns))
 
     solution_info = {
@@ -398,7 +391,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                      remat: bool = False,
                                      layer_construction: bool = False,
                                      auto_layer_boundary: bool = False,
-                                     layer_num: int = None,
+                                     layer_num: Union[int, str] = None,
                                      eps: float = 0.6,
                                      cost_criteria: str = "flops",
                                      layer_eps: float = 0.0,
@@ -442,6 +435,21 @@ def layer_level_jaxpr_transformation(fn: Callable,
 
 
 def manual_remat(fn: Callable, static_argnums=(), lift_markers=False):
+    """Rematerialize an input function with manually selected layer boundaries.
+
+    Rematerialize each layer of an input function with manually selected layer
+    boundaries indicated by pipeline markers.
+
+    Args:
+        fn: the input function to rematerialize.
+        static_argnums: An optional int or collection of ints that specify
+          which positional arguments to treat as static (compile-time constant).
+          Same as in jax.
+        lift_markers: move the first pipeline marker as the first jaxpr eqn and
+          move the last pipeline marker as the last jaxpr eqn.
+    Returns:
+        A new function rematerializes each layer of the input function.
+    """
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=True,
@@ -452,10 +460,29 @@ def manual_remat(fn: Callable, static_argnums=(), lift_markers=False):
 
 def automatic_remat(fn: Callable,
                     static_argnums=(),
-                    layer_num: int = None,
+                    layer_num: Union[int, str] = None,
                     eps: float = 0.6,
                     cost_criteria: str = "flops",
                     layer_eps: float = 0.0):
+    """Rematerialize an input function with automatic boundaries.
+
+    Rematerialize each layer of an input function with automatically decided
+    layer boundaries.
+
+    Args:
+        fn: The input function to rematerialize.
+        static_argnums: An optional int or collection of ints that specify
+          which positional arguments to treat as static (compile-time constant).
+          Same as in jax.
+        layer_num: The number of layers to rematerialize. If set to "auto", the
+          number of layers will be automatically determined by a binary search.
+          The binary search might not work for complex input functions.
+        eps: The tolerance of inbalance of the costs of different layers.
+        cost_criteria: The cost criteria to use for deciding the layers
+        layer_eps: A parameter for layer_num binary search.
+    Returns:
+        A new function rematerializes each layer of the input function.
+    """
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=True,
@@ -471,6 +498,22 @@ def manual_layer_construction(fn: Callable,
                               static_argnums=(),
                               remat_layer=False,
                               lift_markers=False):
+    """Setup manually selected layer boundaries.
+
+    Add input variables of each layer to its start pipeline marker and output
+    variables of each layer to its end pipeline marker.
+
+    Args:
+        fn: the input function.
+        static_argnums: An optional int or collection of ints that specify
+          which positional arguments to treat as static (compile-time constant).
+          Same as in jax.
+        remat_layer: Whether to rematerialize each layer at layer boundaries.
+        lift_markers: Move the first pipeline marker as the first jaxpr eqn and
+          move the last pipeline marker as the last jaxpr eqn.
+    Returns:
+        A new function with correctly setup pipeline markers.
+    """
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=remat_layer,
@@ -486,6 +529,27 @@ def automatic_layer_construction(fn: Callable,
                                  eps: float = 0.6,
                                  cost_criteria: str = "flops",
                                  layer_eps: float = 0.0):
+    """Automatically cluster the equations in a jaxpr into layers.
+
+    Automatically cluster the equations in a jaxpr into layers and add pipeline
+    markers at layer boundaries.
+
+    Args:
+        fn: the input function.
+        static_argnums: An optional int or collection of ints that specify
+          which positional arguments to treat as static (compile-time constant).
+          Same as in jax.
+        remat_layer: Whether to rematerialize each layer at layer boundaries.
+        layer_num: the number of layers to rematerialize. If set to "auto", the
+          number of layers will be automatically determined by a binary search.
+          The binary search might not work for complex input functions.
+        eps: the tolerance of inbalance of the costs of different layers.
+        cost_criteria: the cost criteria to use for deciding the layers
+        layer_eps: a parameter for layer_num binary search.
+    Returns:
+        A new function rematerializes each layer of the input function.
+    """
+
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=remat_layer,

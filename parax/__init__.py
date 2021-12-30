@@ -11,9 +11,13 @@ from . import collective
 
 # Shortcut
 from parax.api import clear_callable_cache, grad, parallelize
-from parax.device_mesh import (DeviceCluster, LogicalDeviceMesh, PhysicalDeviceMesh)
+from parax.device_mesh import (DeviceCluster, LogicalDeviceMesh,
+                               PhysicalDeviceMesh)
 from parax.global_env import global_config, set_parallelize_options
 from parax.mesh_profiling import ProfilingResultDatabase
-from parax.pipeline_parallel.primitive_def import (mark_pipeline, mark_pipeline_jaxpreqn)
-from parax.pipeline_parallel.layer_construction import (manual_remat, automatic_remat, automatic_layer_construction, manual_layer_construction)
+from parax.pipeline_parallel.primitive_def import (mark_pipeline,
+                                                   mark_pipeline_jaxpreqn)
+from parax.pipeline_parallel.layer_construction import (
+    manual_remat, automatic_remat, automatic_layer_construction,
+    manual_layer_construction)
 from parax.util import XlaPassContext

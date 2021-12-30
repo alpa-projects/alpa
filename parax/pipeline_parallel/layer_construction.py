@@ -21,7 +21,6 @@ from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.util import slices_to_jaxpr, OrderedSet
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -257,7 +256,7 @@ def jaxpr_eqns_input_sizes(jaxpr):
 
 def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
     nontrivial = np.array([is_nontrivial(eqn) for eqn in jaxpr.eqns],
-                           dtype=np.int32)
+                          dtype=np.int32)
     input_sizes = jaxpr_eqns_input_sizes(jaxpr)
     if cost_criteria == "flops":
         cost_fn = eqn_flops
@@ -265,10 +264,9 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         cost_fn = heavy_count
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
-    compute_costs = np.array([
-        cost_fn(eqn) if nt else 0
-        for nt, eqn in zip(nontrivial, jaxpr.eqns)
-    ], dtype=np.float64)
+    compute_costs = np.array(
+        [cost_fn(eqn) if nt else 0 for nt, eqn in zip(nontrivial, jaxpr.eqns)],
+        dtype=np.float64)
     return nontrivial, input_sizes, compute_costs
 
 
@@ -284,7 +282,8 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
     if cost_criteria == "flops":
         compute_costs_bound = compute_costs_avg * (1 + eps)
     elif cost_criteria == "count":
-        compute_costs_bound = max(compute_costs_avg * (1 + eps), compute_costs_avg + 5)
+        compute_costs_bound = max(compute_costs_avg * (1 + eps),
+                                  compute_costs_avg + 5)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
     LAYER_HEAVY_OP_LOWER_BOUND = 3
@@ -292,8 +291,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
         LAYER_HEAVY_OP_LOWER_BOUND = int(sum(non_trivial) / layer_num)
         logger.warning(
             "Too few non-trivial ops (dot, conv), which may influence"
-            " auto-sharding performance"
-        )
+            " auto-sharding performance")
 
     @numba.jit(nopython=True)
     def init():
@@ -309,7 +307,8 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                     if total_compute_cost >= compute_costs_bound:
                         blocked[l, r] = 0
                     continue
-                if (total_compute_cost >= compute_costs_bound and non_trivial[r - 1] and
+                if (total_compute_cost >= compute_costs_bound and
+                        non_trivial[r - 1] and
                         cnt > LAYER_HEAVY_OP_LOWER_BOUND):
                     break
                 blocked[l, r] = 0
@@ -317,16 +316,18 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
 
     @numba.jit(nopython=True)
     def dp(input_sizes, blocked):
-        max_cost = np.full((length + 1, layer_num + 1), np.inf, dtype=np.float32)
+        max_cost = np.full((length + 1, layer_num + 1),
+                           np.inf,
+                           dtype=np.float32)
         sum_cost_under_max = np.full((length + 1, layer_num + 1),
-                                  np.inf,
-                                  dtype=np.float32)
+                                     np.inf,
+                                     dtype=np.float32)
         max_cost_argmin = np.full((length + 1, layer_num + 1),
-                                 -1,
-                                 dtype=np.int32)
+                                  -1,
+                                  dtype=np.int32)
         solution_imbalance = np.full((length + 1, layer_num + 1),
-                                    np.inf,
-                                    dtype=np.float32)
+                                     np.inf,
+                                     dtype=np.float32)
         max_cost[0, 0] = 0
         sum_cost_under_max[0, 0] = 0
         # Currently use variance to measure imbalance
@@ -338,8 +339,8 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                 for k in range(0, r):
                     new_value = max(max_cost[k, q - 1],
                                     blocked[k + 1, r] + input_sizes[k, r])
-                    new_sum = (sum_cost_under_max[k, q - 1] + blocked[k + 1, r] +
-                               input_sizes[k, r])
+                    new_sum = (sum_cost_under_max[k, q - 1] +
+                               blocked[k + 1, r] + input_sizes[k, r])
                     new_imbalance = (solution_imbalance[k, q - 1] + k**2 / q -
                                      r**2 / (q + 1) + (r - k)**2)
                     if (new_value < max_cost[r, q] or
@@ -373,14 +374,17 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
 
 
 def search_layer_num(jaxpr, eps, layer_eps=0):
-    non_trivial, input_sizes, compute_costs = get_layer_construction_costs(jaxpr)
+    non_trivial, input_sizes, compute_costs = get_layer_construction_costs(
+        jaxpr)
     l = 2
     r = int(non_trivial.sum() / 3) + 1
-    _, solution_info = cluster_jaxpr_by_cost(jaxpr, l, eps, (non_trivial, input_sizes, compute_costs))
+    _, solution_info = cluster_jaxpr_by_cost(
+        jaxpr, l, eps, (non_trivial, input_sizes, compute_costs))
     l_val = solution_info["total_cost"]
     while r - l > 1:
         mid = int((l + r) / 2)
-        _, solution_info = cluster_jaxpr_by_cost(jaxpr, mid, eps, (non_trivial, input_sizes, compute_costs))
+        _, solution_info = cluster_jaxpr_by_cost(
+            jaxpr, mid, eps, (non_trivial, input_sizes, compute_costs))
         mid_val = solution_info["total_cost"]
         if mid_val > l_val * (1 + layer_eps):
             r = mid
@@ -405,26 +409,25 @@ def layer_level_jaxpr_transformation(fn: Callable,
     @wraps(fn)
     def wrapped(*args):
         jaxpr, out_shape_tree = make_jaxpr(fn,
-                                                    static_argnums=static_argnums,
-                                                    return_shape=True)(*args)
+                                           static_argnums=static_argnums,
+                                           return_shape=True)(*args)
         if auto_layer_boundary:
             nonlocal layer_num
             if layer_num == "auto":
                 layer_num = search_layer_num(jaxpr, eps, layer_eps)
             costs = get_layer_construction_costs(jaxpr,
                                                  cost_criteria=cost_criteria)
-            sliced_eqns, solution_info = cluster_jaxpr_by_cost(jaxpr,
-                                                          layer_num,
-                                                          eps,
-                                                          costs,
-                                                          cost_criteria=cost_criteria)
+            sliced_eqns, solution_info = cluster_jaxpr_by_cost(
+                jaxpr, layer_num, eps, costs, cost_criteria=cost_criteria)
         else:
             if lift_markers:
                 jaxpr = lift_pipeline_marker(jaxpr)
             sliced_eqns = slice_eqns_by_pipeline_marks(jaxpr)
         log_layer_slicing_stats(jaxpr, sliced_eqns)
         if remat:
-            jaxpr = remat_jaxpr(jaxpr, sliced_eqns, add_pipeline_marks=layer_construction)
+            jaxpr = remat_jaxpr(jaxpr,
+                                sliced_eqns,
+                                add_pipeline_marks=layer_construction)
             if layer_construction:
                 sliced_eqns = slice_eqns_by_pipeline_marks(jaxpr)
         if layer_construction:
@@ -447,9 +450,12 @@ def manual_remat(fn: Callable, static_argnums=(), lift_markers=False):
                                             lift_markers=lift_markers)
 
 
-def automatic_remat(fn: Callable, static_argnums=(),
-               layer_num: int = None, eps: float = 0.6,
-               cost_criteria: str = "flops", layer_eps: float = 0.0):
+def automatic_remat(fn: Callable,
+                    static_argnums=(),
+                    layer_num: int = None,
+                    eps: float = 0.6,
+                    cost_criteria: str = "flops",
+                    layer_eps: float = 0.0):
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=True,
@@ -476,8 +482,10 @@ def manual_layer_construction(fn: Callable,
 def automatic_layer_construction(fn: Callable,
                                  static_argnums=(),
                                  remat_layer=False,
-                                 layer_num: int = None, eps: float = 0.6,
-                                 cost_criteria: str = "flops", layer_eps: float = 0.0):
+                                 layer_num: int = None,
+                                 eps: float = 0.6,
+                                 cost_criteria: str = "flops",
+                                 layer_eps: float = 0.0):
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=remat_layer,

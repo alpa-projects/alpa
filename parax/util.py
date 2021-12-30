@@ -857,9 +857,8 @@ def get_num_hosts_and_num_devices(args):
     return num_hosts, num_devices_per_host
 
 
-def get_ray_namespace_str():
+def get_ray_namespace_str(prefix=global_config.default_ray_namespace_prefix):
     """Get a unique ray namespace str to avoid some annoyed warnings."""
-    prefix = global_config.default_ray_namespace_prefix
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     namespace_str = f"{prefix}-{date_str}"
     return namespace_str

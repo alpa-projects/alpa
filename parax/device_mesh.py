@@ -445,8 +445,7 @@ class PhysicalDeviceMesh:
                     for devices_this_host in self.devices
                     for i in devices_this_host
                 ])
-            if not skip_launch:
-                self._launch_xla_servers()
+            self._launch_xla_servers()
 
     @property
     def host_ips(self):
@@ -1082,7 +1081,7 @@ class VirtualPhysicalMesh:
         """Whether this mesh should be considered as a distributed mesh."""
         return True
 
-    def get_physical_mesh(self, skip_launch=False):
+    def get_physical_mesh(self):
         """Convert to a physical mesh (which will request resources from Ray)."""
         return PhysicalDeviceMesh(
             host_ids=self.host_ids,
@@ -1090,8 +1089,7 @@ class VirtualPhysicalMesh:
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             devices=self.device_ids,
-            use_ray=True,
-            skip_launch=skip_launch)
+            use_ray=True)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Generate a logical mesh."""

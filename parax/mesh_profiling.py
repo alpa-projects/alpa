@@ -1,14 +1,12 @@
-# pylint: disable=no-self-use
-"""Profiling communication cost."""
+"""Profiling communication cost for device meshes."""
 from collections import defaultdict
 import os
 import pickle
 import time
-import ray
 
 import numpy as np
-
 from jax.lib import xla_client, xla_bridge, xla_extension
+import ray
 
 from parax.util import GB, print_used_time, XlaPassContext
 
@@ -140,6 +138,7 @@ class MeshProfilingResult:
 
 
 class ProfilingResultDatabase:
+    """A database that stores profiling results for multiple device mesh shapes."""
 
     def __init__(self, data={}):
         self.data = data
@@ -290,7 +289,8 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     return shapes, backend.compile(loop_computation, compile_options)
 
 
-def to_np_dtype(dtype_str):
+def to_np_dtype(dtype_str: str):
+    """Convert a string type to np dtype"""
     if dtype_str == "f32":
         return np.dtype("float32")
     elif dtype_str == "f16":
@@ -300,12 +300,14 @@ def to_np_dtype(dtype_str):
 
 
 def rank_0_print(host_id, msg):
+    """Print message on rank 0."""
     if host_id == 0:
         print(msg, flush=True)
 
 
 def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
                        num_devices_per_node, op_info):
+    """Profile one HLO operator."""
     if op_info[0] == "dot":
         n, m, k, dtype_str = op_info[1]
         dtype = to_np_dtype(dtype_str)
@@ -454,6 +456,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
 
 def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                     cache_filename):
+    """Profile a list of HLO operators."""
     results = []
     num_devices_per_node = 8
     save_every = 15
@@ -486,6 +489,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
 
 
 def profile_dot(device_cluster, cache_filename):
+    """Profile the compute cost of dot."""
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
@@ -511,12 +515,13 @@ def profile_dot(device_cluster, cache_filename):
 
 def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                                   size_configs):
+    """Enumerate all possible collective groups."""
     # Enumerate all possible logical meshes
     logical_mesh_shapes = []
-    total_devices = num_hosts * num_devices_per_host
-    for i in range(1, total_devices + 1):
-        if total_devices % i == 0:
-            logical_mesh_shapes.append((total_devices // i, i))
+    num_devices = num_hosts * num_devices_per_host
+    for i in range(1, num_devices + 1):
+        if num_devices % i == 0:
+            logical_mesh_shapes.append((num_devices // i, i))
 
     # Enumerate all replica groups
     all_specs = set()
@@ -547,7 +552,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
 
 def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
-    """Profile costs for all dot and comuniation primitives."""
+    """Profile costs for all dot and communication primitives."""
     from parax.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
@@ -669,6 +674,7 @@ def estimate_hlo_module_cost(hlo_module,
                              profiling_results,
                              num_micro_batches=1,
                              grad_sync_channel_ids=""):
+    """Estimate the cost of an HLO module with the HLO instruction level cost model."""
     with XlaPassContext({
             "gpu_cost_model::profiling_results": profiling_results,
             "gpu_cost_model::num_micro_batches": num_micro_batches,

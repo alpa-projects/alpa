@@ -4,21 +4,27 @@ import logging
 import multiprocessing
 import time
 import traceback
+from typing import Sequence, Optional, Union, Tuple
 from warnings import warn
 
 import numpy as np
+from jax.core import ShapedArray
 from jax.interpreters import xla, pxla
+from jaxlib import xla_extension
 from jaxlib.xla_client import OpSharding
 
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
-                                  save_to_file)
+                                  save_to_file, SearchTask)
 from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# A constant to represent infinity
 INFINITY_COST = 1e13
+
+# The threshold of all-reduce combiner in bytes.
 ALLREDUCE_THRESHOLD = 1 << 60
 
 
@@ -59,7 +65,7 @@ class LogicalDeviceMesh:
         return self.id_mesh.shape
 
     @property
-    def total_devices(self):
+    def num_devices(self):
         return np.prod(self.id_mesh.shape)
 
     def all_gather_cost(self, num_bytes, mesh_dim):
@@ -94,40 +100,45 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-def compile_with_search(backend, xla_computation, avals, out_avals,
-                        donated_invars, physical_mesh, logical_mesh_choices,
-                        logical_mesh_search_mode, memory_budget_per_device,
-                        search_task, record_file, multiple_stages,
-                        grad_acc_num_micro_batches,
-                        bypass_device_assignment_check):
+def compile_with_search(
+        backend: xla_extension.Client,
+        xla_computation: xla_extension.XlaComputation,
+        avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
+        donated_invars: Sequence[bool], physical_mesh: "PhysicalDeviceMesh",
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: str,
+        memory_budget_per_device: Optional[float],
+        search_task: Optional[SearchTask], record_file: Optional[str],
+        multiple_stages: Union[str,
+                               bool], grad_acc_num_micro_batches: Optional[int],
+        bypass_device_assignment_check: bool):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
-      backend (xla_extension.Client): The XLA backend client.
-      xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
+      backend: The XLA backend client.
+      xla_computation: The unoptimized xla computation
         got by tracing the jax function.
-      avals (Sequence[ShapedArray]): The abstract values of input arguments.
-      out_avals (Sequence[ShapedArray]): The abstract values of outputs.
-      donated_invars (Sequence[bool]): Whether the arguments are donated.
-      bypass_device_assignment_check (bool): Whether compile without exact devices.
-      logical_mesh_choices (List[Tuple[int]]): The candidates of logical mesh shape.
-        If there is only one choice, use the given one. If there are multple choices,
+      avals: The abstract values of input arguments.
+      out_avals: The abstract values of outputs.
+      donated_invars: Whether the arguments are donated.
+      physical_mesh: The physical device mesh.
+      logical_mesh_choices: The candidates of logical mesh shape.
+        If there is only one choice, use the given one. If there are multiple choices,
         we will try all of them and pick the best.
-      logical_mesh_search_mode (str): The choices are {"measurement", "cost_model"}.
+      logical_mesh_search_mode: The choices are {"measurement", "cost_model"}.
         If is "measurement", use real profiling to pick the best logical mesh shape.
         If is "cost_model", use cost estimation in HLO IR to pick the best one.
         This is ignored if len(logical_mesh_choices) == 1.
-      memory_budget_per_device (Optional[float]): The memory budget per device in bytes.
-      search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
+      memory_budget_per_device: The memory budget per device in bytes.
+      search_task: Only used when doing logical mesh shape search.
         Used when dumping measurement records to the file.
-      record_file (Optional[str]): If is not None, dump measurement records into
+      record_file: If is not None, dump measurement records into
         this file.
-      strategy_config (Optional[StrategyConfig]): If is not None, do compilation
-        according to this configuration.
-      multiple_stages (bool | str): Whether to return multiple stages sliced by xla_pipeline_maker.
-      grad_acc_num_micro_batches (Optional[int]): The number of micro batches
+      multiple_stages: Whether to return multiple stages sliced by xla_pipeline_maker.
+      grad_acc_num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
+      bypass_device_assignment_check: Whether to compile without exact devices.
     """
     from parax import testing
 
@@ -137,12 +148,12 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
     return_after_slice_auto_sharded_stages = bool(multiple_stages)
 
-    total_devices = logical_mesh_choices[0].total_devices
+    num_devices = logical_mesh_choices[0].num_devices
     build_random_seed = global_config.build_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
-        num_partitions=total_devices,
-        device_assignment=np.arange(total_devices).reshape((1, -1)),
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
@@ -315,28 +326,31 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     return compiled, strategy_config
 
 
-def compile_with_given_strategy(backend,
-                                xla_computation,
-                                strategy_config,
-                                num_devices,
-                                bypass_device_assignment_check,
-                                hlo_proto_status,
-                                rewrite_for_grad_acc=False,
-                                rewrite_grad_acc_indices=None,
-                                run_backend_codegen="auto"):
+def compile_with_given_strategy(
+        backend: xla_extension.Client,
+        xla_computation: xla_extension.XlaComputation,
+        strategy_config: StrategyConfig,
+        num_devices: int,
+        bypass_device_assignment_check: bool,
+        hlo_proto_status: HloProtoStatus,
+        rewrite_for_grad_acc: bool = False,
+        rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
+        run_backend_codegen: Union[str, bool] = "auto"):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
-      backend (xla_extension.Client): The XLA backend client.
-      xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
+      backend: The XLA backend client.
+      xla_computation: The unoptimized xla computation
         got by tracing the jax function.
-      strategy_config (StrategyConfig): The auto-sharding strategy solution.
-      num_devices (int): The total number of devices.
-      bypass_device_assignment_check (bool): Set this to true if this compilation is invoked
+      strategy_config: The auto-sharding strategy solution.
+      num_devices: The total number of devices.
+      bypass_device_assignment_check: Set this to true if this compilation is invoked
         on the driver node in the multi-host setting.
-      hlo_proto_status (HloProtoStatus): The optimization status of the
+      hlo_proto_status: The optimization status of the
         input xla computation. see docs in the definition of `HloProtoStatus`.
-      rewrite_for_grad_acc (bool): Whether do rewriting for gradient accumulation.
+      rewrite_for_grad_acc: Whether do rewriting for gradient accumulation.
+      rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
+      run_backend_codegen: Whether run the backend codegen to generate cuda binaries.
     """
     compile_options = get_compile_options(
         num_replicas=1,
@@ -413,20 +427,23 @@ def compile_with_given_strategy(backend,
     return compiled
 
 
-def get_input_output_sharding_specs(hlo_module, avals, out_avals, num_devices,
-                                    logical_mesh_shape):
+def get_input_output_sharding_specs(
+    hlo_module: xla_extension.HloModule, avals: Sequence[ShapedArray],
+    out_avals: Sequence[ShapedArray], num_devices: int,
+    logical_mesh_shape: Sequence[int]
+) -> Tuple[Sequence[pxla.ShardingSpec], Sequence[pxla.ShardingSpec]]:
     """Get the sharding specs of input/output tensors from an HloModule.
 
     Args:
-      hlo_module (xla_extension.HloModule): The sharded HLO module.
-      avals (List[ShapedArray]: The abstract values of input tensors.
-      out_avals (List[ShapedArray]: The abstract values of output tensors.
-      num_devices (int): The total number of devices.
-      logical_mesh_shape (Tuple[int]): The shape of logical mesh.
+      hlo_module: The sharded HLO module.
+      avals: The abstract values of input tensors.
+      out_avals: The abstract values of output tensors.
+      num_devices: The total number of devices.
+      logical_mesh_shape: The shape of logical mesh.
 
     Returns:
-      input_sharding_specs (List[pxla.ShardingSpec]): The sharding specs of input tensors.
-      output_sharding_specs (List[pxla.ShardingSpec]): The sharding specs of output tensors.
+      input_sharding_specs: The sharding specs of input tensors.
+      output_sharding_specs: The sharding specs of output tensors.
     """
     if num_devices != 1:
         input_shardings = hlo_module.spmd_parameters_shardings()
@@ -449,7 +466,9 @@ def get_input_output_sharding_specs(hlo_module, avals, out_avals, num_devices,
     return input_sharding_specs, output_sharding_specs
 
 
-def _hlo_sharding_to_sharding_spec_no_tuple(proto, aval, logical_mesh):
+def _hlo_sharding_to_sharding_spec_no_tuple(
+        proto: bytes, aval: ShapedArray,
+        logical_mesh: Sequence[int]) -> pxla.ShardingSpec:
     """The internal function of hlo_sharding_to_sharding_spec."""
     sharding_type, tile_assignment_dimensions, tile_assignment_devices = (
         proto.type, proto.tile_assignment_dimensions,
@@ -518,7 +537,9 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto, aval, logical_mesh):
     return pxla.ShardingSpec(sharding, mesh_mapping)
 
 
-def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
+def hlo_sharding_to_sharding_spec(
+        hlo_sharding: xla_extension.HloSharding, aval: ShapedArray,
+        logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Convert hlo sharding to sharding spec."""
     logical_mesh = LogicalDeviceMesh(
         None,
@@ -536,7 +557,9 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
                                                        logical_mesh)
 
 
-def make_replicated_spec(aval, logical_mesh_shape):
+def make_replicated_spec(
+        aval: ShapedArray,
+        logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Make a replicated ShardingSpec."""
     sharding = (pxla.NoSharding(),) * len(aval.shape)
     mesh_mapping = (pxla.Replicated(np.prod(logical_mesh_shape)),)
@@ -582,7 +605,7 @@ def _call_solver_serialized_args(
         r_np,
         v_np,
         s_init_np=None):
-    """Call the solver with serailized arguments."""
+    """Call the solver with serialized arguments."""
     global last_s_val, last_objective
 
     import pulp
@@ -828,27 +851,28 @@ def _call_solver_serialized_args(
     return s_val, e_val, objective, status
 
 
-# Auto-sharded pipeline stages
+# Auto-sharded pipeline stages.
+# These global variables are used to receive values from XLA c++ passes.
 auto_sharded_hlo_stages = None
 
 hooked_sharding_protos = None
 
 
-def set_auto_sharded_hlo_stages(hlo_module_protos):
+def set_auto_sharded_hlo_stages(hlo_module_protos: Sequence[bytes]):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
     global auto_sharded_hlo_stages
     auto_sharded_hlo_stages = hlo_module_protos
 
 
-def set_hooked_sharding_protos(hlo_module_proto):
+def set_hooked_sharding_protos(hlo_module_proto: bytes):
     global hooked_sharding_protos
     hooked_sharding_protos = hlo_module_proto
 
 
-def get_auto_sharded_hlo_stages():
+def get_auto_sharded_hlo_stages() -> Sequence[bytes]:
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stages
 
 
-def get_hooked_sharding_protos():
+def get_hooked_sharding_protos() -> bytes:
     return hooked_sharding_protos

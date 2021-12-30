@@ -324,7 +324,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     key = (repr(outvar), batch_idx)
                     # get uuids of this outvar
                     get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
-                        physical_mesh.total_devices).reshape(
+                        physical_mesh.num_devices).reshape(
                             -1, num_devices_per_host)
 
                 exec_uuid = executable_uuids[stage_idx]
@@ -413,7 +413,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         physical_mesh = self.physical_meshes[mesh_idx]
         output_uuids = self.get_next_uuids(
-            len(vars) * physical_mesh.total_devices).reshape(
+            len(vars) * physical_mesh.num_devices).reshape(
                 len(physical_mesh.workers), len(vars), -1)
         for worker_idx, worker in enumerate(physical_mesh.workers):
             executable_config_lists[worker].append(config)
@@ -595,7 +595,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             num_args = len(mesh_arg_list)
             # (num_args, num_hosts, num_device)
             arg_uuids = self.get_next_uuids(
-                num_args * physical_mesh.total_devices).reshape(
+                num_args * physical_mesh.num_devices).reshape(
                     num_args, -1, physical_mesh.num_devices_per_host)
             for arg_idx, key in enumerate(mesh_arg_lists[mesh_idx]):
                 key = repr(key[0]), key[1]
@@ -801,9 +801,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             num_devices_per_host = physical_mesh.num_devices_per_host
             output_uuid_transposed = output_uuids[mesh_idx].transpose([1, 0, 2])
             output_bufs[mesh_idx] = np.empty(
-                (num_outs[mesh_idx], physical_mesh.total_devices), dtype=object)
+                (num_outs[mesh_idx], physical_mesh.num_devices), dtype=object)
             for i in range(num_outs[mesh_idx]):
-                for j in range(physical_mesh.total_devices):
+                for j in range(physical_mesh.num_devices):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     dtype = self.global_outvars[

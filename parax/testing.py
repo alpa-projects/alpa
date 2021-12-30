@@ -1,4 +1,4 @@
-"""Utility for testing."""
+"""Utilities for testing."""
 from collections.abc import Iterable
 import time
 import unittest

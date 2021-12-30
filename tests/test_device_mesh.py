@@ -27,9 +27,9 @@ class DeviceMeshTest(unittest.TestCase):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
-        total_devices = len(
+        num_devices = len(
             physical_mesh.host_ids) * physical_mesh.num_devices_per_host
-        logical_mesh = physical_mesh.get_logical_mesh([1, total_devices])
+        logical_mesh = physical_mesh.get_logical_mesh([1, num_devices])
         set_parallelize_options(devices=logical_mesh)
 
         @parallelize

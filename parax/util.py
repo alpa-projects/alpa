@@ -2,15 +2,13 @@
 """Common utilities."""
 from collections import OrderedDict
 from datetime import datetime
-
 from functools import partial
 import functools
 import itertools as it
 import os
 import subprocess
 import time
-import tqdm
-from typing import Sequence
+from typing import Sequence, Any
 from warnings import warn
 from functools import partialmethod
 
@@ -27,9 +25,11 @@ from jax.interpreters import xla, pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import _DeviceArray
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
-from jax.tree_util import tree_map, tree_flatten
+import jax.numpy as jnp
+from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import ray
+import tqdm
 
 from parax.global_env import global_config
 
@@ -42,7 +42,7 @@ FLAGS.experimental_cpp_jit = False
 ########################################
 
 
-def freeze_dict(pytree):
+def freeze_dict(pytree: PyTreeDef):
     """Convert a pytree to a FrozenDict."""
 
     def is_leaf(x):
@@ -56,7 +56,7 @@ def freeze_dict(pytree):
     return tree_map(freeze, pytree, is_leaf)
 
 
-def auto_static_argnums(args):
+def auto_static_argnums(args: Sequence[Any]):
     """Return the indices of static arguments according to heuristic rules."""
 
     def is_static_arg(arg):
@@ -77,7 +77,7 @@ def auto_static_argnums(args):
     return [i for i in range(len(args)) if is_static_arg(args[i])]
 
 
-def auto_donate_argnums(args):
+def auto_donate_argnums(args: Sequence[Any]):
     """Return the indices of donated arguments according to heuristic rules."""
 
     def should_donate(x):
@@ -94,21 +94,14 @@ def auto_donate_argnums(args):
 ########################################
 
 
-def to_int_tuple(array):
+def to_int_tuple(array: np.ndarray):
     """Convert a numpy array to int tuple."""
     if array is None:
         return tuple()
     return tuple(int(x) for x in array)
 
 
-def get_dim_last_value(array, dim):
-    """Get the value of the last element in a dimension."""
-    indices = tuple(0 if i != dim else array.shape[dim] - 1
-                    for i in range(len(array.shape)))
-    return array[indices]
-
-
-def check_arithmetic_sequence(array):
+def check_arithmetic_sequence(array: np.ndarray):
     """Check the input 1-D array is an arithmetic sequence. Return
     the delta if Ture and None otherwise."""
     if len(array) < 2:
@@ -120,27 +113,8 @@ def check_arithmetic_sequence(array):
     return delta
 
 
-class FastLookupList:
-
-    def __init__(self, iterable=()):
-        self.elements = list(iterable)
-        self.elements_set = set(iterable)
-
-    def __getitem__(self, key):
-        return self.elements[key]
-
-    def __len__(self):
-        return len(self.elements)
-
-    def __contains__(self, element):
-        return element in self.elements_set
-
-    def append(self, element):
-        self.elements.append(element)
-        self.elements_set.add(element)
-
-
 class OrderedSet:
+    """An ordered set implemented by using the built-in OrderedDict."""
 
     def __init__(self, iterable=()):
         self.dict = OrderedDict()
@@ -253,6 +227,8 @@ class OrderedSet:
 
 
 class DisjointDict:
+    """A dictionary for recursive lookup.
+    Path compression is used to avoid excess of maximum recursion depth."""
 
     def __init__(self):
         self.values = dict()
@@ -307,9 +283,11 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
-def get_compile_options(num_replicas, num_partitions, device_assignment,
-                        use_spmd_partitioning, parameter_is_tupled_arguments,
-                        build_random_seed):
+def get_compile_options(num_replicas: int, num_partitions: int,
+                        device_assignment: np.ndarray,
+                        use_spmd_partitioning: bool,
+                        parameter_is_tupled_arguments: int,
+                        build_random_seed: int):
     """Return CompileOptions for XLA compilation."""
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
@@ -322,7 +300,8 @@ def get_compile_options(num_replicas, num_partitions, device_assignment,
     return compile_options
 
 
-def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
+def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
+                             donated_invars: Sequence[bool], backend):
     """Convert a jaxpr to a XLA HLO computation."""
     backend_name = backend.platform
     in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
@@ -359,7 +338,8 @@ def jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars, backend):
     return built
 
 
-def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
+def setup_computation_alias(xla_computation: xc.XlaComputation,
+                            donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
     Assume the tensors in output tuple strictly match the donated parameters.
@@ -391,7 +371,8 @@ def setup_computation_alias(xla_computation, donated_invars: Sequence[bool]):
         p_in += 1
 
 
-def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
+def count_communication_primitives(hlo_ir: str,
+                                   ignore_scalar_all_reduce: bool = False):
     """Count the communication primitives in a HLO IR."""
     total = hlo_ir.count("channel_id")
     all_reduce = hlo_ir.count("all-reduce(") + hlo_ir.count("all-reduce-start(")
@@ -413,7 +394,7 @@ def count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=False):
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 
-def compile_dummy_zero_constant(backend, num_devices):
+def compile_dummy_zero_constant(backend, num_devices: int):
     """Compile an XLA executable that returns a constant zero."""
     c = xc.XlaBuilder("dummy_zero_constant")
     sharding = xc.OpSharding()
@@ -433,7 +414,9 @@ def compile_dummy_zero_constant(backend, num_devices):
     return compiled
 
 
-def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
+def compile_allocate_zero_buffers(backend, num_devices: int,
+                                  shapes: Sequence[Sequence[int]],
+                                  dtypes: Sequence[jnp.dtype]):
     """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
     c = xc.XlaBuilder("allocate_zero_buffers")
     sharding = xc.OpSharding()
@@ -457,7 +440,9 @@ def compile_allocate_zero_buffers(backend, num_devices, shapes, dtypes):
     return compiled
 
 
-def compile_memset_zero_buffers(backend, num_devices, shapes, dtypes):
+def compile_memset_zero_buffers(backend, num_devices: int,
+                                shapes: Sequence[Sequence[int]],
+                                dtypes: Sequence[jnp.dtype]):
     """
     Compile an XLA executable that memset zero buffers with given shape and dtypes.
     Try to avoid memcpy
@@ -494,7 +479,7 @@ def compile_memset_zero_buffers(backend, num_devices, shapes, dtypes):
     return compiled
 
 
-def get_shard_shape(aval, sharding_spec):
+def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):
     """Return the shape of a shard."""
     shape = []
     for dim, spec_dim in zip(aval.shape, sharding_spec.sharding):
@@ -595,9 +580,9 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
     return result
 
 
-def log_jaxpr(jaxpr, name):
+def log_jaxpr(jaxpr: Jaxpr, filename: str):
     """Print jaxpr int a temporary file for debugging purposes."""
-    path = "/tmp/" + name
+    path = "/tmp/" + filename
     with open(path, "w") as f:
         f.write(repr(jaxpr))
 
@@ -633,9 +618,8 @@ def profile_xla_executable(compiled, backend, local_devices):
                 for device in local_devices
             ])
         local_devices[0].synchronize_all_activity()
-    except:
+    except RuntimeError:
         return cost_failed
-    free_mem = local_devices[0].available_memory()
 
     # Run benchmark
     def run_func():
@@ -653,7 +637,7 @@ def profile_xla_executable(compiled, backend, local_devices):
 
     try:
         costs = benchmark_func(run_func, repeat=3, number=3)
-    except:
+    except RuntimeError:
         costs = cost_failed
     return costs
 
@@ -669,7 +653,7 @@ def benchmark_func(run_func,
 
     The function is executed for (warmup + number * repeat) times.
     The return value is a list of `repeat` elements and each elements is
-    the avarage execution time of `number` executions.
+    the average execution time of `number` executions.
 
     If `min_repeat_second` is set, the function automatically picks a `number`
     so that one `repeat` lasts for at least `min_repeat_second` seconds.
@@ -832,8 +816,8 @@ def jax_tensor_index(src_tensor, indices, size):
 ########################################
 
 
-def run_cmd(cmd):
-    """Run a bash commond."""
+def run_cmd(cmd: str):
+    """Run a bash command."""
     print(cmd)
     ret = os.system(cmd)
     return ret
@@ -852,6 +836,7 @@ def list_gpu_info():
 
 
 def disable_tqdm_globally():
+    """Disable tqdm globally."""
     tqdm.tqdm.__init__ = partialmethod(tqdm.tqdm.__init__, disable=True)
 
 
@@ -872,15 +857,17 @@ def get_num_hosts_and_num_devices(args):
     return num_hosts, num_devices_per_host
 
 
-def get_ray_namespace_str(prefix="parax-train"):
+def get_ray_namespace_str(prefix=global_config.default_ray_namespace_prefix):
     """Get a unique ray namespace str to avoid some annoyed warnings."""
-    prefix = global_config.default_ray_namespace_prefix
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     namespace_str = f"{prefix}-{date_str}"
     return namespace_str
 
 
-def write_tsv(heads, values, filename, print_line=True):
+def write_tsv(heads: Sequence[str],
+              values: Sequence[Any],
+              filename: str,
+              print_line: bool = True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
 
@@ -896,7 +883,7 @@ def write_tsv(heads, values, filename, print_line=True):
         print(line)
 
 
-def to_str_round(x, decimal=6):
+def to_str_round(x: Any, decimal: int = 6):
     """Print a python object but round all floating point numbers."""
     if isinstance(x, str):
         return x
@@ -919,7 +906,7 @@ def to_str_round(x, decimal=6):
 _tic = None
 
 
-def print_used_time(message):
+def print_used_time(message: str):
     """Print a message and the elapsed time from the last call."""
     global _tic
     if message:
@@ -935,12 +922,12 @@ GB = 1 << 30  # Gigabyte
 MB = 1 << 20  # Megabyte
 
 
-def map_to_shape(array_pytree):
+def map_to_shape(array_pytree: PyTreeDef):
     """Map a PyTree of jax arrays to their shapes."""
     return tree_map(lambda x: getattr(x, "shape", None), array_pytree)
 
 
-def compute_bytes(pytree):
+def compute_bytes(pytree: PyTreeDef):
     """Compute the total bytes of arrays in a pytree."""
     flatten_args, _ = tree_flatten(pytree)
     ret = 0
@@ -950,7 +937,7 @@ def compute_bytes(pytree):
     return ret
 
 
-def compute_param_number(pytree):
+def compute_param_number(pytree: PyTreeDef):
     """Compute the total number of elements in a pytree."""
     flatten_args, _ = tree_flatten(pytree)
     ret = 0

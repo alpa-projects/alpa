@@ -76,10 +76,10 @@ class VirtualDistributedArray:
         """Return the device assignment of each tile."""
         if self._tile_assignments is None:
             if self.replicated:
-                mesh_flat = np.arange(self.device_mesh.total_devices)
+                mesh_flat = np.arange(self.device_mesh.num_devices)
                 self._tile_assignments = np.reshape(
                     mesh_flat,
-                    self.tile_shape + [self.device_mesh.total_devices])
+                    self.tile_shape + [self.device_mesh.num_devices])
             else:
                 # Generate tile assignments using proto
                 proto = self._sharding_spec_proto
@@ -1032,11 +1032,11 @@ class CrossMeshCommunicator:
         for dim_spec in dst_sharding_spec.sharding:
             tot_sharding *= dim_spec_chunk_value(dim_spec)
 
-        if tot_sharding == dst_mesh.total_devices:
+        if tot_sharding == dst_mesh.num_devices:
             return dst_sharding_spec, extra_slice
 
-        assert dst_mesh.total_devices % tot_sharding == 0
-        extra_sharding = dst_mesh.total_devices // tot_sharding
+        assert dst_mesh.num_devices % tot_sharding == 0
+        extra_sharding = dst_mesh.num_devices // tot_sharding
         # TODO(yonghao): Cannot do allgather cross node. Need to support it.
         first_mesh_dim = dst_sharding_spec.mesh_mapping[0]
         if (isinstance(first_mesh_dim, pxla.Replicated) or

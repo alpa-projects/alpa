@@ -2,19 +2,21 @@
 import hashlib
 import inspect
 import time
+from typing import Callable, Sequence, Optional
 
 import numpy as np
 
 from jax import linear_util as lu, disable_jit
-from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym)
+from jax.core import Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym, ShapedArray
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
+from jax.tree_util import PyTreeDef
 
 from parax.util import OrderedSet
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
-from parax.measure_record import SearchTask, load_best_record
+from parax.measure_record import SearchTask, load_best_record, StrategyConfig
 from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
@@ -22,8 +24,11 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
 from parax.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias
 
 
-def get_compute_key(fun, in_tree, donated_invars, *aval):
+def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
+                    donated_invars: Sequence[bool],
+                    *aval: Sequence[ShapedArray]):
     """Return a unique string as the query key of a computation definition."""
+
     # Algorithm:
     # Concatenate the definition location, source code,
     # input arguments specification to a string.
@@ -43,13 +48,13 @@ def get_compute_key(fun, in_tree, donated_invars, *aval):
 
 def shard_parallel_callable(
     fun: lu.WrappedFun,
-    in_tree,
-    out_tree_thunk,
-    donated_invars,
-    batch_invars,
+    in_tree: PyTreeDef,
+    out_tree_thunk: Callable,
+    donated_invars: Sequence[bool],
+    batch_invars: Sequence[bool],
     devices,
-    memory_budget_per_device,
-    *avals,
+    memory_budget_per_device: float,
+    *avals: Sequence[ShapedArray],
 ):
     """Compile a callable with auto-sharding pass."""
     # This function resolves the polymorphism in arguments and global configurations
@@ -84,10 +89,10 @@ def shard_parallel_callable(
             if inp is None:
                 # Generate a search space that contains all possible mesh shapes.
                 logical_mesh_choices = []
-                total_devices = physical_mesh.total_devices
-                for i in range(1, total_devices):
-                    if total_devices % i == 0:
-                        logical_mesh_shape = (total_devices // i, i)
+                num_devices = physical_mesh.num_devices
+                for i in range(1, num_devices):
+                    if num_devices % i == 0:
+                        logical_mesh_shape = (num_devices // i, i)
                         logical_mesh_choices.append(
                             physical_mesh.get_logical_mesh(
                                 mesh_shape=logical_mesh_shape,
@@ -123,33 +128,37 @@ def shard_parallel_callable(
                                    record_file, strategy_config, *avals)
 
 
-def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                            donated_invars, physical_mesh, logical_mesh_choices,
-                            logical_mesh_search_mode, memory_budget_per_device,
-                            search_task, record_file, strategy_config, *avals):
+def shard_parallel_internal(
+        fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
+        donated_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: str, memory_budget_per_device: float,
+        search_task: Optional[SearchTask], record_file: str,
+        strategy_config: StrategyConfig, *avals: Sequence[ShapedArray]):
     """
     Compile a callable with auto-sharding pass.
 
     Args:
-      fun (lu.WrappedFun): The wrapped jax function to be compiled.
-      in_tree (PyTree): The pytree of input arguments.
-      out_tree_thunk (Callable[()->PyTree]): The thunk to produce output pytree.
-      donated_invars (List[bool]): Whether to donate input parameters.
-      physical_mesh (PhysicalDeviceMesh): The physical device mesh.
-      logical_mesh_choices (List[Tuple[int]]): The candidates of logical mesh shape.
+      fun: The wrapped jax function to be compiled.
+      in_tree: The pytree of input arguments.
+      out_tree_thunk: The thunk to produce output pytree.
+      donated_invars: Whether to donate input parameters.
+      physical_mesh: The physical device mesh.
+      logical_mesh_choices: The candidates of logical mesh shape.
         If there is only one choice, use the given one. If there are multple choices,
         we will try all of them and pick the best.
-      logical_mesh_search_mode (str): The choices are {"measurement", "cost_model"}.
+      logical_mesh_search_mode: The choices are {"measurement", "cost_model"}.
         If is "measurement", use real profiling to pick the best logical mesh shape.
         If is "cost_model", use cost estimation in HLO IR to pick the best one.
         This is ignored if len(logical_mesh_choices) == 1.
-      memory_budget_per_device (Optional[float]): The memory budget per device in bytes.
-      search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
+      memory_budget_per_device: The memory budget per device in bytes.
+      search_task: Only used when doing logical mesh shape search.
         Used when dumping measurement records to the file.
-      record_file (Optional[str]): If is not None, dump measurement records into
+      record_file: If is not None, dump measurement records into
         this file.
-      strategy_config (Optional[StrategyConfig]): If is not None, do compilation
+      strategy_config: If is not None, do compilation
         according to this configuration.
+      avals: The input abstract values.
     """
     tic = time.time()
 
@@ -183,7 +192,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             bypass_device_assignment_check=physical_mesh.is_distributed)
     else:
         compiled = compile_with_given_strategy(backend, built, strategy_config,
-                                               physical_mesh.total_devices,
+                                               physical_mesh.num_devices,
                                                physical_mesh.is_distributed,
                                                HloProtoStatus.UNOPTIMIZED)
 
@@ -202,10 +211,14 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
 
 def shard_parallel_internal_gradient_accumulation(
-        fun: lu.WrappedFun, in_tree, out_tree_thunk, donated_invars,
-        batch_invars, physical_mesh, logical_mesh_choices,
-        logical_mesh_search_mode, memory_budget_per_device, search_task,
-        record_file, strategy_config, *raw_avals):
+        fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
+        donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+        physical_mesh: PhysicalDeviceMesh,
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: Sequence[str],
+        memory_budget_per_device: float, search_task: SearchTask,
+        record_file: str, strategy_config: StrategyConfig,
+        *raw_avals: Sequence[ShapedArray]):
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
@@ -265,13 +278,13 @@ def shard_parallel_internal_gradient_accumulation(
         backend,
         accumulate_grad,
         strategy_config,
-        physical_mesh.total_devices,
+        physical_mesh.num_devices,
         bypass_device_assignment_check,
         HloProtoStatus.SHARDING_ANNOTATED,
         rewrite_for_grad_acc=True)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,
-                                             physical_mesh.total_devices,
+                                             physical_mesh.num_devices,
                                              bypass_device_assignment_check,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 
@@ -303,7 +316,7 @@ def filter_used_vars(all_vars, eqns):
     return [var for var in all_vars if var in used_vars]
 
 
-def clone_vars(var_list, gensym_func):
+def clone_vars(var_list, gensym_func: Callable):
     """Clone variables."""
     return [gensym_func(x.aval) for x in var_list]
 

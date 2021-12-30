@@ -5,10 +5,9 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
-from collections import namedtuple
 import logging
 import os
-from typing import List, Sequence, Tuple, Optional
+from typing import Sequence, Union
 
 import numpy as np
 import ray
@@ -61,10 +60,10 @@ class RemoteBufferRef:
 
     def __init__(self,
                  device_mesh,
-                 host_id,
-                 device_id,
-                 uuid=None,
-                 dtype=jnp.float32):
+                 host_id: int,
+                 device_id: int,
+                 uuid: int = None,
+                 dtype: jnp.dtype = jnp.float32):
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
@@ -95,16 +94,6 @@ class RemoteBufferRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
-def get_uuid_np_array(array):
-    """Convert a 2d array of RemoteBufferRef to a np array of UUID (int64)."""
-    shape = (len(array), len(array[0]))
-    ret = np.empty(shape, dtype=np.int64)
-    for i in range(shape[0]):
-        for j in range(shape[1]):
-            ret[i, j] = array[i][j].uuid
-    return ret
-
-
 class MeshDriverExecutable:
     """The base class of the driver part of a mesh executable."""
 
@@ -119,6 +108,7 @@ def get_execution_timer_name(exec_uuid):
 
 
 def get_sync_func_driver(physical_mesh):
+    """Get the sync function on the driver."""
 
     def sync_func_driver():
         physical_mesh.devices[0].synchronize_all_activity()
@@ -127,6 +117,7 @@ def get_sync_func_driver(physical_mesh):
 
 
 def get_sync_func_worker(worker):
+    """Get the sync function on the workers"""
 
     def sync_func_worker():
         worker.local_devices[0].synchronize_all_activity()
@@ -134,17 +125,27 @@ def get_sync_func_worker(worker):
     return sync_func_worker
 
 
+def get_uuid_np_array(array):
+    """Convert a 2d array of RemoteBufferRef to a np array of UUID (int64)."""
+    shape = (len(array), len(array[0]))
+    ret = np.empty(shape, dtype=np.int64)
+    for i in range(shape[0]):
+        for j in range(shape[1]):
+            ret[i, j] = array[i][j].uuid
+    return ret
+
+
 class NormalMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a normal mesh executable."""
 
     def __init__(self,
                  physical_mesh: "PhysicalDeviceMesh",
-                 compiled: XlaExecutable,
+                 compiled: Union[XlaExecutable, xla_extension.HloModule],
                  strategy_config: StrategyConfig,
                  avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
-                 flop_count: Optional[int] = None):
+                 flop_count: int = None):
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
@@ -157,7 +158,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         else:
             self.hlo_module = compiled.hlo_modules()[0]
         self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
-            self.hlo_module, avals, out_avals, physical_mesh.total_devices,
+            self.hlo_module, avals, out_avals, physical_mesh.num_devices,
             strategy_config.logical_mesh_shape)
 
         # Cache results for input and output sharding
@@ -179,6 +180,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.sync_func = get_sync_func_driver(physical_mesh)
 
     def set_executable(self, physical_mesh, compiled, strategy_config):
+        """Put the executable on workers."""
         if physical_mesh.is_distributed:
             hlo_proto = self.hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
@@ -224,8 +226,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             output_uuids = output_uuids.transpose([1, 0, 2])
 
             # Gather output buffers
-            # Shape: (num_outs, total_devices)
-            output_bufs = np.empty((num_outs, physical_mesh.total_devices),
+            # Shape: (num_outs, num_devices)
+            output_bufs = np.empty((num_outs, physical_mesh.num_devices),
                                    dtype=object)
             for i in range(len(output_bufs)):
                 for j in range(len(output_bufs[i])):
@@ -293,6 +295,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             return self.compiled.total_allocation_size()
 
     def get_hlo_text(self):
+        """Return the HLO IR in the text format."""
         return self.hlo_text
 
     def __del__(self):
@@ -320,7 +323,7 @@ def delete_donated_buffers(buffer_dict, uuids):
                 del buffer_dict[uuid]
 
 
-class NormalMeshWorkerExecutable:
+class NormalMeshWorkerExecutable(MeshWorkerExecutable):
     """The worker part of a normal mesh executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
@@ -342,10 +345,10 @@ class NormalMeshWorkerExecutable:
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self,
-                          input_uuids: List[List[int]],
-                          output_uuids: List[List[int]],
-                          sync_before=True,
-                          sync_after=True):
+                          input_uuids: Sequence[Sequence[int]],
+                          output_uuids: Sequence[Sequence[int]],
+                          sync_before: bool = True,
+                          sync_after: bool = True):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
@@ -362,7 +365,7 @@ class NormalMeshWorkerExecutable:
         try:
             output_bufs = self.compiled.execute_sharded_on_local_devices(
                 input_bufs)
-        except RuntimeError as re:
+        except RuntimeError:
             # logger.info("Executing in actor encounters an exception: {}".format(re))
             ray.actor.exit_actor()
 
@@ -388,13 +391,21 @@ class NormalMeshWorkerExecutable:
         self.compiled.delete()
 
 
-def get_grad_sync_channel_ids(hlo_module) -> str:
+def get_grad_sync_channel_ids(hlo_module: xla_extension.HloModule) -> str:
     """Return the channel ids of all-reduces that are used for gradient synchronization.
 
     The return value is a string containing all channel ids separated by periods.
     (e.g., ".0.12." means channel id 0 and 12)
     """
     return xla_extension.get_grad_sync_channel_ids(hlo_module)
+
+
+def get_grad_sync_channel_ids_with_hint(hlo_module: xla_extension.HloModule,
+                                        hint: Sequence[int]) -> str:
+    """Return the channel ids of all-reduces that are used for gradient synchronization.
+    see also get_grad_sync_channel_ids.
+    """
+    return xla_extension.get_grad_sync_channel_ids(hlo_module, hint)
 
 
 class GradAccMeshDriverExecutable:
@@ -413,7 +424,7 @@ class GradAccMeshDriverExecutable:
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
                  num_micro_batches: int,
-                 flop_count: Optional[int] = None):
+                 flop_count: int = None):
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
@@ -436,12 +447,12 @@ class GradAccMeshDriverExecutable:
             get_input_output_sharding_specs(accumulate_grad.hlo_modules()[0],
                                             accumulate_grad_in_avals,
                                             grad_avals,
-                                            physical_mesh.total_devices,
+                                            physical_mesh.num_devices,
                                             logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (
             get_input_output_sharding_specs(apply_grad.hlo_modules()[0],
                                             apply_grad_in_avals, out_avals,
-                                            physical_mesh.total_devices,
+                                            physical_mesh.num_devices,
                                             logical_mesh_shape))
         num_grads = len(grad_avals)
         assert accumulate_grad_input_sharding_specs[
@@ -517,7 +528,7 @@ class GradAccMeshDriverExecutable:
             self.accumulate_grad = accumulate_grad
             self.apply_grad = apply_grad
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
-                xla_bridge.get_backend("gpu"), physical_mesh.total_devices,
+                xla_bridge.get_backend("gpu"), physical_mesh.num_devices,
                 grad_shard_shapes, grad_shard_dtypes)
             self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
             self.grad_sync_channel_ids = grad_sync_channel_ids
@@ -597,8 +608,8 @@ class GradAccMeshDriverExecutable:
             output_uuids = output_uuids.transpose([1, 0, 2])
 
             # Gather output buffers
-            # Shape: (num_outs, total_devices)
-            output_bufs = np.empty((num_outs, physical_mesh.total_devices),
+            # Shape: (num_outs, num_devices)
+            output_bufs = np.empty((num_outs, physical_mesh.num_devices),
                                    dtype=object)
             for i in range(len(output_bufs)):
                 for j in range(len(output_bufs[i])):
@@ -681,6 +692,7 @@ class GradAccMeshDriverExecutable:
                        self.apply_grad.total_allocation_size())
 
     def get_hlo_text(self):
+        """Return the HLO IR in the text format."""
         return self.hlo_text
 
     def __del__(self):
@@ -695,7 +707,7 @@ class GradAccMeshWorkerExecutable:
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
                  accumulate_grad_batch_arg_indices: Sequence[int],
-                 grad_shard_shapes: Sequence[Tuple[int, ...]],
+                 grad_shard_shapes: Sequence[Sequence[int]],
                  grad_shard_dtypes: Sequence[jnp.dtype],
                  strategy_config: StrategyConfig,
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
@@ -797,14 +809,10 @@ class GradAccMeshWorkerExecutable:
         self.allocate_zero_buffers.delete()
 
 
-def get_grad_sync_channel_ids_with_hint(hlo_module, hint) -> str:
-    return xla_extension.get_grad_sync_channel_ids(hlo_module, hint)
-
-
 class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     """
     The driver part of a mesh executable that
-    only compute and accumulate grads, but not apply it.
+    only computes and accumulates gradients, but does not apply it.
     """
 
     def __init__(self, physical_mesh: "PhysicalDeviceMesh", compiled,
@@ -817,7 +825,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         else:
             hlo_module = compiled.hlo_modules()[0]
 
-        if physical_mesh.total_devices > 1:
+        if physical_mesh.num_devices > 1:
             self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
                 hlo_module, out_acc_grad_indices)
         else:
@@ -829,6 +837,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                              out_avals, donated_invars)
 
     def set_executable(self, physical_mesh, compiled, strategy_config):
+        """Put the executable on workers."""
         hlo_module = self.hlo_module
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
@@ -856,7 +865,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
 class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
     The worker part of a mesh executable that
-    only compute and accumulate grads, but not apply it
+    only computes and accumulates grads, but does not apply it
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
@@ -868,9 +877,9 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
     def execute_on_worker(self,
-                          input_uuids: List[List[int]],
-                          output_uuids: List[List[int]],
-                          skip_grad_sync=False,
+                          input_uuids: Sequence[Sequence[int]],
+                          output_uuids: Sequence[Sequence[int]],
+                          skip_grad_sync: bool = False,
                           **kwargs):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
@@ -880,10 +889,12 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                                              **kwargs)
 
 
-class AllocZeroBufferDriverExecutable:
+class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
     """The driver part of a buffer-allocation executable."""
 
-    def __init__(self, physical_mesh, grad_vars, grad_sharding_specs):
+    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
+                 grad_vars: Sequence[ShapedArray],
+                 grad_sharding_specs: Sequence[pxla.ShardingSpec]):
         self.physical_mesh = physical_mesh
         grad_avals = [var.aval for var in grad_vars]
         grad_shard_shapes = [
@@ -910,12 +921,14 @@ class AllocZeroBufferDriverExecutable:
         self.sync_func = get_sync_func_driver(physical_mesh)
 
     def get_driver_callable(self):
+        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
         ret = partial(self.launch_on_driver)
         ret.shard_args_only = partial(self.shard_args_only)
         ret.get_executable = lambda: self
         return ret
 
     def launch_on_driver(self, *args):
+        """Launch the executable on the driver."""
         assert len(args) == 0, (
             f"allocate zero buffers does not need args, got {len(args)}")
         physical_mesh = self.physical_mesh
@@ -937,7 +950,7 @@ class AllocZeroBufferDriverExecutable:
             output_uuids = output_uuids.transpose([1, 0, 2])
 
             # Gather outputs
-            output_bufs = np.empty((num_outs, physical_mesh.total_devices),
+            output_bufs = np.empty((num_outs, physical_mesh.num_devices),
                                    dtype=object)
             for i in range(len(output_bufs)):
                 for j in range(len(output_bufs[i])):
@@ -958,26 +971,18 @@ class AllocZeroBufferDriverExecutable:
         return self.outs_handler(output_bufs)
 
     def shard_args_only(self, *args):
+        """Pre-shard the input arguments."""
         raise NotImplementedError
-
-    def profile_with_dummy_inputs(self):
-        raise NotImplementedError
-
-    def get_total_allocation_size(self):
-        return 0
-
-    def get_hlo_text(self):
-        return ""
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
 
 
-class AllocZeroBufferWorkerExecutable:
+class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
     """The worker part of a buffer-allocation executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int,
-                 grad_shard_shapes: Sequence[Tuple[int, ...]],
+                 grad_shard_shapes: Sequence[Sequence[int]],
                  grad_shard_dtypes: Sequence[jnp.dtype]):
         num_devices = len(worker.backend.devices())
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
@@ -988,10 +993,11 @@ class AllocZeroBufferWorkerExecutable:
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self,
-                          input_uuids,
-                          output_uuids,
-                          sync_before=False,
-                          sync_after=False):
+                          input_uuids: Sequence[Sequence[int]],
+                          output_uuids: Sequence[Sequence[int]],
+                          sync_before: bool = False,
+                          sync_after: bool = False):
+        """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
         before_sync_func = self.sync_func if sync_before else None
         after_sync_func = self.sync_func if sync_after else None
@@ -1004,17 +1010,16 @@ class AllocZeroBufferWorkerExecutable:
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], grad_bufs[i])
 
-    def get_total_allocation_size(self):
-        return 0
-
     def __del__(self):
         self.allocate_zero_buffers.delete()
 
 
-class MemzeroWorkerExecutable:
+class MemzeroWorkerExecutable(MeshWorkerExecutable):
+    """The worker part of an executable that sets all input tensors to zeros."""
 
-    def __init__(self, worker: "MeshHostWorker", uuid: int, buffer_shard_shapes,
-                 buffer_shard_dtypes):
+    def __init__(self, worker: "MeshHostWorker", uuid: int,
+                 buffer_shard_shapes: Sequence[Sequence[int]],
+                 buffer_shard_dtypes: Sequence[jnp.dtype]):
         num_devices = len(worker.backend.devices())
         self.memzero = compile_memset_zero_buffers(worker.backend, num_devices,
                                                    buffer_shard_shapes,
@@ -1025,10 +1030,11 @@ class MemzeroWorkerExecutable:
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self,
-                          input_uuids,
-                          output_uuids,
-                          sync_before=False,
-                          sync_after=False):
+                          input_uuids: Sequence[Sequence[int]],
+                          output_uuids: Sequence[Sequence[int]],
+                          sync_before: bool = False,
+                          sync_after: bool = False):
+        """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
         before_sync_func = self.sync_func if sync_before else None
         after_sync_func = self.sync_func if sync_after else None

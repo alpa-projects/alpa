@@ -173,10 +173,10 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     # Compute statistics
     tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
                                 hidden_size, expert_group_size, vocab_size, num_experts,
-                                virtual_mesh.total_devices, np.mean(latencies))
+                                virtual_mesh.num_devices, np.mean(latencies))
     tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
                                      hidden_size, expert_group_size, vocab_size, num_experts,
-                                     virtual_mesh.total_devices, np.mean(latencies),
+                                     virtual_mesh.num_devices, np.mean(latencies),
                                      checkpoint_activations=True)
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)

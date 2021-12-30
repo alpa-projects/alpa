@@ -56,7 +56,7 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
     else:
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
-    assert physical_mesh.total_devices == dp_size * tensor_mp_size
+    assert physical_mesh.num_devices == dp_size * tensor_mp_size
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size])
     set_parallelize_options(devices=logical_mesh)
                             #search_logical_mesh_shape=True,

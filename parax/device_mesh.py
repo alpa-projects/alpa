@@ -5,7 +5,6 @@ import cupy
 from cupy.cuda import nccl
 import logging
 from operator import attrgetter
-import pickle
 import time
 from typing import Any, List, Union, Sequence, Tuple
 
@@ -30,8 +29,8 @@ from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
 from parax.monkey_patch import set_override_backend
 from parax.shard_parallel.auto_sharding import LogicalDeviceMesh
 from parax.timer import timers
-from parax.util import (benchmark_func, get_dim_last_value, list_gpu_info, GB,
-                        jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
+from parax.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
+                        cupy_to_jax_tensor, jax_tensor_set,
                         xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
                         is_continuous_subset, infer_offset_and_n_elements,
@@ -47,9 +46,9 @@ def device_id_to_str(host_ip, device_id, device_type="gpu"):
 
 
 class MeshHostWorker:
-    """A ray actor that manages the xla computation on a single host."""
+    """A ray actor that manages the xla computation and buffers on a single host."""
 
-    def __init__(self, server_address, num_hosts, host_id):
+    def __init__(self, server_address: str, num_hosts: int, host_id: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.distributed_client = (
@@ -91,24 +90,24 @@ class MeshHostWorker:
     def put_non_zero_buffer(self,
                             uuid: int,
                             device_id: int,
-                            shape: Tuple[int, ...],
+                            shape: Sequence[int],
                             dtype=np.float32):
         self.buffers[uuid] = device_put(jnp.full(
             shape, 1e-8, dtype), self.local_devices[device_id]).device_buffer
 
-    def get_buffers(self, uuids: Union[List[int], int]):
+    def get_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
             return [self.buffers[uuid] for uuid in uuids]
         return self.buffers[uuids]
 
-    def delete_buffers(self, uuids: Union[List[int], int]):
+    def delete_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
             for uuid in uuids:
                 del self.buffers[uuid]
         else:
             del self.buffers[uuids]
 
-    def block_until_ready_buffers(self, uuids: Union[List[int], int]):
+    def block_until_ready_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
             for uuid in uuids:
                 self.buffers[uuid].block_until_ready()
@@ -150,16 +149,17 @@ class MeshHostWorker:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
-    def send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name):
+    def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
+                  dst_gpu_idx: int, group_name: str):
         """
         Send a slice of a source buffer to a target GPU.
 
         Args:
-            uuid (int64): the uuid of the xla buffers.
-            offset (List[slice]): the slice to be sent in the buffer.
-            dst_rank (int): destination rank to send.
-            dst_gpu_idx (int): the gpu index on the destination rank.
-            group_name (str): collective group name
+            uuid: the uuid of the xla buffers.
+            offset: the slice to be sent in the buffer.
+            dst_rank: destination rank to send.
+            dst_gpu_idx: the gpu index on the destination rank.
+            group_name: collective group name
         """
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_tensors[uuid % len(self.local_devices)]
@@ -190,18 +190,19 @@ class MeshHostWorker:
             to_send = jax_tensor_to_cupy(src_buffer)
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
 
-    def recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank,
-                  src_gpu_idx, group_name):
+    def recv_tile(self, uuid: int, device_id: int,
+                  indices_in_dst_tile: Sequence[slice], src_rank: int,
+                  src_gpu_idx: int, group_name: str):
         """
-        Recv a slice from a source GPU and in-place write it on the target buffer.
+        Receive a slice from a source GPU and in-place write it on the target buffer.
 
         Args:
-            uuid (int64): the uuid of the xla buffers.
-            device_id (int): the device where the buffer is received, used to allocate tmp buffer.
-            indices_in_dst_tile (List[slice]): the slice index to be written on destination buffer.
-            src_rank (int): source rank to receive from.
-            src_gpu_idx (int): the sender gpu index on the source rank.
-            group_name (str): collective group name.
+            uuid: the uuid of the xla buffers.
+            device_id: the device where the buffer is received, used to allocate tmp buffer.
+            indices_in_dst_tile: the slice index to be written on destination buffer.
+            src_rank: source rank to receive from.
+            src_gpu_idx: the sender gpu index on the source rank.
+            group_name: collective group name.
         """
         if uuid not in self.buffers:
             raise RuntimeError("Buffer has not been created.")
@@ -249,7 +250,8 @@ class MeshHostWorker:
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
-    def allgather(self, uuids, device_ids, tensor_slices):
+    def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
+                  tensor_slices: Sequence[slice]):
         cupy_buffers = []
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
@@ -270,20 +272,25 @@ class MeshHostWorker:
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
     # TODO(yonghao): replace dict by named tuple or class
-    def put_resharding_send_task(self, uuid, tasks, group_name):
+    def put_resharding_send_task(self, uuid: int, tasks: Sequence[Tuple],
+                                 group_name: str):
         self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 
-    def put_resharding_recv_task(self, uuid, tasks, group_name):
+    def put_resharding_recv_task(self, uuid: int, tasks: Sequence[Tuple],
+                                 group_name: str):
         self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
 
-    def run_resharding_send_task(self, uuid, buf_uuids):
+    def run_resharding_send_task(self, uuid: int, buf_uuids: Sequence[int]):
         task = self.send_tasks[uuid]
         for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             self.send_tile(buf_uuid,
                            *tile_detail,
                            group_name=task['group_name'])
 
-    def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
+    def run_resharding_recv_task(self,
+                                 uuid: int,
+                                 buf_uuids: Sequence[int],
+                                 set_empty_buffer: bool = True):
         task = self.recv_tasks[uuid]
         for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
             if set_empty_buffer:
@@ -294,10 +301,10 @@ class MeshHostWorker:
                                *recv_subtask,
                                group_name=task['group_name'])
 
-    def put_resharding_allgather_task(self, uuid, tasks):
+    def put_resharding_allgather_task(self, uuid: int, tasks: Sequence[Tuple]):
         self.allgather_tasks[uuid] = {"tasks": tasks}
 
-    def run_allgather_task(self, uuid, buffer_uuids):
+    def run_allgather_task(self, uuid: int, buffer_uuids: Sequence[Tuple]):
         task = self.allgather_tasks[uuid]
         allgather_details = task["tasks"]
         for group_idx in allgather_details:
@@ -308,7 +315,7 @@ class MeshHostWorker:
         return
 
     ##### Profiling Related Functions #####
-    def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename):
+    def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str):
         num_devices = self.num_hosts * len(self.local_devices)
         return mesh_profiling.profile_hlo_ops(op_infos, self.backend,
                                               self.local_devices, self.host_id,
@@ -385,12 +392,11 @@ class PhysicalDeviceMesh:
 
     def __init__(self,
                  devices=None,
-                 host_ids=None,
-                 host_info=None,
-                 head_ip=None,
-                 num_devices_per_host=1,
-                 use_ray=False,
-                 skip_launch=False):
+                 host_ids: Sequence[int] = None,
+                 host_info: Sequence[dict] = None,
+                 head_ip: str = None,
+                 num_devices_per_host: int = 1,
+                 use_ray: bool = False):
         # actually we can infer use_ray by checking ip addresses.
         self.use_ray = use_ray
         self.host_ids = host_ids
@@ -439,8 +445,7 @@ class PhysicalDeviceMesh:
                     for devices_this_host in self.devices
                     for i in devices_this_host
                 ])
-            if not skip_launch:
-                self._launch_xla_servers()
+            self._launch_xla_servers()
 
     @property
     def host_ips(self):
@@ -510,7 +515,7 @@ class PhysicalDeviceMesh:
         return (len(self.host_ids), self.num_devices_per_host)
 
     @property
-    def total_devices(self):
+    def num_devices(self):
         """Return the total number of GPUs on this mesh."""
         return len(self.device_ids_flat)
 
@@ -550,7 +555,7 @@ class PhysicalDeviceMesh:
                          intra_host_bandwidth=None,
                          inter_host_bandwidth=None):
         """Return a logical mesh and parameters of the alpha-beta communication cost model."""
-        id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
+        id_mesh = np.arange(self.num_devices).reshape(mesh_shape)
 
         if mesh_topology is None:
             mesh_alpha = mesh_alpha or (1,) * len(mesh_shape)
@@ -824,10 +829,10 @@ class PhysicalDeviceMesh:
 class DistributedArray:
     """A distributed array on a PhysicalDeviceMesh."""
 
-    def __init__(self, device_mesh: "PhysicalDeviceMesh", aval: ShapedArray,
+    def __init__(self, device_mesh: PhysicalDeviceMesh, aval: ShapedArray,
                  sharding_spec: ShardingSpec,
                  remote_buffers: Sequence[RemoteBufferRef],
-                 indices: Tuple[Index, ...]):
+                 indices: Sequence[Index]):
         self.device_mesh = device_mesh
         self.aval = aval
         self.sharding_spec = sharding_spec
@@ -886,7 +891,7 @@ xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
 
 
 class ReplicatedDistributedArray:
-    """A distributed array that is replicated on many meshes.
+    """A distributed array that is replicated on multiple meshes.
 
     We use this class as a workaround for symbols that type-change from DeviceArray
     to DistributedArray in pipeline-parallel training, such as optimizer's step.
@@ -896,8 +901,8 @@ class ReplicatedDistributedArray:
     Warning: do not use this class unless you know exactly how.
     """
 
-    def __init__(self, device_meshes: List[PhysicalDeviceMesh],
-                 arrays: List[DistributedArray]):
+    def __init__(self, device_meshes: Sequence[PhysicalDeviceMesh],
+                 arrays: Sequence[DistributedArray]):
         self._mesh_array_map = dict()
         self._array_mesh_map = dict()
         for mesh, array in zip(device_meshes, arrays):
@@ -954,11 +959,10 @@ class VirtualPhysicalMesh:
     """
 
     def __init__(self,
-                 *,
-                 host_ids=None,
-                 host_info=None,
-                 head_ip=None,
-                 num_devices_per_host=1,
+                 host_ids: Sequence[int] = None,
+                 host_info: Sequence[dict] = None,
+                 head_ip: str = None,
+                 num_devices_per_host: int = 1,
                  devices=None):
         self.host_ids = host_ids
         self.host_info = host_info
@@ -1049,7 +1053,7 @@ class VirtualPhysicalMesh:
         return (len(self.host_ids), self.num_devices_per_host)
 
     @property
-    def total_devices(self):
+    def num_devices(self):
         """Return the total number of GPUs on this mesh."""
         return len(self.device_ids_flat)
 
@@ -1077,7 +1081,7 @@ class VirtualPhysicalMesh:
         """Whether this mesh should be considered as a distributed mesh."""
         return True
 
-    def get_physical_mesh(self, skip_launch=False):
+    def get_physical_mesh(self):
         """Convert to a physical mesh (which will request resources from Ray)."""
         return PhysicalDeviceMesh(
             host_ids=self.host_ids,
@@ -1085,12 +1089,11 @@ class VirtualPhysicalMesh:
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             devices=self.device_ids,
-            use_ray=True,
-            skip_launch=skip_launch)
+            use_ray=True)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Generate a logical mesh."""
-        id_mesh = np.arange(self.total_devices).reshape(mesh_shape)
+        id_mesh = np.arange(self.num_devices).reshape(mesh_shape)
         mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
         mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
@@ -1106,17 +1109,7 @@ class VirtualPhysicalMesh:
 
     def get_1d_logical_mesh(self):
         """Return a 1D logical mesh."""
-        return self.get_logical_mesh((1, self.total_devices))
-
-
-def get_dummy_virtual_mesh(mesh_shape):
-    num_hosts = mesh_shape[0]
-    num_devices_per_host = mesh_shape[1]
-    host_ids = [str(i) for i in range(num_hosts)]
-    host_info = [dict(NodeManagerAddress=str(i)) for i in range(num_hosts)]
-    return VirtualPhysicalMesh(host_ids=host_ids,
-                               host_info=host_info,
-                               num_devices_per_host=num_devices_per_host)
+        return self.get_logical_mesh((1, self.num_devices))
 
 
 class DeviceCluster:
@@ -1147,14 +1140,16 @@ class DeviceCluster:
         return sum(
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
 
-    def get_physical_mesh(self, host_ids=None, num_devices_per_host=None):
+    def get_physical_mesh(self,
+                          host_ids: Sequence[int] = None,
+                          num_devices_per_host: int = None):
         """
         Slice a subset of hosts and devices to form a physical device mesh.
 
         Args:
-            host_ids: List[int]. The index of host nodes.
+            host_ids: The index of host nodes.
                 'None' means using all hosts
-            num_devices_per_host: int. The number of devices per host.
+            num_devices_per_host: The number of devices per host.
                 'None' means using all devices
 
         Return:
@@ -1175,8 +1170,8 @@ class DeviceCluster:
                                   use_ray=True)
 
     def get_virtual_physical_mesh(self,
-                                  host_ids=None,
-                                  num_devices_per_host=None):
+                                  host_ids: Sequence[int] = None,
+                                  num_devices_per_host: int = None):
         """
         Slice a subset of hosts and devices to form a virtual physical mesh.
 
@@ -1197,6 +1192,7 @@ class DeviceCluster:
                                    head_ip=self.head_ip)
 
     def profile_all(self, *args, **kwargs):
+        """Profile computation and communication cost for all submesh shapes of this cluster."""
         return mesh_profiling.profile_all(self, *args, **kwargs)
 
 

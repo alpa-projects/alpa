@@ -246,7 +246,7 @@ def benchmark_wide_resnet_internal(benchmark_case, niter,
     print_used_time("Benchmark")
 
     # Compute statistics
-    num_gpus = virtual_mesh.total_devices
+    num_gpus = virtual_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     peak_mem = executable.get_max_memory_allocated() / GB
     del state

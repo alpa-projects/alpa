@@ -59,7 +59,7 @@ class LogicalDeviceMesh:
         return self.id_mesh.shape
 
     @property
-    def total_devices(self):
+    def num_devices(self):
         return np.prod(self.id_mesh.shape)
 
     def all_gather_cost(self, num_bytes, mesh_dim):
@@ -137,12 +137,12 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
     return_after_slice_auto_sharded_stages = bool(multiple_stages)
 
-    total_devices = logical_mesh_choices[0].total_devices
+    num_devices = logical_mesh_choices[0].num_devices
     build_random_seed = global_config.build_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
-        num_partitions=total_devices,
-        device_assignment=np.arange(total_devices).reshape((1, -1)),
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)

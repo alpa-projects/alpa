@@ -182,7 +182,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
         option (string): ["all", "single_node_model_parallel", "default"].
     """
     results = []
-    num_devices = virtual_submesh.total_devices
+    num_devices = virtual_submesh.num_devices
     if option in ["all", "single_node_model_parallel"]:
         if option == "all":
             max_mp_dimension = num_devices
@@ -246,7 +246,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
 
     print("- Generate all stage infos (Jaxpr -> HLO)")
     # TODO(yonghao): only generate these info once for all mesh shapes
-    computation_source_ratio = meshes[0].total_devices / cluster_size
+    computation_source_ratio = meshes[0].num_devices / cluster_size
     is_full_mesh = computation_source_ratio == 1
     tolerance = global_config.auto_stage_construction_imbalance_tolerance
     for start in tqdm.tqdm(range(0, num_layers)):
@@ -329,7 +329,7 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
     num_autosharding_configs = len(autosharding_configs[0])
-    cluster_size = virtual_mesh.total_devices
+    cluster_size = virtual_mesh.num_devices
     layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
 
     compute_cost = np.full(
@@ -384,7 +384,7 @@ def get_sliced_virtual_submeshes(virtual_mesh, submeshe_shapes):
     num_devices_per_host = virtual_mesh.num_devices_per_host
     submesh_sizes = [np.prod(submesh) for submesh in submeshe_shapes]
     virtual_submeshes = [None] * len(submeshe_shapes)
-    assert sum(submesh_sizes) == virtual_mesh.total_devices
+    assert sum(submesh_sizes) == virtual_mesh.num_devices
     sorted_submesh_indices = np.argsort(submesh_sizes)
     current_host_id = 0
     current_device_id = 0
@@ -439,9 +439,9 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
     output_meshes = []
     if not original_mesh.is_distributed:
         raise RuntimeError("SingleDeviceMesh is not supported.")
-    if original_mesh.total_devices < num_meshes:
+    if original_mesh.num_devices < num_meshes:
         raise RuntimeError("#device < #workers.")
-    num_device_per_mesh = int(original_mesh.total_devices / num_meshes)
+    num_device_per_mesh = int(original_mesh.num_devices / num_meshes)
     num_device_per_host = original_mesh.num_devices_per_host
     num_host = original_mesh.num_hosts
 
@@ -573,7 +573,7 @@ def cluster_layers_and_slice_mesh(layers,
                     mesh, submesh_choices, autosharding_configs, layers,
                     donation_mapping, global_outvars, jax_apply_layers,
                     apply_grad_global_info)
-            cost, solution = dp(num_layers, mesh.total_devices,
+            cost, solution = dp(num_layers, mesh.num_devices,
                                 num_micro_batches, submesh_choices,
                                 num_autosharding_configs, compute_cost,
                                 max_n_succ_stages)
@@ -674,7 +674,7 @@ def cluster_layers_and_slice_mesh(layers,
         assert len(logical_mesh_shapes) == len(sliced_meshes)
         for logical_mesh_shape, submesh in zip(logical_mesh_shapes,
                                                sliced_meshes):
-            assert np.prod(logical_mesh_shape) == submesh.total_devices
+            assert np.prod(logical_mesh_shape) == submesh.num_devices
     else:
         logical_mesh_shapes = [
             submesh.get_default_logical_mesh().shape

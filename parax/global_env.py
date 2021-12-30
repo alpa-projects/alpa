@@ -6,7 +6,7 @@ import numpy as np
 
 
 class GlobalConfig:
-    """Global configuration of parax.
+    """The global configuration of parax.
 
     See also the docstring of `set_parallelize_options` for the meanings
     of the member variables.
@@ -20,7 +20,7 @@ class GlobalConfig:
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
 
-        ########## Options for shard parallel ##########
+        ########## Options of shard parallel ##########
         self.search_logical_mesh_shape = False
         self.mesh_shape_search_mode = "cost_model"
         self.mesh_shape_search_log_file = None
@@ -29,7 +29,7 @@ class GlobalConfig:
         self.cache_folder = "parax_cache"
         self.cache_auto_sharding_ilp_solution = False
 
-        ########## Options for pipeline parallel ##########
+        ########## Options of pipeline parallel ##########
         self.pipeline_stage_mode = "uniform_layer_gpipe"
         self.profile_with_whole_ray_cluster = True
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile
@@ -48,7 +48,7 @@ class GlobalConfig:
         self.profile_timeout = 600
         self.profile_maximum_retry = 2
 
-        ########## Options for auto-sharding solver ##########
+        ########## Options of auto-sharding solver ##########
         self.allow_all_gather = True  # Wether allow all-gather during re-sharding.
         self.allow_all_to_all = True  # Wether allow all-to-all during re-sharding.
         self.allow_replicated_parameters = True  # Whether allow replicated parameters.
@@ -65,7 +65,7 @@ class GlobalConfig:
         self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
         # instead of the ILP solver.
 
-        ########## Options for pipeline runtime ##########
+        ########## Options of pipeline runtime ##########
         self.pipeline_distributed_compile = True  # Whether to use distributed compilation
         # in pipeline parallel for each stage. Disabling it helps debug.
         self.pipeline_use_signal_send_recv = False
@@ -73,11 +73,11 @@ class GlobalConfig:
         self.precompile_resharding_tasks = True
         self.use_scatter_gather = True
 
-        ########## Options for XLA compilation ##########
+        ########## Options of XLA compilation ##########
         self.build_random_seed = 42
         self.remat_using_while = False
 
-        ########## Options for benchmark ##########
+        ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.
         # This will produce wrong results but is acceptable for
@@ -85,10 +85,10 @@ class GlobalConfig:
         self.use_dummy_value_for_benchmarking = False
         self.fix_physical_mesh_shape = None
 
-        ########## Options for logging ##########
+        ########## Options of logging ##########
         self.print_xla_compilation_time = False
 
-        ########## Options for Ray ##########
+        ########## Options of ray namespace ##########
         self.default_ray_namespace_prefix = "parax-train"
         self.unittest_ray_namespace_prefix = "parax-unittest"
 
@@ -106,7 +106,7 @@ global_config = GlobalConfig()
 
 def set_parallelize_options(
         devices=None,
-        strategy="shard_parallel",
+        strategy: str = "shard_parallel",
         memory_budget_per_device=None,
         num_micro_batches=None,
         # shard-parallel
@@ -133,7 +133,7 @@ def set_parallelize_options(
 
     Args:
       devices: The device cluster.
-      strategy (str): The parallelization strategy.
+      strategy: The parallelization strategy.
         Possible choices: {"shard_parallel", "pmap_data_parallel",
         "shard_data_parallel", "local_pipeline_parallel", "3d_parallel"}.
       memory_budget_per_device (Optional[float]): The memory budget of one

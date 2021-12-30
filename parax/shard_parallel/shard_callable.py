@@ -84,10 +84,10 @@ def shard_parallel_callable(
             if inp is None:
                 # Generate a search space that contains all possible mesh shapes.
                 logical_mesh_choices = []
-                total_devices = physical_mesh.total_devices
-                for i in range(1, total_devices):
-                    if total_devices % i == 0:
-                        logical_mesh_shape = (total_devices // i, i)
+                num_devices = physical_mesh.num_devices
+                for i in range(1, num_devices):
+                    if num_devices % i == 0:
+                        logical_mesh_shape = (num_devices // i, i)
                         logical_mesh_choices.append(
                             physical_mesh.get_logical_mesh(
                                 mesh_shape=logical_mesh_shape,
@@ -183,7 +183,7 @@ def shard_parallel_internal(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             bypass_device_assignment_check=physical_mesh.is_distributed)
     else:
         compiled = compile_with_given_strategy(backend, built, strategy_config,
-                                               physical_mesh.total_devices,
+                                               physical_mesh.num_devices,
                                                physical_mesh.is_distributed,
                                                HloProtoStatus.UNOPTIMIZED)
 
@@ -265,13 +265,13 @@ def shard_parallel_internal_gradient_accumulation(
         backend,
         accumulate_grad,
         strategy_config,
-        physical_mesh.total_devices,
+        physical_mesh.num_devices,
         bypass_device_assignment_check,
         HloProtoStatus.SHARDING_ANNOTATED,
         rewrite_for_grad_acc=True)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,
-                                             physical_mesh.total_devices,
+                                             physical_mesh.num_devices,
                                              bypass_device_assignment_check,
                                              HloProtoStatus.SHARDING_ANNOTATED)
 

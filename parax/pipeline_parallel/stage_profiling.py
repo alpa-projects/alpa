@@ -138,12 +138,12 @@ class CompileWorker:
             acc_grad_proto)
         (input_sharding_protos,
          output_sharding_proto) = get_input_output_sharding_proto(
-             acc_grad_proto, logical_mesh.total_devices)
+             acc_grad_proto, logical_mesh.num_devices)
 
         if len(protos) > 1:
             apply_grad_proto = protos[1]
             apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
-                apply_grad_proto, logical_mesh.total_devices)
+                apply_grad_proto, logical_mesh.num_devices)
         else:
             apply_grad_input_sharding_protos = None
 
@@ -153,7 +153,7 @@ class CompileWorker:
             self.backend,
             sharding_annotated_computation,
             strategy_config,
-            logical_mesh.total_devices,
+            logical_mesh.num_devices,
             bypass_device_assignment_check=True,
             hlo_proto_status=HloProtoStatus.SHARDING_ANNOTATED,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
@@ -374,7 +374,7 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
         num_cpus = int(
             min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
         num_gpus = int(ray.available_resources()["GPU"])
-        mesh_num_devices = meshes[0].total_devices
+        mesh_num_devices = meshes[0].num_devices
         prof_database = ProfilingResultDatabase()
         prof_database.load(global_config.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)

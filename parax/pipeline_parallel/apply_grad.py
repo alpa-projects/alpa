@@ -9,7 +9,7 @@ from jax.lax import add_p
 import numpy as np
 
 from parax.pipeline_parallel.computation import JaxPipelineComputation
-from parax.pipeline_parallel.manual_layer_slicing import get_var_mapping
+from parax.pipeline_parallel.layer_construction import get_var_mapping
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.pipeline_parallel.schedules import gen_dependency_with_stages

@@ -9,7 +9,7 @@ import ray
 import tqdm
 
 from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
-from parax.pipeline_parallel.automatic_layer_slicing import eqn_flops
+from parax.pipeline_parallel.layer_stats import eqn_flops
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.pipeline_parallel.stage_profiling import (

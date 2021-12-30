@@ -13,7 +13,7 @@ import optax
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
+                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_construction)
 from parax.model.conformer import ConformerForASRModule, ConformerConfig, TrainState
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
                         count_communication_primitives, print_used_time,
@@ -192,7 +192,7 @@ def benchmark_model_one_case(benchmark_case):
     # Log benchmark results
     num_gpus = mesh_dim0 * mesh_dim1
     tflops = executable.flop_count / num_gpus / np.mean(costs) / 1e12
-    heads = ["Model", "Model Config", "Parallel Config", "Param count", 
+    heads = ["Model", "Model Config", "Parallel Config", "Param count",
              "Alloc Mem", "ILP Objective", "Mean Time", "Std Time", "TFLOPS"]
     values = [model_type, str(benchmark_case[:-5]), str(benchmark_case[-5:]),
               f"{param_count/1e9:.3f}", f"{alloc_mem/GB:.3f}", f"{objective:.2f}",

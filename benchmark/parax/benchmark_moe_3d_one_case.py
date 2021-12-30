@@ -86,7 +86,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
-    
+
     if not isinstance(overwrite_global_config_dict, dict):
         overwrite_global_config_dict = {}
 
@@ -114,7 +114,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     }
     print_used_time("Prepare input")
 
-    add_manual_layer_slicing_marker = ((not auto_layer) and (pipeline_mp_size > 1))
+    add_manual_layer_construction_marker = ((not auto_layer) and (pipeline_mp_size > 1))
 
     # Init train state
     model = FlaxMoEForLMModule(MoEConfig(
@@ -129,7 +129,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         pipeline_mp_size=pipeline_mp_size,
         tie_word_embeddings=tie_word_embeddings,
         gradient_checkpointing=use_remat and not auto_layer,
-        add_manual_pipeline_markers=add_manual_layer_slicing_marker,
+        add_manual_pipeline_markers=add_manual_layer_construction_marker,
     ), dtype=dtype)
 
     rngkey = jax.random.PRNGKey(0)

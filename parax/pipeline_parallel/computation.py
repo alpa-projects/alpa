@@ -22,7 +22,6 @@ from parax.mesh_executable import PartialGradAccMeshDriverExecutable
 from parax.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
                                                    pipeline_p,
                                                    mark_pipeline_jaxpreqn)
-from parax.pipeline_parallel.manual_layer_slicing import get_var_mapping
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 get_input_output_sharding_specs,
@@ -31,7 +30,7 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
 from parax.global_env import global_config
 from parax.util import (OrderedSet, get_compile_options,
                         jaxpr_to_hlo_computation, setup_computation_alias,
-                        log_jaxpr, compile_dummy_zero_constant)
+                        log_jaxpr, compile_dummy_zero_constant, get_var_mapping)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore

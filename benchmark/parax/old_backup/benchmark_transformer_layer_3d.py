@@ -8,7 +8,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
-                   mark_pipeline, manual_layer_slicing)
+                   mark_pipeline, manual_layer_construction)
 from parax.model.bert_model import BertConfig, FlaxBertLayerCollection
 from parax.model.model_util import TrainState
 from parax.util import write_tsv, list_gpu_info, print_used_time, get_ray_namespace_str
@@ -75,7 +75,7 @@ def get_train_step(grad_func, pipeline_mp_size):
                 mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
             return loss
         if pipeline_mp_size > 1:
-            loss_func = manual_layer_slicing(loss_func)
+            loss_func = manual_layer_construction(loss_func)
         # grad, grad_x = jax.grad(loss_func, argnums=(0, 1))(optimizer.target, batch["hidden_states"])
 
         params = jax.tree_util.tree_map(lambda x: x, state.params)

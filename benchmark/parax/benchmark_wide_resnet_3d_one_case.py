@@ -14,7 +14,7 @@ import optax
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
+                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_construction)
 from parax.model.wide_resnet import get_wide_resnet, TrainState
 from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
@@ -87,10 +87,9 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat):
     @parallelize
     def train_step(state, batch):
 
-        @partial(automatic_layer_slicing,
+        @partial(automatic_layer_construction,
                  layer_num=16,
-                 use_pipeline=True,
-                 use_remat=use_remat)
+                 remat_layer=use_remat)
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
                 {

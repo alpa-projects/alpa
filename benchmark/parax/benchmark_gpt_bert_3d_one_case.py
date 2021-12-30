@@ -10,7 +10,8 @@ import optax
 import parax
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, mark_pipeline, manual_layer_slicing, automatic_layer_slicing)
+                   DeviceCluster, mark_pipeline, manual_layer_construction,
+                   automatic_layer_construction, automatic_remat)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
@@ -71,14 +72,14 @@ def create_train_state(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer=False):
+def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
+                   auto_layer=False, remat_layer_boundary=True):
 
     add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size >= 1))
 
     @parallelize
     def train_step(state, batch, rng_key):
 
-        # @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             if add_pipeline_marker:
@@ -99,15 +100,16 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
             return loss
 
         if add_pipeline_marker:
-            loss_func = manual_layer_slicing(loss_func)
+            loss_func = manual_layer_construction(loss_func)
         elif auto_layer:
-            if use_remat:
-                loss_func = automatic_layer_slicing(loss_func, num_layers,
-                                                    use_pipeline=False,
-                                                    use_remat=True)
-            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size,
-                                                use_pipeline=True,
-                                                use_remat=False)
+            if remat_layer_boundary:
+                loss_func = automatic_layer_construction(loss_func,
+                                                         remat_layer=use_remat,
+                                                         layer_num=pipeline_mp_size)
+            else:
+                if use_remat:
+                    loss_func = automatic_remat(loss_func, layer_num=num_layers)
+                loss_func = automatic_layer_construction(loss_func, layer_num=pipeline_mp_size)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
@@ -172,7 +174,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     }
     print_used_time("Prepare input")
 
-    add_manual_layer_slicing_marker = ((not auto_layer) and (pipeline_mp_size > 1))
+    add_manual_layer_construction_marker = ((not auto_layer) and (pipeline_mp_size > 1))
 
     if model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
@@ -185,7 +187,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             pipeline_mp_size=pipeline_mp_size,
             gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
-            add_manual_pipeline_markers=add_manual_layer_slicing_marker,
+            add_manual_pipeline_markers=add_manual_layer_construction_marker,
         ), dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
@@ -198,7 +200,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             pipeline_mp_size=pipeline_mp_size,
             gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
-            add_manual_pipeline_markers=add_manual_layer_slicing_marker,
+            add_manual_pipeline_markers=add_manual_layer_construction_marker,
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")

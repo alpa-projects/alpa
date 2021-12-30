@@ -12,7 +12,7 @@ import ray
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
+                   DeviceCluster, PhysicalDeviceMesh)
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from parax.model.model_util import optax_adafactor
 from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,

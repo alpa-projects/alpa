@@ -17,8 +17,9 @@ from parax.device_mesh import DeviceCluster
 from parax.global_env import set_parallelize_options, global_config
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.model.model_util import TrainState
-from parax.pipeline_parallel.automatic_layer_slicing import automatic_layer_slicing
-from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing, remat
+from parax.pipeline_parallel.layer_construction import (
+    automatic_layer_construction, manual_layer_construction, automatic_remat,
+    manual_remat)
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 from parax.util import get_ray_namespace_str
 
@@ -118,13 +119,10 @@ def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
 
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
-        if use_remat:
-            fn = remat(fn)
-        return manual_layer_slicing(fn)
-    return automatic_layer_slicing(fn,
-                                   layer_num=layer_num,
-                                   use_pipeline=True,
-                                   use_remat=use_remat)
+        return manual_layer_construction(fn, remat_layer=use_remat)
+    return automatic_layer_construction(fn,
+                                        remat_layer=use_remat,
+                                        layer_num=layer_num)
 
 
 def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):

@@ -22,8 +22,7 @@ def run_unittest_files(files, args):
             continue
         if args.filter is not None and args.filter not in filename:
             continue
-        # TODO(yonghao): this looks ugly
-        if not args.enable_profile and "auto_stage" in filename:
+        if not args.enable_slow_tests and "auto_stage" in filename:
             continue
 
         def func():
@@ -45,7 +44,7 @@ if __name__ == "__main__":
         default=None,
         help="Run test cases whose names contain the filter string")
     arg_parser.add_argument(
-        "--enable_profile",
+        "--enable_slow_tests",
         action="store_true",
         help="Run test cases including profiling, which takes a long time")
     args = arg_parser.parse_args()

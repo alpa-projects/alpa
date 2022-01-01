@@ -189,27 +189,32 @@ class AutoShardingMoETest(unittest.TestCase):
 
             # Check communication cost
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
-            expected = device_mesh.all_to_all_cost(batch_size * seq_len * hidden_size * 2 * 4, i) * 4 +\
-                       device_mesh.all_reduce_cost(hidden_size * hidden_size * 3 * 4, i) +\
-                       device_mesh.all_reduce_cost(hidden_size * 3 * 4, i) +\
-                       device_mesh.all_reduce_cost(hidden_size * hidden_size * 4, i) +\
-                       device_mesh.all_reduce_cost(hidden_size * 4, i) +\
-                       device_mesh.all_reduce_cost(hidden_size * 4, i) * 4 +\
-                       device_mesh.all_reduce_cost(hidden_size * E * 4, i)
+            expected = (
+                device_mesh.all_to_all_cost(
+                    batch_size * seq_len * hidden_size * 2 * 4, i) * 4 +
+                device_mesh.all_reduce_cost(hidden_size * hidden_size * 3 * 4,
+                                            i) +
+                device_mesh.all_reduce_cost(hidden_size * 3 * 4, i) +
+                device_mesh.all_reduce_cost(hidden_size * hidden_size * 4, i) +
+                device_mesh.all_reduce_cost(hidden_size * 4, i) +
+                device_mesh.all_reduce_cost(hidden_size * 4, i) * 4 +
+                device_mesh.all_reduce_cost(hidden_size * E * 4, i))
             assert_close(expected, objective)
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-                count_communication_primitives(hlo_ir)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
+                count_communication_primitives(hlo_ir))
             assert n_all_reduce == 1
             assert n_all_to_all == 4
             assert n_total == n_all_reduce + n_all_to_all
 
             # Check sharding specification
             num_devices = np.prod(device_mesh.id_mesh.shape)
-            assert_all_replicated(optimizer.target["params"]["attention"]["output"]\
-                    ["dense"]["kernel"], num_devices)
-            assert_all_replicated(optimizer.target["params"]["attention"]["self"]\
-                    ["qvk_combined"]["kernel"], num_devices)
+            assert_all_replicated(
+                optimizer.target["params"]["attention"]["output"]["dense"]
+                ["kernel"], num_devices)
+            assert_all_replicated(
+                optimizer.target["params"]["attention"]["self"]["qvk_combined"]
+                ["kernel"], num_devices)
             assert_all_replicated(optimizer.target["params"]["moe"]["wg"],
                                   num_devices)
             assert_expert_partitioned(optimizer.target["params"]["moe"]["wi"],
@@ -235,8 +240,8 @@ class AutoShardingMoETest(unittest.TestCase):
             device_mesh)
 
         # Check communication cost
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-            count_communication_primitives(hlo_ir)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
+            count_communication_primitives(hlo_ir))
         assert n_all_reduce == 2  # one data-parallel for experts weights,
         # one data-parallel for normal weights
         assert n_all_to_all > 0
@@ -261,8 +266,8 @@ class AutoShardingMoETest(unittest.TestCase):
             device_mesh)
 
         # Check communication cost
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-            count_communication_primitives(hlo_ir)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
+            count_communication_primitives(hlo_ir))
         assert n_all_to_all > 0
         assert n_reduce_scatter > 0
         assert n_all_reduce == 0
@@ -290,8 +295,9 @@ class AutoShardingMoETest(unittest.TestCase):
 
             # Check communication cost
             # all-to-all + data-parallel on attention_w_i, attention_w_o, layer_norm, moe_w_g
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-                count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
+                count_communication_primitives(hlo_ir,
+                                               ignore_scalar_all_reduce=True))
 
             # Special case: zero stage 3
             if global_config.force_zero_stage_3:
@@ -337,8 +343,8 @@ class AutoShardingMoETest(unittest.TestCase):
                                                    deterministic, device_mesh)
 
         # Check communication cost
-        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
-            count_communication_primitives(hlo_ir)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
+            count_communication_primitives(hlo_ir))
         if global_config.prefer_reduce_scatter:
             assert n_reduce_scatter > 0
             assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all

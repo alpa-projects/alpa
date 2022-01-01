@@ -186,10 +186,18 @@ class BaseDistributedRuntime(BaseRuntime):
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
 
-    def _compile_resharding_tasks(self):
-        """Create and compile all resharding (send/recv/allgather) tasks."""
-        for src_mesh_idx, dst_mesh_idx, var_spec_map \
-                in self._communicator.task_spec_iter():
+    def _create_resharding_and_get_send_recv_tasks(self):
+        """
+        Initialize all resharding (send/recv) tasks.
+
+        In this function, we do the following:
+        1. we create a resharding task for each resharding spec
+        2. for each resharding task, we generate all related send/recv tasks.
+        """
+
+        # Create resharding tasks for each var
+        for src_mesh_idx, dst_mesh_idx, var_spec_map in (
+                self._communicator.task_spec_iter()):
             for key, spec in var_spec_map.items():
                 cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]

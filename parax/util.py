@@ -537,13 +537,13 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
     batch_size = None
     for aval, is_batch_var in zip(raw_avals, batch_invars):
         if is_batch_var:
-            assert aval.shape[0] % num_micro_batches == 0,\
-                "The batch dimension must be divisable by num_micro_batches."
+            assert aval.shape[0] % num_micro_batches == 0, (
+                "The batch dimension must be divisable by num_micro_batches.")
             if batch_size is None:
                 batch_size = aval.shape[0] // num_micro_batches
             else:
-                assert batch_size == aval.shape[0] // num_micro_batches,\
-                    "The batch dimension must be the same for all batch vars."
+                assert batch_size == aval.shape[0] // num_micro_batches, (
+                    "The batch dimension must be the same for all batch vars.")
             shape = (batch_size,) + aval.shape[1:]
             avals.append(aval.update(shape=shape))
         else:
@@ -958,30 +958,3 @@ def compute_param_number(pytree):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
-
-
-def get_cross_slice_vars(jaxpr, slices):
-    defined = dict()
-    stage_invars = [OrderedSet() for _ in slices]
-    for invar in jaxpr.invars:
-        defined[invar] = -1
-    for invar in jaxpr.constvars:
-        defined[invar] = -1
-    for i, sliced in enumerate(slices):
-        for eqn in sliced:
-            for outvar in eqn.outvars:
-                if isinstance(outvar, DropVar):
-                    continue
-                defined[outvar] = i
-    for i, sliced in enumerate(slices):
-        for eqn in sliced:
-            for invar in eqn.invars:
-                if not isinstance(invar, Var):
-                    continue
-                if defined[invar] >= 0 and defined[invar] != i:
-                    stage_invars[i].add(invar)
-    for i, invars in enumerate(stage_invars):
-        print(f'Layer {i} has inputs:')
-        for invar in invars:
-            print(invar, invar.aval.shape, 'from layer', defined[invar])
-    return

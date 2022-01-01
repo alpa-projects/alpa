@@ -10,12 +10,11 @@ import pygloo
 import numpy
 
 from parax.collective.collective_group import gloo_util
-from parax.collective.collective_group.base_collective_group \
-    import BaseGroup
-from parax.collective.types import AllReduceOptions, \
-    BarrierOptions, Backend, ReduceOptions, BroadcastOptions, \
-    AllGatherOptions, ReduceScatterOptions, SendOptions, \
-    RecvOptions
+from parax.collective.collective_group.base_collective_group import BaseGroup
+from parax.collective.types import (AllReduceOptions, BarrierOptions, Backend,
+                                    ReduceOptions, BroadcastOptions,
+                                    AllGatherOptions, ReduceScatterOptions,
+                                    SendOptions, RecvOptions)
 from parax.collective.const import get_store_name
 
 logger = logging.getLogger(__name__)
@@ -37,13 +36,13 @@ class Rendezvous:
     def __init__(self, group_name, context, store_type, device_type):
         self._group_name = group_name
         self._context = context
-        self._redis_ip_address, self._redis_port = \
-            ray.worker._global_node.redis_address.split(":")
-        self._process_ip_address = \
-            ray.util.get_node_ip_address()
-        logger.debug("Redis address: {}, port: {}, this actor address: {}."
-                     .format(self._redis_ip_address, self._redis_port,
-                             self._process_ip_address))
+        self._redis_ip_address, self._redis_port = (
+            ray.worker._global_node.redis_address.split(":"))
+        self._process_ip_address = (ray.util.get_node_ip_address())
+        logger.debug(
+            "Redis address: {}, port: {}, this actor address: {}.".format(
+                self._redis_ip_address, self._redis_port,
+                self._process_ip_address))
         self._store_type = store_type
         self._device_type = device_type
         self._store = None
@@ -72,13 +71,13 @@ class Rendezvous:
                     time.sleep(0.1)
             # Note: multi-machines needs a shared NFS.
             fileStore = pygloo.rendezvous.FileStore(store_path)
-            self._store = pygloo.rendezvous.PrefixStore(
-                self._group_name, fileStore)
+            self._store = pygloo.rendezvous.PrefixStore(self._group_name,
+                                                        fileStore)
         elif store_type == "hash":
             raise NotImplementedError("No implementation for hash store.")
         else:
-            raise RuntimeError("Unrecognized store type: {}."
-                               .format(store_type))
+            raise RuntimeError(
+                "Unrecognized store type: {}.".format(store_type))
 
     def create_device(self, device_type):
         if device_type == "tcp":
@@ -164,6 +163,7 @@ class Rendezvous:
 
 
 class GLOOGroup(BaseGroup):
+
     def __init__(self,
                  world_size,
                  rank,
@@ -255,13 +255,12 @@ class GLOOGroup(BaseGroup):
         root_rank = reduce_options.root_rank
 
         def collective_fn(input_tensor, output_tensor, context):
-            pygloo.reduce(
-                context, gloo_util.get_tensor_ptr(input_tensor),
-                gloo_util.get_tensor_ptr(output_tensor),
-                gloo_util.get_tensor_n_elements(input_tensor),
-                gloo_util.get_gloo_tensor_dtype(input_tensor),
-                gloo_util.get_gloo_reduce_op(reduce_options.reduceOp),
-                root_rank)
+            pygloo.reduce(context, gloo_util.get_tensor_ptr(input_tensor),
+                          gloo_util.get_tensor_ptr(output_tensor),
+                          gloo_util.get_tensor_n_elements(input_tensor),
+                          gloo_util.get_gloo_tensor_dtype(input_tensor),
+                          gloo_util.get_gloo_reduce_op(reduce_options.reduceOp),
+                          root_rank)
 
         self._collective(tensors, tensors, collective_fn)
 
@@ -319,11 +318,10 @@ class GLOOGroup(BaseGroup):
                 for j, tensor in enumerate(tensor_list):
                     gloo_util.copy_tensor(tensor, output_flattened[i][j])
 
-        self._collective(
-            tensors,
-            output_flattened,
-            collective_fn,
-            postprocess_fn=postprocess_fn)
+        self._collective(tensors,
+                         output_flattened,
+                         collective_fn,
+                         postprocess_fn=postprocess_fn)
 
     def reducescatter(self,
                       tensors,
@@ -363,11 +361,10 @@ class GLOOGroup(BaseGroup):
                 for j, tensor in enumerate(tensor_list):
                     gloo_util.copy_tensor(input_flattened[i][j], tensor)
 
-        self._collective(
-            input_flattened,
-            tensors,
-            collective_fn,
-            preprocess_fn=preprocess_fn)
+        self._collective(input_flattened,
+                         tensors,
+                         collective_fn,
+                         preprocess_fn=preprocess_fn)
 
     def send(self, tensors, send_options=SendOptions()):
         """Send a tensor to a destination rank in the group.
@@ -513,11 +510,11 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
         # check dtype
         dt = gloo_util.get_gloo_tensor_dtype(t)
         if dt != dtype:
-            raise RuntimeError(
-                "All tensor operands to scatter/gather must "
-                "have the same dtype. Got '{}' and '{}'.".format(dt, dtype))
+            raise RuntimeError("All tensor operands to scatter/gather must "
+                               "have the same dtype. Got '{}' and '{}'.".format(
+                                   dt, dtype))
         s = gloo_util.get_tensor_shape(t)
         if s != shape:
-            raise RuntimeError(
-                "All tensor operands to scatter/gather must "
-                "have the same shape. Got '{}' and '{}'.".format(s, shape))
+            raise RuntimeError("All tensor operands to scatter/gather must "
+                               "have the same shape. Got '{}' and '{}'.".format(
+                                   s, shape))

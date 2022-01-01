@@ -13,8 +13,8 @@ _GLOO_AVAILABLE = True
 logger = logging.getLogger(__name__)
 
 try:
-    from parax.collective.collective_group.\
-        nccl_collective_group import NCCLGroup
+    from parax.collective.collective_group.nccl_collective_group import (
+        NCCLGroup)
 except ImportError:
     _NCCL_AVAILABLE = False
     logger.warning("NCCL seems unavailable. Please install Cupy "
@@ -22,8 +22,8 @@ except ImportError:
                    "https://docs.cupy.dev/en/stable/install.html.")
 
 try:
-    from parax.collective.collective_group.\
-        gloo_collective_group import GLOOGroup
+    from parax.collective.collective_group.gloo_collective_group import (
+        GLOOGroup)
 except ImportError:
     _GLOO_AVAILABLE = False
 
@@ -59,12 +59,11 @@ class GroupManager(object):
             raise RuntimeError("Ray does not support MPI.")
         elif backend == types.Backend.GLOO:
             logger.debug("Creating GLOO group: '{}'...".format(group_name))
-            g = GLOOGroup(
-                world_size,
-                rank,
-                group_name,
-                store_type="redis",
-                device_type="tcp")
+            g = GLOOGroup(world_size,
+                          rank,
+                          group_name,
+                          store_type="redis",
+                          device_type="tcp")
             self._name_group_map[group_name] = g
             self._group_name_map[g] = group_name
         elif backend == types.Backend.NCCL:
@@ -137,8 +136,8 @@ def init_collective_group(world_size: int,
     global _group_mgr
     # TODO(Hao): implement a group auto-counter.
     if not group_name:
-        raise ValueError("group_name '{}' needs to be a string."
-                         .format(group_name))
+        raise ValueError(
+            "group_name '{}' needs to be a string.".format(group_name))
 
     if _group_mgr.is_group_exist(group_name):
         raise RuntimeError("Trying to initialize a group twice.")
@@ -179,9 +178,9 @@ def create_collective_group(actors,
         pass
 
     if len(ranks) != len(actors):
-        raise RuntimeError(
-            "Each actor should correspond to one rank. Got '{}' "
-            "ranks but '{}' actors".format(len(ranks), len(actors)))
+        raise RuntimeError("Each actor should correspond to one rank. Got '{}' "
+                           "ranks but '{}' actors".format(
+                               len(ranks), len(actors)))
 
     if set(ranks) != set(range(len(ranks))):
         raise RuntimeError(
@@ -665,13 +664,15 @@ def _check_and_get_group(group_name):
             # get and create the group.
             name = "info_" + group_name
             info_actor = ray.get_actor(name=name)
-            ids, world_size, rank, backend = ray.get(info_actor.get_info.remote())
+            ids, world_size, rank, backend = ray.get(
+                info_actor.get_info.remote())
 
             # Recycle the info named actor *pro-activately* to avoid named actor leak.
             if ray.get(info_actor.get_access_counter.remote()) == world_size:
                 ray.kill(info_actor)
-                logger.debug("Information about the collective group has been broadcasted. "
-                             "The Info actor will go out of context and be destroyed.")
+                logger.debug(
+                    "Information about the collective group has been broadcasted. "
+                    "The Info actor will go out of context and be destroyed.")
 
             worker = ray.worker.global_worker
             id_ = worker.core_worker.get_actor_id()
@@ -680,8 +681,8 @@ def _check_and_get_group(group_name):
                                                group_name)
         except ValueError as exc:
             # check if this group is initialized using options()
-            if "collective_group_name" in os.environ and \
-                    os.environ["collective_group_name"] == group_name:
+            if ("collective_group_name" in os.environ and
+                    os.environ["collective_group_name"] == group_name):
                 rank = int(os.environ["collective_rank"])
                 world_size = int(os.environ["collective_world_size"])
                 backend = os.environ["collective_backend"]
@@ -766,6 +767,5 @@ def _check_root_tensor_valid(length, root_tensor):
     if root_tensor < 0:
         raise ValueError("root_tensor '{}' is negative.".format(root_tensor))
     if root_tensor >= length:
-        raise ValueError(
-            "root_tensor '{}' is greater than the number of GPUs: "
-            "'{}'".format(root_tensor, length))
+        raise ValueError("root_tensor '{}' is greater than the number of GPUs: "
+                         "'{}'".format(root_tensor, length))

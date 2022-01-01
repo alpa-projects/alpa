@@ -118,8 +118,8 @@ def load_from_file(filename, protocol="json"):
 
     for line in open(filename, "r"):
         obj = json.loads(line)
-        task_jsonable, config_jsonable, time_costs, estimated_cost, \
-            error_no, timestamp, _ = obj
+        (task_jsonable, config_jsonable, time_costs, estimated_cost, error_no,
+         timestamp, _) = obj
 
         inp = MeasureInput(SearchTask.from_jsonable(task_jsonable),
                            StrategyConfig.from_jsonable(config_jsonable))

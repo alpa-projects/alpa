@@ -94,8 +94,8 @@ class BertLayerModel(nn.Module):
         return x
 
 
-def create_train_state(rngkey, model, params):
-    params = model.init(rngkey, *params)
+def create_train_state(rngkey, model, inputs):
+    params = model.init(rngkey, *inputs)
     tx = optax.adam(learning_rate=1e-2)
     state = TrainState.create(apply_fn=model.apply,
                               params=params,
@@ -104,8 +104,8 @@ def create_train_state(rngkey, model, params):
     return state
 
 
-def create_dummy_train_state(rngkey, model, params, dtype=jnp.float16):
-    params = model.init_dummy(rngkey, *params)
+def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
+    params = model.init_dummy(rngkey, *inputs)
     tx = optax.adam(learning_rate=1e-2)
     mixed_precision = (dtype == jnp.float16)
     state = TrainState.create(apply_fn=model.apply,
@@ -185,8 +185,9 @@ def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat,
 class PipelineBasicTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto", namespace=get_ray_namespace_str(
-            prefix=global_config.unittest_ray_namespace_prefix))
+        ray.init(address="auto",
+                 namespace=get_ray_namespace_str(
+                     prefix=global_config.unittest_ray_namespace_prefix))
         jax.config.update('jax_platform_name', 'cpu')
 
         # Backup global config

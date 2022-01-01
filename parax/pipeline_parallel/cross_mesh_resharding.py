@@ -28,6 +28,177 @@ def next_resharding_task_uuid():
     return resharding_task_counter
 
 
+class VirtualDistributedArray:
+    """
+    Distributed Array without allocating remote buffers.
+
+    VDA wrapper differs from DistributedArray (DA) in that:
+    (1) it does not allocate a remote buffer at construction;
+    (2) its device_mesh attribute is a virtual mesh (not physical).
+
+    Args:
+        device_mesh (VirtualPhysicalMesh): the virtual mesh this VDA locates on.
+        aval (aval): shape information about the array.
+        sharding_spec (ShardingSpec): sharding spec of this array.
+    """
+
+    def __init__(self, *, device_mesh, aval, sharding_spec):
+        self.device_mesh = device_mesh
+        self.aval = aval
+        self.sharding_spec = sharding_spec
+
+        self._indices = None
+        self._one_replica_buffer_indices = None
+        self._tile_assignments = None
+        self._tiles = None
+
+        self._sharding_spec_proto = self.sharding_spec.sharding_proto()
+
+    @property
+    def tensor_shape(self):
+        """Return the shape of the original tensor."""
+        return self.aval.shape
+
+    @property
+    def tensor_rank(self):
+        """Return the rank of the original tensor."""
+        return len(self.tensor_shape)
+
+    @property
+    def indices(self):
+        """Return the indices of the sharded tensor."""
+        if not self._indices:
+            self._indices = pxla.spec_to_indices(self.tensor_shape,
+                                                 self.sharding_spec)
+        return self._indices
+
+    @property
+    def tile_assignments(self):
+        """Return the device assignment of each tile."""
+        if self._tile_assignments is None:
+            if self.replicated:
+                mesh_flat = np.arange(self.device_mesh.total_devices)
+                self._tile_assignments = np.reshape(
+                    mesh_flat,
+                    self.tile_shape + [self.device_mesh.total_devices])
+            else:
+                # Generate tile assignments using proto
+                proto = self._sharding_spec_proto
+                shape = proto.tile_assignment_dimensions
+                devices_flat = proto.tile_assignment_devices
+                self._tile_assignments = np.reshape(devices_flat, shape)
+        return self._tile_assignments
+
+    @property
+    def replicated_maxes(self):
+        """Return the list of mesh axes for replication."""
+        replicated_maxes = []
+        for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
+            if isinstance(assignment, Replicated):
+                replicated_maxes.append(maxis)
+        return replicated_maxes
+
+    @property
+    def num_replicas(self):
+        if self.tiled:
+            return 1
+        else:
+            num_replicas = 1
+            for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
+                if isinstance(assignment, Replicated):
+                    num_replicas = num_replicas * assignment.replicas
+            return num_replicas
+
+    @property
+    def tiled(self):
+        """Whether this distributed array is fully tiled."""
+        if not self.replicated_maxes:
+            return True
+        return False
+
+    @property
+    def replicated(self):
+        """Whether this distributed array is fully replicated."""
+        if len(self.replicated_maxes) == len(self.sharding_spec.mesh_mapping):
+            return True
+        return False
+
+    @property
+    def partial_tiled(self):
+        """Whether this distributed array is mixed sharded and replicated."""
+        if (self.replicated_maxes and len(self.replicated_maxes) < len(
+                self.sharding_spec.mesh_mapping)):
+            return True
+        return False
+
+    @property
+    def tile_shape(self):
+        """
+        Return the shape of the tiles.
+
+        Each dim of the tile_shape is an integer representing how many tiles are along this dim.
+        """
+        if self.tiled:
+            return self.tile_assignments.shape
+        elif self.partial_tiled:
+            return self.tile_assignments.shape[:-1]
+        else:
+            # when fully replicated, the tile shape should be [1, ..., 1, num_devices],
+            # with rank = rank(array) + 1
+            return [1] * len(self.sharding_spec.sharding)
+
+    @property
+    def num_tiles(self):
+        """Return the number of tiles of the VDA."""
+        return np.prod(self.tile_shape)
+
+    @property
+    def tiles(self):
+        """Return all the shards of the VDA following their orders."""
+        if self._tiles is None:
+            # Below are for tiled or partial_tiled.
+            num_tiles = np.prod(self.tile_shape)
+            # unique tiles (not counting those replicated)
+            self._tiles = np.empty(self.tile_shape, dtype=object)
+            for tile_index_flat in range(num_tiles):
+                # get its index
+                tile_index = unflatten_tile_index(tile_index_flat,
+                                                  self.tile_shape)
+                indices = [None] * len(self.tensor_shape)
+                for i, dim in enumerate(self.tensor_shape):
+                    tile_size, ragged = divmod(dim, self.tile_shape[i])
+                    assert not ragged
+                    indices[i] = slice(tile_size * tile_index[i],
+                                       tile_size * (tile_index[i] + 1))
+                device_ids = self.tile_assignments[tuple(tile_index)]
+                if not isinstance(device_ids, Iterable):
+                    device_ids = [device_ids]
+                else:
+                    device_ids = list(device_ids)
+                device_strs = [
+                    self.device_mesh.device_strs[d] for d in device_ids
+                ]
+                dst_tile = Tile(index=tile_index,
+                                index_flat=tile_index_flat,
+                                replica_device_ids=device_ids,
+                                replica_device_strs=device_strs,
+                                indices=indices)
+                self._tiles[tuple(tile_index)] = dst_tile
+        return self._tiles
+
+    @property
+    def device_str_to_flat_index(self):
+        """Maps a device_str to its index in the flattened .indices object."""
+        device_str_to_flat_index_map = dict()
+        for i, device_str in enumerate(self.device_mesh.device_strs):
+            device_str_to_flat_index_map[device_str] = i
+        return device_str_to_flat_index_map
+
+
+VDA = VirtualDistributedArray
+
+
+# TODO(Hao): maybe we should derive two classes: Eager and Lazy Resharding tasks.
 class ReshardingTask:
     """
     A task that addresses cross-mesh resharding between two meshes.
@@ -288,10 +459,10 @@ class SymbolicReshardingTask(ReshardingTask):
             for replica_index, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 # Get args for an empty buffer
-                receiver_device_id = \
-                    self.collective_group.device_str_to_device_id_map[receiver]
-                receiver_worker = \
-                    self.collective_group.device_str_to_mesh_worker_map[receiver]
+                receiver_device_id = (
+                    self.collective_group.device_str_to_device_id_map[receiver])
+                receiver_worker = (self.collective_group.
+                                   device_str_to_mesh_worker_map[receiver])
                 dtype = self.task_spec.src.aval.dtype
                 # Get args for send/recv
                 senders = [
@@ -299,13 +470,16 @@ class SymbolicReshardingTask(ReshardingTask):
                     for src_tile_index, _ in enumerate(src_tiles)
                 ]
                 self.receiver_uuid_plan.append(receiver)
-                receiver_rank, receiver_gpu_idx = \
-                    self.collective_group.device_str_to_rank_map[receiver]
+                receiver_rank, receiver_gpu_idx = (
+                    self.collective_group.device_str_to_rank_map[receiver])
                 recv_tile_specs = []
                 for sender_idx, sender in enumerate(senders):
                     # Sender's task
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                         sender]
+                    # tile = src_tiles[sender_idx]
+                    # self._sender_tasks[sender_worker].append(
+                    #     (tile.offset, receiver_rank, receiver_gpu_idx))
                     self._sender_tasks[sender_worker].append(
                         ReshardingTileSpec(src_tiles[sender_idx].offset,
                                            receiver_rank, receiver_gpu_idx))
@@ -421,8 +595,9 @@ class SymbolicReshardingTask(ReshardingTask):
         return dst_array
 
     def __str__(self):
-        return f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"\
-               f"{self.task_spec.src_sharding_spec} ->\n{self.task_spec.dst_sharding_spec})"
+        return (f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"
+                f"{self.task_spec.src_sharding_spec} ->\n"
+                f"{self.task_spec.dst_sharding_spec})")
 
 
 class CollectiveGroup:
@@ -657,8 +832,9 @@ class ReshardingTaskSpec:
                     # meaning it is a fully involved tile
                     offset = related_tile_offset[i][0]
                     offsets.append(slice(0, tile_length_on_this_dim))
-                    left_in_dst_tile = tile_length_on_this_dim - offset + \
-                        (tile_index_relative[i] - 1) * tile_length_on_this_dim
+                    left_in_dst_tile = (
+                        tile_length_on_this_dim - offset +
+                        (tile_index_relative[i] - 1) * tile_length_on_this_dim)
                     right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
@@ -874,14 +1050,15 @@ class CrossMeshCommunicator:
             # find out variables that need resharding, and get their
             # (1) out_sharding_spec in the src stage
             # (2) in_sharding_spec in the destination stage.
-            resharding_vars, out_var_indices, in_var_indices = \
-                self._args_between(src_stage, dst_stage)
+            resharding_vars, out_var_indices, in_var_indices = (
+                self._args_between(src_stage, dst_stage))
             out_sharding_specs = src_stage.output_sharding_specs
             in_sharding_specs = dst_stage.input_sharding_specs
 
             # Make a ReshardSpec for each VDA
-            for var, out_var_index, in_var_index in \
-                    zip(resharding_vars, out_var_indices, in_var_indices):
+            for var, out_var_index, in_var_index in zip(resharding_vars,
+                                                        out_var_indices,
+                                                        in_var_indices):
                 src_sharding_spec = out_sharding_specs[out_var_index]
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 dst_sharding_spec, extra_slice = self._rewrite_allgather_specs(

@@ -95,7 +95,8 @@ class GlobalConfig:
         """Backup the configs."""
         return copy.copy(self.__dict__)
 
-    def restore(self, saved_dict):
+    @staticmethod
+    def restore(saved_dict):
         """Restore the configs from a backup."""
         global_config.__dict__ = saved_dict
 

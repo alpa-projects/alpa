@@ -69,7 +69,6 @@ class GlobalConfig:
         self.pipeline_distributed_compile = True  # Whether to use distributed compilation
         # in pipeline parallel for each stage. Disabling it helps debug.
         self.pipeline_use_signal_send_recv = False
-        self.pipeline_aggressively_sync = False
         self.precompile_resharding_tasks = True
         self.use_scatter_gather = True
 
@@ -96,7 +95,8 @@ class GlobalConfig:
         """Backup the configs."""
         return copy.copy(self.__dict__)
 
-    def restore(self, saved_dict):
+    @staticmethod
+    def restore(saved_dict):
         """Restore the configs from a backup."""
         global_config.__dict__ = saved_dict
 

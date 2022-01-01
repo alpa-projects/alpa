@@ -4,12 +4,11 @@ import logging
 
 from jax.core import Literal
 import jax.numpy as jnp
-import ray
 
 from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
 from parax.mesh_executable import AllocZeroBufferDriverExecutable
 from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from parax.pipeline_parallel.cross_mesh_resharding import ReshardingTask
+from parax.pipeline_parallel.cross_mesh_resharding import EagerReshardingTask
 from parax.global_env import global_config
 from parax.timer import timers
 
@@ -65,6 +64,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
         self._runnables = None
         self._env = None
         self._initial_var_reference_count = None
+        self._env_reference_count = None
 
         # Init and warm-up
         self._prepare_runables()
@@ -97,12 +97,12 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
             for var_idx, invar in enumerate(stage.invars):
                 if invar in self.grad_dummy_invars:
                     if invar in grad_var_spec_dict:
-                        raise NotImplemented(
+                        raise NotImplementedError(
                             f'accumulate {invar} in a mesh but multiple stages')
                     grad_var_spec_dict[invar] = input_specs[var_idx]
         # create executable for each mesh
         self.allocate_zero_buffers = []
-        if len(grad_var_spec_dict):
+        if len(grad_var_spec_dict) > 0:
             for mesh_idx in range(mesh_num):
                 grad_var_spec_dict = mesh_grad_vars[mesh_idx]
                 grad_vars, grad_sharding_specs = list(
@@ -116,7 +116,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
 
     def _prepare_reference_count(self):
         self._initial_var_reference_count = {}
-        for i, var in enumerate(self.global_invars):
+        for _, var in enumerate(self.global_invars):
             for b in range(self.num_batch):
                 self._initial_var_reference_count[(b, repr(var))] = 0
 
@@ -125,7 +125,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                 self._initial_var_reference_count[(self.num_batch - 1,
                                                    repr(var))] = 0
 
-        for clock, sched in enumerate(self.schedule.schedules):
+        for _, sched in enumerate(self.schedule.schedules):
             for _, task in enumerate(sched):
                 if not task:
                     continue
@@ -215,6 +215,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
 
     @staticmethod
     def get_execution_time_costs(warmup=2, timer_name="overall"):
+        """Get the per-iter time, averaged across iterations."""
         if timer_name not in timer_names:
             raise RuntimeError(
                 "Unrecognized timer name for pipeline parallel runtime. "
@@ -309,7 +310,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                         task_spec = self._communicator.resharding_specs[
                             src_mesh_idx][mesh_idx][key]
                         assert task_spec
-                        task = ReshardingTask(
+                        task = EagerReshardingTask(
                             task_spec,
                             self._collective_groups[src_mesh_idx][mesh_idx],
                             self.physical_meshes[src_mesh_idx],

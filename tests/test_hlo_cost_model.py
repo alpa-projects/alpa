@@ -12,7 +12,6 @@ import ray
 
 from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
 from parax.mesh_profiling import estimate_hlo_module_cost
-from parax.global_env import global_config
 from parax.util import map_to_shape
 
 
@@ -21,13 +20,10 @@ class HloCostModelTest(unittest.TestCase):
     def setUp(self):
         jax.config.update('jax_platform_name', 'cpu')
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
         ray.init(address='auto')
 
     def tearDown(self):
         # Restore global config
-        global_config.restore(self.old_global_config)
         ray.shutdown()
 
     def run_n_layer_mlp(self,

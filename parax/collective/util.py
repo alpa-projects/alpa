@@ -42,7 +42,7 @@ class NCCLUniqueIDStore:
         """Get the NCCL unique ID held in this store."""
         if not self.nccl_id:
             logger.debug("The NCCL ID has not been set yet "
-                        "for store {} by rank-0 process.".format(self.name))
+                         "for store {} by rank-0 process.".format(self.name))
             return None
         else:
             self.access_counter += 1

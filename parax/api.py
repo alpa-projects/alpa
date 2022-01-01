@@ -1,6 +1,6 @@
 """Top-level user API."""
 from functools import wraps
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Union
 
 from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
@@ -22,19 +22,19 @@ from parax.util import auto_donate_argnums, auto_static_argnums
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None,
-                donate_argnums="auto",
-                static_argnums="auto",
-                batch_argnums=(1,)):
+def parallelize(fun: Callable = None,
+                donate_argnums: Union[Sequence[int], str] = "auto",
+                static_argnums: Union[Sequence[int], str] = "auto",
+                batch_argnums: Sequence[int] = (1,)):
     """
     Automatically parallelize a jax function.
 
     Args:
         fun: The function to be parallelized.
         donate_argnums: The same as the donate_argnums argument of jax.jit.
-          If is "auto", parax uses heuristic rules to infer this.
+          If it is "auto", parax uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
-          If is "auto", parax uses heuristic rules to infer this.
+          If it is "auto", parax uses heuristic rules to infer this.
         batch_argnums: The indices of arguments that are the data batch.
           This information is used to split the original data batch into micro batches
           to perform gradient accumulation or pipeline parallelism.
@@ -120,20 +120,20 @@ def parallelize(fun=None,
                     f"Invalid return_value_mode: {return_value_mode}")
 
         @wraps(fun)
-        def preshard_dynamic_args(*args, **kwargs):
+        def _preshard_dynamic_args(*args, **kwargs):
             """Prepare sharded arguments for benchmark purposes,
             so we can exclude the time for sharding arguments."""
             kwargs['__return_value_mode'] = "preshard_dynamic_args"
             return ret_func(*args, **kwargs)
 
         @wraps(fun)
-        def get_executable(*args, **kwargs):
+        def _get_executable(*args, **kwargs):
             """Return the compiled executable."""
             kwargs['__return_value_mode'] = "get_executable"
             return ret_func(*args, **kwargs)
 
-        ret_func.preshard_dynamic_args = preshard_dynamic_args
-        ret_func.get_executable = get_executable
+        ret_func.preshard_dynamic_args = _preshard_dynamic_args
+        ret_func.get_executable = _get_executable
         return ret_func
 
     if fun is None:
@@ -155,7 +155,8 @@ def parallelize_callable(
     memory_budget_per_device: Optional[float],
     *avals: Sequence[AbstractValue],
 ):
-    """Auto parallel callable."""
+    """Cached parallelized callable."""
+
     # Clean stores for the next call
     for store in fun.stores:
         if store:
@@ -186,7 +187,7 @@ def grad(*args, **kwargs):
 
     This function annotates all gradient tensors. This information is used to perform
     gradient accumulation transformation.
-    If any auxilary tensors are returned, they are averaged over mini batches in the same
+    If any auxiliary tensors are returned, they are averaged over mini batches in the same
     way as how the gradients are averaged.
     """
 

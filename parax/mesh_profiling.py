@@ -1,14 +1,12 @@
-# pylint: disable=no-self-use
-"""Profiling communication cost."""
+"""Profiling communication cost for device meshes."""
 from collections import defaultdict
 import os
 import pickle
 import time
-import ray
 
 import numpy as np
-
 from jax.lib import xla_client, xla_bridge, xla_extension
+import ray
 
 from parax.util import GB, print_used_time, XlaPassContext
 
@@ -42,13 +40,17 @@ class MeshProfilingResult:
         pass
 
     def estimate_all_gather(self, group, size, dtype):
-        ret = self._estimate_internal(group, size, dtype, self.all_gather_cost_dict) -\
-            self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict)
+        ret = (
+            self._estimate_internal(group, size, dtype,
+                                    self.all_gather_cost_dict) -
+            self._estimate_internal(group, 0, dtype, self.all_gather_cost_dict))
         return ret
 
     def estimate_all_reduce(self, group, size, dtype):
-        ret = self._estimate_internal(group, size, dtype, self.all_reduce_cost_dict) -\
-            self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict)
+        ret = (
+            self._estimate_internal(group, size, dtype,
+                                    self.all_reduce_cost_dict) -
+            self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict))
         return ret
 
     def multiply_scale(self, factor):
@@ -136,6 +138,7 @@ class MeshProfilingResult:
 
 
 class ProfilingResultDatabase:
+    """A database that stores profiling results for multiple device mesh shapes."""
 
     def __init__(self, data={}):
         self.data = data
@@ -286,7 +289,8 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     return shapes, backend.compile(loop_computation, compile_options)
 
 
-def to_np_dtype(dtype_str):
+def to_np_dtype(dtype_str: str):
+    """Convert a string type to np dtype"""
     if dtype_str == "f32":
         return np.dtype("float32")
     elif dtype_str == "f16":
@@ -296,12 +300,14 @@ def to_np_dtype(dtype_str):
 
 
 def rank_0_print(host_id, msg):
+    """Print message on rank 0."""
     if host_id == 0:
         print(msg, flush=True)
 
 
 def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
                        num_devices_per_node, op_info):
+    """Profile one HLO operator."""
     if op_info[0] == "dot":
         n, m, k, dtype_str = op_info[1]
         dtype = to_np_dtype(dtype_str)
@@ -433,9 +439,10 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
 
     # Run profiling
-    device_inputs[0] = \
-        [backend.buffer_from_pyval(np.int32(number), local_devices[k])
-            for k in range(len(local_devices))]
+    device_inputs[0] = [
+        backend.buffer_from_pyval(np.int32(number), local_devices[k])
+        for k in range(len(local_devices))
+    ]
 
     [d.synchronize_all_activity() for d in local_devices]
     tic = time.time()
@@ -447,17 +454,17 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     return mean_time
 
 
-def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
+def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
+                    cache_filename):
+    """Profile a list of HLO operators."""
     results = []
     num_devices_per_node = 8
     save_every = 15
 
-    # Must use an absolute efs path due to distributed ray workers
-    TMP_CACHE_FILE = "/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl"
-    if os.path.exists(TMP_CACHE_FILE):
+    if os.path.exists(cache_filename):
         rank_0_print(host_id,
-                     f"Load cached hlo op cost dict from {TMP_CACHE_FILE}...")
-        cache_dict = pickle.load(open(TMP_CACHE_FILE, "rb"))
+                     f"Load cached hlo op cost dict from {cache_filename}...")
+        cache_dict = pickle.load(open(cache_filename, "rb"))
     else:
         cache_dict = {}
 
@@ -476,12 +483,13 @@ def profile_hlo_ops(backend, local_devices, host_id, num_devices, op_infos):
         if host_id == 0 and ((i + 1) % save_every == 0 or
                              i == len(op_infos) - 1):
             rank_0_print(host_id, "Save cache...")
-            pickle.dump(cache_dict, open(TMP_CACHE_FILE, "wb"))
+            pickle.dump(cache_dict, open(cache_filename, "wb"))
 
     return np.array(results)
 
 
-def profile_dot(device_cluster):
+def profile_dot(device_cluster, cache_filename):
+    """Profile the compute cost of dot."""
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
@@ -491,7 +499,7 @@ def profile_dot(device_cluster):
         for i in range(0, 48):
             n = 128 * i
             op_infos.append(("dot", (n, n, n, dtype)))
-    results = physical_mesh.profile_hlo_ops(op_infos)
+    results = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
 
     dot_cost_dict = defaultdict(list)
     for i in range(len(op_infos)):
@@ -507,12 +515,13 @@ def profile_dot(device_cluster):
 
 def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                                   size_configs):
+    """Enumerate all possible collective groups."""
     # Enumerate all possible logical meshes
     logical_mesh_shapes = []
-    total_devices = num_hosts * num_devices_per_host
-    for i in range(1, total_devices + 1):
-        if total_devices % i == 0:
-            logical_mesh_shapes.append((total_devices // i, i))
+    num_devices = num_hosts * num_devices_per_host
+    for i in range(1, num_devices + 1):
+        if num_devices % i == 0:
+            logical_mesh_shapes.append((num_devices // i, i))
 
     # Enumerate all replica groups
     all_specs = set()
@@ -542,13 +551,13 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
     return list(all_specs)
 
 
-def profile_all(device_cluster, cluster_key, comm_size_range):
-    """Profile costs for all dot and comuniation primitives."""
+def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
+    """Profile costs for all dot and communication primitives."""
     from parax.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
     ##### Profile compute cost
-    dot_cost_dict = profile_dot(device_cluster)
+    dot_cost_dict = profile_dot(device_cluster, cache_filename)
     print_used_time("Profile dot")
 
     ##### Profile communication cost
@@ -567,9 +576,10 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         print(f"Mesh shape: {(num_hosts, num_devices_per_host)}")
 
         # Slice a mesh
-        tmp_mesh = virtual_mesh.slice_2d(list(range(num_hosts)),
-                                         np.arange(num_hosts * num_devices_per_host).\
-                                         reshape((num_hosts, num_devices_per_host)))
+        tmp_mesh = virtual_mesh.slice_2d(
+            list(range(num_hosts)),
+            np.arange(num_hosts * num_devices_per_host).reshape(
+                (num_hosts, num_devices_per_host)))
         all_specs = enumerate_all_collective_spec(num_hosts,
                                                   num_devices_per_host,
                                                   size_configs)
@@ -592,7 +602,9 @@ def profile_all(device_cluster, cluster_key, comm_size_range):
         while s < len(op_infos):
             try:
                 batch_result = physical_mesh.profile_hlo_ops(
-                    op_infos[s:s + batch_size], timeout=batch_timeout)
+                    op_infos[s:s + batch_size],
+                    cache_filename,
+                    timeout=batch_timeout)
             except ray.exceptions.RayError:
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None
@@ -662,6 +674,7 @@ def estimate_hlo_module_cost(hlo_module,
                              profiling_results,
                              num_micro_batches=1,
                              grad_sync_channel_ids=""):
+    """Estimate the cost of an HLO module with the HLO instruction level cost model."""
     with XlaPassContext({
             "gpu_cost_model::profiling_results": profiling_results,
             "gpu_cost_model::num_micro_batches": num_micro_batches,

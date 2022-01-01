@@ -7,15 +7,13 @@ import cupy
 
 from parax.collective.const import ENV
 from parax.collective.collective_group import nccl_util
-from parax.collective.collective_group.base_collective_group \
-    import BaseGroup
+from parax.collective.collective_group.base_collective_group import BaseGroup
 from parax.collective.const import get_store_name
-from parax.collective.types import AllReduceOptions, \
-    BarrierOptions, Backend, ReduceOptions, BroadcastOptions, \
-    AllGatherOptions, ReduceScatterOptions, SendOptions, \
-    RecvOptions
-from parax.collective.collective_group.cuda_stream import \
-    get_stream_pool
+from parax.collective.types import (AllReduceOptions, BarrierOptions, Backend,
+                                    ReduceOptions, BroadcastOptions,
+                                    AllGatherOptions, ReduceScatterOptions,
+                                    SendOptions, RecvOptions)
+from parax.collective.collective_group.cuda_stream import get_stream_pool
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +105,7 @@ class Rendezvous:
                 continue
             break
         if not uid:
-            raise RuntimeError(
-                "Unable to get the NCCLUniqueID from the store.")
+            raise RuntimeError("Unable to get the NCCLUniqueID from the store.")
         return uid
 
     def get_access_counter(self):
@@ -122,6 +119,7 @@ class Rendezvous:
 
 
 class NCCLGroup(BaseGroup):
+
     def __init__(self, world_size, rank, group_name):
         """Init an NCCL collective group."""
         super(NCCLGroup, self).__init__(world_size, rank, group_name)
@@ -223,17 +221,16 @@ class NCCLGroup(BaseGroup):
         Returns:
             None
         """
-        root_rank = len(tensors) * reduce_options.root_rank \
-            + reduce_options.root_tensor
+        root_rank = (len(tensors) * reduce_options.root_rank +
+                     reduce_options.root_tensor)
 
         def collective_fn(input_tensor, output_tensor, comm, stream):
-            comm.reduce(
-                nccl_util.get_tensor_ptr(input_tensor),
-                nccl_util.get_tensor_ptr(output_tensor),
-                nccl_util.get_tensor_n_elements(input_tensor),
-                nccl_util.get_nccl_tensor_dtype(input_tensor),
-                nccl_util.get_nccl_reduce_op(reduce_options.reduceOp),
-                root_rank, stream.ptr)
+            comm.reduce(nccl_util.get_tensor_ptr(input_tensor),
+                        nccl_util.get_tensor_ptr(output_tensor),
+                        nccl_util.get_tensor_n_elements(input_tensor),
+                        nccl_util.get_nccl_tensor_dtype(input_tensor),
+                        nccl_util.get_nccl_reduce_op(reduce_options.reduceOp),
+                        root_rank, stream.ptr)
 
         self._collective(tensors, tensors, collective_fn)
 
@@ -247,16 +244,15 @@ class NCCLGroup(BaseGroup):
         Returns:
             None
         """
-        root_rank = len(tensors) * broadcast_options.root_rank \
-            + broadcast_options.root_tensor
+        root_rank = (len(tensors) * broadcast_options.root_rank +
+                     broadcast_options.root_tensor)
 
         def collective_fn(input_tensor, output_tensor, comm, stream):
-            comm.broadcast(
-                nccl_util.get_tensor_ptr(input_tensor),
-                nccl_util.get_tensor_ptr(output_tensor),
-                nccl_util.get_tensor_n_elements(input_tensor),
-                nccl_util.get_nccl_tensor_dtype(input_tensor), root_rank,
-                stream.ptr)
+            comm.broadcast(nccl_util.get_tensor_ptr(input_tensor),
+                           nccl_util.get_tensor_ptr(output_tensor),
+                           nccl_util.get_tensor_n_elements(input_tensor),
+                           nccl_util.get_nccl_tensor_dtype(input_tensor),
+                           root_rank, stream.ptr)
 
         self._collective(tensors, tensors, collective_fn)
 
@@ -277,11 +273,11 @@ class NCCLGroup(BaseGroup):
         """
 
         def collective_fn(input_tensor, output_tensor, comm, stream):
-            comm.allGather(
-                nccl_util.get_tensor_ptr(input_tensor),
-                nccl_util.get_tensor_ptr(output_tensor),
-                nccl_util.get_tensor_n_elements(input_tensor),
-                nccl_util.get_nccl_tensor_dtype(input_tensor), stream.ptr)
+            comm.allGather(nccl_util.get_tensor_ptr(input_tensor),
+                           nccl_util.get_tensor_ptr(output_tensor),
+                           nccl_util.get_tensor_n_elements(input_tensor),
+                           nccl_util.get_nccl_tensor_dtype(input_tensor),
+                           stream.ptr)
 
         _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists)
         output_flattened = [
@@ -295,11 +291,10 @@ class NCCLGroup(BaseGroup):
                 for j, tensor in enumerate(tensor_list):
                     nccl_util.copy_tensor(tensor, output_flattened[i][j])
 
-        self._collective(
-            tensors,
-            output_flattened,
-            collective_fn,
-            postprocess_fn=postprocess_fn)
+        self._collective(tensors,
+                         output_flattened,
+                         collective_fn,
+                         postprocess_fn=postprocess_fn)
 
     def reducescatter(self,
                       tensors,
@@ -338,11 +333,10 @@ class NCCLGroup(BaseGroup):
                 for j, tensor in enumerate(tensor_list):
                     nccl_util.copy_tensor(input_flattened[i][j], tensor)
 
-        self._collective(
-            input_flattened,
-            tensors,
-            collective_fn,
-            preprocess_fn=preprocess_fn)
+        self._collective(input_flattened,
+                         tensors,
+                         collective_fn,
+                         preprocess_fn=preprocess_fn)
 
     def send(self, tensors, send_options=SendOptions()):
         """Send a tensor to a destination gpu in the group.
@@ -357,8 +351,8 @@ class NCCLGroup(BaseGroup):
 
         def p2p_fn(tensor, comm, stream, peer):
             comm.send(
-                nccl_util.get_tensor_ptr(tensor), send_options.n_elements
-                if send_options.n_elements > 0 else
+                nccl_util.get_tensor_ptr(tensor),
+                send_options.n_elements if send_options.n_elements > 0 else
                 nccl_util.get_tensor_n_elements(tensor),
                 nccl_util.get_nccl_tensor_dtype(tensor), peer, stream.ptr)
 
@@ -378,8 +372,8 @@ class NCCLGroup(BaseGroup):
 
         def p2p_fn(tensor, comm, stream, peer):
             comm.recv(
-                nccl_util.get_tensor_ptr(tensor), recv_options.n_elements
-                if recv_options.n_elements > 0 else
+                nccl_util.get_tensor_ptr(tensor),
+                recv_options.n_elements if recv_options.n_elements > 0 else
                 nccl_util.get_tensor_n_elements(tensor),
                 nccl_util.get_nccl_tensor_dtype(tensor), peer, stream.ptr)
 
@@ -421,8 +415,9 @@ class NCCLGroup(BaseGroup):
             # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
             # named actor leak.
             if rendezvous.get_access_counter() == self.world_size:
-                logger.debug("NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                             "will go out of context and be destroyed.")
+                logger.debug(
+                    "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                    "will go out of context and be destroyed.")
                 rendezvous.destroy_store()
 
         # Now create the communicators
@@ -514,8 +509,9 @@ class NCCLGroup(BaseGroup):
             # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
             # avoid named actor leak.
             if rendezvous.get_access_counter() == 2:
-                logger.debug("NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                             "will go out of context and be destroyed.")
+                logger.debug(
+                    "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                    "will go out of context and be destroyed.")
                 rendezvous.destroy_store()
 
         # create the p2p communicators
@@ -553,7 +549,8 @@ class NCCLGroup(BaseGroup):
             store = ray.get_actor(store_name)
             ray.kill(store)
         except ValueError:
-            logger.info("The store with name {} has been destroyed somewhere else.")
+            logger.info(
+                "The store with name {} has been destroyed somewhere else.")
             pass
 
     def _generate_nccl_uid(self, key):
@@ -650,8 +647,8 @@ class NCCLGroup(BaseGroup):
         my_gpu_idx = nccl_util.get_tensor_device(tensors[0])
         comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
                                            peer_gpu_idx)
-        comms = self._get_nccl_p2p_communicator(comm_key, my_gpu_idx,
-                                                peer_rank, peer_gpu_idx)
+        comms = self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
+                                                peer_gpu_idx)
         streams = self._dev_streams_map[comm_key]
         events = self._dev_event_map[comm_key]
 
@@ -704,16 +701,16 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
         dt = nccl_util.get_nccl_tensor_dtype(tensors[i])
         if dt != dtype:
             raise RuntimeError("All tensor operands to scatter/gather must "
-                               "have the same dtype. Got '{}' and '{}'."
-                               .format(dt, dtype))
+                               "have the same dtype. Got '{}' and '{}'.".format(
+                                   dt, dtype))
         # Note: typically CCL libraries only requires they have the same
         # number of elements; Here we make it more strict -- we require
         # exact shape match.
         s = nccl_util.get_tensor_shape(tensors[i])
         if s != shape:
             raise RuntimeError("All tensor operands to scatter/gather must "
-                               "have the same shape. Got '{}' and '{}'."
-                               .format(s, shape))
+                               "have the same shape. Got '{}' and '{}'.".format(
+                                   s, shape))
         # check all tensors in `tensor_lists` match.
         for t in tensor_lists[i]:
             # check dtype
@@ -721,8 +718,7 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
             if dt != dtype:
                 raise RuntimeError(
                     "All tensor operands to scatter/gather must "
-                    "have the same dtype. Got '{}' and '{}'.".format(
-                        dt, dtype))
+                    "have the same dtype. Got '{}' and '{}'.".format(dt, dtype))
             s = nccl_util.get_tensor_shape(t)
             if s != shape:
                 raise RuntimeError(
@@ -752,12 +748,12 @@ def _check_gpu_tensors(tensors):
         # (4) each tensor is on a different GPU
         dtype = nccl_util.get_nccl_tensor_dtype(t)
         if dt != dtype:
-            raise RuntimeError("Tensors must have identical dtype. Got: '{}'."
-                               .format(dtype))
+            raise RuntimeError(
+                "Tensors must have identical dtype. Got: '{}'.".format(dtype))
         shape = nccl_util.get_tensor_shape(t)
         if s != shape:
-            raise RuntimeError("Tensor must have identical shape. Got: '{}'."
-                               .format(shape))
+            raise RuntimeError(
+                "Tensor must have identical shape. Got: '{}'.".format(shape))
         device = nccl_util.get_tensor_device(t)
         if device == d:
             raise RuntimeError("Tensor must be on distinct GPUs.")

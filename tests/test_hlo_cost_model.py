@@ -80,7 +80,9 @@ class HloCostModelTest(unittest.TestCase):
 
     def test_cluster_profling(self):
         cluster = DeviceCluster()
-        prof_database = cluster.profile_all("p3.16", comm_size_range=(19, 20))
+        prof_database = cluster.profile_all("p3.16",
+                                            comm_size_range=(19, 20),
+                                            cache_filename="tmp_cache.pkl")
         prof_database.save("tmp_prof_database.pkl")
 
     def test_n_layer_mlp(self):

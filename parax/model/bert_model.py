@@ -408,8 +408,8 @@ class FlaxBertLayerCollection(nn.Module):
         id = 0
         for i, layer in enumerate(self.layers):
             if self.config.add_manual_pipeline_markers:
-                if id < len(self.pipeline_marker_positions) and \
-                        i == self.pipeline_marker_positions[id]:
+                if (id < len(self.pipeline_marker_positions) and
+                        i == self.pipeline_marker_positions[id]):
                     mark_pipeline(name=str(id), mark_type="end")
                     mark_pipeline(name=str(id + 1), mark_type="start")
                     id = id + 1

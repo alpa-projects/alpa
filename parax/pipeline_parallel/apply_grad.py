@@ -9,11 +9,10 @@ from jax.lax import add_p
 import numpy as np
 
 from parax.pipeline_parallel.computation import JaxPipelineComputation
-from parax.pipeline_parallel.manual_layer_slicing import get_var_mapping
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.pipeline_parallel.schedules import gen_dependency_with_stages
-from parax.util import slices_to_jaxpr, OrderedSet
+from parax.util import slices_to_jaxpr, OrderedSet, get_var_mapping
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -246,8 +245,8 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                     f"Cannot donate {invar} (shape: {invar.aval.shape})")
             donated_invars[idx] = False
 
-    return sliced_apply_grad, n_stages, dependency, apply_grad_placement,\
-            global_outvars, donated_invars
+    return (sliced_apply_grad, n_stages, dependency, apply_grad_placement,
+            global_outvars, donated_invars)
 
 
 def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):

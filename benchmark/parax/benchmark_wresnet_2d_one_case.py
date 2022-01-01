@@ -13,7 +13,7 @@ import optax
 
 import parax
 from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_slicing)
+                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_construction)
 from parax.model.wide_resnet import get_wide_resnet, TrainState
 from parax.util import (run_cmd, map_to_shape, count_communication_primitives,
                         print_used_time, compute_param_number)

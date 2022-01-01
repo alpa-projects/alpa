@@ -228,8 +228,8 @@ class GpipeSchedule(PipelineSchedule):
     def should_skip_grad_sync(self, task):
         batch_idx, stage_idx = task
         do_grad_sync = False
-        if self.num_mesh <= stage_idx < self.num_mesh * 2 \
-                and batch_idx == self.last_backward_batch_index:
+        if (self.num_mesh <= stage_idx < self.num_mesh * 2 and
+                batch_idx == self.last_backward_batch_index):
             do_grad_sync = True
         return not do_grad_sync
 
@@ -341,8 +341,8 @@ class PipeDreamFlush(PipelineSchedule):
     def should_skip_grad_sync(self, task):
         batch_idx, stage_idx = task
         do_grad_sync = False
-        if self.num_mesh <= stage_idx < self.num_mesh * 2 \
-                and batch_idx == self.last_backward_batch_index:
+        if (self.num_mesh <= stage_idx < self.num_mesh * 2 and
+                batch_idx == self.last_backward_batch_index):
             do_grad_sync = True
         return not do_grad_sync
 

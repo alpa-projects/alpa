@@ -195,8 +195,8 @@ def copy_tensor(dst_tensor, src_tensor):
         None
     """
     copied = True
-    if isinstance(dst_tensor, numpy.ndarray) \
-            and isinstance(src_tensor, numpy.ndarray):
+    if (isinstance(dst_tensor, numpy.ndarray) and
+            isinstance(src_tensor, numpy.ndarray)):
         numpy.copyto(dst_tensor, src_tensor)
     elif torch_available():
         if isinstance(dst_tensor, torch.Tensor) and isinstance(
@@ -215,14 +215,16 @@ def copy_tensor(dst_tensor, src_tensor):
     else:
         copied = False
     if not copied:
-        raise ValueError("Unsupported tensor type. Got: {} and {}. Supported "
-                         "CPU tensor types are: torch.Tensor, numpy.ndarray."
-                         .format(type(dst_tensor), type(src_tensor)))
+        raise ValueError(
+            "Unsupported tensor type. Got: {} and {}. Supported "
+            "CPU tensor types are: torch.Tensor, numpy.ndarray.".format(
+                type(dst_tensor), type(src_tensor)))
 
 
 # Note(Hao): this requires Ray >= 1.2.0,
 # otherwise _QueueActor is an actor class.
 class glooQueue(_QueueActor):
+
     def index(self, group_name):
         try:
             return self.queue._queue.index(group_name)
@@ -232,6 +234,7 @@ class glooQueue(_QueueActor):
 
 @ray.remote(num_cpus=0)
 class SignalActor:
+
     def __init__(self, world_size):
         self.ready_events = [asyncio.Event() for _ in range(world_size)]
         self.world_size = world_size

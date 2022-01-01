@@ -2,11 +2,13 @@
 from abc import ABCMeta
 from abc import abstractmethod
 
-from parax.collective.types import AllReduceOptions, BarrierOptions, \
-    ReduceOptions, AllGatherOptions, BroadcastOptions, ReduceScatterOptions
+from parax.collective.types import (AllReduceOptions, BarrierOptions,
+                                    ReduceOptions, AllGatherOptions,
+                                    BroadcastOptions, ReduceScatterOptions)
 
 
 class BaseGroup(metaclass=ABCMeta):
+
     def __init__(self, world_size, rank, group_name):
         """Init the process group with basic information.
 

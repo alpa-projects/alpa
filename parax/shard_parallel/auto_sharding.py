@@ -4,23 +4,27 @@ import logging
 import multiprocessing
 import time
 import traceback
+from typing import Sequence, Optional, Union, Tuple
 from warnings import warn
 
 import numpy as np
+from jax.core import ShapedArray
 from jax.interpreters import xla, pxla
+from jaxlib import xla_extension
 from jaxlib.xla_client import OpSharding
 
-from parax.device_mesh import LogicalDeviceMesh
 from parax.global_env import global_config
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
-                                  save_to_file)
-from parax.mesh_executable import NormalMeshDriverExecutable
+                                  save_to_file, SearchTask)
 from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# A constant to represent infinity
 INFINITY_COST = 1e13
+
+# The threshold of all-reduce combiner in bytes.
 ALLREDUCE_THRESHOLD = 1 << 60
 
 
@@ -33,40 +37,108 @@ class HloProtoStatus(enum.IntEnum):
     # the SPMD partitioner.
 
 
-def compile_with_search(backend, xla_computation, avals, out_avals,
-                        donated_invars, physical_mesh, logical_mesh_choices,
-                        logical_mesh_search_mode, memory_budget_per_device,
-                        search_task, record_file, multiple_stages,
-                        grad_acc_num_micro_batches,
-                        bypass_device_assignment_check):
+class LogicalDeviceMesh:
+    """
+    A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
+
+    A physical mesh can have multiple logical views. (e.g., a 2x8 physical mesh can be viewed
+    as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
+    We use alpha-beta model to model the communication cost.
+    """
+
+    def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
+        self.physical_mesh = physical_mesh
+        self.id_mesh = np.array(id_mesh)
+        self.flatten_ids = tuple(int(x) for x in self.id_mesh.flatten())
+        self.is_multi_host = False
+
+        # coefficient for alpha-beta communication model
+        if mesh_alpha is None:
+            mesh_alpha = [1] * len(self.id_mesh.shape)
+        if mesh_beta is None:
+            mesh_beta = [1] * len(self.id_mesh.shape)
+        self.mesh_alpha = tuple(mesh_alpha)
+        self.mesh_beta = tuple(mesh_beta)
+
+    @property
+    def shape(self):
+        return self.id_mesh.shape
+
+    @property
+    def num_devices(self):
+        return np.prod(self.id_mesh.shape)
+
+    def all_gather_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices * num_bytes + 0.1)
+
+    def all_reduce_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] * 2 *
+                (num_devices - 1) / num_devices * num_bytes + 0.01)
+
+    def reduce_scatter_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices * num_bytes + 0.001)
+
+    def all_to_all_cost(self, num_bytes, mesh_dim):
+        num_devices = self.id_mesh.shape[mesh_dim]
+        penalty_factor = num_devices / 2.0
+        return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
+                (num_devices - 1) / num_devices / num_devices * num_bytes *
+                penalty_factor + 0.001)
+
+    def __hash__(self):
+        return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
+                     self.mesh_beta))
+
+    def __eq__(self, other):
+        return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
+                 self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
+                                     other.mesh_alpha, other.mesh_beta))
+
+
+def compile_with_search(
+        backend: xla_extension.Client,
+        xla_computation: xla_extension.XlaComputation,
+        avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
+        donated_invars: Sequence[bool], physical_mesh: "PhysicalDeviceMesh",
+        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_search_mode: str,
+        memory_budget_per_device: Optional[float],
+        search_task: Optional[SearchTask], record_file: Optional[str],
+        multiple_stages: Union[str,
+                               bool], grad_acc_num_micro_batches: Optional[int],
+        bypass_device_assignment_check: bool):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
-      backend (xla_extension.Client): The XLA backend client.
-      xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
+      backend: The XLA backend client.
+      xla_computation: The unoptimized xla computation
         got by tracing the jax function.
-      avals (Sequence[ShapedArray]): The abstract values of input arguments.
-      out_avals (Sequence[ShapedArray]): The abstract values of outputs.
-      donated_invars (Sequence[bool]): Whether the arguments are donated.
-      bypass_device_assignment_check (bool): Whether compile without exact devices.
-      logical_mesh_choices (List[Tuple[int]]): The candidates of logical mesh shape.
-        If there is only one choice, use the given one. If there are multple choices,
+      avals: The abstract values of input arguments.
+      out_avals: The abstract values of outputs.
+      donated_invars: Whether the arguments are donated.
+      physical_mesh: The physical device mesh.
+      logical_mesh_choices: The candidates of logical mesh shape.
+        If there is only one choice, use the given one. If there are multiple choices,
         we will try all of them and pick the best.
-      logical_mesh_search_mode (str): The choices are {"measurement", "cost_model"}.
+      logical_mesh_search_mode: The choices are {"measurement", "cost_model"}.
         If is "measurement", use real profiling to pick the best logical mesh shape.
         If is "cost_model", use cost estimation in HLO IR to pick the best one.
         This is ignored if len(logical_mesh_choices) == 1.
-      memory_budget_per_device (Optional[float]): The memory budget per device in bytes.
-      search_task (Optional[SearchTask]): Only used when doing logical mesh shape search.
+      memory_budget_per_device: The memory budget per device in bytes.
+      search_task: Only used when doing logical mesh shape search.
         Used when dumping measurement records to the file.
-      record_file (Optional[str]): If is not None, dump measurement records into
+      record_file: If is not None, dump measurement records into
         this file.
-      strategy_config (Optional[StrategyConfig]): If is not None, do compilation
-        according to this configuration.
-      multiple_stages (bool | str): Whether to return multiple stages sliced by xla_pipeline_maker.
-      grad_acc_num_micro_batches (Optional[int]): The number of micro batches
+      multiple_stages: Whether to return multiple stages sliced by xla_pipeline_maker.
+      grad_acc_num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
+      bypass_device_assignment_check: Whether to compile without exact devices.
     """
     from parax import testing
 
@@ -76,12 +148,12 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
     run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
     return_after_slice_auto_sharded_stages = bool(multiple_stages)
 
-    total_devices = logical_mesh_choices[0].total_devices
+    num_devices = logical_mesh_choices[0].num_devices
     build_random_seed = global_config.build_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
-        num_partitions=total_devices,
-        device_assignment=np.arange(total_devices).reshape((1, -1)),
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
@@ -204,8 +276,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
         if multiple_stages:
             hlo_stages = get_auto_sharded_hlo_stages()
-            sharded_proto = get_hooked_sharding_protos()
+            hooked_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
+        from parax.mesh_executable import NormalMeshDriverExecutable
         assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
         best_time_cost = float("inf")
@@ -226,8 +299,9 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 time_costs = (objective,)
 
             if np.mean(time_costs) < best_time_cost:
-                best_logical_mesh, best_compiled, best_solution_vector, best_objective = \
-                    logical_mesh, compiled, solution_vector, objective
+                (best_logical_mesh, best_compiled, best_solution_vector,
+                 best_objective) = (logical_mesh, compiled, solution_vector,
+                                    objective)
                 best_time_cost = np.mean(time_costs)
 
             # Save records to file
@@ -236,44 +310,47 @@ def compile_with_search(backend, xla_computation, avals, out_avals,
                 inp = MeasureInput(search_task, strategy_config)
                 res = MeasureResult(time_costs, objective, 0, int(time.time()))
                 save_to_file([inp], [res], record_file)
-            #print(logical_mesh.shape, objective, np.mean(time_costs))
 
-        logical_mesh, compiled, solution_vector, objective = \
-            best_logical_mesh, best_compiled, best_solution_vector, best_objective
+        logical_mesh, compiled, solution_vector, objective = (
+            best_logical_mesh, best_compiled, best_solution_vector,
+            best_objective)
 
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
     strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
                                      solution_vector)
     if multiple_stages == "stage_and_hooked":
-        return hlo_stages, sharded_proto, strategy_config
+        return hlo_stages, hooked_proto, strategy_config
     if multiple_stages:
         return hlo_stages, strategy_config
     return compiled, strategy_config
 
 
-def compile_with_given_strategy(backend,
-                                xla_computation,
-                                strategy_config,
-                                num_devices,
-                                bypass_device_assignment_check,
-                                hlo_proto_status,
-                                rewrite_for_grad_acc=False,
-                                rewrite_grad_acc_indices=None,
-                                run_backend_codegen="auto"):
+def compile_with_given_strategy(
+        backend: xla_extension.Client,
+        xla_computation: xla_extension.XlaComputation,
+        strategy_config: StrategyConfig,
+        num_devices: int,
+        bypass_device_assignment_check: bool,
+        hlo_proto_status: HloProtoStatus,
+        rewrite_for_grad_acc: bool = False,
+        rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
+        run_backend_codegen: Union[str, bool] = "auto"):
     """Compile an XLA computation with a given auto sharding strategy.
 
     Args:
-      backend (xla_extension.Client): The XLA backend client.
-      xla_computation (xla_extension.XlaComputation): The unoptimized xla computation
+      backend: The XLA backend client.
+      xla_computation: The unoptimized xla computation
         got by tracing the jax function.
-      strategy_config (StrategyConfig): The auto-sharding strategy solution.
-      num_devices (int): The total number of devices.
-      bypass_device_assignment_check (bool): Set this to true if this compilation is invoked
+      strategy_config: The auto-sharding strategy solution.
+      num_devices: The total number of devices.
+      bypass_device_assignment_check: Set this to true if this compilation is invoked
         on the driver node in the multi-host setting.
-      hlo_proto_status (HloProtoStatus): The optimization status of the
+      hlo_proto_status: The optimization status of the
         input xla computation. see docs in the definition of `HloProtoStatus`.
-      rewrite_for_grad_acc (bool): Whether do rewriting for gradient accumulation.
+      rewrite_for_grad_acc: Whether do rewriting for gradient accumulation.
+      rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
+      run_backend_codegen: Whether run the backend codegen to generate cuda binaries.
     """
     compile_options = get_compile_options(
         num_replicas=1,
@@ -289,18 +366,18 @@ def compile_with_given_strategy(backend,
     # 2. make sure the annotaed sharding is not modified by other passes.
     if hlo_proto_status == HloProtoStatus.UNOPTIMIZED:
         run_hlo_passes = True
-        run_hlo_optimization_pipeline = True
+        run_pre_spmd_partitioner_passes = True
         run_auto_sharding = True
         solution_vector = strategy_config.auto_sharding_solution_vector
     elif hlo_proto_status == HloProtoStatus.SHARDING_ANNOTATED:
         run_hlo_passes = True
-        run_hlo_optimization_pipeline = False
+        run_pre_spmd_partitioner_passes = False
         run_auto_sharding = False
         solution_vector = []
     elif hlo_proto_status == HloProtoStatus.FULLY_OPTIMIZED:
         run_hlo_passes = False
         run_auto_sharding = False
-        run_hlo_optimization_pipeline = False
+        run_pre_spmd_partitioner_passes = False
         solution_vector = []
     else:
         raise ValueError(f"Invalid status: {hlo_proto_status}")
@@ -320,7 +397,7 @@ def compile_with_given_strategy(backend,
             # Build options
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
             "build_option::run_hlo_passes": run_hlo_passes,
-            "build_option::run_hlo_optimization_pipeline": run_hlo_optimization_pipeline,
+            "build_option::run_pre_spmd_partitioner_passes": run_pre_spmd_partitioner_passes,
             "build_option::run_backend_codegen": run_backend_codegen,
 
             # Auto-sharding solver options
@@ -350,26 +427,29 @@ def compile_with_given_strategy(backend,
     return compiled
 
 
-def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
-                                    logical_mesh_shape):
+def get_input_output_sharding_specs(
+    hlo_module: xla_extension.HloModule, avals: Sequence[ShapedArray],
+    out_avals: Sequence[ShapedArray], num_devices: int,
+    logical_mesh_shape: Sequence[int]
+) -> Tuple[Sequence[pxla.ShardingSpec], Sequence[pxla.ShardingSpec]]:
     """Get the sharding specs of input/output tensors from an HloModule.
 
     Args:
-      hlo_module (xla_extension.HloModule): The sharded HLO module.
-      num_devices (int): The total number of devices.
-      avals (List[ShapedArray]: The abstract values of input tensors.
-      avals (List[ShapedArray]: The abstract values of output tensors.
-      logical_mesh_shape (Tuple[int]): The shape of logical mesh.
+      hlo_module: The sharded HLO module.
+      avals: The abstract values of input tensors.
+      out_avals: The abstract values of output tensors.
+      num_devices: The total number of devices.
+      logical_mesh_shape: The shape of logical mesh.
 
     Returns:
-      input_sharding_specs (List[pxla.ShardingSpec]): The sharding specs of input tensors.
-      output_sharding_specs (List[pxla.ShardingSpec]): The sharding specs of output tensors.
+      input_sharding_specs: The sharding specs of input tensors.
+      output_sharding_specs: The sharding specs of output tensors.
     """
     if num_devices != 1:
         input_shardings = hlo_module.spmd_parameters_shardings()
         input_sharding_specs = [
-            hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
-            for (proto_tuple, aval) in zip(input_shardings, avals)
+            hlo_sharding_to_sharding_spec(proto, aval, logical_mesh_shape)
+            for (proto, aval) in zip(input_shardings, avals)
         ]
         output_shardings = hlo_module.spmd_output_sharding()
         output_sharding_specs = hlo_sharding_to_sharding_spec(
@@ -386,10 +466,13 @@ def get_input_output_sharding_specs(hlo_module, num_devices, avals, out_avals,
     return input_sharding_specs, output_sharding_specs
 
 
-def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
+def _hlo_sharding_to_sharding_spec_no_tuple(
+        proto: bytes, aval: ShapedArray,
+        logical_mesh: Sequence[int]) -> pxla.ShardingSpec:
     """The internal function of hlo_sharding_to_sharding_spec."""
-    sharding_type, tile_assignment_dimensions, tile_assignment_devices, \
-        _, _ = proto_tuple
+    sharding_type, tile_assignment_dimensions, tile_assignment_devices = (
+        proto.type, proto.tile_assignment_dimensions,
+        proto.tile_assignment_devices)
 
     sharding = []
     mesh_mapping = []
@@ -454,13 +537,15 @@ def _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval, logical_mesh):
     return pxla.ShardingSpec(sharding, mesh_mapping)
 
 
-def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
+def hlo_sharding_to_sharding_spec(
+        hlo_sharding: xla_extension.HloSharding, aval: ShapedArray,
+        logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Convert hlo sharding to sharding spec."""
     logical_mesh = LogicalDeviceMesh(
         None,
         np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
-    proto_tuple = hlo_sharding.proto_tuple()
-    sharding_type, _, _, tuple_shardings, _ = proto_tuple
+    proto = hlo_sharding.proto_tuple()
+    sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
     if sharding_type == OpSharding.Type.TUPLE:
         avals = aval
         return [
@@ -468,27 +553,13 @@ def hlo_sharding_to_sharding_spec(hlo_sharding, aval, logical_mesh_shape):
             for (shard, aval) in zip(tuple_shardings, avals)
         ]
     else:
-        return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval,
+        return _hlo_sharding_to_sharding_spec_no_tuple(proto, aval,
                                                        logical_mesh)
 
 
-def sharding_proto_to_sharding_spec(proto_tuple, aval, logical_mesh_shape):
-    logical_mesh = LogicalDeviceMesh(
-        None,
-        np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
-    sharding_type, _, _, tuple_shardings, _ = proto_tuple
-    if sharding_type == OpSharding.Type.TUPLE:
-        avals = aval
-        return [
-            _hlo_sharding_to_sharding_spec_no_tuple(shard, aval, logical_mesh)
-            for (shard, aval) in zip(tuple_shardings, avals)
-        ]
-    else:
-        return _hlo_sharding_to_sharding_spec_no_tuple(proto_tuple, aval,
-                                                       logical_mesh)
-
-
-def make_replicated_spec(aval, logical_mesh_shape):
+def make_replicated_spec(
+        aval: ShapedArray,
+        logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Make a replicated ShardingSpec."""
     sharding = (pxla.NoSharding(),) * len(aval.shape)
     mesh_mapping = (pxla.Replicated(np.prod(logical_mesh_shape)),)
@@ -534,7 +605,7 @@ def _call_solver_serialized_args(
         r_np,
         v_np,
         s_init_np=None):
-    """Call the solver with serailized arguments."""
+    """Call the solver with serialized arguments."""
     global last_s_val, last_objective
 
     import pulp
@@ -732,8 +803,9 @@ def _call_solver_serialized_args(
 
     msg = verbose
     time_limit = 2000
-    assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), \
+    assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), (
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
+    )
     solver = pulp.COIN_CMD(
         mip=True,
         msg=msg,
@@ -779,27 +851,28 @@ def _call_solver_serialized_args(
     return s_val, e_val, objective, status
 
 
-# Auto-sharded pipeline stages
+# Auto-sharded pipeline stages.
+# These global variables are used to receive values from XLA c++ passes.
 auto_sharded_hlo_stages = None
 
 hooked_sharding_protos = None
 
 
-def set_auto_sharded_hlo_stages(hlo_module_protos):
+def set_auto_sharded_hlo_stages(hlo_module_protos: Sequence[bytes]):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
     global auto_sharded_hlo_stages
     auto_sharded_hlo_stages = hlo_module_protos
 
 
-def set_hooked_sharding_protos(hlo_module_proto):
+def set_hooked_sharding_protos(hlo_module_proto: bytes):
     global hooked_sharding_protos
     hooked_sharding_protos = hlo_module_proto
 
 
-def get_auto_sharded_hlo_stages():
+def get_auto_sharded_hlo_stages() -> Sequence[bytes]:
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stages
 
 
-def get_hooked_sharding_protos():
+def get_hooked_sharding_protos() -> bytes:
     return hooked_sharding_protos

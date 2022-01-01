@@ -103,26 +103,26 @@ class GradAccumulationTest(unittest.TestCase):
         if global_config.prefer_reduce_scatter:
             _, accumulate_grad, apply_grad = hlo_text.split("HloModule")
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(accumulate_grad)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(accumulate_grad))
             assert n_total == n_all_reduce + n_reduce_scatter == 1
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(apply_grad)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(apply_grad))
             assert n_total == n_all_gather == 1
         else:
             assert executable.grad_sync_channel_ids.count(".") == 2
             _, accumulate_grad, apply_grad = hlo_text.split("HloModule")
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(accumulate_grad)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(accumulate_grad))
             if use_2d_mesh:
                 assert n_total == n_all_reduce == 2
             else:
                 assert n_total == n_all_reduce == 1
 
-            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ =\
-                count_communication_primitives(apply_grad)
+            n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
+                count_communication_primitives(apply_grad))
             assert n_total == 0
 
         physical_mesh.shutdown()

@@ -2,8 +2,6 @@
 
 import unittest
 
-import numpy as np
-
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
@@ -22,7 +20,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        set_parallelize_options(jax.devices()[:4])
+        set_parallelize_options(jax.local_devices()[:4])
 
     def test_donate_buffer(self):
 
@@ -39,12 +37,11 @@ class AutoShardingBasicTest(unittest.TestCase):
         hlo_ir = hlo_module.to_string()
 
         # Assert b is sharded
-        assert b.sharding_spec == pxla.ShardingSpec(
+        assert (b.sharding_spec == pxla.ShardingSpec(
             sharding=(NoSharding(), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0),)) or\
-               b.sharding_spec == pxla.ShardingSpec(
-            sharding=(Chunked([4]), NoSharding()),
-            mesh_mapping=(ShardedAxis(0),))
+            mesh_mapping=(ShardedAxis(0),)) or b.sharding_spec
+                == pxla.ShardingSpec(sharding=(Chunked([4]), NoSharding()),
+                                     mesh_mapping=(ShardedAxis(0),)))
 
     def test_dot_reshape_transpose(self):
         set_parallelize_options(memory_budget_per_device=1 * MB)
@@ -67,7 +64,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         # Check correctness
         expected = func(a, b)
         actual = para_func(a, b)
-        np.testing.assert_allclose(expected, actual)
+        testing.assert_allclose(expected, actual)
 
     def test_dropout(self):
 
@@ -111,7 +108,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert hlo_ir.count("all-reduce(") == 1
 
     def test_one_by_one_mesh(self):
-        set_parallelize_options(devices=jax.devices()[0:1])
+        set_parallelize_options(devices=jax.local_devices()[0:1])
 
         @parallelize
         def add_one(x):
@@ -121,13 +118,13 @@ class AutoShardingBasicTest(unittest.TestCase):
         a = jnp.ones((128, 128))
         b = add_one(a)
 
-        np.testing.assert_allclose(b, a + 1)
+        testing.assert_allclose(b, a + 1)
 
     def test_reshape_uneven_partition(self):
         # TODO(lmzheng): Support the uneven partition of reshape.
         # But this seems too complicated.
 
-        set_parallelize_options(devices=jax.devices()[0:4])
+        set_parallelize_options(devices=jax.local_devices()[0:4])
 
         @parallelize
         def split(a):

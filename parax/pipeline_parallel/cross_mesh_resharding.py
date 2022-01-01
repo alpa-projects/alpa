@@ -284,10 +284,10 @@ class SymbolicReshardingTask(ReshardingTask):
             for replica_index, receiver in enumerate(
                     dst_tile.replica_device_strs):
                 # Get args for an empty buffer
-                receiver_device_id = \
-                    self.collective_group.device_str_to_device_id_map[receiver]
-                receiver_worker = \
-                    self.collective_group.device_str_to_mesh_worker_map[receiver]
+                receiver_device_id = (
+                    self.collective_group.device_str_to_device_id_map[receiver])
+                receiver_worker = (self.collective_group.
+                                   device_str_to_mesh_worker_map[receiver])
                 dtype = self.task_spec.src.aval.dtype
                 receiver_task = [receiver_device_id, dst_tile.tile_shape, dtype]
                 # Get args for send/recv
@@ -296,8 +296,8 @@ class SymbolicReshardingTask(ReshardingTask):
                     for src_tile_index, _ in enumerate(src_tiles)
                 ]
                 self.receiver_uuid_plan.append(receiver)
-                receiver_rank, receiver_gpu_idx = \
-                    self.collective_group.device_str_to_rank_map[receiver]
+                receiver_rank, receiver_gpu_idx = (
+                    self.collective_group.device_str_to_rank_map[receiver])
                 receiver_subtasks = []
                 for sender_idx, sender in enumerate(senders):
                     # Sender's task
@@ -322,7 +322,8 @@ class SymbolicReshardingTask(ReshardingTask):
         # is a worker -> ((device_ids), (device_strs), (slices))
         for flatten_id, indices in enumerate(self.task_spec.dst_indices):
             receiver = self.dst_mesh.device_strs[flatten_id]
-            participant_worker = self.collective_group.device_str_to_mesh_worker_map[receiver]
+            participant_worker = self.collective_group.device_str_to_mesh_worker_map[
+                receiver]
             (step, offset, group_idx, dst_mesh_shape
             ) = self._allgather_receiver_step_and_offset(receiver)
             post_allgather_indices = self._indices_in_dst_post_allgather(
@@ -402,8 +403,9 @@ class SymbolicReshardingTask(ReshardingTask):
         return dst_array
 
     def __str__(self):
-        return f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"\
-               f"{self.task_spec.src_sharding_spec} ->\n{self.task_spec.dst_sharding_spec})"
+        return (f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"
+                f"{self.task_spec.src_sharding_spec} ->\n"
+                f"{self.task_spec.dst_sharding_spec})")
 
 
 class CollectiveGroup:
@@ -638,8 +640,9 @@ class ReshardingTaskSpec:
                     # meaning it is a fully involved tile
                     offset = related_tile_offset[i][0]
                     offsets.append(slice(0, tile_length_on_this_dim))
-                    left_in_dst_tile = tile_length_on_this_dim - offset + \
-                        (tile_index_relative[i] - 1) * tile_length_on_this_dim
+                    left_in_dst_tile = (
+                        tile_length_on_this_dim - offset +
+                        (tile_index_relative[i] - 1) * tile_length_on_this_dim)
                     right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
@@ -758,11 +761,11 @@ class CrossMeshCommunicator:
         for dim_spec in dst_sharding_spec.sharding:
             tot_sharding *= dim_spec_chunk_value(dim_spec)
 
-        if tot_sharding == dst_mesh.total_devices:
+        if tot_sharding == dst_mesh.num_devices:
             return dst_sharding_spec, extra_slice
 
-        assert dst_mesh.total_devices % tot_sharding == 0
-        extra_sharding = dst_mesh.total_devices // tot_sharding
+        assert dst_mesh.num_devices % tot_sharding == 0
+        extra_sharding = dst_mesh.num_devices // tot_sharding
         # TODO(yonghao): Cannot do allgather cross node. Need to support it.
         first_mesh_dim = dst_sharding_spec.mesh_mapping[0]
         if (isinstance(first_mesh_dim, pxla.Replicated) or
@@ -855,14 +858,15 @@ class CrossMeshCommunicator:
             # find out variables that need resharding, and get their
             # (1) out_sharding_spec in the src stage
             # (2) in_sharding_spec in the destination stage.
-            resharding_vars, out_var_indices, in_var_indices = \
-                self._args_between(src_stage, dst_stage)
+            resharding_vars, out_var_indices, in_var_indices = (
+                self._args_between(src_stage, dst_stage))
             out_sharding_specs = src_stage.output_sharding_specs
             in_sharding_specs = dst_stage.input_sharding_specs
 
             # Make a ReshardSpec for each VDA
-            for var, out_var_index, in_var_index in \
-                    zip(resharding_vars, out_var_indices, in_var_indices):
+            for var, out_var_index, in_var_index in zip(resharding_vars,
+                                                        out_var_indices,
+                                                        in_var_indices):
                 src_sharding_spec = out_sharding_specs[out_var_index]
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 dst_sharding_spec, extra_slice = self._rewrite_allgather_specs(

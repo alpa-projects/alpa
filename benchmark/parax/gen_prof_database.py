@@ -25,6 +25,8 @@ if __name__ == "__main__":
 
     comm_size_range = (0, 29)
     cluster = DeviceCluster()
-    prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range)
+    # Must use an absolute efs filename because ray actors are on distributed workers.
+    prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range
+        cache_filename="/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl")
     prof_database.save(args.filename)
     print(f"Save profiling database to {args.filename}")

@@ -132,7 +132,7 @@ compute_cost = np.array(
 print(compute_cost.shape, (N, N, M))
 print("previously tested compute cost", compute_cost)
 
-cost, solution = dp(N, virtual_mesh.total_devices, batch_size, submesh_choices, compute_cost)
+cost, solution = dp(N, virtual_mesh.num_devices, batch_size, submesh_choices, compute_cost)
 print("-" * 30, "Solution", "-" * 30)
 print("Cost:", cost)
 print(solution)

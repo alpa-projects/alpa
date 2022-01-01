@@ -606,7 +606,7 @@ def profile_xla_executable(compiled, backend, local_devices):
     for shape in input_shapes:
         input_bytes += np.prod(
             shape.dimensions()) * shape.numpy_dtype().itemsize
-    if free_mem < compiled.total_allocation_size():
+    if free_mem < compiled.total_allocation_size() and free_mem != -1:
         return cost_failed
 
     device_inputs = []

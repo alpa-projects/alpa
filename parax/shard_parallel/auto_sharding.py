@@ -14,7 +14,7 @@ from jax.interpreters import xla, pxla
 from jaxlib import xla_extension
 from jaxlib.xla_client import OpSharding
 
-from parax.global_env import global_config
+from parax.global_env import global_config, AutoShardingOption
 from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file, SearchTask)
 from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
@@ -33,35 +33,6 @@ class HloProtoStatus(enum.IntEnum):
     SHARDING_ANNOTATED = 1  # A HLO with sharding annotation attached.
     FULLY_OPTIMIZED = 2  # A fully optimized HLO which is already partitioned by
     # the SPMD partitioner.
-
-
-class AutoShardingOption:
-    """Options of the auto-sharding solver."""
-
-    def __init__(self):
-        self.allow_all_gather = True  # Whether to allow all-gather during re-sharding.
-        self.allow_all_to_all = True  # Whether to allow all-to-all during re-sharding.
-        self.allow_replicated_parameters = True  # Whether to allow replicated parameters.
-        self.force_data_parallel = False  # Whether to forcibly generate data-parallel.
-        self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
-        # a mesh dimension.
-        self.force_zero_stage_3 = False  # Whether to forcibly generate a strategy similar to
-        # ZeRO optimizer stage 3.
-        self.force_zero_stage_3_all_gather_threshold = 1 << 25  # The threshold of all-gather combiner
-        # if force_zero_stage_3 is true.
-        self.prefer_reduce_scatter = False  # Prefer reduce-scatter over all-reduce.
-        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
-        self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
-        self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
-        # instead of the ILP solver.
-        self.all_reduce_threshold = 1 << 60  # The threshold of all-reduce combiner in bytes.
-
-    def deepcopy_and_update(self, new_values: dict):
-        ret = copy.copy(self)
-        for k, v in new_values.items():
-            assert hasattr(ret, k)
-            setattr(ret, k, v)
-        return ret
 
 
 class LogicalDeviceMesh:
@@ -116,6 +87,25 @@ class LogicalDeviceMesh:
         return (self.mesh_alpha[mesh_dim] + self.mesh_beta[mesh_dim] *
                 (num_devices - 1) / num_devices / num_devices * num_bytes *
                 penalty_factor + 0.001)
+
+    def make_tile_spec(self, array, tensor_dims, mesh_dims):
+        shape = array.shape
+        sharding = [
+            pxla.NoSharding(),
+        ] * len(shape)
+        mesh_mapping = [
+            None,
+        ] * len(self.id_mesh.shape)
+
+        for i, (tensor_dim, mesh_dim) in enumerate(zip(tensor_dims, mesh_dims)):
+            sharding[tensor_dim] = pxla.Chunked([self.id_mesh.shape[mesh_dim]],)
+            mesh_mapping[mesh_dim] = pxla.ShardedAxis(i)
+
+        for i, _ in enumerate(mesh_mapping):
+            if mesh_mapping[i] is None:
+                mesh_mapping[i] = pxla.Replicated(self.id_mesh.shape[i])
+
+        return pxla.ShardingSpec(sharding, mesh_mapping)
 
     def __hash__(self):
         return hash((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,

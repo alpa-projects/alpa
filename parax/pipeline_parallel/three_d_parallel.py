@@ -230,17 +230,17 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1)
-    compile_fn = lambda w, v: w.compile_with_config.remote(*v)
+    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v)
     compile_intermediate = [None] * num_meshes
     total_flops = 0
-    default_auto_sharding_option = AutoShardingOption()
+    default_autosharding_option = global_config.default_autosharding_option
     for mesh_idx in range(num_meshes):
         virtual_mesh = virtual_meshes[mesh_idx]
         logical_mesh_choices = [
             virtual_mesh.get_logical_mesh(logical_mesh_shapes[mesh_idx])
         ]
         logical_mesh_search_mode = "cost_model"
-        autosharding_option = default_auto_sharding_option.deepcopy_and_update(
+        autosharding_option = default_autosharding_option.deepcopy_and_update(
             autosharding_option_dicts[mesh_idx])
 
         # Setup dummy stages

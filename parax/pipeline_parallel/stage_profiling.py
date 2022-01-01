@@ -128,7 +128,7 @@ class CompileWorker:
         try:
             _, (protos, hooked_proto,
                 strategy_config) = self.compile_proto_with_search(
-                    stage_id, autosharding_option, proto, jaxpr_args,
+                    stage_id, proto, jaxpr_args, autosharding_option,
                     mesh_kwargs)
         except RuntimeError:
             logger.warning("Unexpected error in compile time")
@@ -172,9 +172,9 @@ class CompileWorker:
     def compile_proto_with_search(self, stage_id, proto,
                                   jaxpr_args, autosharding_option, mesh_kwargs):
         built = xla_client.XlaComputation(proto)
+        mesh_kwargs["as_option"] = autosharding_option
         return stage_id, compile_with_search(self.backend, built,
-                                             *jaxpr_args, autosharding_option,
-                                             **mesh_kwargs)
+                                             *jaxpr_args, **mesh_kwargs)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -341,7 +341,7 @@ def compile_all(stages):
     num_cpus = int(
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
     num_gpus = int(ray.available_resources()["GPU"])
-    default_autosharding_option = AutoShardingOption()
+    default_autosharding_option = global_config.default_autosharding_option
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     for stage_id, (_, compile_info, auto_sharding_config, _, _,
@@ -354,7 +354,8 @@ def compile_all(stages):
             (stage_id, proto, avals, out_avals,
              donate_invars, output_acc_grad_indices,
              logical_mesh,
-             default_autosharding_option.deepcopy_and_update(autosharding_option_dict)))
+             default_autosharding_option.deepcopy_and_update(autosharding_option_dict),
+             global_config.num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):

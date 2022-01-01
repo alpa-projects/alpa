@@ -6,6 +6,44 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 
 
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+
+    def __init__(self):
+        self.allow_all_gather = True  # Whether to allow all-gather during re-sharding.
+        self.allow_all_to_all = True  # Whether to allow all-to-all during re-sharding.
+        self.allow_replicated_parameters = True  # Whether to allow replicated parameters.
+        self.force_data_parallel = False  # Whether to forcibly generate data-parallel.
+        self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
+        # a mesh dimension.
+        self.force_zero_stage_3 = False  # Whether to forcibly generate a strategy similar to
+        # ZeRO optimizer stage 3.
+        self.force_zero_stage_3_all_gather_threshold = 1 << 25  # The threshold of all-gather combiner
+        # if force_zero_stage_3 is true.
+        self.prefer_reduce_scatter = False  # Prefer reduce-scatter over all-reduce.
+        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
+        self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
+        # instead of the ILP solver.
+        self.all_reduce_threshold = 1 << 60  # The threshold of all-reduce combiner in bytes.
+
+    def deepcopy_and_update(self, new_values: dict):
+        """Make a deepcopy and update some keys with new values."""
+        ret = copy.copy(self)
+        for k, v in new_values.items():
+            assert hasattr(ret, k)
+            setattr(ret, k, v)
+        return ret
+
+    def backup(self):
+        """Backup the configs."""
+        return copy.copy(self.__dict__)
+
+    def restore(self, saved_dict):
+        """Restore the configs from a backup."""
+        self.__dict__ = saved_dict
+
+
 class GlobalConfig:
     """The global configuration of parax.
 
@@ -14,17 +52,15 @@ class GlobalConfig:
     """
 
     def __init__(self):
-        from parax.shard_parallel.auto_sharding import AutoShardingOption
-
         ########## Options of both shard_parallel and pipeline_parallel ##########
         self.devices = None
         self.strategy = "shard_parallel"
         self.memory_budget_per_device = None
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
+        self.default_autosharding_option = AutoShardingOption()
 
         ########## Options of shard_parallel ##########
-        self.shard_parallel_autosharding_option = AutoShardingOption()
         self.shard_parallel_search_logical_mesh_shape = False
         self.shard_parallel_mesh_shape_search_mode = "cost_model"
         self.shard_parallel_mesh_shape_search_log_file = None
@@ -81,7 +117,7 @@ class GlobalConfig:
 
     def restore(self, saved_dict):
         """Restore the configs from a backup."""
-        global_config.__dict__ = saved_dict
+        self.__dict__ = saved_dict
 
 
 global_config = GlobalConfig()

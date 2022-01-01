@@ -172,7 +172,7 @@ class SymbolicReshardingTask(ReshardingTask):
     @property
     def is_local_allgather_task(self):
         """If this task involves a post scatter-allgather"""
-        return self.task_spec.strategy.is_scatter_gather
+        return self.task_spec.strategy.is_local_allgather
 
     @property
     def sender_tasks(self):

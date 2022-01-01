@@ -1,7 +1,7 @@
 import argparse
 from datetime import datetime
 import time
-from benchmark.parax.benchmark_wide_resnet_3d_one_case import benchmark_wresnet_3d_one_case
+from benchmark.parax.benchmark_wresnet_3d_one_case import benchmark_wresnet_3d_one_case
 
 import numpy as np
 import ray

@@ -7,7 +7,7 @@ run_experiment () {
   NUM_DEVICES_PER_HOST=$2
   NUM_GPUS=$((NUM_HOSTS * NUM_DEVICES_PER_HOST))
   echo "--- Running experiment with $NUM_HOSTS hosts and $NUM_DEVICES_PER_HOST devices per host ---"
-  python3 -u benchmark_wide_resnet_3d.py --suite 16gb \
+  python3 -u benchmark_wresnet_3d.py --suite 16gb \
     --exp_name auto_${NUM_GPUS}_gpus \
     --num-hosts ${NUM_HOSTS} \
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \

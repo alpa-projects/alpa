@@ -1,4 +1,5 @@
 """Use the auto sharding pass in XLA."""
+import copy
 import enum
 import logging
 import multiprocessing
@@ -24,9 +25,6 @@ logger.setLevel(logging.INFO)
 # A constant to represent infinity
 INFINITY_COST = 1e13
 
-# The threshold of all-reduce combiner in bytes.
-ALLREDUCE_THRESHOLD = 1 << 60
-
 
 class HloProtoStatus(enum.IntEnum):
     """The status of a HLO protobuf."""
@@ -35,6 +33,35 @@ class HloProtoStatus(enum.IntEnum):
     SHARDING_ANNOTATED = 1  # A HLO with sharding annotation attached.
     FULLY_OPTIMIZED = 2  # A fully optimized HLO which is already partitioned by
     # the SPMD partitioner.
+
+
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+
+    def __init__(self):
+        self.allow_all_gather = True  # Whether to allow all-gather during re-sharding.
+        self.allow_all_to_all = True  # Whether to allow all-to-all during re-sharding.
+        self.allow_replicated_parameters = True  # Whether to allow replicated parameters.
+        self.force_data_parallel = False  # Whether to forcibly generate data-parallel.
+        self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
+        # a mesh dimension.
+        self.force_zero_stage_3 = False  # Whether to forcibly generate a strategy similar to
+        # ZeRO optimizer stage 3.
+        self.force_zero_stage_3_all_gather_threshold = 1 << 25  # The threshold of all-gather combiner
+        # if force_zero_stage_3 is true.
+        self.prefer_reduce_scatter = False  # Prefer reduce-scatter over all-reduce.
+        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
+        self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
+        self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
+        # instead of the ILP solver.
+        self.all_reduce_threshold = 1 << 60  # The threshold of all-reduce combiner in bytes.
+
+    def deepcopy_and_update(self, new_values: dict):
+        ret = copy.copy(self)
+        for k, v in new_values.items():
+            assert hasattr(ret, k)
+            setattr(ret, k, v)
+        return ret
 
 
 class LogicalDeviceMesh:
@@ -107,7 +134,8 @@ def compile_with_search(
         donated_invars: Sequence[bool],
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
         return_mode: str,
-        grad_acc_num_micro_batches: int,
+        num_micro_batches: int,
+        as_option: AutoShardingOption,
         bypass_device_assignment_check: bool,
         memory_budget_per_device: Optional[float] = None,
         logical_mesh_search_mode: Optional[str] = None,
@@ -130,9 +158,10 @@ def compile_with_search(
         If it is "executable", return the compiled xla executable.
         If it is "stage_protos", return the HLO Module proto of multiple pipeline stages.
         If it is "stage_and_hook_protos", return the HLO Module proto of multiple pipeline stages and the hooked hlo sharding.
-      grad_acc_num_micro_batches: The number of micro batches
+      num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
+      as_option: The options of the auto-sharding solver.
       bypass_device_assignment_check: Whether to compile without exact devices.
       memory_budget_per_device: The memory budget per device in bytes.
       logical_mesh_search_mode: Only used when doing logical mesh shape search.
@@ -178,16 +207,16 @@ def compile_with_search(
         mesh_shape = logical_mesh.shape
 
         # Set configs for force_zero_stage_3
-        if global_config.force_zero_stage_3:
+        if as_option.force_zero_stage_3:
             # Generate a strategy similar to ZeRO stage 3
             force_data_parallel = True
             prefer_reduce_scatter = True
             reduce_scatter_aggresive_partition = True
-            all_gather_threshold = global_config.force_zero_stage_3_all_gather_threshold
+            all_gather_threshold = as_option.force_zero_stage_3_all_gather_threshold
         else:
             # Use default settings
-            force_data_parallel = global_config.force_data_parallel
-            prefer_reduce_scatter = global_config.prefer_reduce_scatter
+            force_data_parallel = as_option.force_data_parallel
+            prefer_reduce_scatter = as_option.prefer_reduce_scatter
             reduce_scatter_aggresive_partition = False
             all_gather_threshold = 1 << 60
 
@@ -208,10 +237,10 @@ def compile_with_search(
                 )
         else:
             # Use default settings
-            allow_all_gather = global_config.allow_all_gather
-            allow_all_to_all = global_config.allow_all_to_all
+            allow_all_gather = as_option.allow_all_gather
+            allow_all_to_all = as_option.allow_all_to_all
 
-            if global_config.force_batch_dim_to_mesh_dim is None:
+            if as_option.force_batch_dim_to_mesh_dim is None:
                 # Automatically set force_batch_dim_to_mesh_dim
                 if logical_mesh.shape[0] > 1 and logical_mesh.shape[1] > 1:
                     # In 2d mesh, force the batch tensor dim to match the first mesh dim
@@ -219,10 +248,10 @@ def compile_with_search(
                 else:
                     force_batch_dim_to_mesh_dim = -1
             else:
-                force_batch_dim_to_mesh_dim = global_config.force_batch_dim_to_mesh_dim
+                force_batch_dim_to_mesh_dim = as_option.force_batch_dim_to_mesh_dim
 
         # Set configs for reduce-scatter
-        if global_config.num_micro_batches is not None and global_config.num_micro_batches > 1:
+        if num_micro_batches is not None and num_micro_batches > 1:
             reduce_scatter_grad_acc_friendly = True
         else:
             reduce_scatter_grad_acc_friendly = False
@@ -244,20 +273,20 @@ def compile_with_search(
                 "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
                 "auto_sharding::all_to_all_cost": INFINITY_COST,
                 "auto_sharding::allow_replicated_parameters":
-                    global_config.allow_replicated_parameters,
+                    as_option.allow_replicated_parameters,
                 "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
                 "auto_sharding::reduce_scatter_grad_acc_friendly": reduce_scatter_grad_acc_friendly,
                 "auto_sharding::reduce_scatter_aggresive_partition": reduce_scatter_aggresive_partition,
                 "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
-                    global_config.allow_recompute_heavy_op,
+                    as_option.allow_recompute_heavy_op,
                 "auto_sharding::allow_mixed_mesh_shape":
-                    global_config.allow_mixed_mesh_shape,
+                    as_option.allow_mixed_mesh_shape,
                 "auto_sharding::grad_acc_num_micro_batches":
                     grad_acc_num_micro_batches or 1,
                 "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
                 "auto_sharding::force_simple_heuristic":
-                    global_config.force_simple_heuristic,
+                    as_option.force_simple_heuristic,
 
                 # Device mesh
                 "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
@@ -271,7 +300,7 @@ def compile_with_search(
 
                 # Communication combiner options
                 "combiner::all_gather_threshold": all_gather_threshold,
-                "combiner::all_reduce_threshold": ALLREDUCE_THRESHOLD,
+                "combiner::all_reduce_threshold": as_option.all_reduce_threshold,
                 "combiner::use_continuous_buffer": True,
 
                 # Debug options
@@ -301,12 +330,12 @@ def compile_with_search(
                 logical_mesh)
             strategy_config = StrategyConfig(build_random_seed,
                                              logical_mesh.shape,
+                                             as_option.all_reduce_threshold,
                                              solution_vector)
 
             if logical_mesh_search_mode == "measurement":
                 mesh_exe = NormalMeshDriverExecutable(logical_mesh_search_physical_mesh,
-                                                      compiled,
-                                                      strategy_config, avals,
+                                                      compiled, strategy_config, avals,
                                                       out_avals, donated_invars)
                 time_costs = tuple(mesh_exe.profile_with_dummy_inputs())
             else:
@@ -333,6 +362,7 @@ def compile_with_search(
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
     strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
+                                     as_option.all_reduce_threshold,
                                      solution_vector)
 
     if return_mode == "executable":
@@ -432,7 +462,7 @@ def compile_with_given_strategy(
 
             # Communication combiner options
             "combiner::all_gather_threshold": 1 << 60,
-            "combiner::all_reduce_threshold": ALLREDUCE_THRESHOLD,
+            "combiner::all_reduce_threshold": strategy_config.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,
 
             # Other useless but required arguments

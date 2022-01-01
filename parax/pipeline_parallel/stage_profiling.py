@@ -29,7 +29,8 @@ from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
-                                                hlo_sharding_to_sharding_spec)
+                                                hlo_sharding_to_sharding_spec,
+                                                AutoShardingOption)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
 logger = logging.getLogger(__name__)
@@ -90,14 +91,17 @@ class CompileWorker:
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
 
-    def compile_stage_with_search(self, stage_id, global_config_dict,
-                                  logical_mesh, proto, avals, out_avals,
-                                  donate_invars, output_acc_grad_indices):
+    def compile_stage_for_profiling(self, stage_id,
+                                    proto, avals, out_avals,
+                                    donate_invars, output_acc_grad_indices,
+                                    logical_mesh, autosharding_option,
+                                    num_micro_batches):
         """
-        Compile a single stage with auto sharding.
+        Compile a single stage with auto sharding for profiling.
+
         Args:
             stage_id: the index of the input stage.
-            global_config_dict: the global config dictionary for compilation setting.
+            autosharding_option: the global config dictionary for compilation setting.
             logical_mesh: the logical mesh for compilation.
             proto: the proto of XlaComputation to be compiled
             avals: input avals
@@ -114,17 +118,17 @@ class CompileWorker:
         mesh_kwargs = {
             "logical_mesh_choices": [logical_mesh],
             "return_mode": "stage_and_hook_protos",
-            "grad_acc_num_micro_batches": None,
+            "num_micro_batches": num_micro_batches,
             "bypass_device_assignment_check": True,
-            "memory_budget_per_device": global_config.memory_budget_per_device,
-            "logical_mesh_search_mode": global_config.mesh_shape_search_mode,
+            "memory_budget_per_device": None,
+            "logical_mesh_search_mode": "cost_model",
             "search_task": None,
             "record_file": None,
         }
         try:
             _, (protos, hooked_proto,
-                strategy_config) = self.compile_with_config(
-                    stage_id, global_config_dict, proto, jaxpr_args,
+                strategy_config) = self.compile_proto_with_search(
+                    stage_id, autosharding_option, proto, jaxpr_args,
                     mesh_kwargs)
         except RuntimeError:
             logger.warning("Unexpected error in compile time")
@@ -165,11 +169,11 @@ class CompileWorker:
                           input_sharding_protos, output_sharding_proto,
                           hooked_proto, apply_grad_input_sharding_protos)
 
-    def compile_with_config(self, stage_id, global_config_dict, proto,
-                            jaxpr_args, mesh_kwargs):
-        global_config.restore(global_config_dict)
+    def compile_proto_with_search(self, stage_id, proto,
+                                  jaxpr_args, autosharding_option, mesh_kwargs):
         built = xla_client.XlaComputation(proto)
-        return stage_id, compile_with_search(self.backend, built, *jaxpr_args,
+        return stage_id, compile_with_search(self.backend, built,
+                                             *jaxpr_args, autosharding_option,
                                              **mesh_kwargs)
 
 
@@ -337,21 +341,20 @@ def compile_all(stages):
     num_cpus = int(
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
     num_gpus = int(ray.available_resources()["GPU"])
+    default_autosharding_option = AutoShardingOption()
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
-    backup_config = global_config.backup()
     for stage_id, (_, compile_info, auto_sharding_config, _, _,
                    _) in enumerate(stages):
-        logical_mesh, auto_sharding_global_config = auto_sharding_config
-        global_config.devices = logical_mesh
-        compile_config = global_config.backup()
-        compile_config.update(auto_sharding_global_config)
+        logical_mesh, autosharding_option_dict = auto_sharding_config
         (proto, avals, out_avals, donate_invars,
          output_acc_grad_indices) = compile_info
         compile_workers.submit(
-            lambda w, v: w.compile_stage_with_search.remote(*v),
-            (stage_id, compile_config, logical_mesh, proto, avals, out_avals,
-             donate_invars, output_acc_grad_indices))
+            lambda w, v: w.compile_stage_for_profiling.remote(*v),
+            (stage_id, proto, avals, out_avals,
+             donate_invars, output_acc_grad_indices,
+             logical_mesh,
+             default_autosharding_option.deepcopy_and_update(autosharding_option_dict)))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
@@ -359,7 +362,6 @@ def compile_all(stages):
         compiled_outputs[stage_id] = compiled_output
 
     compile_workers.shutdown()
-    global_config.restore(backup_config)
     return compiled_outputs
 
 
@@ -654,7 +656,7 @@ def profile_layer_communication_cost(
         src_mesh: VirtualPhysicalMesh, dst_mesh: VirtualPhysicalMesh,
         collective_group: CollectiveGroup):
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
-    tot_cost = 0
+
     backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
     global_config.use_dummy_value_for_benchmarking = True
     tasks = []

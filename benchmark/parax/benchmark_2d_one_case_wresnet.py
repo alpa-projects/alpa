@@ -1,25 +1,43 @@
-import argparse
-from functools import partial
-import pickle
-import time
-
 from flax import linen as nn, optim
 from flax.training import common_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
-import ray
 import optax
 
 import parax
-from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_construction)
+from parax import parallelize, global_config, set_parallelize_options, testing
 from parax.model.wide_resnet import get_wide_resnet, TrainState
-from parax.util import (run_cmd, map_to_shape, count_communication_primitives,
-                        print_used_time, compute_param_number)
+from parax.util import (map_to_shape, count_communication_primitives,
+                        print_used_time, compute_param_number, GB)
+
+_ = None
+
+# B = batch_size, I = image_size,
+# L = num_layers, C = num_base_channels, W = width_factor, 
+# D0 = mesh_dimension_0, D1 = mesh_dimension_1,
+# NB = num_micro_batches, FM = force_batch_dim_mapping,
+# RS = prefer_reduce_scatter, Remat = use_rematerialization
+
+fast_test_wresnet_suite = {
+1: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False, _),
+],
+
+4 : [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False, _),
+],
+
+8: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False, _), 
+],
+}
 
 
-GB = 1024 ** 3
+as_option = global_config.default_autosharding_option
 
 
 def compute_metrics(logits, labels):
@@ -141,9 +159,7 @@ def get_train_step(learning_rate_fn, use_grad_acc):
 
 
 def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
-    # Backup global config
     print_used_time(None)
-    backup = global_config.backup()
 
     # Model configs
     model_type = "wresnet"
@@ -166,13 +182,13 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
 
     if force_batch_dim_mapping:
         # Always map batch dim to mesh dim 0
-        global_config.force_batch_dim_to_mesh_dim = 0
-    global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.allow_mixed_mesh_shape = False
+        as_option.force_batch_dim_to_mesh_dim = 0
+    as_option.prefer_reduce_scatter = prefer_reduce_scatter
+    as_option.allow_mixed_mesh_shape = False
     if other == "zero-3":
-        global_config.force_zero_stage_3 = True
+        as_option.force_zero_stage_3 = True
     elif other in ["shard-largest"]:
-        global_config.force_simple_heuristic = other
+        as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
@@ -244,72 +260,4 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     peak_mem = physical_mesh.get_max_memory_allocated()
 
-    # Restore global config
-    global_config.restore(backup)
-
     return param_count, ilp_objective, peak_mem, latencies, tflops
-
-
-TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
-
-
-def benchmark_one_case(case, niter,
-                       num_hosts, num_devices_per_host,
-                       local, use_separate_process,
-                       dump_result=False):
-    if not use_separate_process:
-        # Launch physical mesh
-        if local:
-            assert num_hosts == 1
-            physical_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices_per_host])
-        else:
-            ray.init(address="auto", ignore_reinit_error=True)
-            device_cluster = DeviceCluster()
-            physical_mesh = device_cluster.get_physical_mesh(
-                list(range(num_hosts)), num_devices_per_host)
-            jax.config.update('jax_platform_name', 'cpu')
-
-        global_config.use_dummy_value_for_benchmarking = True
-
-        # Run benchmark
-        result = benchmark_wresnet_internal(physical_mesh, case, niter)
-
-        physical_mesh.shutdown()
-    else:
-        # Launch a new process for benchmark to isolate errors.
-        # Get the return data via pickle.
-        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        ret = run_cmd("python3 benchmark_wresnet_2d_one_case.py "
-                     f"--niter {niter} "
-                     f'--case "{case}" '
-                     f"--num-hosts {num_hosts} "
-                     f"--num-devices-per-host {num_devices_per_host} "
-                     f"{'--local' if local else ''} "
-                     f"--dump-result ")
-        if ret == 0:
-            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
-        else:
-            result = -1, -1, -1, [-1], -1
-
-    if dump_result:
-        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
-
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--niter", type=int)
-    parser.add_argument("--case", type=str)
-    parser.add_argument("--num-hosts", type=int)
-    parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--local", action="store_true",
-        help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--dump-result", action="store_true",
-        help="Dump results into a temporary pickle file")
-    args = parser.parse_args()
-
-    run_cmd("mkdir -p tmp")
-    case = eval(args.case)
-    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
-                       args.local, False, args.dump_result)

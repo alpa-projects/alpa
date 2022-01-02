@@ -1,4 +1,5 @@
-"""Intra operator ablation study"""
+"""Intra-operator parallelism ablation study."""
+import argparse
 import time
 
 import numpy as np
@@ -6,21 +7,19 @@ import ray
 
 from parax import DeviceCluster, global_config
 from parax.util import write_tsv, to_str_round
-from benchmark_gpt_bert_2d_one_case import benchmark_one_case as benchmark_one_case_gpt_raw
-from benchmark_moe_2d_one_case import benchmark_one_case as benchmark_one_case_moe_raw
-from benchmark_wresnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
+from benchmark_2d_one_case import benchmark_one_case
 
-benchmark_one_case_gpt = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_gpt_raw("gpt", case, niter, num_host, num_devices_per_host,
-                               local=False, use_separate_process=True)
+benchmark_one_case_gpt = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("gpt", case, niter, num_host, num_devices_per_host,
+                       local=False, use_separate_process=True))
 
-benchmark_one_case_moe = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_moe_raw(case, niter, num_host, num_devices_per_host,
-                                   local=False, use_separate_process=True)
+benchmark_one_case_moe = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("moe", case, niter, num_host, num_devices_per_host,
+                       local=False, use_separate_process=True))
 
-benchmark_one_case_wresnet = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_wresnet_raw(case, niter, num_host, num_devices_per_host,
-                                   local=False, use_separate_process=True)
+benchmark_one_case_wresnet = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("wresnet", case, niter, num_host, num_devices_per_host,
+                       local=False, use_separate_process=True))
 
 
 GB = 1 << 30
@@ -208,13 +207,17 @@ suites = [
 ]
 
 
-def build_cases():
+def build_cases(wanted_model):
     instance = "p3.16"
     exp_name = "intra-op-ablation"
 
     cases = []
     for suite in suites:
         model_name, method, args_list, benchmark_func = suite
+
+        if wanted_model is not None and model_name != wanted_model:
+            continue
+
         for i, args in enumerate(args_list):
             if "moe" in model_name:
                 num_devices = args[8] * args[9]
@@ -229,14 +232,18 @@ def build_cases():
 
 
 if __name__ == "__main__":
-    cases = build_cases()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str)
+    args = parser.parse_args()
+    cases = build_cases(args.model)
+    niter = 5
 
     for case in cases:
         exp_name, instance, num_hosts, num_devices_per_host, model_name,\
             method, benchmark_func, args = case
 
         # Benchmark case
-        result = benchmark_func(args, 5, num_hosts, num_devices_per_host)
+        result = benchmark_func(args, niter, num_hosts, num_devices_per_host)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
         value_dict = {
             "param_count": param_count / 1e9,

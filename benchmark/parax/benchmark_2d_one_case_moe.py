@@ -1,27 +1,16 @@
-import argparse
-import pickle
-from datetime import datetime
-
-import os
-import time
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 import ray
 
 import parax
-from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
+from parax import global_config, set_parallelize_options, testing
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from parax.model.model_util import optax_adafactor
-from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info, benchmark_func,
-                        count_communication_primitives, print_used_time,
-                        compute_param_number)
+from parax.util import count_communication_primitives, print_used_time, compute_param_number
 
 from benchmark.util import compute_moe_parameter_count
-from benchmark.parax.paper_manual_moe_suite import paper_moe_suite, test_moe_suite
-from benchmark_gpt_bert_2d_one_case import get_train_step
+from benchmark_2d_one_case_gpt_bert import get_train_step
 
 
 GB = 1024 ** 3
@@ -49,8 +38,6 @@ def create_train_state(rngkey, model, dtype, batch):
 
 
 def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
-    # Backup global config
-    backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
@@ -159,69 +146,4 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
                                                   mlp_factor=8)
     peak_mem = physical_mesh.get_max_memory_allocated()
 
-    # Restore global config
-    global_config.restore(backup)
-
     return parameter_count, ilp_objective, peak_mem, latencies, tflops
-
-
-TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer_moe.pkl"
-
-
-def benchmark_one_case(case, niter, num_hosts, num_devices_per_host, local,
-                       use_separate_process=False, dump_result=False):
-    if not use_separate_process:
-        # Launch physical mesh
-        if local:
-            assert num_hosts == 1
-            physical_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices_per_host])
-        else:
-            ray.init(address="auto", ignore_reinit_error=True)
-            device_cluster = DeviceCluster()
-            physical_mesh = device_cluster.get_physical_mesh(
-                list(range(num_hosts)), num_devices_per_host)
-            jax.config.update('jax_platform_name', 'cpu')
-
-        global_config.use_dummy_value_for_benchmarking = True
-
-        # Run benchmark
-        result = benchmark_moe_internal(physical_mesh, case, niter)
-        physical_mesh.shutdown()
-    else:
-        # Launch a new process for benchmark to isolate errors.
-        # Get the return data via pickle.
-        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        ret = run_cmd("python3 benchmark_moe_2d_one_case.py "
-                      f"--niter {niter} "
-                      f'--case "{case}" '
-                      f"--num-hosts {num_hosts} "
-                      f"--num-devices-per-host {num_devices_per_host} "
-                      f"{'--local' if local else ''} "
-                      f"--dump-result ")
-        if ret == 0:
-            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
-        else:
-            result = -1, -1, -1, [-1], -1
-
-    if dump_result:
-        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
-
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--niter", type=int, default=10)
-    parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--num-hosts", type=int)
-    parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--local", action="store_true",
-                        help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--dump-result", action="store_true",
-                        help="Dump results into a temporary pickle file")
-    args = parser.parse_args()
-
-    run_cmd("mkdir -p tmp")
-    case = eval(args.case)
-    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
-                       args.local, False, args.dump_result)

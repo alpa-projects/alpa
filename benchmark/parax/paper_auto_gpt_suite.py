@@ -23,7 +23,7 @@ default_overwrite_dict = {
     "auto_stage_construction_imbalance_tolerance": 1e5,
     "logical_mesh_search_space": "all",
     "use_hlo_cost_model": True,
-    "profiling_database_filename": "prof_database_4gpu.pkl",
+    "profiling_database_filename": "prof_database.pkl",
 }
 
 

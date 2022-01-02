@@ -18,6 +18,8 @@ from test_auto_sharding_mlp import (
     assert_replicated_row_partitioned, assert_row_partitioned, is_fully_sharded,
     assert_sharding_zero_stage_3)
 
+as_option = global_config.default_autosharding_option
+
 
 class AutoShardingAttentionTest(unittest.TestCase):
 
@@ -25,12 +27,10 @@ class AutoShardingAttentionTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
+        self.as_option_backup = as_option.backup()
 
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
+        as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(self.devices)
@@ -193,7 +193,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
-            if global_config.prefer_reduce_scatter:
+            if as_option.prefer_reduce_scatter:
                 assert n_total == num_layers * 4 - 1
                 assert n_all_reduce == num_layers * 4 - 1
                 assert n_total == n_all_reduce
@@ -247,7 +247,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
             assert n_reduce_scatter == 2
             assert n_all_gather == 1
@@ -257,7 +257,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
         # Check sharding specification
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             for weight in jax.tree_util.tree_leaves(
                     optimizer.state.param_states):
                 if len(weight.shape) > 1:
@@ -288,7 +288,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_heads = 8
         deterministic = False
         use_remat = False
-        global_config.force_batch_dim_to_mesh_dim = 0
+        as_option.force_batch_dim_to_mesh_dim = 0
 
         # data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
@@ -390,7 +390,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, deterministic, device_mesh)
 
-            if global_config.force_zero_stage_3:
+            if as_option.force_zero_stage_3:
                 # only the weight and opt_state of token_embed is not sharded
                 assert_sharding_zero_stage_3(optimizer, 3)
                 continue
@@ -408,8 +408,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_heads = 4
         vocab_size = 512
         deterministic = False
-        global_config.allow_all_gather = False  # Temporary hack
-        global_config.allow_all_to_all = False  # Temporary hack
+        as_option.allow_all_gather = False  # Temporary hack
+        as_option.allow_all_to_all = False  # Temporary hack
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
@@ -478,9 +478,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
         deterministic = False
         # To generate the desired strategy, we have to turn off mixed mesh shape and all-gather
         # and enable recomputing heavy ops.
-        global_config.allow_recompute_heavy_op = True
-        global_config.allow_all_gather = False
-        global_config.allow_mixed_mesh_shape = False
+        as_option.allow_recompute_heavy_op = True
+        as_option.allow_all_gather = False
+        as_option.allow_mixed_mesh_shape = False
 
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
@@ -493,7 +493,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             assert n_all_reduce == 4 * num_layers + 2 + 2
             assert n_reduce_scatter <= 3  # The correct number should be 2,
             # but GpuMultiOutputFusion can make
@@ -510,7 +510,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         assert "s32[4,4,4096]{2,1,0} iota()" not in hlo_ir
         assert "s32[2,4,2048]{2,1,0} iota()" in hlo_ir
 
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             num_not_sharded = 0  # allow the token_type_embeddings not partitioned.
             for weight in jax.tree_util.tree_leaves(
                     optimizer.state.param_states):
@@ -546,34 +546,34 @@ class AutoShardingAttentionTest(unittest.TestCase):
                             weights[j], mesh_shape)
 
     def test_bert_layer_data_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_bert_layer_data_parallel()
 
     def test_bert_layer_model_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_bert_layer_model_parallel()
 
     def test_bert_layer_2d_mesh_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_bert_layer_2d_mesh()
 
     def test_bert_mlm_data_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_bert_mlm_data_parallel()
 
     def test_bert_mlm_data_parallel_reduce_scatter_zero_3(self):
-        global_config.force_zero_stage_3 = True
-        global_config.force_zero_stage_3_all_gather_threshold = 1
+        as_option.force_zero_stage_3 = True
+        as_option.force_zero_stage_3_all_gather_threshold = 1
         self.test_bert_mlm_data_parallel()
 
     @unittest.skip("This test is broken after we disallow some replicated iota."
                   )
     def test_bert_mlm_model_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_bert_mlm_model_parallel()
 
     def test_bert_mlm_2d_mesh_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_bert_mlm_2d_mesh()
 
     def test_bert_layer_model_parallel_remat(self):

@@ -13,7 +13,6 @@ from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
-from parax.util import OrderedSet
 from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
 from parax.global_env import global_config
 from parax.measure_record import SearchTask, load_best_record, StrategyConfig
@@ -21,7 +20,7 @@ from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverE
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
-from parax.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias
+from parax.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 
 
 def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
@@ -74,12 +73,12 @@ def shard_parallel_callable(
     if isinstance(devices, PhysicalDeviceMesh):
         physical_mesh = devices
 
-        if global_config.search_logical_mesh_shape:
+        if global_config.shard_parallel_search_logical_mesh_shape:
             # Check cached strategy folder
             compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
             device_key = physical_mesh.get_signature()
             search_task = SearchTask(compute_key, device_key)
-            record_file = global_config.mesh_shape_search_log_file
+            record_file = global_config.shard_parallel_mesh_shape_search_log_file
 
             if record_file:
                 inp, _ = load_best_record(search_task, filename=record_file)
@@ -96,7 +95,7 @@ def shard_parallel_callable(
                         logical_mesh_choices.append(
                             physical_mesh.get_logical_mesh(
                                 mesh_shape=logical_mesh_shape,
-                                # TODO(lmzheng): export this as an arugment in
+                                # TODO(lmzheng): export this as an argument in
                                 # set_parallelize_options or physical_mesh.
                                 #mesh_alpha=[1,1],
                                 #mesh_beta=[1,1]))
@@ -118,20 +117,22 @@ def shard_parallel_callable(
         return shard_parallel_internal_gradient_accumulation(
             fun, in_tree, out_tree_thunk, donated_invars, batch_invars,
             physical_mesh, logical_mesh_choices,
-            global_config.mesh_shape_search_mode, memory_budget_per_device,
-            search_task, record_file, strategy_config, *avals)
+            global_config.shard_parallel_mesh_shape_search_mode,
+            memory_budget_per_device, search_task, record_file, strategy_config,
+            *avals)
 
-    return shard_parallel_internal(fun, in_tree, out_tree_thunk, donated_invars,
-                                   physical_mesh, logical_mesh_choices,
-                                   global_config.mesh_shape_search_mode,
-                                   memory_budget_per_device, search_task,
-                                   record_file, strategy_config, *avals)
+    return shard_parallel_internal(
+        fun, in_tree, out_tree_thunk, donated_invars, physical_mesh,
+        logical_mesh_choices,
+        global_config.shard_parallel_mesh_shape_search_mode,
+        memory_budget_per_device, search_task, record_file, strategy_config,
+        *avals)
 
 
 def shard_parallel_internal(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
         donated_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
-        logical_mesh_choices: Sequence[Sequence[int]],
+        logical_mesh_choices: Sequence[LogicalDeviceMesh],
         logical_mesh_search_mode: str, memory_budget_per_device: float,
         search_task: Optional[SearchTask], record_file: str,
         strategy_config: StrategyConfig, *avals: Sequence[ShapedArray]):
@@ -145,7 +146,7 @@ def shard_parallel_internal(
       donated_invars: Whether to donate input parameters.
       physical_mesh: The physical device mesh.
       logical_mesh_choices: The candidates of logical mesh shape.
-        If there is only one choice, use the given one. If there are multple choices,
+        If there is only one choice, use the given one. If there are multiple choices,
         we will try all of them and pick the best.
       logical_mesh_search_mode: The choices are {"measurement", "cost_model"}.
         If is "measurement", use real profiling to pick the best logical mesh shape.
@@ -181,20 +182,24 @@ def shard_parallel_internal(
             avals,
             out_avals,
             donated_invars,
-            physical_mesh,
             logical_mesh_choices,
-            logical_mesh_search_mode,
-            memory_budget_per_device,
-            search_task,
-            record_file,
-            multiple_stages=False,
-            grad_acc_num_micro_batches=None,
-            bypass_device_assignment_check=physical_mesh.is_distributed)
+            "executable",
+            1,
+            global_config.default_autosharding_option,
+            bypass_device_assignment_check=physical_mesh.is_distributed,
+            memory_budget_per_device=memory_budget_per_device,
+            logical_mesh_search_mode=logical_mesh_search_mode,
+            logical_mesh_search_physical_mesh=physical_mesh,
+            search_task=search_task,
+            record_file=record_file)
     else:
-        compiled = compile_with_given_strategy(backend, built, strategy_config,
-                                               physical_mesh.num_devices,
-                                               physical_mesh.is_distributed,
-                                               HloProtoStatus.UNOPTIMIZED)
+        compiled = compile_with_given_strategy(
+            backend,
+            built,
+            strategy_config,
+            physical_mesh.num_devices,
+            HloProtoStatus.UNOPTIMIZED,
+            bypass_device_assignment_check=physical_mesh.is_distributed)
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
@@ -214,11 +219,10 @@ def shard_parallel_internal_gradient_accumulation(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
         donated_invars: Sequence[bool], batch_invars: Sequence[bool],
         physical_mesh: PhysicalDeviceMesh,
-        logical_mesh_choices: Sequence[Sequence[int]],
-        logical_mesh_search_mode: Sequence[str],
-        memory_budget_per_device: float, search_task: SearchTask,
-        record_file: str, strategy_config: StrategyConfig,
-        *raw_avals: Sequence[ShapedArray]):
+        logical_mesh_choices: Sequence[LogicalDeviceMesh],
+        logical_mesh_search_mode: str, memory_budget_per_device: float,
+        search_task: SearchTask, record_file: str,
+        strategy_config: StrategyConfig, *raw_avals: Sequence[ShapedArray]):
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
@@ -247,15 +251,16 @@ def shard_parallel_internal_gradient_accumulation(
         avals,
         out_avals,
         donated_invars,
-        physical_mesh,
         logical_mesh_choices,
-        logical_mesh_search_mode,
-        memory_budget_per_device,
-        search_task,
-        record_file,
-        multiple_stages=True,
-        grad_acc_num_micro_batches=num_micro_batches,
-        bypass_device_assignment_check=physical_mesh.is_distributed)
+        "stage_protos",
+        num_micro_batches,
+        global_config.default_autosharding_option,
+        bypass_device_assignment_check=physical_mesh.is_distributed,
+        memory_budget_per_device=memory_budget_per_device,
+        logical_mesh_search_mode=logical_mesh_search_mode,
+        logical_mesh_search_physical_mesh=physical_mesh,
+        search_task=search_task,
+        record_file=record_file)
     assert len(hlo_protos) == 2
 
     # Compile these two HLOs separately to get two XLA executables
@@ -279,14 +284,14 @@ def shard_parallel_internal_gradient_accumulation(
         accumulate_grad,
         strategy_config,
         physical_mesh.num_devices,
-        bypass_device_assignment_check,
         HloProtoStatus.SHARDING_ANNOTATED,
+        bypass_device_assignment_check,
         rewrite_for_grad_acc=True)
     apply_grad = compile_with_given_strategy(backend, apply_grad,
                                              strategy_config,
                                              physical_mesh.num_devices,
-                                             bypass_device_assignment_check,
-                                             HloProtoStatus.SHARDING_ANNOTATED)
+                                             HloProtoStatus.SHARDING_ANNOTATED,
+                                             bypass_device_assignment_check)
 
     # Compile them to a single mesh executable
     mesh_executable = GradAccMeshDriverExecutable(physical_mesh,

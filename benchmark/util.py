@@ -3,6 +3,10 @@ import time
 
 import numpy as np
 
+
+GB = 1 << 30
+
+
 def write_tsv(heads, values, filename, print_line=True):
     """Write tsv data to a file."""
     assert len(heads) == len(values)
@@ -146,4 +150,3 @@ def compute_moe_parameter_count(num_layers,
         return half * pure_transformer + half * moe_transformer + embedding
 
 
-GB = 1 << 30

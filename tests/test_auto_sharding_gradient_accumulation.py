@@ -16,6 +16,8 @@ from parax import (parallelize, set_parallelize_options, grad, testing,
 from parax.util import count_communication_primitives
 from parax.testing import assert_allclose
 
+as_option = global_config.default_autosharding_option
+
 
 class GradAccumulationTest(unittest.TestCase):
 
@@ -23,13 +25,10 @@ class GradAccumulationTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         ray.init(address="auto", ignore_reinit_error=True)
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
+        self.as_option_backup = as_option.backup()
 
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
-
+        as_option.restore(self.as_option_backup)
         ray.shutdown()
 
     def run_gradient_accumulation(self, use_ray, use_2d_mesh):
@@ -48,7 +47,7 @@ class GradAccumulationTest(unittest.TestCase):
 
         set_parallelize_options(logical_mesh)
 
-        global_config.allow_all_to_all = False
+        as_option.allow_all_to_all = False
 
         batch_size = 256
         num_micro_batches = 2
@@ -100,7 +99,7 @@ class GradAccumulationTest(unittest.TestCase):
 
         # Check sharding strategy
         hlo_text = executable.get_hlo_text()
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             _, accumulate_grad, apply_grad = hlo_text.split("HloModule")
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
@@ -137,7 +136,7 @@ class GradAccumulationTest(unittest.TestCase):
         self.run_gradient_accumulation(use_ray=False, use_2d_mesh=True)
 
     def test_gradient_accumulation_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.run_gradient_accumulation(use_ray=False, use_2d_mesh=False)
 
 

@@ -47,7 +47,7 @@ test_auto_moe_suite = {
 1:  get_auto_test_case("380M", [64], [4]),
 2:  get_auto_test_case("690M", [64], [4]),
 4:  get_auto_test_case("1.3B", [64], [8]),
-8:  get_auto_test_case("2.4B", [64], [8]),
+8:  get_auto_test_case("2.4B", [16], [8]),
 16: get_auto_test_case("10B",  [32], [8]),
 32: get_auto_test_case("27B",  [32], [8]),
 }

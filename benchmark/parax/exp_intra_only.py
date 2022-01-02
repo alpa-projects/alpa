@@ -1,4 +1,4 @@
-"""Intra operator ablation study"""
+"""Intra-operator-parallelism-only e2e evaluation."""
 import argparse
 import time
 
@@ -7,23 +7,21 @@ import ray
 
 from parax import DeviceCluster, global_config
 from parax.util import write_tsv, to_str_round
-from benchmark_gpt_bert_2d_one_case import benchmark_one_case as benchmark_one_case_gpt_raw
-from benchmark_moe_2d_one_case import benchmark_one_case as benchmark_one_case_moe_raw
-from benchmark_wresnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
+from benchmark_2d_one_case import benchmark_one_case
 from paper_manual_gpt_suite import gpt_specs
 from paper_manual_moe_suite import moe_specs
 
-benchmark_one_case_gpt = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_gpt_raw("gpt", case, niter, num_host, num_devices_per_host,
-                               local=False, use_separate_process=True)
+benchmark_one_case_gpt = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("gpt", case, niter, num_host, num_devices_per_host,
+                       local=False, use_separate_process=True))
 
-benchmark_one_case_moe = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_moe_raw(case, niter, num_host, num_devices_per_host,
-                                   local=False, use_separate_process=True)
+benchmark_one_case_moe = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("moe", case, niter, num_host, num_devices_per_host,
+                       local=False, use_separate_process=True))
 
-benchmark_one_case_wresnet = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_wresnet_raw(case, niter, num_host, num_devices_per_host,
-                                   local=False, use_separate_process=True)
+benchmark_one_case_wresnet = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("wresnet", case, niter, num_host, num_devices_per_host,
+                       local=False, use_separate_process=True))
 
 wresnet_specs = {
     #    I,   L,  C,   W,  dtype,  
@@ -114,8 +112,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str)
     args = parser.parse_args()
-    niter = 4
     cases = build_cases(args.model)
+    niter = 4
 
     for case in cases:
         exp_name, instance, num_hosts, num_devices_per_host, model_name,\

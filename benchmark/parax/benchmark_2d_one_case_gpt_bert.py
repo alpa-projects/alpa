@@ -1,36 +1,18 @@
-import argparse
-from functools import partial
-import os
-import pickle
-import time
-
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import ray
 
 import parax
-from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops, GB
-from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
+from parax import parallelize, global_config, set_parallelize_options, testing
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import map_to_shape, count_communication_primitives, print_used_time, run_cmd
+from parax.util import map_to_shape, count_communication_primitives, print_used_time
 
+from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops, GB
 
-def load_profiling_result(physical_mesh):
-    filename = physical_mesh.get_signature() + ".prof.pkl"
-    if os.path.exists(filename):
-        print(f"Load saved profiling results from {filename}")
-        physical_mesh.load_profiling_result(filename)
-        physical_mesh.prof_result.make_monotonic()
-        physical_mesh.prof_result.multiply_scale(1e7)
-    else:
-        physical_mesh.profile_collective("all-reduce")
-        print(f"Save profiling results to {filename}")
-        physical_mesh.save_profiling_result(filename)
+as_option = global_config.default_autosharding_option
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -85,14 +67,13 @@ def get_train_step(grad_func, num_layers, dtype):
 
 
 def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter):
-    # Backup global config
-    backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
-        mesh_dim0, mesh_dim1, _, _, _,  num_micro_batches, force_batch_dim_mapping,\
-        use_remat, prefer_reduce_scatter, other, overwrite_global_config_dict = benchmark_case
+    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
+     use_remat, prefer_reduce_scatter, other, overwrite_global_config_dict) = benchmark_case
+ 
     dtype = jnp.float16
 
     # Parallel configs
@@ -104,16 +85,16 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     if force_batch_dim_mapping:
         # Always map batch dim to mesh dim 0
-        global_config.force_batch_dim_to_mesh_dim = 0
-    global_config.prefer_reduce_scatter = prefer_reduce_scatter
+        as_option.force_batch_dim_to_mesh_dim = 0
+    as_option.prefer_reduce_scatter = prefer_reduce_scatter
 
     if other == "zero-3":
-        global_config.force_zero_stage_3 = True
+        as_option.force_zero_stage_3 = True
     elif other in ["shard-largest"]:
-        global_config.force_simple_heuristic = other
+        as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
-    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1])
+    logical_mesh = physical_mesh.get_logical_mesh([l_dim0, l_dim1])
     set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
     print_used_time("Setup device mesh")
@@ -200,74 +181,4 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
     peak_mem = physical_mesh.get_max_memory_allocated()
 
-    # Restore global config
-    global_config.restore(backup)
-
     return param_count, ilp_objective, peak_mem, latencies, tflops
-
-
-TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
-
-
-def benchmark_one_case(model, case, niter,
-                       num_hosts, num_devices_per_host,
-                       local, use_separate_process,
-                       dump_result=False):
-    if not use_separate_process:
-        # Launch physical mesh
-        if local:
-            assert num_hosts == 1
-            physical_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices_per_host])
-        else:
-            ray.init(address="auto", ignore_reinit_error=True)
-            device_cluster = DeviceCluster()
-            physical_mesh = device_cluster.get_physical_mesh(
-                list(range(num_hosts)), num_devices_per_host)
-            jax.config.update('jax_platform_name', 'cpu')
-
-        global_config.use_dummy_value_for_benchmarking = True
-
-        # Run benchmark
-        result = benchmark_gpt_bert_internal(physical_mesh, model, case, niter)
-
-        physical_mesh.shutdown()
-    else:
-        # Launch a new process for benchmark to isolate errors.
-        # Get the return data via pickle.
-        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        ret = run_cmd("python3 benchmark_gpt_bert_2d_one_case.py "
-                     f"--model {model} "
-                     f"--niter {niter} "
-                     f'--case "{case}" '
-                     f"--num-hosts {num_hosts} "
-                     f"--num-devices-per-host {num_devices_per_host} "
-                     f"{'--local' if local else ''} "
-                     f"--dump-result ")
-        if ret == 0:
-            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
-        else:
-            result = -1, -1, -1, [-1], -1
-
-    if dump_result:
-        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
-
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str)
-    parser.add_argument("--niter", type=int)
-    parser.add_argument("--case", type=str)
-    parser.add_argument("--num-hosts", type=int)
-    parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--local", action="store_true",
-        help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--dump-result", action="store_true",
-        help="Dump results into a temporary pickle file")
-    args = parser.parse_args()
-
-    run_cmd("mkdir -p tmp")
-    case = eval(args.case)
-    benchmark_one_case(args.model, case, args.niter, args.num_hosts, args.num_devices_per_host,
-                       args.local, False, args.dump_result)

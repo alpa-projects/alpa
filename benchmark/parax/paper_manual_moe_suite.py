@@ -1,4 +1,27 @@
-# suites for moe benchmarking
+"""Suites for gpt benchmarking."""
+
+_ = None
+
+
+# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
+# #head = num_heads, S_ = expert_group_size, E = expert_number,
+# LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
+# PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
+# NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
+# RS = prefer_reduce_scatter, AP = auto_pipeline
+
+fast_test_moe_suite = {  # key = number of gpus, value = a list of cases
+1: [
+    #B, S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
+    (8, 1024, 1024, 8,  32,    25600, 8,  1024, 1,   1,   _, _,  1,   1,  True,  True,  True,  _, _),
+],
+
+8: [
+    #B, S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
+    (8, 1024, 1024, 4,  32,    25600, 16, 1024, 8,   1,   _, _,  1,   1,  False, True,  True,  _, _),
+],
+
+}
 
 moe_specs = {
 #         S,    H,      L,     #head,     V,     E
@@ -23,8 +46,8 @@ fixed_params = (True,  True, False)
 
 test_moe_suite = {
 1: [
-    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,  (Remat, RS, AP), EP (deepspeed-only)
-    (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  False,   *fixed_params,  1),
+    # B,      model,                          LD0, LD1, PD0, PD1, PP, NB, FM,    (Remat, RS, AP), EP (deepspeed-only)
+    (8,  *moe_specs["380M"],  8 * 1024 // 2,  1,   1,   1,   1,   1,  1,  False, *fixed_params,  1),
 ],
 
 2: [
@@ -34,7 +57,7 @@ test_moe_suite = {
 ],
 
 8: [
-    (16,     *moe_specs["1.3B"],  8 * 1024 // 2,   1,    4,    1,    4,   2,    1,  False,   *fixed_params, 1),
+    (16, *moe_specs["1.3B"],  8 * 1024 // 2,   1,  4,   1,   4,   2,  1,  False, *fixed_params, 1),
 
     # All-to-all error
     #(16,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params, 1),

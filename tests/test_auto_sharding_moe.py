@@ -19,6 +19,8 @@ from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
                                     assert_expert_partitioned,
                                     assert_sharding_zero_stage_3)
 
+as_option = global_config.default_autosharding_option
+
 
 class AutoShardingMoETest(unittest.TestCase):
 
@@ -26,12 +28,10 @@ class AutoShardingMoETest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
+        self.as_option_backup = as_option.backup()
 
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
+        as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(self.devices)
@@ -208,7 +208,7 @@ class AutoShardingMoETest(unittest.TestCase):
             assert n_total == n_all_reduce + n_all_to_all
 
             # Check sharding specification
-            num_devices = np.prod(device_mesh.id_mesh.shape)
+            num_devices = np.prod(device_mesh.shape)
             assert_all_replicated(
                 optimizer.target["params"]["attention"]["output"]["dense"]
                 ["kernel"], num_devices)
@@ -230,8 +230,8 @@ class AutoShardingMoETest(unittest.TestCase):
         S = 32
         E = 16
         deterministic = True
-        global_config.allow_mixed_mesh_shape = True
-        global_config.allow_all_gather = False
+        as_option.allow_mixed_mesh_shape = True
+        as_option.allow_all_gather = False
 
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
@@ -255,9 +255,9 @@ class AutoShardingMoETest(unittest.TestCase):
         S = 32
         E = 16
         deterministic = True
-        global_config.allow_mixed_mesh_shape = True
-        global_config.allow_all_gather = False
-        global_config.prefer_reduce_scatter = True
+        as_option.allow_mixed_mesh_shape = True
+        as_option.allow_all_gather = False
+        as_option.prefer_reduce_scatter = True
 
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
@@ -300,14 +300,14 @@ class AutoShardingMoETest(unittest.TestCase):
                                                ignore_scalar_all_reduce=True))
 
             # Special case: zero stage 3
-            if global_config.force_zero_stage_3:
+            if as_option.force_zero_stage_3:
                 assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
                 assert_sharding_zero_stage_3(state, 4)
                 continue
 
             # Normal cases
-            if global_config.prefer_reduce_scatter:
-                if global_config.force_data_parallel:
+            if as_option.prefer_reduce_scatter:
+                if as_option.force_data_parallel:
                     assert 0 < n_reduce_scatter <= 2
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
                 else:
@@ -315,7 +315,7 @@ class AutoShardingMoETest(unittest.TestCase):
                     assert n_all_to_all == 4
                     assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
             else:
-                if global_config.force_data_parallel:
+                if as_option.force_data_parallel:
                     assert n_all_reduce == 1
                     assert n_total == n_all_reduce
                 else:
@@ -333,7 +333,7 @@ class AutoShardingMoETest(unittest.TestCase):
         S = 32
         E = 16
         deterministic = True
-        global_config.allow_mixed_mesh_shape = True
+        as_option.allow_mixed_mesh_shape = True
 
         mesh_shape = (2, 2)
         device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
@@ -345,7 +345,7 @@ class AutoShardingMoETest(unittest.TestCase):
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
             count_communication_primitives(hlo_ir))
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             assert n_reduce_scatter > 0
             assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter + n_all_to_all
         else:
@@ -353,25 +353,25 @@ class AutoShardingMoETest(unittest.TestCase):
             assert n_total == n_all_reduce + n_all_to_all
 
     def test_moe_lm_data_parallel(self):
-        global_config.force_data_parallel = True
+        as_option.force_data_parallel = True
         self.test_moe_lm()
 
     def test_moe_lm_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_moe_lm()
 
     def test_moe_lm_2d_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_moe_lm_2d()
 
     def test_moe_lm_data_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
-        global_config.force_data_parallel = True
+        as_option.prefer_reduce_scatter = True
+        as_option.force_data_parallel = True
         self.test_moe_lm()
 
     def test_moe_lm_data_parallel_reduce_scatter_zero_3(self):
-        global_config.force_zero_stage_3 = True
-        global_config.force_zero_stage_3_all_gather_threshold = 1
+        as_option.force_zero_stage_3 = True
+        as_option.force_zero_stage_3_all_gather_threshold = 1
         self.test_moe_lm()
 
 

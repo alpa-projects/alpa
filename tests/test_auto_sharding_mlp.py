@@ -16,6 +16,8 @@ from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceM
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
+as_option = global_config.default_autosharding_option
+
 
 def assert_close(x, y, atol=0.01):
     assert abs((x + 1e-9) / (y + 1e-9) - 1) <= atol, f"{x} vs. {y}"
@@ -124,14 +126,14 @@ def assert_data_parallel_cost(state,
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 
     # Special case 1 : adafactor
-    if optimizer_type == "adafactor" and global_config.prefer_reduce_scatter:
+    if optimizer_type == "adafactor" and as_option.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
         assert n_all_gather <= 2
         assert n_all_reduce <= 2
         return
 
     # Special case 2 : force zero stage 3
-    if global_config.force_zero_stage_3:
+    if as_option.force_zero_stage_3:
         assert n_all_reduce == 0
         assert n_all_gather == 2
         assert n_reduce_scatter == 1
@@ -139,7 +141,7 @@ def assert_data_parallel_cost(state,
         return
 
     # Normal case
-    if global_config.prefer_reduce_scatter:
+    if as_option.prefer_reduce_scatter:
         assert n_reduce_scatter == 1
         assert n_all_gather == 1
         if allow_not_sharded_params:
@@ -152,7 +154,7 @@ def assert_data_parallel_cost(state,
         assert n_total == n_all_reduce
 
     # Check sharding specification
-    if global_config.prefer_reduce_scatter:
+    if as_option.prefer_reduce_scatter:
         num_not_sharded = 0
         for weight in opt_state:
             if not is_sharded(weight) and len(weight.shape) > 0:
@@ -160,7 +162,7 @@ def assert_data_parallel_cost(state,
         assert num_not_sharded <= allow_not_sharded_params * 2
     else:
         for weight in params:
-            assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
+            assert_all_replicated(weight, np.prod(device_mesh.shape))
 
 
 class AutoShardingMLPTest(unittest.TestCase):
@@ -170,12 +172,10 @@ class AutoShardingMLPTest(unittest.TestCase):
         self.devices = jax.local_devices()[:4]
         self.optimizer_type = "adam"
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
+        self.as_option_backup = as_option.backup()
 
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
+        as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(devices=self.devices)
@@ -274,7 +274,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
-            if global_config.prefer_reduce_scatter:
+            if as_option.prefer_reduce_scatter:
                 assert n_all_reduce + n_reduce_scatter == num_layers - 1
                 assert n_reduce_scatter == n_all_gather
                 assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
@@ -313,7 +313,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir))
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers - 1
             assert n_all_gather == 1
             assert n_reduce_scatter == 2
@@ -323,7 +323,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
         # Check sharding specification
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             for weight in jax.tree_util.tree_leaves(state.opt_state):
                 if len(weight.shape) > 1:
                     assert_fully_sharded(weight)
@@ -342,7 +342,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
-            global_config.force_data_parallel = True
+            as_option.force_data_parallel = True
 
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
             state, hlo_ir, objective = self.run_n_layer_mlp(
@@ -355,7 +355,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         num_layers = 6
         batch_size = 32
         hidden_dim = 256
-        global_config.force_batch_dim_to_mesh_dim = 0
+        as_option.force_batch_dim_to_mesh_dim = 0
 
         # Data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
@@ -374,30 +374,30 @@ class AutoShardingMLPTest(unittest.TestCase):
         assert_close(objective, expected)
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_model_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_model_parallel()
 
     def test_n_layer_mlp_2d_mesh_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_2d_mesh()
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_data_parallel_reduce_scatter_adafactor(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.optimizer_type = "adafactor"
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
-        global_config.force_zero_stage_3 = True
-        global_config.force_zero_stage_3_all_gather_threshold = (32 * 32 +
-                                                                 32) * 6 * 4
+        as_option.force_zero_stage_3 = True
+        as_option.force_zero_stage_3_all_gather_threshold = (32 * 32 +
+                                                             32) * 6 * 4
         self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):

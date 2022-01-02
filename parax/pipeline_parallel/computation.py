@@ -205,7 +205,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
-                                         logical_mesh_shape, None)
+                                         logical_mesh_shape, 1, None)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
         hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
@@ -328,8 +328,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
             xla_computation,
             self.strategy_config,
             num_devices,
-            is_distributed,
             HloProtoStatus.SHARDING_ANNOTATED,
+            bypass_device_assignment_check=is_distributed,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
 
@@ -753,16 +753,80 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_sharded_xla_computations_compile_config(
+def generate_computations_from_protos(jax_computations, computation_protos,
+                                      donate_invars, donatable_lists,
+                                      acc_grad_outvars, strategy_config):
+    computations = [
+        XlaShardedPipelineComputation.from_auto_sharded_computation(
+            auto_sharded_hlo_proto=proto,
+            jax_pipeline_computation=computation,
+            strategy_config=strategy_config,
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables)
+        for computation, proto, donate_invars, donatables in zip(
+            jax_computations, computation_protos, donate_invars,
+            donatable_lists)
+    ]
+    return computations
+
+
+def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars):
+        computation_donate_invars, donatable_lists, acc_grad_outvars,
+        num_micro_batches, logical_mesh_choices, autosharding_option,
+        memory_budget_per_device, logical_mesh_search_mode, search_task,
+        record_file):
     """
     Generate sharded XLA computations by running the auto-sharding pass
     on the given JaxPipelineComputations.
 
-    Note: we merge the colocated forward and backward computation and compile
+    Note: we merge the co-located forward and backward computation and compile
     them together to get a sharding strategy config.
     """
+    proto, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
+        name, jax_computations, computation_donate_invars)
+    built = xc.XlaComputation(proto)
+    in_avals, out_avals, donated_invars = jaxpr_args
+
+    backend_name = "gpu"
+    backend = xb.get_backend(backend_name)
+    computation_protos, strategy_config = compile_with_search(
+        backend,
+        built,
+        in_avals,
+        out_avals,
+        donated_invars,
+        logical_mesh_choices,
+        "stage_protos",
+        num_micro_batches,
+        autosharding_option,
+        bypass_device_assignment_check=True,
+        memory_budget_per_device=memory_budget_per_device,
+        logical_mesh_search_mode=logical_mesh_search_mode,
+        logical_mesh_search_physical_mesh=None,
+        search_task=search_task,
+        record_file=record_file)
+    computations = [
+        XlaShardedPipelineComputation.from_auto_sharded_computation(
+            auto_sharded_hlo_proto=proto,
+            jax_pipeline_computation=computation,
+            strategy_config=strategy_config,
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables)
+        for computation, proto, donate_invars, donatables in zip(
+            jax_computations, computation_protos, computation_donate_invars,
+            donatable_lists)
+    ]
+    return computations, flops
+
+
+def generate_sharded_xla_computations_arguments(
+        name: str, jax_computations: Sequence[JaxPipelineComputation],
+        computation_donate_invars):
+    """Similar to generate_sharded_xla_computations but only generates the
+    arguments for distributed compilation."""
     invars = OrderedSet()
     outvars = OrderedSet()
     donation_mapping = dict()
@@ -800,69 +864,9 @@ def generate_sharded_xla_computations_compile_config(
         built.as_hlo_module())
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
-    jaxpr_config = in_avals, out_avals, dummy_donated_invars
+    jaxpr_args = in_avals, out_avals, dummy_donated_invars
     proto = built.as_serialized_hlo_module_proto()
-    return proto, jaxpr_config, flops
-
-
-def generate_computations_from_protos(jax_computations, acc_grad_outvars,
-                                      donate_invars, donatable_lists,
-                                      computation_protos, strategy_config):
-    computations = [
-        XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto,
-            jax_pipeline_computation=computation,
-            strategy_config=strategy_config,
-            donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars,
-            donatables=donatables)
-        for computation, proto, donate_invars, donatables in zip(
-            jax_computations, computation_protos, donate_invars,
-            donatable_lists)
-    ]
-    return computations
-
-
-def generate_sharded_xla_computations(
-        name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars, logical_mesh_choices,
-        logical_mesh_search_mode, memory_budget_per_device, acc_grad_outvars,
-        donatable_lists, search_task, record_file):
-    proto, jaxpr_config, flops = generate_sharded_xla_computations_compile_config(
-        name, jax_computations, computation_donate_invars)
-    built = xc.XlaComputation(proto)
-    in_avals, out_avals, donated_invars = jaxpr_config
-
-    backend_name = "gpu"
-    backend = xb.get_backend(backend_name)
-    computation_protos, strategy_config = compile_with_search(
-        backend,
-        built,
-        in_avals,
-        out_avals,
-        donated_invars,
-        None,
-        logical_mesh_choices,
-        logical_mesh_search_mode,
-        memory_budget_per_device,
-        search_task,
-        record_file,
-        multiple_stages=True,
-        grad_acc_num_micro_batches=None,
-        bypass_device_assignment_check=True)
-    computations = [
-        XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto,
-            jax_pipeline_computation=computation,
-            strategy_config=strategy_config,
-            donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars,
-            donatables=donatables)
-        for computation, proto, donate_invars, donatables in zip(
-            jax_computations, computation_protos, computation_donate_invars,
-            donatable_lists)
-    ]
-    return computations, flops
+    return proto, jaxpr_args, flops
 
 
 def rewrite_hook(eqns, gensym_fn):

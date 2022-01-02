@@ -188,13 +188,7 @@ class PipelineBasicTest(unittest.TestCase):
                      prefix=global_config.unittest_ray_namespace_prefix))
         jax.config.update('jax_platform_name', 'cpu')
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
-
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
-
         ray.shutdown()
         time.sleep(1)
 
@@ -259,8 +253,7 @@ class PipelineBasicTest(unittest.TestCase):
                          hidden_size=512,
                          num_heads=512 // 64,
                          submesh_shapes=None,
-                         do_numerical_test=True,
-                         overwrite_global_config_dict=dict()):
+                         do_numerical_test=True):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
@@ -268,9 +261,6 @@ class PipelineBasicTest(unittest.TestCase):
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
-        global_config_tmp = global_config.backup()
-        global_config_tmp.update(overwrite_global_config_dict)
-        global_config.restore(global_config_tmp)
 
         # Init model and optimizer
         rngkey = jax.random.PRNGKey(0)

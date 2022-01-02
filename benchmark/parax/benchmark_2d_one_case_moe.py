@@ -38,8 +38,6 @@ def create_train_state(rngkey, model, dtype, batch):
 
 
 def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
-    # Backup global config
-    backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
@@ -147,8 +145,5 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)
     peak_mem = physical_mesh.get_max_memory_allocated()
-
-    # Restore global config
-    global_config.restore(backup)
 
     return parameter_count, ilp_objective, peak_mem, latencies, tflops

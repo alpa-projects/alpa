@@ -7,7 +7,7 @@ run_experiment () {
   NUM_DEVICES_PER_HOST=$2
   NUM_GPUS=$((NUM_HOSTS * NUM_DEVICES_PER_HOST))
   echo "--- Running experiment with $NUM_HOSTS hosts and $NUM_DEVICES_PER_HOST devices per host ---"
-  python3 -u benchmark_moe_3d.py --suite paper_auto_moe \
+  python3 -u benchmark_3d.py --suite moe.paper_auto \
     --exp_name auto_${NUM_GPUS}_gpus \
     --num-hosts ${NUM_HOSTS} \
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \

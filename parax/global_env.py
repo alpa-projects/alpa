@@ -59,6 +59,7 @@ class GlobalConfig:
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
         self.default_autosharding_option = AutoShardingOption()
+        self.xla_client_mem_fraction = 0.9
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_search_logical_mesh_shape = False

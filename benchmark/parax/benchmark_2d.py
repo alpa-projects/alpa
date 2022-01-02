@@ -6,7 +6,8 @@ import numpy as np
 from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices
 
 from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
-from paper_manual_moe_suite import test_moe_suite, paper_moe_suite
+from paper_manual_moe_suite import fast_test_moe_suite, test_moe_suite, paper_moe_suite
+from benchmark_2d_one_case_wresnet import fast_test_wresnet_suite
 from benchmark_2d_one_case import benchmark_one_case
 
 
@@ -17,16 +18,18 @@ benchmark_suites = {
     "gpt.fast_test": fast_test_gpt_suite,
     "gpt.test": test_gpt_suite,
     "gpt.paper": paper_gpt_suite,
+
+    "moe.fast_test": fast_test_moe_suite,
     "moe.test": test_moe_suite,
     "moe.paper": paper_moe_suite,
-    "wresnet.test": None,
-    "wresnet.paper": None,
+
+    "wresnet.fast_test": fast_test_wresnet_suite,
 }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--suite", choices=list(benchmark_suites.keys()), type=str)
+    parser.add_argument("--suite", choices=list(benchmark_suites.keys()), type=str, required=True)
     parser.add_argument("--niter", type=int, default=5,
         help="Number of benchmark iteration")
     parser.add_argument("--num-hosts", type=int)
@@ -64,9 +67,17 @@ if __name__ == "__main__":
              use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         elif model_type == "moe":
-            pass
+            (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
+             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
+             num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
+             auto_pipeline, overwrite_global_config_dict) = benchmark_case
+            model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
         elif model_type == "wresnet":
-            pass
+            (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
+             l_dim0, l_dim1, num_micro_batches, force_batch_dim_mapping,
+             prefer_reduce_scatter, use_remat, other) = benchmark_case
+            model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
+            pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
         parallel_config = (l_dim0, l_dim1, pipeline_mp_size)

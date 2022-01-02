@@ -7,23 +7,21 @@ import ray
 
 from parax import DeviceCluster, global_config
 from parax.util import write_tsv, to_str_round
-from benchmark_gpt_bert_3d_one_case import benchmark_one_case as benchmark_one_case_gpt_raw
-from benchmark_moe_3d_one_case import benchmark_one_case as benchmark_one_case_moe_raw
-from benchmark_wresnet_2d_one_case import benchmark_one_case as benchmark_one_case_wresnet_raw
+from benchmark_3d_one_case import benchmark_one_case
 from paper_manual_gpt_suite import gpt_specs
 from paper_manual_moe_suite import moe_specs
 
-benchmark_one_case_gpt = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_gpt_raw("gpt", case, niter, num_host, num_devices_per_host,
-                               use_separate_process=True)
+benchmark_one_case_gpt = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("gpt", case, niter, num_host, num_devices_per_host,
+                       use_separate_process=True))
 
-benchmark_one_case_moe = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_moe_raw(case, niter, num_host, num_devices_per_host,
-                               use_separate_process=True)
+benchmark_one_case_moe = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("moe", case, niter, num_host, num_devices_per_host,
+                       use_separate_process=True))
 
-benchmark_one_case_wresnet = lambda case, niter, num_host, num_devices_per_host: \
-    benchmark_one_case_wresnet_raw(case, niter, num_host, num_devices_per_host,
-                                   use_separate_process=True)
+benchmark_one_case_wresnet = (lambda case, niter, num_host, num_devices_per_host:
+    benchmark_one_case("wresnet", case, niter, num_host, num_devices_per_host,
+                       use_separate_process=True))
 
 wresnet_specs = {
     #    I,   L,  C,   W,  dtype,  
@@ -146,7 +144,7 @@ if __name__ == "__main__":
         result = benchmark_func(args, niter, num_hosts, num_devices_per_host)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
+         submesh_shapes, logical_mesh_shapes, autosharding_option_dicts) = result
 
         value_dict = {
             "param_count": parameter_count / 1e9,

@@ -91,8 +91,7 @@ class CompileWorker:
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
 
-    def compile_stage_for_profiling(self, stage_id,
-                                    proto, avals, out_avals,
+    def compile_stage_for_profiling(self, stage_id, proto, avals, out_avals,
                                     donate_invars, output_acc_grad_indices,
                                     logical_mesh, autosharding_option,
                                     num_micro_batches):
@@ -169,12 +168,12 @@ class CompileWorker:
                           input_sharding_protos, output_sharding_proto,
                           hooked_proto, apply_grad_input_sharding_protos)
 
-    def compile_proto_with_search(self, stage_id, proto,
-                                  jaxpr_args, autosharding_option, mesh_kwargs):
+    def compile_proto_with_search(self, stage_id, proto, jaxpr_args,
+                                  autosharding_option, mesh_kwargs):
         built = xla_client.XlaComputation(proto)
         mesh_kwargs["as_option"] = autosharding_option
-        return stage_id, compile_with_search(self.backend, built,
-                                             *jaxpr_args, **mesh_kwargs)
+        return stage_id, compile_with_search(self.backend, built, *jaxpr_args,
+                                             **mesh_kwargs)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -278,13 +277,14 @@ class HloCostModelProfileWorker:
 
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
         try:
-            compiled = compile_with_given_strategy(self.backend,
-                                                   xla_computation,
-                                                   config,
-                                                   self.num_devices,
-                                                   hlo_proto_status,
-                                                   bypass_device_assignment_check=True,
-                                                   run_backend_codegen=True)
+            compiled = compile_with_given_strategy(
+                self.backend,
+                xla_computation,
+                config,
+                self.num_devices,
+                hlo_proto_status,
+                bypass_device_assignment_check=True,
+                run_backend_codegen=True)
         except RuntimeError:
             return stage_id, np.inf, -1, (0, 0, 0, 0)
 
@@ -351,11 +351,10 @@ def compile_all(stages):
          output_acc_grad_indices) = compile_info
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
-            (stage_id, proto, avals, out_avals,
-             donate_invars, output_acc_grad_indices,
-             logical_mesh,
-             default_autosharding_option.deepcopy_and_update(autosharding_option_dict),
-             global_config.num_micro_batches))
+            (stage_id, proto, avals, out_avals, donate_invars,
+             output_acc_grad_indices, logical_mesh,
+             default_autosharding_option.deepcopy_and_update(
+                 autosharding_option_dict), global_config.num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):

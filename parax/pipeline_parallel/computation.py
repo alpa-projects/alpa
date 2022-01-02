@@ -774,9 +774,9 @@ def generate_computations_from_protos(jax_computations, computation_protos,
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
-        num_micro_batches,
-        logical_mesh_choices, autosharding_option, memory_budget_per_device,
-        logical_mesh_search_mode, search_task, record_file):
+        num_micro_batches, logical_mesh_choices, autosharding_option,
+        memory_budget_per_device, logical_mesh_search_mode, search_task,
+        record_file):
     """
     Generate sharded XLA computations by running the auto-sharding pass
     on the given JaxPipelineComputations.

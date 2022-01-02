@@ -19,7 +19,6 @@ from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
                                     assert_expert_partitioned,
                                     assert_sharding_zero_stage_3)
 
-
 as_option = global_config.default_autosharding_option
 
 

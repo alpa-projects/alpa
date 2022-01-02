@@ -4,7 +4,6 @@ from parax.testing import PipelineBasicTest
 from parax.global_env import global_config
 from parax.util import count_communication_primitives
 
-
 as_option = global_config.default_autosharding_option
 
 

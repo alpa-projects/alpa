@@ -39,7 +39,8 @@ class StrategyConfig:
     """A configuration that specifies all details of a parallelization strategy."""
 
     def __init__(self, build_random_seed: int, logical_mesh_shape: Tuple[int],
-                 all_reduce_threshold: int, auto_sharding_solution_vector: np.ndarray):
+                 all_reduce_threshold: int,
+                 auto_sharding_solution_vector: np.ndarray):
         self.build_random_seed = build_random_seed
         self.logical_mesh_shape = logical_mesh_shape
         self.all_reduce_threshold = all_reduce_threshold
@@ -53,7 +54,7 @@ class StrategyConfig:
     @staticmethod
     def from_jsonable(value):
         (build_random_seed, logical_mesh_shape, all_reduce_threshold,
-            auto_sharding_solution_vector) = value
+         auto_sharding_solution_vector) = value
         return StrategyConfig(build_random_seed, logical_mesh_shape,
                               all_reduce_threshold,
                               np.array(auto_sharding_solution_vector))

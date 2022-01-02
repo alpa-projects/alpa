@@ -16,7 +16,6 @@ from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceM
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
-
 as_option = global_config.default_autosharding_option
 
 
@@ -398,7 +397,7 @@ class AutoShardingMLPTest(unittest.TestCase):
     def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
         as_option.force_zero_stage_3 = True
         as_option.force_zero_stage_3_all_gather_threshold = (32 * 32 +
-                                                                 32) * 6 * 4
+                                                             32) * 6 * 4
         self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):

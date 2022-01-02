@@ -511,21 +511,12 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
     return output_meshes
 
 
-def cluster_layers_and_slice_mesh(layers,
-                                  mesh,
-                                  donation_mapping,
-                                  global_outvars,
-                                  num_micro_batches,
-                                  batch_size,
-                                  jax_apply_layers,
-                                  apply_grad_global_info,
-                                  pipeline_stage_mode,
-                                  logical_mesh_search_space,
-                                  cache_compute_cost,
-                                  forward_stage_layer_ids,
-                                  submesh_shapes,
-                                  logical_mesh_shapes,
-                                  autosharding_option_dicts):
+def cluster_layers_and_slice_mesh(
+        layers, mesh, donation_mapping, global_outvars, num_micro_batches,
+        batch_size, jax_apply_layers, apply_grad_global_info,
+        pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
+        forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
+        autosharding_option_dicts):
     """
     Cluster pipeline layers into stages, slice the device mesh
     into multiple submeshes, and assign the stages to the submeshes.
@@ -573,10 +564,9 @@ def cluster_layers_and_slice_mesh(layers,
                     mesh, submesh_choices, autosharding_configs, layers,
                     donation_mapping, global_outvars, jax_apply_layers,
                     apply_grad_global_info)
-            cost, solution = dp(num_layers, mesh.num_devices,
-                                num_micro_batches, submesh_choices,
-                                num_autosharding_configs, compute_cost,
-                                max_n_succ_stages)
+            cost, solution = dp(num_layers, mesh.num_devices, num_micro_batches,
+                                submesh_choices, num_autosharding_configs,
+                                compute_cost, max_n_succ_stages)
 
             # Parse solution
             forward_stage_layer_ids = [

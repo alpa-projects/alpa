@@ -18,7 +18,6 @@ from test_auto_sharding_mlp import (
     assert_replicated_row_partitioned, assert_row_partitioned, is_fully_sharded,
     assert_sharding_zero_stage_3)
 
-
 as_option = global_config.default_autosharding_option
 
 

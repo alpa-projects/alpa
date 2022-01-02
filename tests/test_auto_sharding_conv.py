@@ -15,7 +15,6 @@ from parax.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
 
-
 as_option = global_config.default_autosharding_option
 
 

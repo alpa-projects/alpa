@@ -117,21 +117,22 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-def compile_with_search(
-        backend: xla_extension.Client,
-        xla_computation: xla_extension.XlaComputation,
-        avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
-        donated_invars: Sequence[bool],
-        logical_mesh_choices: Sequence[LogicalDeviceMesh],
-        return_mode: str,
-        num_micro_batches: int,
-        as_option: AutoShardingOption,
-        bypass_device_assignment_check: bool,
-        memory_budget_per_device: Optional[float] = None,
-        logical_mesh_search_mode: Optional[str] = None,
-        logical_mesh_search_physical_mesh: Optional["PhysicalDeviceMesh"] = None,
-        search_task: Optional[SearchTask] = None,
-        record_file: Optional[str] = None):
+def compile_with_search(backend: xla_extension.Client,
+                        xla_computation: xla_extension.XlaComputation,
+                        avals: Sequence[ShapedArray],
+                        out_avals: Sequence[ShapedArray],
+                        donated_invars: Sequence[bool],
+                        logical_mesh_choices: Sequence[LogicalDeviceMesh],
+                        return_mode: str,
+                        num_micro_batches: int,
+                        as_option: AutoShardingOption,
+                        bypass_device_assignment_check: bool,
+                        memory_budget_per_device: Optional[float] = None,
+                        logical_mesh_search_mode: Optional[str] = None,
+                        logical_mesh_search_physical_mesh: Optional[
+                            "PhysicalDeviceMesh"] = None,
+                        search_task: Optional[SearchTask] = None,
+                        record_file: Optional[str] = None):
     """Compile an XLA computation with mesh shape search and auto sharding solver.
 
     Args:
@@ -290,7 +291,8 @@ def compile_with_search(
 
                 # Communication combiner options
                 "combiner::all_gather_threshold": all_gather_threshold,
-                "combiner::all_reduce_threshold": as_option.all_reduce_threshold,
+                "combiner::all_reduce_threshold":
+                    as_option.all_reduce_threshold,
                 "combiner::use_continuous_buffer": True,
 
                 # Debug options
@@ -324,9 +326,9 @@ def compile_with_search(
                                              solution_vector)
 
             if logical_mesh_search_mode == "measurement":
-                mesh_exe = NormalMeshDriverExecutable(logical_mesh_search_physical_mesh,
-                                                      compiled, strategy_config, avals,
-                                                      out_avals, donated_invars)
+                mesh_exe = NormalMeshDriverExecutable(
+                    logical_mesh_search_physical_mesh, compiled,
+                    strategy_config, avals, out_avals, donated_invars)
                 time_costs = tuple(mesh_exe.profile_with_dummy_inputs())
             else:
                 assert logical_mesh_search_mode == "cost_model"
@@ -452,7 +454,8 @@ def compile_with_given_strategy(
 
             # Communication combiner options
             "combiner::all_gather_threshold": 1 << 60,
-            "combiner::all_reduce_threshold": strategy_config.all_reduce_threshold,
+            "combiner::all_reduce_threshold":
+                strategy_config.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,
 
             # Other useless but required arguments

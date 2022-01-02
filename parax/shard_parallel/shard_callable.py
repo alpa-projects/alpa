@@ -118,14 +118,15 @@ def shard_parallel_callable(
             fun, in_tree, out_tree_thunk, donated_invars, batch_invars,
             physical_mesh, logical_mesh_choices,
             global_config.shard_parallel_mesh_shape_search_mode,
-            memory_budget_per_device, search_task,
-            record_file, strategy_config, *avals)
+            memory_budget_per_device, search_task, record_file, strategy_config,
+            *avals)
 
-    return shard_parallel_internal(fun, in_tree, out_tree_thunk, donated_invars,
-                                   physical_mesh, logical_mesh_choices,
-                                   global_config.shard_parallel_mesh_shape_search_mode,
-                                   memory_budget_per_device, search_task,
-                                   record_file, strategy_config, *avals)
+    return shard_parallel_internal(
+        fun, in_tree, out_tree_thunk, donated_invars, physical_mesh,
+        logical_mesh_choices,
+        global_config.shard_parallel_mesh_shape_search_mode,
+        memory_budget_per_device, search_task, record_file, strategy_config,
+        *avals)
 
 
 def shard_parallel_internal(
@@ -192,10 +193,13 @@ def shard_parallel_internal(
             search_task=search_task,
             record_file=record_file)
     else:
-        compiled = compile_with_given_strategy(backend, built, strategy_config,
-                                               physical_mesh.num_devices,
-                                               HloProtoStatus.UNOPTIMIZED,
-                                               bypass_device_assignment_check=physical_mesh.is_distributed)
+        compiled = compile_with_given_strategy(
+            backend,
+            built,
+            strategy_config,
+            physical_mesh.num_devices,
+            HloProtoStatus.UNOPTIMIZED,
+            bypass_device_assignment_check=physical_mesh.is_distributed)
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
@@ -216,10 +220,9 @@ def shard_parallel_internal_gradient_accumulation(
         donated_invars: Sequence[bool], batch_invars: Sequence[bool],
         physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
-        logical_mesh_search_mode: str,
-        memory_budget_per_device: float, search_task: SearchTask,
-        record_file: str, strategy_config: StrategyConfig,
-        *raw_avals: Sequence[ShapedArray]):
+        logical_mesh_search_mode: str, memory_budget_per_device: float,
+        search_task: SearchTask, record_file: str,
+        strategy_config: StrategyConfig, *raw_avals: Sequence[ShapedArray]):
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches

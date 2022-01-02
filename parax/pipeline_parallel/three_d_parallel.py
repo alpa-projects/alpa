@@ -14,8 +14,7 @@ from parax.pipeline_parallel.schedules import (GpipeSchedule,
 from parax.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
-    generate_sharded_xla_computations_arguments,
-    get_donatable_intermediate,
+    generate_sharded_xla_computations_arguments, get_donatable_intermediate,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
@@ -122,7 +121,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
          forward_stage_layer_ids=global_config.forward_stage_layer_ids,
          submesh_shapes=global_config.sub_physical_mesh_shapes,
          logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-         autosharding_option_dicts=global_config.submesh_autosharding_option_dicts)
+         autosharding_option_dicts=global_config.
+         submesh_autosharding_option_dicts)
 
     num_meshes = len(sliced_meshes)
 
@@ -202,8 +202,8 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
-                     acc_grad_outvars, donate_invars_dict,
-                     num_micro_batches, logical_mesh_shapes, autosharding_option_dicts,
+                     acc_grad_outvars, donate_invars_dict, num_micro_batches,
+                     logical_mesh_shapes, autosharding_option_dicts,
                      memory_budget_per_device, gensym_func):
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
@@ -269,8 +269,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "record_file": record_file,
             }
             compile_workers.submit(
-                compile_fn, (mesh_idx, proto, jaxpr_args,
-                             autosharding_option, mesh_kwargs))
+                compile_fn,
+                (mesh_idx, proto, jaxpr_args, autosharding_option, mesh_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops
@@ -279,8 +279,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 donatable_dict[mesh_idx], acc_grad_outvars, num_micro_batches,
                 logical_mesh_choices, autosharding_option,
-                memory_budget_per_device, logical_mesh_search_mode,
-                search_task, record_file)
+                memory_budget_per_device, logical_mesh_search_mode, search_task,
+                record_file)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

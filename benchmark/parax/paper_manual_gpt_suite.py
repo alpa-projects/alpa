@@ -10,13 +10,15 @@ _ = None
 
 fast_test_gpt_suite = { # key = number of gpus, value = a list of cases
 1: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
+    #B,   S,     H     L,  #head, V,     LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
+    (8,  1024,  1024,  4,  32,    51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
 ],
 
 8: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _, _,  1,   1,  True, True,  False, _, _),
+    #B,   S,     H     L,  #head, V,     LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
+    (8,  1024,  4096,  4,  32,    51200, 1,   8,   _, _,  1,   1,  True, True,  True,  _, _),
+    (8,  1024,  4096,  4,  32,    51200, 2,   4,   _, _,  1,   1,  True, True,  True,  _, _),
+    (8,  1024,  4096,  4,  32,    51200, 8,   1,   _, _,  1,   1,  True, True,  True,  _, _),
 ],
 }
 

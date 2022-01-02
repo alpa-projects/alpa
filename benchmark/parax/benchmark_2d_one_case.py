@@ -1,28 +1,16 @@
 import argparse
-from functools import partial
-import os
 import pickle
-import time
 
-from flax import linen as nn
 import jax
-import jax.numpy as jnp
-import numpy as np
-import optax
 import ray
 
-import parax
-from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops, GB
-from parax import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
-from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
-from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import map_to_shape, count_communication_primitives, print_used_time, run_cmd
+from parax import global_config, PhysicalDeviceMesh, DeviceCluster
+from parax.util import run_cmd
+
+from benchmark_gpt_bert_2d_one_case import benchmark_gpt_bert_internal
 
 
 TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
-
-from benchmark_gpt_bert_2d_one_case import benchmark_gpt_bert_internal
 
 
 def benchmark_one_case(model, case, niter,
@@ -33,7 +21,7 @@ def benchmark_one_case(model, case, niter,
         # Launch physical mesh
         if local:
             assert num_hosts == 1
-            physical_mesh = PhysicalDeviceMesh(jax.devices()[:num_devices_per_host])
+            physical_mesh = PhysicalDeviceMesh(jax.local_devices()[:num_devices_per_host])
         else:
             ray.init(address="auto", ignore_reinit_error=True)
             device_cluster = DeviceCluster()

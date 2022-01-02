@@ -1,10 +1,3 @@
-import pickle
-
-from datetime import datetime
-import time
-
-import argparse
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,20 +8,15 @@ import parax
 from parax import global_config, set_parallelize_options, DeviceCluster
 from parax.model.model_util import optax_adafactor
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.util import write_tsv, print_used_time, disable_tqdm_globally, to_str_round, get_ray_namespace_str
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.timer import timers
-from benchmark_gpt_bert_3d_one_case import get_train_step
-from benchmark.util import compute_moe_parameter_count, compute_moe_tflops, run_cmd
-from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_suite
+from parax.util import print_used_time, to_str_round, GB
 
-GB = 1024 ** 3
+from benchmark_3d_one_case_gpt_bert import get_train_step
+from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
 
 
-benchmark_suites = {
-    "test_moe": test_moe_suite,
-    "paper_moe": paper_moe_suite
-}
+as_option = global_config.default_autosharding_option
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -53,8 +41,6 @@ def create_train_state(rngkey, model, dtype, batch):
 
 
 def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_host):
-    # Backup global config
-    backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
@@ -78,17 +64,14 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
 
     if force_batch_dim_mapping:
         # Always map batch dim to mesh dim 0
-        global_config.force_batch_dim_to_mesh_dim = 0
-    global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.allow_mixed_mesh_shape = True
+        as_option.force_batch_dim_to_mesh_dim = 0
+    as_option.prefer_reduce_scatter = prefer_reduce_scatter
+    as_option.allow_mixed_mesh_shape = True
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
-
-    if not isinstance(overwrite_global_config_dict, dict):
-        overwrite_global_config_dict = {}
 
     if not auto_pipeline:
         set_parallelize_options(devices=virtual_mesh,
@@ -101,8 +84,10 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode="auto_gpipe",
-                                num_micro_batches=num_micro_batches,
-                                **overwrite_global_config_dict)
+                                num_micro_batches=num_micro_batches)
+
+    if isinstance(overwrite_global_config_dict, dict):
+        global_config.update_with_dict(overwrite_global_config_dict)
 
     # Prepare input batch
     batch = {
@@ -163,8 +148,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     for i in range(niter):
         state = train_step(state, batch, rngkey)
 
-    timer_name = "overall"
-    latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)[2:]
+    latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
 
     mem_allocated = executable.get_memory_allocated()
@@ -181,64 +165,6 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)
 
-    # Restore global config
-    global_config.restore(backup)
     executable.shutdown()
     return (parameter_count, mem_allocated, max_mem_allocated, latencies,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
-
-
-TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
-
-
-def benchmark_one_case(case, niter, num_hosts, num_devices_per_host,
-                       disable_tqdm=False,
-                       use_separate_process=False, dump_result=False):
-    if disable_tqdm:
-        disable_tqdm_globally()
-
-    if not use_separate_process:
-        ray.init(address="auto", ignore_reinit_error=True,
-                 namespace=get_ray_namespace_str())
-        jax.config.update('jax_platform_name', 'cpu')
-        global_config.use_dummy_value_for_benchmarking = True
-
-        result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
-    else:
-        # Launch a new process for benchmark to isolate errors.
-        # Get the return data via pickle.
-        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        ret = run_cmd("python3 benchmark_moe_3d_one_case.py "
-                      f"--niter {niter} "
-                      f'--case "{case}" '
-                      f"--num-hosts {num_hosts} "
-                      f"--num-devices-per-host {num_devices_per_host} "
-                      f"--dump-result "
-                      f'{"--disable-tqdm" if disable_tqdm else ""}')
-        if ret == 0:
-            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
-        else:
-            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
-
-    if dump_result:
-        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
-
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--niter", type=int, default=7)
-    parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--num-hosts", type=int)
-    parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--dump-result", action="store_true",
-                        help="Dump results into a temporary pickle file")
-    parser.add_argument("--disable-tqdm", action="store_true")
-    args = parser.parse_args()
-
-    run_cmd("mkdir -p tmp")
-    case = eval(args.case)
-    benchmark_one_case(case, args.niter, args.num_hosts, args.num_devices_per_host,
-                       use_separate_process=False, dump_result=args.dump_result,
-                       disable_tqdm=args.disable_tqdm)

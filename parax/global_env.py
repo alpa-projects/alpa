@@ -120,6 +120,12 @@ class GlobalConfig:
         """Restore the configs from a backup."""
         self.__dict__ = saved_dict
 
+    def update_with_dict(self, value_dict):
+        """Update the config with values from a dictionary."""
+        for k, v in value_dict.items():
+            assert hasattr(self, k)
+            setattr(self, k, v)
+
 
 global_config = GlobalConfig()
 

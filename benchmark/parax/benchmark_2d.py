@@ -3,15 +3,12 @@ from datetime import datetime
 
 import numpy as np
 
-from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices
+from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, GB
 
 from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
 from paper_manual_moe_suite import fast_test_moe_suite, test_moe_suite, paper_moe_suite
 from benchmark_2d_one_case_wresnet import fast_test_wresnet_suite
 from benchmark_2d_one_case import benchmark_one_case
-
-
-GB = 1 << 30
 
 
 benchmark_suites = {
@@ -31,14 +28,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", choices=list(benchmark_suites.keys()), type=str, required=True)
     parser.add_argument("--niter", type=int, default=5,
-        help="Number of benchmark iteration")
+                        help="The number of benchmark iterations")
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--local", action="store_true",
-        help="Run on local GPUs. Do not use ray actors.")
+                        help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--use-separate-process", action="store_true",
-        help="Launch separate processes for benchmark to isolate errors."
-              "Errors in a single case will not terminate this script.")
+                        help="Launch separate processes for benchmark to isolate errors."
+                             "Errors in a single case will not terminate this script.")
     parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
 
@@ -80,13 +77,15 @@ if __name__ == "__main__":
             pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
+
         parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
 
-        # Run one case
         if pipeline_mp_size > 1:
             print(f"Skipping the case: {str(benchmark_case)}, because PP > 1. "
                   f"Please use `benchmark_gpt_bert_3d.py`.")
             continue
+
+        # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
         result = benchmark_one_case(model_type, benchmark_case, args.niter,
                                     num_hosts, num_devices_per_host,

@@ -74,6 +74,7 @@ class SearchAPITest(unittest.TestCase):
 
         self.run_2_layer_mlp(batch_size=16, hidden_dim=64)
 
+    @unittest.skip("This test is broken due to unhandled cuda error in nccl.")
     def test_search_multi_host(self):
         physical_mesh = DeviceCluster().get_physical_mesh()
 

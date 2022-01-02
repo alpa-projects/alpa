@@ -74,7 +74,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str)
     parser.add_argument("--niter", type=int)
-    parser.add_argument("--case", type=str)
+    parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--local", action="store_true",

@@ -11,8 +11,9 @@ on:
     branches: [ master ]
 
 env:
-  cupy_version: "cupy-cuda110"
-  cuda_version: "11.0"
+  cupy_version: "cupy-cuda111"
+  cuda_version: "11.1"
+  base_path: "/home/ubuntu"
 
 
 jobs:
@@ -47,7 +48,7 @@ jobs:
         echo $CONDA/bin >> $GITHUB_PATH
     - name: Install dependencies
       run: |
-        pip3 install cmake numpy scipy flax==0.3.5 numba pybind11 ${{ env.cupy_version }}
+        pip3 install cmake numpy scipy flax numba pybind11 ${{ env.cupy_version }}
         pip3 install ray[default]
         sudo apt install -y coinor-cbc glpk-utils
         pip3 install pulp
@@ -57,14 +58,14 @@ jobs:
         pip3 install pytest-cov  
         pip install coverage
         pip install coverage-badge
-    - name: Build jaxlib 1
+    - name: Build jaxlib from source
       working-directory: ./jax-parax
       run: |
-        export TF_PATH=/home/zhihan/actions-runner/_work/parax/parax/tensorflow-parax # Change TF_PATH as needed
+        export TF_PATH=${{ env.base_path }}/actions-runner/_work/parax/parax/tensorflow-parax # Change TF_PATH as needed
         export CUDA_HOME=/usr/local/cuda/
         export PATH=/usr/local/cuda-${{ env.cuda_version }}/bin:/usr/local/cuda/bin${PATH:+:${PATH}}
         python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
-    - name: Build jaxlib 2
+    - name: Install jaxlib
       working-directory: ./jax-parax/dist
       run: pip3 install -e .
     - name: Install jax
@@ -84,9 +85,15 @@ jobs:
       working-directory: ./parax
       run: prospector parax/
     - name: Install cupy library
+      if: always()
       run: |
-        export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
-        python -m cupyx.tools.install_library --library nccl --cuda ${{ env.cuda_version }}
+        DIR="${{ env.base_path }}/.cupy/cuda_lib/11.1/nccl"
+        if [ -d "$DIR" ]; then
+          echo "cupy is already installed"
+        else
+          export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
+          python -m cupyx.tools.install_library --library nccl --cuda ${{ env.cuda_version }}
+        fi
     - name: Test with pytest
       if: always()
       working-directory: ./parax
@@ -94,6 +101,7 @@ jobs:
         export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
         export CUDA_HOME=/usr/local/cuda/
         export PATH=/usr/local/cuda-${{ env.cuda_version }}/bin:/usr/local/cuda/bin${PATH:+:${PATH}}         
+        # export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
         ray start --head                 
         coverage run -m unittest discover -s tests -p "test_auto_sharding_*.py" # Select the tests to run
     - name: Generate coverage badge
@@ -105,6 +113,7 @@ jobs:
       working-directory: ./parax
       run: |
         export LD_LIBRARY_PATH=/usr/local/cuda-${{ env.cuda_version }}/lib64:$LD_LIBRARY_PATH
+        export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
         python ./benchmark/parax/benchmark_gpt_bert_2d.py --local # Select the benchmark to run
     - name: Stop ray
       if: always()

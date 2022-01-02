@@ -1,4 +1,3 @@
-
 import argparse
 from functools import partial
 import os
@@ -22,6 +21,19 @@ from parax.util import map_to_shape, count_communication_primitives, print_used_
 
 
 as_option = global_config.default_autosharding_option
+
+
+def load_profiling_result(physical_mesh):
+    filename = physical_mesh.get_signature() + ".prof.pkl"
+    if os.path.exists(filename):
+        print(f"Load saved profiling results from {filename}")
+        physical_mesh.load_profiling_result(filename)
+        physical_mesh.prof_result.make_monotonic()
+        physical_mesh.prof_result.multiply_scale(1e7)
+    else:
+        physical_mesh.profile_collective("all-reduce")
+        print(f"Save profiling results to {filename}")
+        physical_mesh.save_profiling_result(filename)
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -79,10 +91,9 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     print_used_time(None)
 
     # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, other, overwrite_global_config_dict) = benchmark_case
- 
+    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,\
+        mesh_dim0, mesh_dim1, _, _, _,  num_micro_batches, force_batch_dim_mapping,\
+        use_remat, prefer_reduce_scatter, other, overwrite_global_config_dict = benchmark_case
     dtype = jnp.float16
 
     # Parallel configs
@@ -103,7 +114,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
-    logical_mesh = physical_mesh.get_logical_mesh([l_dim0, l_dim1])
+    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1])
     set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
     print_used_time("Setup device mesh")

@@ -37,7 +37,7 @@ class AutoShardingOption:
 
     def backup(self):
         """Backup the configs."""
-        return copy.copy(self.__dict__)
+        return copy.deepcopy(self.__dict__)
 
     def restore(self, saved_dict):
         """Restore the configs from a backup."""
@@ -113,7 +113,7 @@ class GlobalConfig:
 
     def backup(self):
         """Backup the configs."""
-        return copy.copy(self.__dict__)
+        return copy.deepcopy(self.__dict__)
 
     def restore(self, saved_dict):
         """Restore the configs from a backup."""

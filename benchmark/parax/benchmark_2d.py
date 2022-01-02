@@ -1,61 +1,38 @@
 import argparse
 from datetime import datetime
 
-import ray
-
 import numpy as np
 
-from parax.util import list_gpu_info, write_tsv, run_cmd, get_num_hosts_and_num_devices
+from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices
 
-from benchmark_gpt_bert_2d_one_case import benchmark_one_case
-from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
-from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite
+from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
+from paper_manual_moe_suite import test_moe_suite, paper_moe_suite
+from benchmark_2d_one_case import benchmark_one_case
+
 
 GB = 1 << 30
-_ = None
 
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
-# NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter
-
-default_benchmark_suite = {  # key = number of gpus, value = a list of cases
-1: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-    (8,  1024,  1024,  4,    32,   51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
-],
-
-4: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-],
-
-8: [
-    #B,   S,     H     L,   #head,   V,   LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-    (8,  1024,  1024,  4,    32,   51200, 1,   8,   _, _,  1,   1,  True, True,  False, _, _),
-],
-
-16: [
-]
-}
 
 benchmark_suites = {
-    "default": default_benchmark_suite,
-    "test_gpt": test_gpt_suite,
-    "paper_gpt": paper_gpt_suite,
-    "paper_auto_gpt": paper_auto_gpt_suite,
+    "gpt.fast_test": fast_test_gpt_suite,
+    "gpt.test": test_gpt_suite,
+    "gpt.paper": paper_gpt_suite,
+    "moe.test": test_moe_suite,
+    "moe.paper": paper_moe_suite,
+    "wresnet.test": None,
+    "wresnet.paper": None,
 }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="gpt")
+    parser.add_argument("--suite", choices=list(benchmark_suites.keys()), type=str)
     parser.add_argument("--niter", type=int, default=5,
         help="Number of benchmark iteration")
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)
     parser.add_argument("--local", action="store_true",
         help="Run on local GPUs. Do not use ray actors.")
-    parser.add_argument("--suite", choices=list(benchmark_suites.keys()), default="default")
     parser.add_argument("--use-separate-process", action="store_true",
         help="Launch separate processes for benchmark to isolate errors."
               "Errors in a single case will not terminate this script.")
@@ -75,15 +52,23 @@ if __name__ == "__main__":
         exit()
     run_cmd("mkdir -p tmp")
 
+    model_type = args.suite.split(".")[0]
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
+    output_name = f"{model_type}_parax_{args.exp_name}_{date_str}.tsv"
 
     # Run all cases
     for benchmark_case in suite:
-        (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-         use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
-        model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
+        if model_type in ["gpt", "bert"]:
+            (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
+             use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+            model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
+        elif model_type == "moe":
+            pass
+        elif model_type == "wresnet":
+            pass
+        else:
+            raise ValueError(f"Invalid model: {model_type}")
         parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
 
         # Run one case
@@ -92,7 +77,7 @@ if __name__ == "__main__":
                   f"Please use `benchmark_gpt_bert_3d.py`.")
             continue
         print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(args.model, benchmark_case, args.niter,
+        result = benchmark_one_case(model_type, benchmark_case, args.niter,
                                     num_hosts, num_devices_per_host,
                                     args.local, args.use_separate_process)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
@@ -102,7 +87,7 @@ if __name__ == "__main__":
                  "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
                  "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
-        values = [args.model, model_config, parallel_config, "N/A",
+        values = [model_type, model_config, parallel_config, "N/A",
                   num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
                   f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",

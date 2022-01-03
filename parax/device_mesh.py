@@ -1,5 +1,5 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from collections.abc import Iterable
 import cupy
 from cupy.cuda import nccl
@@ -43,6 +43,20 @@ logger.setLevel(logging.INFO)
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
     """Convert device id (int) to a canonical device string."""
     return "{}:{}:{}".format(host_ip, device_type, str(device_id))
+
+
+ReshardingTileSpec = namedtuple("ReshardingSendSpec",
+                                ["offset", "rank", "gpu_idx"])
+ReshardingSendTask = namedtuple("ReshardingSendTask",
+                                ["tile_specs", "group_name"])
+ReshardingRecvSpec = namedtuple("ReshardingRecvSpec",
+                                ["device_id", "shape", "dtype", "tile_specs"])
+ReshardingRecvTask = namedtuple("ReshardingRecvTask",
+                                ["recv_specs", "group_name"])
+ReshardingAllGatherSpec = namedtuple("ReshardingAllGatherSpec",
+                                     ["device_ids", "tensor_slices"])
+ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
+                                     ["allgather_specs"])
 
 
 class MeshHostWorker:
@@ -271,47 +285,44 @@ class MeshHostWorker:
             uuid = uuids[device_id]
             self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
 
-    # TODO(yonghao): replace dict by named tuple or class
-    def put_resharding_send_task(self, uuid: int, tasks: Sequence[Tuple],
-                                 group_name: str):
-        self.send_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+    def put_resharding_send_task(self, uuid, tasks, group_name):
+        self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
+                                                   group_name=group_name)
 
-    def put_resharding_recv_task(self, uuid: int, tasks: Sequence[Tuple],
-                                 group_name: str):
-        self.recv_tasks[uuid] = {'tasks': tasks, 'group_name': group_name}
+    def put_resharding_recv_task(self, uuid, tasks, group_name):
+        self.recv_tasks[uuid] = ReshardingRecvTask(recv_specs=tasks,
+                                                   group_name=group_name)
 
-    def run_resharding_send_task(self, uuid: int, buf_uuids: Sequence[int]):
-        task = self.send_tasks[uuid]
-        for tile_detail, buf_uuid in zip(task['tasks'], buf_uuids):
-            self.send_tile(buf_uuid,
-                           *tile_detail,
-                           group_name=task['group_name'])
+    def run_resharding_send_task(self, uuid, buf_uuids):
+        task: ReshardingSendTask = self.send_tasks[uuid]
+        for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
+            send_tile_spec: ReshardingTileSpec
+            self.send_tile(buf_uuid, send_tile_spec.offset, send_tile_spec.rank,
+                           send_tile_spec.gpu_idx, task.group_name)
 
-    def run_resharding_recv_task(self,
-                                 uuid: int,
-                                 buf_uuids: Sequence[int],
-                                 set_empty_buffer: bool = True):
-        task = self.recv_tasks[uuid]
-        for recv_detail, buf_uuid in zip(task['tasks'], buf_uuids):
+    def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
+        task: ReshardingRecvTask = self.recv_tasks[uuid]
+        for recv_spec, buf_uuid in zip(task.recv_specs, buf_uuids):
+            recv_spec: ReshardingRecvSpec
             if set_empty_buffer:
-                self.put_non_zero_buffer(buf_uuid, *(recv_detail[0:-1]))
-            for recv_subtask in recv_detail[-1]:
-                self.recv_tile(buf_uuid,
-                               recv_detail[0],
-                               *recv_subtask,
-                               group_name=task['group_name'])
+                self.put_non_zero_buffer(buf_uuid, recv_spec.device_id,
+                                         recv_spec.shape, recv_spec.dtype)
+            for recv_tile_spec in recv_spec.tile_specs:
+                recv_tile_spec: ReshardingTileSpec
+                self.recv_tile(buf_uuid, recv_spec.device_id,
+                               recv_tile_spec.offset, recv_tile_spec.rank,
+                               recv_tile_spec.gpu_idx, task.group_name)
 
-    def put_resharding_allgather_task(self, uuid: int, tasks: Sequence[Tuple]):
-        self.allgather_tasks[uuid] = {"tasks": tasks}
+    def put_resharding_allgather_task(self, uuid, tasks):
+        self.allgather_tasks[uuid] = ReshardingAllGatherTask(tasks)
 
-    def run_allgather_task(self, uuid: int, buffer_uuids: Sequence[Tuple]):
-        task = self.allgather_tasks[uuid]
-        allgather_details = task["tasks"]
-        for group_idx in allgather_details:
-            detail = allgather_details[group_idx]
-            device_ids = detail["participant_device_ids"]
-            tensor_slices = detail["slices"]
-            self.allgather(buffer_uuids, device_ids, tensor_slices)
+    def run_allgather_task(self, uuid, buffer_uuids):
+        task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
+        allgather_specs = task.allgather_specs
+        for group_idx in allgather_specs:
+            allgather_spec: ReshardingAllGatherSpec = allgather_specs[group_idx]
+            self.allgather(buffer_uuids, allgather_spec.device_ids,
+                           allgather_spec.tensor_slices)
         return
 
     ##### Profiling Related Functions #####

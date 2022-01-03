@@ -156,7 +156,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             f"Got {global_config.pipeline_parallel_schedule}. "
             f"Available ones are `gpipe` or `1f1b`.")
     if logger.level == logging.DEBUG:
-        logger.debug(schedule.pprint_schedule(print=False))
+        logger.debug(schedule.pprint_schedule(to_print=False))
 
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(

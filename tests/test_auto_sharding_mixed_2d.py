@@ -14,6 +14,8 @@ from parax import parallelize, set_parallelize_options, PhysicalDeviceMesh
 from parax.global_env import global_config
 from parax.util import map_to_shape, count_communication_primitives
 
+as_option = global_config.default_autosharding_option
+
 
 class AutoShardingMixedTest(unittest.TestCase):
 
@@ -21,12 +23,10 @@ class AutoShardingMixedTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
+        self.as_option_backup = as_option.backup()
 
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
+        as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(devices=self.devices[:np.prod(shape)])
@@ -36,8 +36,8 @@ class AutoShardingMixedTest(unittest.TestCase):
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
         set_parallelize_options(devices=device_mesh)
 
-        global_config.allow_mixed_mesh_shape = True
-        global_config.allow_all_gather = False
+        as_option.allow_mixed_mesh_shape = True
+        as_option.allow_all_gather = False
 
         use_bias = False
 

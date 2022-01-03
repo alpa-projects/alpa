@@ -8,7 +8,7 @@ import optax
 import ray
 
 from parax import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_layer_slicing)
+                   DeviceCluster, manual_layer_construction)
 from parax.model.model_util import TrainState
 from parax.testing import assert_allclose
 from parax.util import get_ray_namespace_str
@@ -61,7 +61,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                 mark_pipeline(name='2', mark_type='end')
                 return loss
 
-            loss_func = manual_layer_slicing(loss_func)
+            loss_func = manual_layer_construction(loss_func)
             grad = jax.grad(loss_func)(state.params, x, y)
             return grad
 

@@ -1,6 +1,6 @@
 """Abstract runtime classes and methods."""
 from abc import ABCMeta, abstractmethod
-from typing import Sequence, List, Any
+from typing import List, Any
 
 from jax.core import Var
 import ray
@@ -9,11 +9,11 @@ from parax.util import OrderedSet
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, CollectiveGroup, SymbolicReshardingTask)
-from parax.pipeline_parallel.computation import (PipelineComputation,
-                                                 XlaShardedPipelineComputation)
+from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
 
 
 class BaseRuntime(metaclass=ABCMeta):
+    """Abstract class for pipeline runtime."""
 
     def __init__(self, *, pipeline_stages, global_invars, global_outvars,
                  physical_meshes, **kwargs):
@@ -21,9 +21,10 @@ class BaseRuntime(metaclass=ABCMeta):
         An abstract class for pipeline-parallel runtime.
 
         Args:
-            pipeline_stages (Sequence[PipelineComputation, XlaShardedPipelineComputation]):  pipeline stages.
+            pipeline_stages (Sequence[PipelineComputation, XlaShardedPipelineComputation]): pipeline stages.
             global_invars (Sequence[Var]): input variables.
             global_outvars (input variables.): output varialbes.
+            physical_meshes (List[PhysicalDeviceMesh]): input physical meshes.
         """
         self.global_invars = global_invars
         self.global_outvars = global_outvars
@@ -33,7 +34,7 @@ class BaseRuntime(metaclass=ABCMeta):
     @property
     def num_mesh(self):
         """Return the number of meshes involved in the pipeline-parallel runtime."""
-        if self.physical_meshes == None:
+        if self.physical_meshes is None:
             return 0
         return len(self.physical_meshes)
 
@@ -54,6 +55,7 @@ class BaseRuntime(metaclass=ABCMeta):
 
 
 class BaseDistributedRuntime(BaseRuntime):
+    """Abstract class for distributed pipepline runtime."""
 
     def __init__(self,
                  *,
@@ -76,13 +78,15 @@ class BaseDistributedRuntime(BaseRuntime):
         Args:
             pipeline_stages (List[XlaShardedPipelineComputation]): list of pipeline stage programs.
             global_invars (List[Var]): input variables.
+            grad_dummy_invars (List[Var]): vars for gradient accumulation.
             global_outvars (List[Var]): output variables.
             physical_meshes (List[PhysicalDeviceMesh]): the cluster meshes to pipeline over.
-            sharding_compilation_kwargs (dict): a dict of keyword arguments as the sharding
-                compilation parameters.
             dependency (np.array): dependency between stages as an adjacency matrix.
-            num_batch (int): number of microbatches.
             schedule (GpipeSchedule): schedule to follow to execute the pipeline.
+            is_batch (): indicator of the batch dimension.
+            num_batch (int): number of microbatches.
+            kwargs (dict): a dict of keyword arguments as the sharding
+                compilation parameters.
         """
         super(BaseDistributedRuntime,
               self).__init__(pipeline_stages=pipeline_stages,
@@ -113,9 +117,11 @@ class BaseDistributedRuntime(BaseRuntime):
         self._compile_resharding_tasks()
 
     def run(self, *args, **kwargs):
+        """The runtime invocation interface."""
         raise NotImplementedError()
 
     def get_memory_allocated(self):
+        """Get the current size of allocated memory."""
         calls = []
         for mesh in self.physical_meshes:
             for worker in mesh.workers:
@@ -123,6 +129,7 @@ class BaseDistributedRuntime(BaseRuntime):
         return max(ray.get(calls))
 
     def get_max_memory_allocated(self):
+        """Get the maximal size of memory allocated so far."""
         calls = []
         for mesh in self.physical_meshes:
             for worker in mesh.workers:
@@ -135,6 +142,7 @@ class BaseDistributedRuntime(BaseRuntime):
         ray.get([w.sync.remote() for w in all_workers])
 
     def shutdown(self):
+        """Abstract method for shutting down the runtime."""
         raise NotImplementedError()
 
     def _precompile_sharding_specs(self):
@@ -186,18 +194,10 @@ class BaseDistributedRuntime(BaseRuntime):
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
 
-    def _create_resharding_and_get_send_recv_tasks(self):
-        """
-        Initialize all resharding (send/recv) tasks.
-
-        In this function, we do the following:
-        1. we create a resharding task for each resharding spec
-        2. for each resharding task, we generate all related send/recv tasks.
-        """
-
-        # Create resharding tasks for each var
-        for src_mesh_idx, dst_mesh_idx, var_spec_map in (
-                self._communicator.task_spec_iter()):
+    def _compile_resharding_tasks(self):
+        """Create and compile all resharding (send/recv/allgather) tasks."""
+        for src_mesh_idx, dst_mesh_idx, var_spec_map \
+                in self._communicator.task_spec_iter():
             for key, spec in var_spec_map.items():
                 cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]
@@ -212,6 +212,7 @@ class BaseDistributedRuntime(BaseRuntime):
                     self._collective_groups[i][j].destroy()
 
     def print_resharding_tasks(self):
+        """Pretty print all compiled resharding tasks."""
         ret = ""
         for src_idx in range(len(self._resharding_tasks)):
             for dst_idx in range(len(self._resharding_tasks)):

@@ -4,12 +4,14 @@ from parax.testing import PipelineBasicTest
 from parax.global_env import global_config
 from parax.util import count_communication_primitives
 
+as_option = global_config.default_autosharding_option
+
 
 class PipelineReduceScatterTest(PipelineBasicTest):
 
     def test_mlp_grad_acc_friendly(self):
-        global_config.force_data_parallel = True
-        global_config.prefer_reduce_scatter = True
+        as_option.force_data_parallel = True
+        as_option.prefer_reduce_scatter = True
         hlo_text = self.run_mlp(do_numerical_test=True)
 
         # Check number of communication primitives
@@ -44,8 +46,8 @@ class PipelineReduceScatterTest(PipelineBasicTest):
         assert n_total == n_all_gather == 1
 
     def test_bert_grad_acc_friendly(self):
-        global_config.force_data_parallel = True
-        global_config.prefer_reduce_scatter = True
+        as_option.force_data_parallel = True
+        as_option.prefer_reduce_scatter = True
         hlo_text = self.run_n_layer_bert(n_layers=2, do_numerical_test=False)
 
         # Check numbers of communication primitives

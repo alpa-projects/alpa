@@ -2,7 +2,6 @@
 
 import flax
 from flax.linen.module import compact, wrap_method_once
-
 import jax
 from jax import core, lax, numpy as jnp
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
@@ -109,7 +108,7 @@ setattr(flax.linen.Embed, "setup", embed_setup)
 setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
 
 
-# Mondey patch nn.LayerNorm in flax to make sure all gradients are in fp16
+# Monkey patch nn.LayerNorm in flax to make sure all gradients are in fp16
 # when using mixed-precision.
 @compact
 def layer_norm_call(self, x):
@@ -134,7 +133,7 @@ def layer_norm_call(self, x):
 setattr(flax.linen.LayerNorm, "__call__", wrap_method_once(layer_norm_call))
 
 
-# Mondey patch a new method "init_dummy" to flax's Module.
+# Monkey patch a new method "init_dummy" to flax's Module.
 # This function initializes all weights with ones for testing/benchmark purposes.
 # This function is much faster than the standard initialization.
 def init_dummy(self, *args, **kwargs):

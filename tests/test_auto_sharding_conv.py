@@ -15,6 +15,8 @@ from parax.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
 
+as_option = global_config.default_autosharding_option
+
 
 class TrainState(train_state.TrainState):
     batch_stats: Any
@@ -49,7 +51,7 @@ def assert_data_parallel_cost(state,
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
         count_communication_primitives(hlo_ir, ignore_scalar_all_reduce=True))
 
-    if global_config.prefer_reduce_scatter:
+    if as_option.prefer_reduce_scatter:
         assert n_all_reduce == num_batch_norm * 2
         assert n_reduce_scatter == num_batch_norm + 2
         assert n_all_gather == num_batch_norm + 1
@@ -58,7 +60,7 @@ def assert_data_parallel_cost(state,
         assert n_all_reduce == 1 + num_batch_norm * 2
         assert n_total == n_all_reduce
 
-    if global_config.prefer_reduce_scatter:
+    if as_option.prefer_reduce_scatter:
         num_not_sharded = 0
         for weight in opt_state:
             if not is_sharded(weight) and len(weight.shape) > 1:
@@ -66,7 +68,7 @@ def assert_data_parallel_cost(state,
         assert num_not_sharded == 0
     else:
         for weight in params:
-            assert_all_replicated(weight, np.prod(device_mesh.id_mesh.shape))
+            assert_all_replicated(weight, np.prod(device_mesh.shape))
 
 
 class AutoShardingConvTest(unittest.TestCase):
@@ -75,12 +77,10 @@ class AutoShardingConvTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
+        self.as_option_backup = as_option.backup()
 
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
+        as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
         device_mesh = PhysicalDeviceMesh(devices=self.devices)
@@ -221,7 +221,7 @@ class AutoShardingConvTest(unittest.TestCase):
         image_size = 32
         num_layers = 4
         channel = 8
-        global_config.allow_mixed_mesh_shape = False
+        as_option.allow_mixed_mesh_shape = False
 
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
         state, hlo_ir, objective = self.run_n_layer_conv(
@@ -231,22 +231,22 @@ class AutoShardingConvTest(unittest.TestCase):
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        if global_config.prefer_reduce_scatter:
+        if as_option.prefer_reduce_scatter:
             assert n_reduce_scatter > 0
-        if global_config.allow_mixed_mesh_shape:
+        if as_option.allow_mixed_mesh_shape:
             assert n_all_to_all > 0
 
     def test_n_layer_conv_2d_mesh_mixed_shape(self):
-        global_config.allow_mixed_mesh_shape = True
+        as_option.allow_mixed_mesh_shape = True
         self.test_n_layer_conv_2d_mesh()
 
     def test_n_layer_conv_data_parallel_reduce_scatter(self):
-        global_config.prefer_reduce_scatter = True
+        as_option.prefer_reduce_scatter = True
         self.test_n_layer_conv_data_parallel()
 
     def test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter(self):
-        global_config.allow_mixed_mesh_shape = True
-        global_config.prefer_reduce_scatter = True
+        as_option.allow_mixed_mesh_shape = True
+        as_option.prefer_reduce_scatter = True
         self.test_n_layer_conv_2d_mesh()
 
     def test_n_layer_depthwise_conv_model_parallel(self):

@@ -1,25 +1,24 @@
-import argparse
-import pickle
-
 import jax
 import jax.numpy as jnp
 import numpy as np
-import ray
 import optax
+import ray
 
 import parax
-from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from parax import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, mark_pipeline, manual_layer_slicing, automatic_layer_slicing)
+                   DeviceCluster, mark_pipeline, manual_layer_construction,
+                   automatic_layer_construction, automatic_remat)
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from parax.model.model_util import TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.timer import timers
-from parax.util import print_used_time, run_cmd, disable_tqdm_globally, to_str_round, \
-    get_ray_namespace_str
+from parax.util import print_used_time, to_str_round, get_ray_namespace_str, GB
 
-GB = 1024 ** 3
+from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
+
+
+as_option = global_config.default_autosharding_option
 
 
 def report_pipeline_breakdown(executable, timer_names, niter):
@@ -71,14 +70,14 @@ def create_train_state(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer=False):
+def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
+                   auto_layer=False, remat_layer_boundary=True):
 
     add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size >= 1))
 
     @parallelize
     def train_step(state, batch, rng_key):
 
-        # @partial(automatic_layer_slicing, layer_num=num_layers, use_remat=use_remat)
         def loss_func(params):
             rngs = {"dropout": rng_key}
             if add_pipeline_marker:
@@ -99,15 +98,16 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
             return loss
 
         if add_pipeline_marker:
-            loss_func = manual_layer_slicing(loss_func)
+            loss_func = manual_layer_construction(loss_func)
         elif auto_layer:
-            if use_remat:
-                loss_func = automatic_layer_slicing(loss_func, num_layers,
-                                                    use_pipeline=False,
-                                                    use_remat=True)
-            loss_func = automatic_layer_slicing(loss_func, pipeline_mp_size,
-                                                use_pipeline=True,
-                                                use_remat=False)
+            if remat_layer_boundary:
+                loss_func = automatic_layer_construction(loss_func,
+                                                         remat_layer=use_remat,
+                                                         layer_num=pipeline_mp_size)
+            else:
+                if use_remat:
+                    loss_func = automatic_remat(loss_func, layer_num=num_layers)
+                loss_func = automatic_layer_construction(loss_func, layer_num=pipeline_mp_size)
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
@@ -115,9 +115,9 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, au
 
     return train_step
 
+
 def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 num_hosts, num_devices_per_host):
-    backup = global_config.backup()
     print_used_time(None)
 
     # Model configs
@@ -133,16 +133,13 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     grad_func = parax.grad
 
     if force_batch_dim_mapping:
-        global_config.force_batch_dim_to_mesh_dim = 0
-    global_config.prefer_reduce_scatter = prefer_reduce_scatter
+        as_option.force_batch_dim_to_mesh_dim = 0
+    as_option.prefer_reduce_scatter = prefer_reduce_scatter
 
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
-
-    if overwrite_global_config_dict is None:
-        overwrite_global_config_dict = {}
 
     if pipeline_stage_mode == "uniform_layer_gpipe":
         set_parallelize_options(devices=virtual_mesh,
@@ -156,9 +153,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches)
-    global_config_tmp = global_config.backup()
-    global_config_tmp.update(overwrite_global_config_dict)
-    global_config.restore(global_config_tmp)
+
+    if isinstance(overwrite_global_config_dict, dict):
+        global_config.update_with_dict(overwrite_global_config_dict)
 
     # Prepare input batch
     # Note: there will be an input conversion.
@@ -172,7 +169,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     }
     print_used_time("Prepare input")
 
-    add_manual_layer_slicing_marker = ((not auto_layer) and (pipeline_mp_size > 1))
+    # Init train state
+    add_manual_layer_construction_marker = ((not auto_layer) and (pipeline_mp_size > 1))
 
     if model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
@@ -185,7 +183,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             pipeline_mp_size=pipeline_mp_size,
             gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
-            add_manual_pipeline_markers=add_manual_layer_slicing_marker,
+            add_manual_pipeline_markers=add_manual_layer_construction_marker,
         ), dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
@@ -198,7 +196,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             pipeline_mp_size=pipeline_mp_size,
             gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
-            add_manual_pipeline_markers=add_manual_layer_slicing_marker,
+            add_manual_pipeline_markers=add_manual_layer_construction_marker,
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
@@ -231,11 +229,11 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     executable.sync()
     print_used_time("Compile (worker)")
 
+    # Benchmark step time
     for i in range(niter):
         state = train_step(state, batch, rngkey)
 
-    timer_name = "overall"
-    latencies = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)[2:]
+    latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
 
     mem_allocated = executable.get_memory_allocated()
@@ -244,78 +242,14 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     # Compute statistics
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                 hidden_size, vocab_size,
-                                virtual_mesh.total_devices,
+                                virtual_mesh.num_devices,
                                 np.mean(latencies))
     tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
                                      hidden_size, vocab_size,
-                                     virtual_mesh.total_devices,
+                                     virtual_mesh.num_devices,
                                      np.mean(latencies), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
     # report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute", "alloc"], niter)
     executable.shutdown()
     return (parameter_count, mem_allocated, max_mem_allocated, latencies,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
-
-
-TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
-
-
-def benchmark_one_case(model, case, niter,
-                       num_hosts, num_devices_per_host,
-                       use_separate_process=False,
-                       dump_result=False, disable_tqdm=False):
-    if disable_tqdm:
-        disable_tqdm_globally()
-
-    if not use_separate_process:
-        ray.init(address="auto", ignore_reinit_error=True,
-                 namespace=get_ray_namespace_str())
-        jax.config.update('jax_platform_name', 'cpu')
-        global_config.use_dummy_value_for_benchmarking = True
-
-        result = benchmark_gpt_bert_internal(model, case, niter,
-                                             num_hosts, num_devices_per_host)
-        ray.shutdown()
-    else:
-        # Launch a new process for benchmark to isolate errors.
-        # Get the return data via pickle.
-        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        cmd = (f"python3 -u benchmark_gpt_bert_3d_one_case.py "
-               f"--model {model} "
-               f"--niter {niter} "
-               f'--case "{case}" '
-               f"--num-hosts {num_hosts} "
-               f"--num-devices-per-host {num_devices_per_host} "
-               f"--dump-result ")
-        if disable_tqdm:
-            cmd += "--disable-tqdm "
-        ret = run_cmd(cmd)
-        if ret == 0:
-            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
-        else:
-            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
-
-    if dump_result:
-        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
-
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=6)
-    parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--num-hosts", type=int)
-    parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--dump-result", action="store_true",
-        help="Dump results into a temporary pickle file")
-    parser.add_argument("--disable-tqdm", action="store_true")
-    args = parser.parse_args()
-
-    run_cmd("mkdir -p tmp")
-    case = eval(args.case)
-    benchmark_one_case(args.model, case, args.niter,
-                       args.num_hosts, args.num_devices_per_host,
-                       use_separate_process=False, dump_result=args.dump_result,
-                       disable_tqdm=args.disable_tqdm)

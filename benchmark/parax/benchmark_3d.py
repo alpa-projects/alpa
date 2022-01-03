@@ -3,53 +3,40 @@ from datetime import datetime
 import time
 
 import numpy as np
-import ray
 
-from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round
-from benchmark.parax.benchmark_gpt_bert_3d_one_case import benchmark_one_case
-from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite
-from benchmark.parax.paper_auto_gpt_suite import paper_auto_gpt_suite, test_auto_gpt_suite, result_auto_gpt_suite
+from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round, GB
 
-GB = 1024 ** 3
+from benchmark_3d_one_case import benchmark_one_case
+from benchmark_3d_one_case_wresnet import paper_auto_wresnet_suite
+from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
+from paper_manual_moe_suite import fast_test_moe_suite, test_moe_suite, paper_moe_suite
+from paper_auto_gpt_suite import test_auto_gpt_suite, paper_auto_gpt_suite, result_auto_gpt_suite
+from paper_auto_moe_suite import test_auto_moe_suite, paper_auto_moe_suite
 
-# B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
-# PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
-# NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
-
-# yapf: disable
-
-default_suite = {
-4: [
-    #B,   S,     H     L,   #head,   V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
-],
-
-8: [
-    #B,   S,     H     L,  #head,    V,     LD0, LD1, PD0, PD1, PP, NB,  FM,    Remat, RS,    Stage
-    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "uniform_layer_gpipe", None),
-    (64,  1024,  1024, 8,  1024//64, 51200, 4,   1,   1,   4,   2,  16,  True,  True,  False, "auto_gpipe",          None),
-]
-}
-
-# yapf: enable
 
 benchmark_suites = {
-    "default": default_suite,
-    "paper_gpt": paper_gpt_suite,
-    "test_gpt": test_gpt_suite,
-    "paper_auto_gpt": paper_auto_gpt_suite,
-    "test_auto_gpt": test_auto_gpt_suite,
-    "result_auto_gpt": result_auto_gpt_suite,
+    "gpt.fast_test": fast_test_gpt_suite,
+    "gpt.test": test_gpt_suite,
+    "gpt.paper": paper_gpt_suite,
+    "gpt.test_auto": test_auto_gpt_suite,
+    "gpt.paper_auto": paper_auto_gpt_suite,
+    "gpt.result_auto": result_auto_gpt_suite,
+
+    "moe.fast_test": fast_test_moe_suite,
+    "moe.test": test_moe_suite,
+    "moe.paper": paper_moe_suite,
+    "moe.test_auto": test_auto_moe_suite,
+    "moe.paper_auto": paper_auto_moe_suite,
+
+    "wresnet.paper_auto": paper_auto_wresnet_suite,
 }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="gpt")
-    parser.add_argument("--niter", type=int, default=5)  # 2 warmup + 5 actual run.
-    parser.add_argument("--suite", choices=list(benchmark_suites.keys()),
-                        default="paper_gpt")
+    parser.add_argument("--suite", choices=list(benchmark_suites.keys()), type=str, required=True)
+    parser.add_argument("--niter", type=int, default=5,
+        help="The number of benchmark iterations")
     parser.add_argument("--num-hosts", type=int, default=None)
     parser.add_argument("--num-devices-per-host", type=int, default=None)
     parser.add_argument("--no-separate-process", action='store_false',
@@ -59,8 +46,6 @@ if __name__ == "__main__":
     parser.add_argument("--exp_name", type=str, default="default")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
-
-    print(f"- Use separate process: {args.use_separate_process}")
 
     # Get the benchmark suite
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
@@ -75,31 +60,49 @@ if __name__ == "__main__":
         exit()
     run_cmd("mkdir -p tmp")
 
+    model_type = args.suite.split(".")[0]
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{args.model}_parax_{args.exp_name}_{date_str}.tsv"
+    output_name = f"{model_type}_parax_{args.exp_name}_{date_str}.tsv"
 
     # Run all cases
     for benchmark_case in suite:
-        (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-         use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
-        model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
+        if model_type in ["gpt", "bert"]:
+            (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
+             use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+            model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
+        elif model_type == "moe":
+            (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
+             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
+             num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
+             auto_pipeline, overwrite_global_config_dict) = benchmark_case
+            model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
+            pipeline_stage_mode = "auto_gpipe" if auto_pipeline else "uniform_layer_gpipe"
+        elif model_type == "wresnet":
+            (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
+             num_micro_batches, force_batch_dim_mapping,
+             prefer_reduce_scatter, use_remat, logical_mesh_search_space) = benchmark_case
+            model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
+            pipeline_stage_mode = "auto_gpipe"
+            pipeline_mp_size = 1
+        else:
+            raise ValueError(f"Invalid model: {model_type}")
 
         if pipeline_mp_size <= 1 and pipeline_stage_mode == "uniform_layer_gpipe":
             print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
-                  f"Please use `benchmark_gpt_bert_2d.py` "
+                  f"Please use `benchmark_2d.py` "
                   f"since 3d runtime will have a small overhead.")
             continue
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(args.model, benchmark_case, args.niter,
+        result = benchmark_one_case(model_type, benchmark_case, args.niter,
                                     num_hosts, num_devices_per_host,
                                     use_separate_process=args.use_separate_process,
                                     disable_tqdm=args.disable_tqdm)
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes, logical_mesh_shapes, autosharding_global_configs) = result
+         submesh_shapes, logical_mesh_shapes, autosharding_option_dicts) = result
 
         if pipeline_stage_mode == "uniform_layer_gpipe":
             heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
@@ -107,7 +110,7 @@ if __name__ == "__main__":
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
                      "TFLOPs (ckpt)", "Peak Mem", "overwrite_global_config_dict"]
             parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
-            values = [args.model, model_config, parallel_config, (p_dim0, p_dim1),
+            values = [model_type, model_config, parallel_config, (p_dim0, p_dim1),
                       num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
@@ -121,13 +124,13 @@ if __name__ == "__main__":
                      "Layer->Stage Mapping", "Submesh Shapes",
                      "Logical Mesh Shapes", "Autosharding Global Configs",
                      "overwrite_global_config_dict", "compilation times"]
-            values = [args.model + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
+            values = [model_type + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
                       num_micro_batches, use_remat, prefer_reduce_scatter,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                       f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
                       forward_stage_layer_ids, submesh_shapes,
-                      logical_mesh_shapes, autosharding_global_configs,
+                      logical_mesh_shapes, autosharding_option_dicts,
                       overwrite_global_config_dict, to_str_round(compilation_times, 2)]
             write_tsv(heads, values, output_name)
 

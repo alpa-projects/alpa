@@ -1,4 +1,4 @@
-"""Utility for testing."""
+"""Utilities for testing."""
 from collections.abc import Iterable
 import time
 import unittest
@@ -17,8 +17,9 @@ from parax.device_mesh import DeviceCluster
 from parax.global_env import set_parallelize_options, global_config
 from parax.model.bert_model import BertConfig, FlaxBertLayer
 from parax.model.model_util import TrainState
-from parax.pipeline_parallel.automatic_layer_slicing import automatic_layer_slicing
-from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing, remat
+from parax.pipeline_parallel.layer_construction import (
+    automatic_layer_construction, manual_layer_construction, automatic_remat,
+    manual_remat)
 from parax.pipeline_parallel.primitive_def import mark_pipeline
 from parax.util import get_ray_namespace_str
 
@@ -118,13 +119,10 @@ def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
 
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
-        if use_remat:
-            fn = remat(fn)
-        return manual_layer_slicing(fn)
-    return automatic_layer_slicing(fn,
-                                   layer_num=layer_num,
-                                   use_pipeline=True,
-                                   use_remat=use_remat)
+        return manual_layer_construction(fn, remat_layer=use_remat)
+    return automatic_layer_construction(fn,
+                                        remat_layer=use_remat,
+                                        layer_num=layer_num)
 
 
 def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):
@@ -190,13 +188,7 @@ class PipelineBasicTest(unittest.TestCase):
                      prefix=global_config.unittest_ray_namespace_prefix))
         jax.config.update('jax_platform_name', 'cpu')
 
-        # Backup global config
-        self.old_global_config = global_config.backup()
-
     def tearDown(self):
-        # Restore global config
-        global_config.restore(self.old_global_config)
-
         ray.shutdown()
         time.sleep(1)
 
@@ -261,8 +253,7 @@ class PipelineBasicTest(unittest.TestCase):
                          hidden_size=512,
                          num_heads=512 // 64,
                          submesh_shapes=None,
-                         do_numerical_test=True,
-                         overwrite_global_config_dict=dict()):
+                         do_numerical_test=True):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
@@ -270,9 +261,6 @@ class PipelineBasicTest(unittest.TestCase):
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
-        global_config_tmp = global_config.backup()
-        global_config_tmp.update(overwrite_global_config_dict)
-        global_config.restore(global_config_tmp)
 
         # Init model and optimizer
         rngkey = jax.random.PRNGKey(0)

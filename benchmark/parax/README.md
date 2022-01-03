@@ -8,17 +8,9 @@ ray start --head
 ```
 
 2. Run benchmark.
-- Run benchmark with Ray
-  ```
-  python3 benchmark_transformer_layer.py
-  python3 benchmark_gpt_bert.py
-  ```
-
-- Run benchmark without Ray
-  ```
-  python3 benchmark_transformer_layer.py --local
-  python3 benchmark_gpt_bert.py --local
-  ```
+```
+python3 benchmark_2d.py --suite gpt.fast_test
+```
 
 ## Generate Profiling Database
 1. Start ray cluster.

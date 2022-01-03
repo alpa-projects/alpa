@@ -341,18 +341,6 @@ class SymbolicReshardingTask(ReshardingTask):
             group_spec.tensor_slices.append(post_allgather_indices)
         return self._allgather_tasks
 
-    def put_allgather_tasks(self):
-        allgather_tasks = self.get_allgather_tasks()
-        # TODO(Hao): this collective group not work
-        self.allgather_task_ids = dict()
-        task_dones = []
-        for worker, task in allgather_tasks.items():
-            uuid = next_resharding_task_uuid()
-            self.allgather_task_ids[worker] = uuid
-            task_dones.append(
-                worker.put_resharding_allgather_task.remote(uuid, task))
-        ray.get(task_dones)
-
     # FIXME(Hao): test the function below; it might be buggy.
     def do_prepared(self, src_array, profiling=False):
         """Execute a task which has been put in the remote workers."""

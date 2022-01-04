@@ -225,10 +225,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1)
-
-    def compile_fn(w, v):
-        w.compile_proto_with_search.remote(*v)
-
+    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v)
     compile_intermediate = [None] * num_meshes
     total_flops = 0
     default_autosharding_option = global_config.default_autosharding_option

@@ -97,7 +97,7 @@ class VirtualDistributedArray:
             return 1
         else:
             num_replicas = 1
-            for maxis, assignment in enumerate(self.sharding_spec.mesh_mapping):
+            for _, assignment in enumerate(self.sharding_spec.mesh_mapping):
                 if isinstance(assignment, Replicated):
                     num_replicas = num_replicas * assignment.replicas
             return num_replicas
@@ -182,7 +182,7 @@ class VirtualDistributedArray:
     @property
     def device_str_to_flat_index(self):
         """Maps a device_str to its index in the flattened .indices object."""
-        device_str_to_flat_index_map = dict()
+        device_str_to_flat_index_map = {}
         for i, device_str in enumerate(self.device_mesh.device_strs):
             device_str_to_flat_index_map[device_str] = i
         return device_str_to_flat_index_map
@@ -235,11 +235,11 @@ class TileSlice(Tile):
     offset: List[slice]
 
     def __init__(self, tile, offset):
-        self.index = tile.index
-        self.index_flat = tile.index
-        self.replica_device_ids = tile.replica_device_ids
-        self.replica_device_strs = tile.replica_device_strs
-        self.indices = tile.indices
+        super().__init__(tile.index,
+                         tile.index_flat,
+                         tile.replica_device_ids,
+                         tile.replica_device_strs,
+                         tile.indices)
         self.offset = offset
 
     @property

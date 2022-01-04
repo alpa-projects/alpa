@@ -23,8 +23,8 @@ class BaseRuntime(metaclass=ABCMeta):
         Args:
             pipeline_stages (Sequence[PipelineComputation, XlaShardedPipelineComputation]): pipeline stages.
             global_invars (Sequence[Var]): input variables.
-            global_outvars (input variables.): output varialbes.
-            physical_meshes (List[PhysicalDeviceMesh]): input physical meshes.
+            global_outvars (Sequence[Var]): output varialbes.
+            physical_meshes (Sequence[PhysicalDeviceMesh]): input physical meshes.
         """
         self.global_invars = global_invars
         self.global_outvars = global_outvars

@@ -344,11 +344,11 @@ class SymbolicReshardingTask(ReshardingTask):
     # FIXME(Hao): test the function below; it might be buggy.
     def do_prepared(self, src_array, profiling=False):
         """Execute a task which has been put in the remote workers."""
-        send_buf_uuids = {host: list() for host in self.src_mesh.workers}
-        recv_buf_uuids = {host: list() for host in self.dst_mesh.workers}
+        send_buf_uuids = {host: [] for host in self.src_mesh.workers}
+        recv_buf_uuids = {host: [] for host in self.dst_mesh.workers}
 
         bufs: List[Any] = [None] * len(self.task_spec.dst_indices)
-        device_str_to_buf_map = dict()
+        device_str_to_buf_map = {}
 
         dtype = self.task_spec.src.aval.dtype
         for receiver in self.receiver_uuid_plan:
@@ -393,8 +393,7 @@ class SymbolicReshardingTask(ReshardingTask):
                         uuid, recv_buf_uuids[worker]))
             logger.debug("Precompiled tasks launched.")
             ray.get(results)
-        for i, device_str in enumerate(
-                self.task_spec.dst.device_mesh.device_strs):
+        for device_str in self.task_spec.dst.device_mesh.device_strs:
             # for each replica
             bufs[self.task_spec.dst.device_str_to_flat_index[
                 device_str]] = device_str_to_buf_map[device_str]
@@ -431,10 +430,10 @@ class CollectiveGroup:
         self.group_name = ",".join(self.device_strs)
 
         # construct a device str -> rank: (process_rank, gpu_index) map
-        self.device_str_to_rank_map = dict()
-        self.device_str_to_mesh_worker_map = dict()
-        self.device_str_to_host_id_map = dict()
-        self.device_str_to_device_id_map = dict()
+        self.device_str_to_rank_map = {}
+        self.device_str_to_mesh_worker_map = {}
+        self.device_str_to_host_id_map = {}
+        self.device_str_to_device_id_map = {}
 
         # arranged following the rank order
         num_host = len(self.src_mesh.host_ips) + len(self.dst_mesh.host_ips)
@@ -474,8 +473,7 @@ class CollectiveGroup:
 
     def destroy(self):
         """Destroy the NCCL collective group at exit."""
-        logger.debug("Recycling the collective group: {}.".format(
-            self.group_name))
+        logger.debug(f"Recycling the collective group: {self.group_name}.")
         for worker in self.mesh_workers:
             # This remote call will remove ray named actors (hence it is necessary)
             ray.get(worker.destroy_collective_group.remote(self.group_name))
@@ -692,6 +690,7 @@ class ReshardingStrategy:
             a dst tile, how it should get the data from src_tiles (src tile replicas).
         is_local_allgather (bool): if this strategy involves post allgather operations.
     """
+
     def __init__(self, per_spec_plans, is_local_allgather):
         self.per_spec_plans = per_spec_plans
         self.is_local_allgather = is_local_allgather
@@ -716,12 +715,9 @@ class CrossMeshCommunicator:
     def __init__(self, sharded_stages, schedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
-        if not all([
-                isinstance(s, XlaShardedPipelineComputation)
-                for s in sharded_stages
-        ]):
-            raise RuntimeError("Require a list of sharded stages.")
-
+        for s in sharded_stages:
+            if not isinstance(s, XlaShardedPipelineComputation):
+                raise RuntimeError("Require a list of sharded stages.")
         # Do not mutate
         self._sharded_stages = sharded_stages
         self._schedule = schedule
@@ -750,14 +746,17 @@ class CrossMeshCommunicator:
         """Number of meshes in the schedule."""
         return self._schedule.num_mesh
 
-    def _rewrite_allgather_specs(self, dst_sharding_spec, dst_mesh, var):
+    @staticmethod
+    def _rewrite_allgather_specs(dst_sharding_spec, dst_mesh, var):
         if not global_config.use_scatter_gather:
             return dst_sharding_spec, None
         tot_sharding = 1
         extra_slice = None
-        dim_spec_chunk_value = lambda spec: (spec.chunks[0] if isinstance(
-            spec, pxla.Chunked) else 1)
-        shard_axes = dict()  # tensor axis->mesh axis
+
+        def dim_spec_chunk_value(spec):
+            return spec.chunks[0] if isinstance(spec, pxla.Chunked) else 1
+
+        shard_axes = {}  # tensor axis->mesh axis
         for dim_idx, mesh_dim in enumerate(dst_sharding_spec.mesh_mapping):
             if isinstance(mesh_dim, pxla.ShardedAxis):
                 shard_axes[mesh_dim.axis] = dim_idx
@@ -788,7 +787,7 @@ class CrossMeshCommunicator:
             dim_spec = dst_sharding_spec.sharding[dim]
             dim_chunked_value = dim_spec_chunk_value(dim_spec)
             new_chunked_value = (extra_sharding * dim_chunked_value)
-            if (var.aval.shape[dim] % new_chunked_value == 0):
+            if var.aval.shape[dim] % new_chunked_value == 0:
                 # TODO(yonghao): handle this case:
                 # Mesh:         Tensor After all-gather:    Tensor Before all-gather:
                 # [[0,1,2],     [[0,1], [2,3], [4,5],       [[0],[2],[4],
@@ -813,15 +812,14 @@ class CrossMeshCommunicator:
                 assert len(new_mapping) < 3, "Only support 1D and 2D mesh"
 
                 dst_sharding_spec = pxla.ShardingSpec(new_sharding, new_mapping)
-                logger.debug("output sharding spec rewritten to {}".format(
-                    dst_sharding_spec))
+                logger.debug(f"output sharding spec rewritten to {dst_sharding_spec}")
                 extra_slice = (dim, shard_axes[dim], extra_sharding)
                 break
             dim += 1
-        if extra_slice == None:
+        if extra_slice is None:
             logger.warning(
-                "ReshardingTask is not fully sharded, this causes redundant communication."
-                "Receiver sharding spec is {}".format(dst_sharding_spec))
+                f"ReshardingTask is not fully sharded, this causes redundant communication."
+                f"Receiver sharding spec is {dst_sharding_spec}")
 
         return dst_sharding_spec, extra_slice
 
@@ -839,7 +837,7 @@ class CrossMeshCommunicator:
         # Note(Hao): resharding_specs is num_mesh x num_mesh matrix
         # Each element is a dict: the name of variables are keys, ReshardingSpec are values.
         self.resharding_specs = [
-            [dict() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+            [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
 
         # find stages that will communicate

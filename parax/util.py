@@ -580,7 +580,7 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
     return result
 
 
-def log_jaxpr(jaxpr: Jaxpr, filename: str):
+def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     """Print jaxpr int a temporary file for debugging purposes."""
     path = "/tmp/" + filename
     with open(path, "w") as f:

@@ -11,11 +11,11 @@ from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
                       ShapedArray)
 from jax.interpreters import xla
+from jax.interpreters.partial_eval import remat_call_p
 from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib import xla_extension
 import numpy as np
 
-from parax.util import OrderedSet
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.measure_record import StrategyConfig
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable
@@ -124,10 +124,8 @@ class JaxPipelineComputation(PipelineComputation):
                    invars=closed_jaxpr.jaxpr.invars,
                    outvars=closed_jaxpr.jaxpr.outvars,
                    eqns=closed_jaxpr.eqns,
-                   consts_dir={
-                       k: v for k, v in zip(closed_jaxpr.jaxpr.constvars,
-                                            closed_jaxpr.consts)
-                   })
+                   consts_dir=dict(zip(closed_jaxpr.jaxpr.constvars,
+                                       closed_jaxpr.consts)))
 
 
 @dataclass
@@ -147,7 +145,7 @@ class XlaPipelineComputation(PipelineComputation):
         """
         closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
         backend = xb.get_backend("gpu")
-        name = "pipeline_computation_{}".format(jax_pipeline_computation.name)
+        name = f"pipeline_computation_{jax_pipeline_computation.name}"
         built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
 
         return cls(
@@ -183,6 +181,7 @@ class XlaPipelineComputation(PipelineComputation):
                        result_handlers, kept_var_idx)
 
     def get_hlo_text(self):
+        """Get the HLO text."""
         xla_computation = xc.XlaComputation(self.hlo_proto)
         return xla_computation.as_hlo_text()
 
@@ -202,6 +201,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     @classmethod
     def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
+        """Create a dummy computation."""
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
@@ -231,9 +231,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             donated_invars=None,
             acc_grad_outvars=(),
             donatables=None):
-        # pylint: disable=too-many-locals
         """Run auto-sharding optimizer on a Jax pipeline computation."""
-
         if donatables is None:
             donatables = OrderedSet()
 
@@ -256,6 +254,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
                    donatables=donatables)
 
     def donate_intermediates(self, computation):
+        """Donate intermediate variables."""
         # get sharding annotated hlo module
         hlo_module = computation.as_hlo_module()
         donatable = OrderedSet(self.donatables)
@@ -275,15 +274,15 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
         num_donated = np.count_nonzero(self.donated_invars)
         donatable_outvars = OrderedSet(self.outvars[num_donated:])
-        donated_invars = list()
-        donated_outvars = list()
+        donated_invars = []
+        donated_outvars = []
         var_indices = dict(zip(self.outvars, range(len(self.outvars))))
         var_indices.update(dict(zip(self.invars, range(len(self.invars)))))
         for idx, invar in enumerate(self.invars):
             if invar not in donatable:
                 # not donatable
                 continue
-            elif self.donated_invars[idx]:
+            if self.donated_invars[idx]:
                 # already donated
                 continue
             for outvar in donatable_outvars:
@@ -302,6 +301,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             self.donated_invars[var_indices[invar]] = True
 
     def get_compiled(self, mesh=None, is_distributed=None):
+        """Compile the XLA computation to get sharding specs."""
         # TODO(yonghao): use more general cache functions
         if self.compiled is not None:
             return self.compiled
@@ -345,9 +345,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
-
         compiled = self.get_compiled(mesh)
-        hlo_module = compiled.hlo_modules()[0]
+        # hlo_module = compiled.hlo_modules()[0]
 
         # Return the final callable
         avals = [var.aval for var in self.invars]
@@ -359,6 +358,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):
+        """Get the HLO text."""
         xla_computation = xc.XlaComputation(self.hlo_proto)
         return xla_computation.as_hlo_text()
 
@@ -376,7 +376,9 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
 
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "start":
-            assert current_computation is None, "Defining a pipeline computation inside a pipeline computation is not allowed."
+            assert current_computation is None, ("Defining a pipeline computation "
+                                                 "inside a pipeline computation is "
+                                                 "not allowed.")
             current_computation = JaxPipelineComputation(
                 name=eqn.params["name"])
             for var in eqn.invars:
@@ -407,8 +409,10 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
         computations: Sequence[JaxPipelineComputation], global_invars,
         global_outvars):
     """
+    Fix missing vars generated by jax.grad and parax.grad.
+
     Fix missing input variables in pipeline markers of stages generated by
-    jax.grad or parax.grad. Also Remove unused varaibles in the pipeline
+    jax.grad or parax.grad. Also remove unused variables in the pipeline
     markers.
     """
     assert len(computations) % 2 == 0
@@ -511,14 +515,10 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
 
         for eqn in computation.eqns[1:-1]:
             new_computation.eqns.append(
-                eqn._replace(invars=[
-                    get_var_mapping(computation_var_mapping, var)
-                    for var in eqn.invars
-                ],
-                             outvars=[
-                                 get_var_mapping(computation_var_mapping, var)
-                                 for var in eqn.outvars
-                             ]))
+                eqn._replace(invars=[get_var_mapping(computation_var_mapping, var)
+                                     for var in eqn.invars],
+                             outvars=[get_var_mapping(computation_var_mapping, var)
+                                      for var in eqn.outvars]))
 
         pipeline_end_invars = [
             get_var_mapping(computation_var_mapping, var)
@@ -546,8 +546,9 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
 def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                  global_outvars):
     """
-    clear unused vars cross pipeline computations.
-    mainly to remove grad and only keep accumulated grad
+    Clear unused vars cross pipeline computations.
+
+    This function removes grad and only keeps accumulated grad.
     """
 
     def dce_pipe_marker(marker: JaxprEqn, used_set):
@@ -605,6 +606,7 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
 # TODO(yonghao): make it a pure function
 def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                   gensym_func):
+    """TODO(yonghao): docstring."""
 
     def only_create_consts(jaxpr: Jaxpr):
         const_vars = OrderedSet()
@@ -618,7 +620,6 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
 
     def task_offloader(forward_stage: JaxPipelineComputation,
                        backward_stage: JaxPipelineComputation):
-        from jax.interpreters.partial_eval import remat_call_p
 
         def get_size(var):
             if not isinstance(var, Var):
@@ -627,8 +628,8 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                 return 0
             return np.prod(var.aval.shape) * np.dtype(var.aval.dtype).itemsize
 
-        offloaded_eqns = list()
-        mapping = dict()
+        offloaded_eqns = []
+        mapping = {}
         for eqn in reversed(forward_stage.eqns):
             if eqn.primitive == pipeline_p:
                 continue
@@ -717,8 +718,9 @@ def rearrange_vars(vars,
                    pipe_marker=None,
                    is_input=True):
     """
-    Rearrange vars to let those in selected be first. If the pipe_marker is given,
-    rearrange invars and outvars in pipemarker also.
+    Rearrange vars to let those in selected be first.
+
+    If the pipe_marker is given, rearrange invars and outvars in pipemarker as well.
 
     Args:
         vars (Sequence[Var]): all vars to be rearranged.
@@ -756,6 +758,7 @@ def rearrange_vars(vars,
 def generate_computations_from_protos(jax_computations, computation_protos,
                                       donate_invars, donatable_lists,
                                       acc_grad_outvars, strategy_config):
+    """Generate XLA computation from protos."""
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto,
@@ -778,9 +781,9 @@ def generate_sharded_xla_computations(
         memory_budget_per_device, logical_mesh_search_mode, search_task,
         record_file):
     """
-    Generate sharded XLA computations by running the auto-sharding pass
-    on the given JaxPipelineComputations.
+    Generate sharded XLA computations.
 
+    It runs the auto-sharding pass on the given JaxPipelineComputations.
     Note: we merge the co-located forward and backward computation and compile
     them together to get a sharding strategy config.
     """
@@ -825,11 +828,14 @@ def generate_sharded_xla_computations(
 def generate_sharded_xla_computations_arguments(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars):
-    """Similar to generate_sharded_xla_computations but only generates the
-    arguments for distributed compilation."""
+    """
+    Generates the arguments for distributed compilation.
+
+    Similar to generate_sharded_xla_computations but only generate arguments.
+    """
     invars = OrderedSet()
     outvars = OrderedSet()
-    donation_mapping = dict()
+    donation_mapping = {}
     eqns = []
     consts_dir = {}
     for computation, donation in zip(jax_computations,
@@ -870,6 +876,7 @@ def generate_sharded_xla_computations_arguments(
 
 
 def rewrite_hook(eqns, gensym_fn):
+    """TODO(zhuohan)."""
     for idx, eqn in enumerate(eqns):
         eqn: JaxprEqn
         if ("mark_type" in eqn.params and eqn.params["mark_type"] == "hook"):
@@ -892,6 +899,7 @@ def rewrite_hook(eqns, gensym_fn):
                     [get_var_mapping(rewrite_dict, v) for v in e.invars],
                     e.outvars, e.primitive, e.params)
             return new_hook
+    return None
 
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
@@ -900,21 +908,22 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
                              donation_mapping=None,
                              insert_hook_after=None) -> ClosedJaxpr:
     """
-    Merge continuous jaxprs and remove pipe markers.:
+    Merge continuous jaxprs and remove pipe markers.
 
     Args:
         jaxprs (Sequence[ClosedJaxpr]): jaxprs to be merged
         used (OrderedSet[Var]): out variables used later
         new_marker_name (str): name of merged pipeline used in marker
         donation_mapping (Dict[Var, Var]): donation mapping of merged jaxpr, may have redundant items
+        insert_hook_after (): TODO(zhuohan).
     """
-    new_invars_dict = dict()
-    new_outvars_dict = dict()
+    new_invars_dict = {}
+    new_outvars_dict = {}
     new_eqns = []
-    var_map = dict()
+    var_map = {}
 
     # handle const vars:
-    new_constvars = dict()
+    new_constvars = {}
     for jaxpr in jaxprs:
         new_constvars.update(dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts)))
 
@@ -954,7 +963,7 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         new_hook = rewrite_hook(new_eqns, gensym_fn)
 
     constvars = OrderedSet(new_constvars.keys())
-    new_invars = [k for k in new_invars_dict.keys() if k not in constvars]
+    new_invars = [k for k in new_invars_dict if k not in constvars]
     new_outvars = list(new_outvars_dict.keys())
 
     if donation_mapping:
@@ -967,7 +976,7 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         }
         new_invars = rearrange_vars(new_invars, donation_mapping.keys())
         new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
-    if new_marker_name != None:
+    if new_marker_name is not None:
         new_pipe_start = mark_pipeline_jaxpreqn(
             new_invars, [new_invars_dict[v] for v in new_invars],
             new_marker_name, "start")
@@ -1019,8 +1028,9 @@ def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
 
 def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
                                     gensym_fn):
+    """TODO(yonghao): docstring."""
     invars = OrderedSet(computation.invars)
-    donation_mapping = dict()
+    donation_mapping = {}
     appended_invars = OrderedSet()
     for var in computation.outvars:
         if var not in reversed_donation_mapping:
@@ -1063,6 +1073,7 @@ def split_donate_invars(donation_mapping,
                         stages: Sequence[JaxPipelineComputation]):
     """
     Split donated invars for sliced jaxprs, then rewrite stages.
+
     Currently, we only donate:
     1. global invars that can be donated(set by users);
     2. buffers for accumulated gradients.
@@ -1072,10 +1083,11 @@ def split_donate_invars(donation_mapping,
 
     Args:
         donation_mapping (Dict[Var, Var]): known mapping of donations, including
-            global invar-outvar and accumulate gradients
+            global invar-outvar and accumulate gradients.
         stages: slices in topology order of execution.
+
     Returns:
-        donate_invars_dict:Sequence[Sequence[bool]]: donate_invars for each stage
+        donate_invars_dict:Sequence[Sequence[bool]]: donate_invars for each stage.
     """
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
     gensym_fn = gensym([stage.closed_jaxpr().jaxpr for stage in stages])
@@ -1098,19 +1110,23 @@ def split_donate_invars(donation_mapping,
 def get_donatable_intermediate(stages: Sequence[JaxPipelineComputation],
                                worker_stage_mapping, global_invars):
     """
-    Get donatable invars of each stage. A donatable invar is:
+    Get donatable invars of each stage.
+
+    A donatable invar is:
     1. An intermediate;
     2. Either a main copy never used, or not a main copy.
+
     Args:
-        stages (Sequence[JaxPipelineStage]): all stages
-        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in each mesh
-        global_invars (Sequence[Var] | OrderedSet[Var]): global input variables
+        stages (Sequence[JaxPipelineStage]): all stages.
+        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in each mesh.
+        global_invars (Sequence[Var] | OrderedSet[Var]): global input variables.
+
     Returns:
-        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each stage
+        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each stage.
     """
     global_invars = OrderedSet(global_invars)
-    main_copy_at = dict()
-    stage_at = dict()
+    main_copy_at = {}
+    stage_at = {}
     for mesh_idx, stage_indices in worker_stage_mapping.items():
         for stage_idx in stage_indices:
             stage = stages[stage_idx]

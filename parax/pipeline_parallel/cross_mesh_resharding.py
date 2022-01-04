@@ -1,5 +1,4 @@
 """Cross mesh resharding for pipeline parallelism."""
-import dataclasses
 import logging
 from typing import List, Any
 
@@ -23,6 +22,7 @@ resharding_task_counter = 0
 
 
 def next_resharding_task_uuid():
+    """Generate the next resharding task uuid."""
     global resharding_task_counter
     resharding_task_counter = (resharding_task_counter + 1) % (1 << 60)
     return resharding_task_counter
@@ -45,6 +45,7 @@ class ReshardingTask:
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
 
+    @property
     def is_local_allgather_task(self):
         """If this task involves a post scatter-allgather task."""
         return self.task_spec.strategy.is_local_allgather
@@ -56,9 +57,6 @@ class EagerReshardingTask(ReshardingTask):
     It does not put task info into remote workers. Instead, it provides
     a do() interface to execute the task immediately.
     """
-    def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
-        super(EagerReshardingTask, self).__init__(task_spec, collective_group,
-                                                  src_mesh, dst_mesh)
 
     def do(self, src_array):
         """According to the task_spec, launch send/recv operations eagerly.
@@ -69,12 +67,12 @@ class EagerReshardingTask(ReshardingTask):
             src_array (DistributedArray): the source array to be resharded.
         """
         if src_array.device_mesh != self.src_mesh:
-            raise RuntimeError("The src array locates on a different mesh `{}` "
-                               "than self.src_mesh `{}`.".format(
-                src_array.device_mesh, self.src_mesh))
+            raise RuntimeError(f"The src array locates on a different "
+                               f"mesh `{src_array.device_mesh}` than "
+                               f"self.src_mesh `{self.src_mesh}`.")
 
         bufs: List[Any] = [None] * len(self.task_spec.dst_indices)
-        device_str_to_buf_map = dict()
+        device_str_to_buf_map = {}
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
                 self.task_spec.dst_tile_to_src_tiles_map):
             # Loop over each dst tile for this shard
@@ -153,39 +151,36 @@ class SymbolicReshardingTask(ReshardingTask):
     """A symbolic resharding task that puts task info in remote workers."""
 
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
-        super(SymbolicReshardingTask, self).__init__(task_spec, collective_group,
-                                                     src_mesh, dst_mesh)
+        super().__init__(task_spec, collective_group, src_mesh, dst_mesh)
         # Dict of worker -> ((offset, rank, gpu index))
-        self._sender_tasks = {w: list() for w in self.src_mesh.workers}
+        self._sender_tasks = {w: [] for w in self.src_mesh.workers}
         # Dict of worker -> ((indices, rank, gpu index))
-        self._receiver_tasks = {w: list() for w in self.dst_mesh.workers}
+        self._receiver_tasks = {w: [] for w in self.dst_mesh.workers}
         # Dict of worker -> ((device_ids), (device_strs), (slices))
-        self._allgather_tasks = {host: dict() for host in self.dst_mesh.workers}
+        self._allgather_tasks = {host: {} for host in self.dst_mesh.workers}
 
         self.sender_uuid_plan = []
         self.receiver_uuid_plan = []
-        self.send_worker_task_ids = dict()
-        self.recv_worker_task_ids = dict()
-        self.allgather_worker_task_ids = dict()
+        self.send_worker_task_ids = {}
+        self.recv_worker_task_ids = {}
+        self.allgather_worker_task_ids = {}
 
         # generate the above states
         self._compile()
 
     @property
-    def is_local_allgather_task(self):
-        """If this task involves a post scatter-allgather"""
-        return self.task_spec.strategy.is_local_allgather
-
-    @property
     def sender_tasks(self):
+        """Return sender sub-tasks."""
         return self._sender_tasks
 
     @property
     def receiver_tasks(self):
+        """Return receiver sub-tasks."""
         return self._receiver_tasks
 
     @property
     def allgather_tasks(self):
+        """Return allgahter sub-tasks."""
         return self._allgather_tasks
 
     def _indices_in_dst_post_allgather(self,
@@ -210,13 +205,13 @@ class SymbolicReshardingTask(ReshardingTask):
                                          None)
         shape = self.task_spec.aval.shape
         for idx, tensor_slice in enumerate(indices):
-            if tensor_slice.start == None:
-                assert tensor_slice.stop == None
+            if tensor_slice.start is None:
+                assert tensor_slice.stop is None
                 indices[idx] = slice(0, shape[idx], None)
         return indices
 
     def _allgather_receiver_step_and_offset(self, receiver):
-        tensor_axis, mesh_axis, extra_sharding = self.task_spec.allgather_slice
+        _, mesh_axis, extra_sharding = self.task_spec.allgather_slice
         # the dst mesh of col group may not be dst mesh of resharding task
         host_idx, device_idx = self.collective_group.device_str_to_rank_map[
             receiver]
@@ -259,14 +254,14 @@ class SymbolicReshardingTask(ReshardingTask):
             uuid = next_resharding_task_uuid()
             self.send_worker_task_ids[worker] = uuid
             task_dones.append(
-                worker.put_resharding_send_task.remote(uuid, task,
-                    self.collective_group.group_name))
+                worker.put_resharding_send_task.remote(
+                    uuid, task, self.collective_group.group_name))
         for worker, task in self.receiver_tasks.items():
             uuid = next_resharding_task_uuid()
             self.recv_worker_task_ids[worker] = uuid
             task_dones.append(
-                worker.put_resharding_recv_task.remote(uuid, task,
-                    self.collective_group.group_name))
+                worker.put_resharding_recv_task.remote(
+                    uuid, task, self.collective_group.group_name))
         ray.get(task_dones)
 
         # put allgather tasks
@@ -328,14 +323,13 @@ class SymbolicReshardingTask(ReshardingTask):
             receiver = self.dst_mesh.device_strs[flatten_id]
             participant_worker = self.collective_group.device_str_to_mesh_worker_map[
                 receiver]
-            (step, offset, group_idx, dst_mesh_shape
-            ) = self._allgather_receiver_step_and_offset(receiver)
+            _, _, group_idx, _ = self._allgather_receiver_step_and_offset(receiver)
             post_allgather_indices = self._indices_in_dst_post_allgather(
                 indices, receiver, False)
             group_spec = self._allgather_tasks[participant_worker].setdefault(
                 group_idx,
-                ReshardingAllGatherSpec(device_ids=list(),
-                                        tensor_slices=list()))
+                ReshardingAllGatherSpec(device_ids=[],
+                                        tensor_slices=[]))
             group_spec.device_ids.append(flatten_id %
                                          self.dst_mesh.num_devices_per_host)
             group_spec.tensor_slices.append(post_allgather_indices)

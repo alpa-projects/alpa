@@ -88,11 +88,10 @@ class BaseDistributedRuntime(BaseRuntime):
             kwargs (dict): a dict of keyword arguments as the sharding
                 compilation parameters.
         """
-        super(BaseDistributedRuntime,
-              self).__init__(pipeline_stages=pipeline_stages,
-                             global_invars=global_invars,
-                             global_outvars=global_outvars,
-                             physical_meshes=physical_meshes)
+        super().__init__(pipeline_stages=pipeline_stages,
+                         global_invars=global_invars,
+                         global_outvars=global_outvars,
+                         physical_meshes=physical_meshes)
         self.grad_dummy_invars = grad_dummy_invars
         self.is_batch = is_batch
         self.dependency = dependency
@@ -109,7 +108,7 @@ class BaseDistributedRuntime(BaseRuntime):
             [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
         self._resharding_tasks = [
-            [dict() for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+            [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
 
         # TODO(Hao): this establish_nccl_groups needs to be improved to cover allgather.

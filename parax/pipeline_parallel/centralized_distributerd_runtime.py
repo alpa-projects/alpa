@@ -49,16 +49,15 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                  schedule,
                  is_batch,
                  num_batch=1):
-        super(CentralizedDistributedRuntime,
-              self).__init__(pipeline_stages=pipeline_stages,
-                             global_invars=global_invars,
-                             grad_dummy_invars=grad_dummy_invars,
-                             global_outvars=global_outvars,
-                             physical_meshes=physical_meshes,
-                             dependency=dependency,
-                             schedule=schedule,
-                             is_batch=is_batch,
-                             num_batch=num_batch)
+        super().__init__(pipeline_stages=pipeline_stages,
+                         global_invars=global_invars,
+                         grad_dummy_invars=grad_dummy_invars,
+                         global_outvars=global_outvars,
+                         physical_meshes=physical_meshes,
+                         dependency=dependency,
+                         schedule=schedule,
+                         is_batch=is_batch,
+                         num_batch=num_batch)
 
         # private attributes
         self._runnables = None
@@ -86,7 +85,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
     def _prepare_gradient_accumulation(self):
         # Allocate buffers for accumulated gradients
         mesh_num = len(self.physical_meshes)
-        mesh_grad_vars = [dict() for _ in range(mesh_num)]
+        mesh_grad_vars = [{} for _ in range(mesh_num)]
         # collect buffers to allocate in each mesh
         for stage_idx, stage in enumerate(self.stages):
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
@@ -162,8 +161,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
 
         for clock, sched in enumerate(self.schedule.schedules):
             # submit work in parallel
-            logger.debug(">>> At clock {}, working on tasks {}.".format(
-                clock, sched))
+            logger.debug(f">>> At clock {clock}, working on tasks {sched}.")
             for _, task in enumerate(sched):
                 # i is micro-batch idx
                 # j is stage idx
@@ -189,8 +187,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                 timers("compute").suspend()
 
                 self._process_stage_outputs(batch_idx, stage_idx, outputs)
-            logger.debug(
-                ">>> At clock {}, pipelining jobs finished!".format(clock))
+            logger.debug(f">>> At clock {clock}, pipelining jobs finished!")
 
         # stop loop timers
         for timer_name in ["compute", "resharding"]:
@@ -219,8 +216,7 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
         if timer_name not in timer_names:
             raise RuntimeError(
                 "Unrecognized timer name for pipeline parallel runtime. "
-                "Query timer name from the following: {}.".format(
-                    timer_names.keys()))
+                f"Query timer name from the following: {timer_names.keys()}.")
         return timers(timer_name).costs[warmup:]
 
     def _prepare_env(self, *inputs, batch_dim=0):
@@ -279,8 +275,8 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
             stage_inputs[repr(var)] = self._pop_var(key)
         if len(stage_inputs) != len(stage.invars):
             raise RuntimeError("Failed to find stage inputs. "
-                               "`stage_inputs` got {}, but expect {}.".format(
-                                   len(stage_inputs), len(stage.invars)))
+                               f"`stage_inputs` got {len(stage_inputs)}, "
+                               f"but expect {len(stage.invars)}.")
         return stage_inputs
 
     def _process_stage_inputs(self, stage_idx, inputs):

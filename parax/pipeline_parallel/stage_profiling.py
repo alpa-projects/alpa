@@ -1,35 +1,33 @@
+"""Functionalities about profiling the stages."""
 import gc
 import logging
-from typing import Dict, OrderedDict, Sequence, Tuple
+from typing import Dict, OrderedDict, Sequence
+from abc import ABC, abstractmethod
 
-import tqdm
 import numpy as np
 import ray
-from abc import ABC, abstractmethod
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
-
-import jax.numpy as jnp
-from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, jaxpr_as_fun,
-                      new_jaxpr_eqn, named_call_p)
+import tqdm
+from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, new_jaxpr_eqn, named_call_p)
 from jax.interpreters import pxla
+import jax.numpy as jnp
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
 from parax.global_env import global_config
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
-from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec
-from parax.pipeline_parallel.resharding_tensor import VDA
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
     merge_computation_jaxprs, rearrange_vars)
+from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec
 from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
+from parax.pipeline_parallel.resharding_tensor import VDA
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
-                                                hlo_sharding_to_sharding_spec,
-                                                AutoShardingOption)
+                                                hlo_sharding_to_sharding_spec)
 from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
 
 logger = logging.getLogger(__name__)
@@ -40,6 +38,7 @@ GB = 1024**3
 
 
 class BaseWorkerPoolWrapper(ABC):
+    """TODO(yonghao)."""
 
     @abstractmethod
     def __init__(self):
@@ -47,16 +46,20 @@ class BaseWorkerPoolWrapper(ABC):
         self.pool = None
 
     def submit(self, fn, value):
+        """TODO(yonghao)."""
         self.pool.submit(fn, value)
 
     def get_next(self):
+        """TODO(yonghao)."""
         return self.pool.get_next()
 
     def get_next_unordered(self):
+        """TODO(yonghao)."""
         return self.pool.get_next_unordered(
             timeout=global_config.profile_timeout)
 
     def shutdown(self, force=True):
+        """Shut down the worker."""
         for w in self.actors:
             if force:
                 ray.kill(w)
@@ -66,6 +69,7 @@ class BaseWorkerPoolWrapper(ABC):
 
 
 def get_input_output_sharding_proto(proto, num_devices):
+    """TODO(yonghao): docstring."""
     if num_devices <= 1:
         return None, None
     computation = xla_client.XlaComputation(proto)
@@ -82,8 +86,9 @@ def get_input_output_sharding_proto(proto, num_devices):
 
 class CompileWorker:
     """
-    A ray actor to distributedly compile Jaxpr to HLO Proto.
-    To activaite the worker, a gpu resource is required.
+    A ray actor to compile Jaxpr to HLO Proto using distributed workers.
+
+    To activate the worker, a gpu resource is required.
     """
 
     def __init__(self):
@@ -99,12 +104,15 @@ class CompileWorker:
 
         Args:
             stage_id: the index of the input stage.
-            autosharding_option: the global config dictionary for compilation setting.
-            logical_mesh: the logical mesh for compilation.
             proto: the proto of XlaComputation to be compiled
             avals: input avals
             out_avals: output avals
             donate_invars: donate invars of the computation to be compiled
+            output_acc_grad_indices: TODO(yonghao)
+            logical_mesh: the logical mesh for compilation.
+            autosharding_option: the global config dictionary for compilation setting.
+            num_micro_batches: the number of microbatches.
+
         Returns:
             proto: The proto of compiled executable
             strategy_config: The sharding strategy from auto sharding
@@ -169,6 +177,7 @@ class CompileWorker:
 
     def compile_proto_with_search(self, stage_id, proto, jaxpr_args,
                                   autosharding_option, mesh_kwargs):
+        """TODO(yonghao): docstring."""
         built = xla_client.XlaComputation(proto)
         mesh_kwargs["as_option"] = autosharding_option
         return stage_id, compile_with_search(self.backend, built, *jaxpr_args,
@@ -179,6 +188,7 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of CompileWorker for distributed compilation."""
 
     def __init__(self, num_cpus, num_gpus, debug_mode=False):
+        super().__init__()
         gpu_per_cpu = 1
         while gpu_per_cpu * num_cpus > num_gpus:
             gpu_per_cpu /= 2
@@ -188,10 +198,12 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
         self.local_worker = CompileWorker() if debug_mode else None
 
     def local_get(self, fn, *value):
+        """TODO(yonghao): docstring."""
         return fn(self.local_worker, *value)
 
 
 class ProfileWorker:
+    """TODO(yonghao): docstring."""
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
@@ -199,6 +211,7 @@ class ProfileWorker:
 
     def profile_impl(self, stage_id, compiled_output, profile_info,
                      intermediate_size, initial_size):
+        """TODO(yonghao): docstring."""
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
         proto, config, input_shardings, output_sharding, _, _ = compiled_output
         donated_invars = (True,) * len(tot_donation) + (False,) * (
@@ -232,6 +245,7 @@ class ProfileWorker:
 
     def profile(self, stage_id, compiled_output, profile_info,
                 intermediate_size, initial_size):
+        """Run the profiling on this profile worker."""
         for _ in range(global_config.profile_maximum_retry):
             try:
                 return self.profile_impl(stage_id, compiled_output,
@@ -247,6 +261,7 @@ class ProfileWorker:
         return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
 
     def restart(self, forced):
+        """Restart the physical mesh."""
         self.mesh.shutdown(forced=forced)
         self.mesh = self.virtual_mesh.get_physical_mesh()
 
@@ -255,12 +270,14 @@ class ProfileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of ProfileWorker for distributed profiling."""
 
     def __init__(self, virtual_meshes):
+        super().__init__()
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
         self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
         self.pool = ActorPool(self.actors)
 
 
 class HloCostModelProfileWorker:
+    """TODO(yonghao): docstring."""
 
     def __init__(self, prof_result, num_devices, num_micro_batches):
         self.backend = xla_bridge.get_backend("gpu")
@@ -270,6 +287,7 @@ class HloCostModelProfileWorker:
 
     def profile(self, stage_id, compiled_output, profile_info,
                 intermediate_size, initial_size):
+        """TODO(yonghao): docstring."""
         _, _, _, acc_grad_indices = profile_info
         proto, config, _, _, _, _ = compiled_output
         xla_computation = xla_client.XlaComputation(proto)
@@ -313,12 +331,13 @@ class HloCostModelProfileWorker:
 class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of HloCostModelProfileWorker for distributed profiling.
 
-    Intead of doing real measurements, this class uses a HLO instruction cost model to
-    estimate the cost.
+    Instead of doing real measurements, this class uses a HLO instruction
+    cost model to estimate the cost.
     """
 
     def __init__(self, num_cpus, num_gpus, prof_result, mesh_num_devices,
                  num_micro_batches):
+        super().__init__()
         gpu_per_cpu = 1
         while gpu_per_cpu * num_cpus > num_gpus:
             gpu_per_cpu /= 2
@@ -333,8 +352,10 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
 
 def compile_all(stages):
     """
+    Compile all input stages.
+
     Args:
-        stage_info_list: List of info for compilation. Each info is a tuple with:
+        stages: List of info for compilation. Each info is a tuple with:
             (proto, in_avals, out_avals, donate_invars)
     """
     num_cpus = int(
@@ -366,6 +387,7 @@ def compile_all(stages):
 
 def profile_all(stages, compiled_outputs, meshes, num_layers,
                 num_auto_sharding_configs):
+    """TODO(yonghao): docstring."""
     compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs),
                            np.inf)
     max_n_succ_stages = np.full(
@@ -387,9 +409,9 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
 
     for stage_id, (compiled_output,
                    stage) in enumerate(zip(compiled_outputs, stages)):
-        if compiled_output == None:
+        if compiled_output is None:
             continue
-        proto, config, _, _, hooked_proto, apply_in_shardings = compiled_output
+        _, config, _, _, hooked_proto, apply_in_shardings = compiled_output
         _, _, _, intermediate_vars, profile_info, apply_info = stage
         intermediate_size = compute_intermediate_size(hooked_proto,
                                                       intermediate_vars,
@@ -433,27 +455,33 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
     return compute_cost, max_n_succ_stages
 
 
-def split_global_use_and_donate(layers, layer_indices, donation_mapping,
-                                global_outvars):
-    '''
-    Pick some layers(no need to be consecutive) and assume they are on a mesh,
-    this function then returns donation_mapping and global_use of each selected layer.
+def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
+                                layer_indices: OrderedSet[int],
+                                donation_mapping: Dict[Var, Var],
+                                global_outvars: Sequence[Var]):
+    """
+    Obtains donation_mapping and global_use of each selected layer.
+
+    It picks some layers (no need to be consecutive) and assumes they are on a mesh,
+    it then returns `donation_mapping` and `global_use` of each selected layer.
+
     Args:
         layers (Sequence[JaxPipelineComputation]): all layers
         layer_indices (OrderedSet[int]): indices of selected layers, they are
         assumed to be in the same mesh
         donation_mapping (Dict[Var, Var]): known global donation mapping
         global_outvars (Sequence[Var]): global outvars
+
     Returns:
         donation_mapping: donation mapping of all picked layers
         global_used: an OrderedSet of outvars used not only in selected layers
         layers: layers rearranged for donate invar
-    '''
+    """
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
     layer_indices = OrderedSet(layer_indices)
     gensym_fn = gensym([layer.closed_jaxpr().jaxpr for layer in layers])
     num_layers = len(layers)
-    out_donation_mapping = dict()
+    out_donation_mapping = {}
     out_global_used = OrderedSet()
     used = OrderedSet(global_outvars)
     local_used = OrderedSet()  # limit donation
@@ -464,7 +492,7 @@ def split_global_use_and_donate(layers, layer_indices, donation_mapping,
             global_used = OrderedSet()
             local_donation, new_layer = get_donation_mapping_and_modify(
                 layer, reversed_donation_mapping, gensym_fn)
-            for invar in local_donation.keys():
+            for invar in local_donation:
                 assert invar not in global_used and invar not in local_used
 
             global_used = [var for var in new_layer.outvars if var in used]
@@ -482,10 +510,11 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
                          mixed_jaxpr: ClosedJaxpr, in_sharding_specs,
                          out_sharding_specs):
     """
-    Split sharding specs of layers. Some intermediate sharding specs are missed,
-    but they do not cross mesh so this does not matter.
-    """
+    Split sharding specs of layers.
 
+    Some intermediate sharding specs are missed,
+    but they are not across meshes so this does not matter.
+    """
     in_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.invars, in_sharding_specs))
     out_sharding_dict = dict(zip(mixed_jaxpr.jaxpr.outvars, out_sharding_specs))
     layer_in_sharding_specs = []
@@ -505,7 +534,7 @@ def generate_stage_info(all_layers,
                         name,
                         insert_hook_after=None,
                         apply_grad_info=None):
-    """Combine selected layers together for profiling"""
+    """Combine selected layers together for profiling."""
     backend = xla_bridge.get_backend("gpu")
 
     # TODO(yonghao): infer used_outside etc. in batches
@@ -522,7 +551,7 @@ def generate_stage_info(all_layers,
         (apply_grad_layers, apply_grad_donation,
          apply_grad_outvars) = apply_grad_info
         merged_apply = merge_computation_jaxprs(
-            [l.closed_jaxpr() for l in apply_grad_layers], apply_grad_outvars,
+            [layer.closed_jaxpr() for layer in apply_grad_layers], apply_grad_outvars,
             None, apply_grad_donation)
 
     outvars = OrderedSet(merged.jaxpr.outvars)
@@ -619,6 +648,7 @@ def generate_stage_info(all_layers,
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,
                             dst_mesh: PhysicalDeviceMesh) -> CollectiveGroup:
+    """Create a dummy collective group for profiling."""
     cg = CollectiveGroup(
         OrderedSet(src_mesh.device_strs + dst_mesh.device_strs), src_mesh,
         dst_mesh)
@@ -627,6 +657,7 @@ def create_collective_group(src_mesh: PhysicalDeviceMesh,
 
 
 def dummy_resharding_strategy(spec: ReshardingTaskSpec):
+    """Generates a dummy sharding strategy for profiling."""
     strategy = []
     _sender_loads = {sender: 0 for sender in spec.src.device_mesh.device_strs}
     for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
@@ -655,6 +686,7 @@ def profile_layer_communication_cost(
         src_outvar_sharding_spec, dst_invar_sharding_spec,
         src_mesh: VirtualPhysicalMesh, dst_mesh: VirtualPhysicalMesh,
         collective_group: CollectiveGroup):
+    """TODO(yonghao): docstring."""
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
 
     backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
@@ -679,8 +711,8 @@ def profile_layer_communication_cost(
                                                  out_sharding_spec)
             remote_buffers = _shard_device_array(jnp.zeros_like(invar.aval),
                                                  src_phy_mesh, input_indices)
-            val = DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
-                                   remote_buffers, input_indices)
+            DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
+                             remote_buffers, input_indices)
             task = SymbolicReshardingTask(task_spec, collective_group,
                                           collective_group.src_mesh,
                                           collective_group.dst_mesh)
@@ -702,7 +734,7 @@ def profile_layer_communication_cost(
 
 def compute_intermediate_size(serialized_proto, intermediate_vars,
                               logical_mesh_shape):
-    """Compute bytes of serialized proto"""
+    """Compute bytes of serialized proto."""
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
@@ -730,6 +762,7 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
 
 def compute_apply_grad_invar_size(input_sharding_protos, invars,
                                   selected_invars, logical_mesh_shape):
+    """TODO(yonghao): docstring."""
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize

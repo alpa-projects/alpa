@@ -37,7 +37,7 @@ class VirtualDistributedArray:
     """
 
     def __init__(self, *, device_mesh: VirtualPhysicalMesh, aval,
-                 sharding_spec:ShardingSpec):
+                 sharding_spec: ShardingSpec):
         self.device_mesh = device_mesh
         self.aval = aval
         self.sharding_spec = sharding_spec

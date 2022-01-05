@@ -1,3 +1,4 @@
+"""Functions related with computing the stats during layer construction."""
 from typing import List
 
 from jax import lax
@@ -54,6 +55,7 @@ def eqn_flops(eqn: JaxprEqn) -> float:
 
 
 def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
+    """Calculates the cost of cluster edges."""
     out_tensors = OrderedSet()
     for eqn in start:
         out_tensors = out_tensors.union(OrderedSet(eqn.outvars))
@@ -72,6 +74,7 @@ non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 
 
 def heavy_count(eqn):
+    """Check the number of heavy ops in the eqn."""
     if eqn.primitive in non_trivial_primitive:
         return 1
     if isinstance(eqn.primitive, CallPrimitive):
@@ -85,11 +88,13 @@ def heavy_count(eqn):
 
 
 def is_nontrivial(eqn):
+    """Check if the eqn is nontrivial."""
     return heavy_count(eqn) > 0
 
 
 def get_cross_slice_vars(jaxpr, slices):
-    defined = dict()
+    """TODO(zhuohan):doscstring."""
+    defined = {}
     stage_invars = [OrderedSet() for _ in slices]
     for invar in jaxpr.invars:
         defined[invar] = -1
@@ -115,6 +120,7 @@ def get_cross_slice_vars(jaxpr, slices):
 
 
 def log_layer_slicing_stats(origin_jaxpr, slices):
+    """Print the layer slicing stats."""
     stage_flops = []
     stage_heavy_ops = []
     for eqns in slices:
@@ -124,8 +130,8 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
     print("-" * 20, "Layer slicing stats", "-" * 20)
     print(f"layer_num: {len(slices)}")
     print(" - Number of Jaxpr eqns in each stage:")
-    for i, slice in enumerate(slices):
-        print(f"Layer {i}: #eqns={len(slice)},"
+    for i, s in enumerate(slices):
+        print(f"Layer {i}: #eqns={len(s)},"
               f" flop={stage_flops[i] / (1000 ** 4):.3f} TFlop,"
               f" #heavy_ops={stage_heavy_ops[i]}")
     print(" - Invars of each stage:")

@@ -37,10 +37,9 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
 
 def gen_linear_pipeline_dependency(num_stage):
     """
-    Generate a dependency matrix that marks the neighbors and forward/backward
-    stage pairs as neighbors.
+    Generate a dependency matrix.
 
-    For test only.
+    The matrix marks forward/backward stage pairs as neighbors. For test only.
     """
     assert num_stage % 2 == 0
     d = np.zeros([num_stage, num_stage], dtype=int)
@@ -84,17 +83,17 @@ class PipelineSchedule(metaclass=ABCMeta):
         """Implementation of the schedule."""
         raise NotImplementedError()
 
-    def pprint_schedule(self, print=False):
+    def pprint_schedule(self, to_print=False):
         """Pretty print the schedule."""
         printout = "\n"
         device_str = " ".join(
-            ["{:<8}".format("d" + str(d)) for d in range(self.num_mesh)])
-        printout = printout + "Clock {:<2}: {} \n".format("k", device_str)
+            [f"d{d:<8}" for d in range(self.num_mesh)])
+        printout = printout + f"Clock k : {device_str} \n"
         for clock, scheds in enumerate(self.schedules):
             sched_str = " ".join(
-                ["{:<8}".format(str(sched)) for sched in scheds])
-            printout = printout + "Clock {:<2}: {} \n".format(clock, sched_str)
-        if print:
+                [f"{str(sched):<8}" for sched in scheds])
+            printout = printout + f"Clock {clock:<2}: {sched_str} \n"
+        if to_print:
             logger.info(printout)
         return printout
 
@@ -110,6 +109,7 @@ class PipelineSchedule(metaclass=ABCMeta):
 
     @property
     def num_mesh(self):
+        """Return the number of meshes."""
         return len(self.meshes)
 
     @property
@@ -120,7 +120,7 @@ class PipelineSchedule(metaclass=ABCMeta):
     @cached_property
     def stage_mesh_mapping(self):
         """Generate a stage-worker mapping according to the schedule."""
-        placements = dict()
+        placements = {}
         for tasks in self._schedules:
             for mesh_idx, task in enumerate(tasks):
                 if task:
@@ -134,7 +134,7 @@ class PipelineSchedule(metaclass=ABCMeta):
     @cached_property
     def mesh_stage_mapping(self):
         """Generate a worker-stage mapping according to the schedule."""
-        ownership = dict()
+        ownership = {}
         for tasks in self._schedules:
             for mesh_idx, task in enumerate(tasks):
                 if task:
@@ -226,6 +226,7 @@ class GpipeSchedule(PipelineSchedule):
         return schedules
 
     def should_skip_grad_sync(self, task):
+        """If we should skip the grad synchronization for this task."""
         batch_idx, stage_idx = task
         do_grad_sync = False
         if (self.num_mesh <= stage_idx < self.num_mesh * 2 and
@@ -246,6 +247,7 @@ class GpipeSchedule(PipelineSchedule):
         # return 0
 
     def previous_backward_batch_index(self, batch_idx):
+        """Return the index of the previous microbatch at backward pass."""
         assert batch_idx > 0
         return batch_idx - 1
         # return batch_idx + 1
@@ -271,13 +273,13 @@ class PipeDreamFlush(PipelineSchedule):
 
         next_fwd_mb_idx = [0 for _ in range(n)]
         next_bwd_mb_idx = [0 for _ in range(n)]
-        next_available_clock = [i for i in range(n)]
+        next_available_clock = list(range(n))
         finished_bwd_batch_indices = np.zeros(shape=[num_clock, n],
                                               dtype=np.int32)
 
         # warm-up clocks
         for i in range(n):
-            for j in range(num_warmup_microbatches[i]):
+            for _ in range(num_warmup_microbatches[i]):
                 schedules[next_available_clock[i]][i] = (next_fwd_mb_idx[i], i)
                 next_available_clock[i] = next_available_clock[i] + 1
                 next_fwd_mb_idx[i] = next_fwd_mb_idx[i] + 1
@@ -285,7 +287,7 @@ class PipeDreamFlush(PipelineSchedule):
         # run 1F1B
         for i in reversed(range(n)):
             # from the last device to the first
-            for j in range(num_microbatches_remaining[i]):
+            for _ in range(num_microbatches_remaining[i]):
                 # running through all the remaining microbatches
                 # forward
                 next_clock = next_available_clock[i]
@@ -314,7 +316,7 @@ class PipeDreamFlush(PipelineSchedule):
 
         # run cooldown passes
         for i in reversed(range(n)):
-            for j in range(num_warmup_microbatches[i]):
+            for _ in range(num_warmup_microbatches[i]):
                 assert i + 1 < n
                 next_clock = next_available_clock[i]
                 while finished_bwd_batch_indices[next_clock][
@@ -339,6 +341,7 @@ class PipeDreamFlush(PipelineSchedule):
         return schedules
 
     def should_skip_grad_sync(self, task):
+        """If we should skip the grad synchronization for this task."""
         batch_idx, stage_idx = task
         do_grad_sync = False
         if (self.num_mesh <= stage_idx < self.num_mesh * 2 and
@@ -357,5 +360,6 @@ class PipeDreamFlush(PipelineSchedule):
         return self.num_batch - 1
 
     def previous_backward_batch_index(self, batch_idx):
+        """Return the index of the previous microbatch at backward pass."""
         assert batch_idx > 0
         return batch_idx - 1

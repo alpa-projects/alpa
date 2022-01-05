@@ -1,7 +1,5 @@
-"""Cluster small operators into layers.
-Do rematerialization at the boundary of layer."""
-
-from functools import partial, wraps
+"""Cluster small ops into layers and rematerialize at layer boundary."""
+from functools import wraps
 import logging
 from typing import Callable, Union
 
@@ -26,6 +24,7 @@ logger.setLevel(logging.DEBUG)
 
 
 def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
+    """Slices eqns by pipeline markers."""
     sliced_eqns = []
     current_computation_eqns = None
 
@@ -48,10 +47,7 @@ def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
 
 
 def lift_pipeline_marker(jaxpr: ClosedJaxpr):
-    """
-    Lift the first and last pipeline marker if it is not the first/last
-    eqn of all.
-    """
+    """Lift the first/last marker if it is not the first/last eqn."""
     marker_idx = np.nonzero([e.primitive is pipeline_p for e in jaxpr.eqns])[0]
     assert marker_idx.size > 1
     start_idx = marker_idx[0]
@@ -74,6 +70,7 @@ def transform_pipeline_forward(fn: Callable,
                                transform_fn,
                                static_argnums=(),
                                lift_markers=False):
+    """TODO(zhuohan):docstring."""
 
     def get_sliced(*args):
         origin_jaxpr, out_shape_tree = make_jaxpr(fn,
@@ -99,6 +96,7 @@ def transform_pipeline_forward(fn: Callable,
 
 
 def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
+    """Adds pipeline marks for sliced equations."""
     layer_num = len(sliced_eqns)
     layer_pipeline_invars = [OrderedSet() for _ in range(layer_num)]
     layer_pipeline_outvars = [OrderedSet() for _ in range(layer_num)]
@@ -180,9 +178,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
 
 
 def remat_jaxpr(origin_jaxpr, sliced_eqns, add_pipeline_marks):
-    """
-    The input function should be marked by pipeline markers without input
-    """
+    """The input function should be marked by markers without input."""
     sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, sliced_eqns)
     new_eqns = []
     for i, jaxpr in enumerate(sliced_jaxprs):
@@ -208,6 +204,7 @@ def remat_jaxpr(origin_jaxpr, sliced_eqns, add_pipeline_marks):
 
 
 def insert_marker(origin_jaxpr, sliced_eqns):
+    """Inserts pipeline markers in jaxpr."""
     new_eqns = []
     for i, slices in enumerate(sliced_eqns):
         new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'start'))
@@ -218,7 +215,7 @@ def insert_marker(origin_jaxpr, sliced_eqns):
               origin_jaxpr.jaxpr.outvars, new_eqns), origin_jaxpr.consts)
 
 
-def jaxpr_eqns_input_sizes(jaxpr):
+def jaxpr_eqns_input_sizes(jaxpr) -> np.ndarray:
     """Return a list of input sizes for each equation in the jaxpr.
 
     Args:
@@ -248,6 +245,7 @@ def jaxpr_eqns_input_sizes(jaxpr):
 
 
 def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
+    """Gets the layer construction cost."""
     nontrivial = np.array([is_nontrivial(eqn) for eqn in jaxpr.eqns],
                           dtype=np.int32)
     input_sizes = jaxpr_eqns_input_sizes(jaxpr)
@@ -268,6 +266,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                           eps: float,
                           costs,
                           cost_criteria="flops"):
+    """Clusters the jaxpr by cost."""
     layer_num = int(layer_num)
     length = len(jaxpr.eqns)
     non_trivial, input_sizes, compute_costs = costs
@@ -279,9 +278,9 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                                   compute_costs_avg + 5)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
-    LAYER_HEAVY_OP_LOWER_BOUND = 3
+    LAYER_HEAVY_OP_LOWER_BOUND = 3 # noqa
     if sum(non_trivial) / layer_num < LAYER_HEAVY_OP_LOWER_BOUND:
-        LAYER_HEAVY_OP_LOWER_BOUND = int(sum(non_trivial) / layer_num)
+        LAYER_HEAVY_OP_LOWER_BOUND = int(sum(non_trivial) / layer_num) # noqa
         logger.warning(
             "Too few non-trivial ops (dot, conv), which may influence"
             " auto-sharding performance")
@@ -289,22 +288,22 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
     @numba.jit(nopython=True)
     def init():
         blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
-        for l in range(1, length + 1):
+        for left in range(1, length + 1):
             cnt = 0
             total_compute_cost = 0
-            for r in range(l, length + 1):
+            for r in range(left, length + 1):
                 if non_trivial[r - 1]:
                     cnt += 1
                     total_compute_cost += compute_costs[r - 1]
                 if cnt < LAYER_HEAVY_OP_LOWER_BOUND:
                     if total_compute_cost >= compute_costs_bound:
-                        blocked[l, r] = 0
+                        blocked[left, r] = 0
                     continue
                 if (total_compute_cost >= compute_costs_bound and
                         non_trivial[r - 1] and
                         cnt > LAYER_HEAVY_OP_LOWER_BOUND):
                     break
-                blocked[l, r] = 0
+                blocked[left, r] = 0
         return blocked
 
     @numba.jit(nopython=True)
@@ -348,13 +347,13 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
         return max_cost_argmin, max_cost[length, layer_num]
 
     blocked = init()
-    A_argmin, value = dp(input_sizes, blocked)
+    a_argmin, value = dp(input_sizes, blocked)
 
     reversed_sliced_eqns = []
 
     r = length
     for q in range(layer_num, 0, -1):
-        k = A_argmin[r, q]
+        k = a_argmin[r, q]
         reversed_sliced_eqns.append(jaxpr.eqns[k:r])
         r = k
     assert r == 0, ("no solution for layer clustering"
@@ -368,23 +367,24 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
 
 
 def search_layer_num(jaxpr, eps, layer_eps=0):
+    """TODO(zhuohan): docstring."""
     non_trivial, input_sizes, compute_costs = get_layer_construction_costs(
         jaxpr)
-    l = 2
+    layer_num = 2
     r = int(non_trivial.sum() / 3) + 1
     _, solution_info = cluster_jaxpr_by_cost(
-        jaxpr, l, eps, (non_trivial, input_sizes, compute_costs))
+        jaxpr, layer_num, eps, (non_trivial, input_sizes, compute_costs))
     l_val = solution_info["total_cost"]
-    while r - l > 1:
-        mid = int((l + r) / 2)
+    while r - layer_num > 1:
+        mid = int((layer_num + r) / 2)
         _, solution_info = cluster_jaxpr_by_cost(
             jaxpr, mid, eps, (non_trivial, input_sizes, compute_costs))
         mid_val = solution_info["total_cost"]
         if mid_val > l_val * (1 + layer_eps):
             r = mid
         else:
-            l = mid
-    return l
+            layer_num = mid
+    return layer_num
 
 
 def layer_level_jaxpr_transformation(fn: Callable,
@@ -397,6 +397,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                      cost_criteria: str = "flops",
                                      layer_eps: float = 0.0,
                                      lift_markers: bool = False):
+    """TODO(zhuohan): docstring."""
     if not remat and not layer_construction:
         return fn
 
@@ -411,7 +412,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
                 layer_num = search_layer_num(jaxpr, eps, layer_eps)
             costs = get_layer_construction_costs(jaxpr,
                                                  cost_criteria=cost_criteria)
-            sliced_eqns, solution_info = cluster_jaxpr_by_cost(
+            sliced_eqns, _ = cluster_jaxpr_by_cost(
                 jaxpr, layer_num, eps, costs, cost_criteria=cost_criteria)
         else:
             if lift_markers:
@@ -448,6 +449,7 @@ def manual_remat(fn: Callable, static_argnums=(), lift_markers=False):
           Same as in jax.
         lift_markers: move the first pipeline marker as the first jaxpr eqn and
           move the last pipeline marker as the last jaxpr eqn.
+
     Returns:
         A new function rematerializes each layer of the input function.
     """
@@ -481,6 +483,7 @@ def automatic_remat(fn: Callable,
         eps: The tolerance of inbalance of the costs of different layers.
         cost_criteria: The cost criteria to use for deciding the layers
         layer_eps: A parameter for layer_num binary search.
+
     Returns:
         A new function rematerializes each layer of the input function.
     """
@@ -512,6 +515,7 @@ def manual_layer_construction(fn: Callable,
         remat_layer: Whether to rematerialize each layer at layer boundaries.
         lift_markers: Move the first pipeline marker as the first jaxpr eqn and
           move the last pipeline marker as the last jaxpr eqn.
+
     Returns:
         A new function with correctly setup pipeline markers.
     """
@@ -547,10 +551,10 @@ def automatic_layer_construction(fn: Callable,
         eps: the tolerance of inbalance of the costs of different layers.
         cost_criteria: the cost criteria to use for deciding the layers
         layer_eps: a parameter for layer_num binary search.
+
     Returns:
         A new function rematerializes each layer of the input function.
     """
-
     return layer_level_jaxpr_transformation(fn,
                                             static_argnums,
                                             remat=remat_layer,

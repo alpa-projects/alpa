@@ -1,8 +1,8 @@
-"""Generate callables for 3d parallel that combines pipelining and 2d sharding."""
+"""Generate callables that combines intra- and inter-op parallelisms."""
 import logging
 
 from jax import linear_util as lu
-from jax.core import ClosedJaxpr, gensym
+from jax.core import gensym
 
 from parax.device_mesh import VirtualPhysicalMesh
 from parax.global_env import global_config
@@ -23,7 +23,6 @@ from parax.pipeline_parallel.apply_grad import (
     split_compute_grad_and_apply_grad)
 from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
 from parax.pipeline_parallel.stage_profiling import CompileWorkerPool
-from parax.shard_parallel.auto_sharding import AutoShardingOption
 from parax.util import trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
@@ -35,17 +34,15 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                               donated_invars, batch_invars, devices,
                               memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
-
     if not global_config.with_physical_mesh:
         assert not (
             global_config.pipeline_stage_mode == "auto_gpipe" and
-            global_config.cache_compute_cost == None
+            global_config.cache_compute_cost is None
         ), "no physical mesh, cannot do auto gpipe without cached cost"
 
     if not isinstance(devices, VirtualPhysicalMesh):
-        raise RuntimeError("Unrecognized type of `devices`, got: {}, "
-                           "expected type: {}.".format(type(devices),
-                                                       "VirtualPhysicalMesh"))
+        raise RuntimeError(f"Unrecognized type of `devices`, got: {type(devices)},"
+                           "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
     num_micro_batches = global_config.num_micro_batches
@@ -83,10 +80,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
-    if have_apply_grad:
-        donation_mapping = dict(grad_in_to_out)
-    else:
-        donation_mapping = dict()
+    donation_mapping = dict(grad_in_to_out) if have_apply_grad else {}
 
     num_forward_layers = len(jax_pipeline_layers) // 2
     layer_to_dummy_mesh = (list(range(num_forward_layers)) +
@@ -158,11 +152,11 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                   num_batch=num_micro_batches)
     else:
         raise RuntimeError(
-            "Unrecognized pipeline parallel schedule. "
-            "Got `{}`. Availabe ones are `gpipe` or `1f1b`.".format(
-                global_config.pipeline_parallel_schedule))
+            f"Unrecognized pipeline parallel schedule. "
+            f"Got {global_config.pipeline_parallel_schedule}. "
+            f"Available ones are `gpipe` or `1f1b`.")
     if logger.level == logging.DEBUG:
-        logger.debug(schedule.pprint_schedule(print=False))
+        logger.debug(schedule.pprint_schedule(to_print=False))
 
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(
@@ -205,6 +199,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      acc_grad_outvars, donate_invars_dict, num_micro_batches,
                      logical_mesh_shapes, autosharding_option_dicts,
                      memory_budget_per_device, gensym_func):
+    """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
     stage_id_dict = [[] for _ in range(num_meshes)]
@@ -230,7 +225,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1)
-    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v)
+    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v) # noqa
     compile_intermediate = [None] * num_meshes
     total_flops = 0
     default_autosharding_option = global_config.default_autosharding_option

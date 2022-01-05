@@ -1,18 +1,19 @@
 """Pipeline parallel on a single device."""
-from parax.device_mesh import PhysicalDeviceMesh
-from typing import Sequence, Mapping, Any, Dict
+from typing import Sequence, Mapping, Any, Dict, List
 
 import jax
 from jax import linear_util as lu
 from jax._src.util import safe_map
 from jax.core import Var, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
+from jax.interpreters.xla import DeviceArray
 
+from parax.device_mesh import PhysicalDeviceMesh
+from parax.pipeline_parallel.base_runtime import BaseRuntime
 from parax.pipeline_parallel.computation import (
     PipelineComputation, XlaPipelineComputation, XlaShardedPipelineComputation,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)
-from parax.pipeline_parallel.base_runtime import BaseRuntime
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -30,7 +31,7 @@ class LocalPipelineRunner:
         None
     """
 
-    def __init__(self, name, global_invals):
+    def __init__(self, name: str, global_invals: List[DeviceArray]):
         self.name = name
         self.env = {}
         self.global_invals = global_invals
@@ -42,9 +43,6 @@ class LocalPipelineRunner:
         Args:
             stage (PipelineComputation): The pipeline stage to run.
             invals (Dict[Var, Any], optional): Input value dict.
-
-        Returns:
-            Two dictionaries with values of pipeline & global output variables.
         """
         runnable = stage.get_runnable()
         invals_list = []
@@ -55,13 +53,16 @@ class LocalPipelineRunner:
         self.env.update(outvals)
 
     def get_val(self, var):
+        """Get the value of a variable from the env."""
         return self.env[var]
 
     def del_var(self, var):
+        """Delete a variable from the env."""
         del self.env[var]
 
 
 class LocalRuntime(BaseRuntime):
+    """A local pipeline parallel runtime running on a single GPU."""
 
     def __init__(self,
                  *,
@@ -78,13 +79,14 @@ class LocalRuntime(BaseRuntime):
                 executed.
             global_invars (Sequence[Var]): Global input variables.
             global_outvars (Sequence[Var]): Global output variables.
+            physical_meshes (Sequence[PhysicalDeviceMesh]): physical meshes for the runtime.
             get_hlo_texts (bool): Whether to record hlo_texts. If True, input stages
-                should be XlaShardedComputation
+                should be XlaShardedComputation.
         """
-        super(LocalRuntime, self).__init__(pipeline_stages=pipeline_stages,
-                                           global_invars=global_invars,
-                                           global_outvars=global_outvars,
-                                           physical_meshes=physical_meshes)
+        super().__init__(pipeline_stages=pipeline_stages,
+                         global_invars=global_invars,
+                         global_outvars=global_outvars,
+                         physical_meshes=physical_meshes)
 
         if get_hlo_texts:
             self.hlo_texts_after_spmd_partitioner = []
@@ -152,7 +154,7 @@ class LocalRuntime(BaseRuntime):
 
     def shutdown(self):
         """Shutdown the pipeline runtime."""
-        pass
+        return
 
     def get_hlo_text(self, after_spmd_partitioner=True):
         """Return the HLO text for all stages."""
@@ -166,6 +168,7 @@ class LocalRuntime(BaseRuntime):
             return ret
 
     def get_executable(self):
+        """Get the self as an executable."""
         return self
 
 

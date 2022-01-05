@@ -7,13 +7,12 @@ import parax
 from parax import global_config, set_parallelize_options, testing
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from parax.model.model_util import optax_adafactor
-from parax.util import count_communication_primitives, print_used_time, compute_param_number
+from parax.util import count_communication_primitives, print_used_time, compute_param_number, GB
 
 from benchmark.util import compute_moe_parameter_count
 from benchmark_2d_one_case_gpt_bert import get_train_step
 
-
-GB = 1024 ** 3
+as_option = global_config.default_autosharding_option
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -63,14 +62,14 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 
     if force_batch_dim_mapping:
         # Always map batch dim to mesh dim 0
-        global_config.force_batch_dim_to_mesh_dim = 0
-    global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.allow_mixed_mesh_shape = True
+        as_option.force_batch_dim_to_mesh_dim = 0
+    as_option.prefer_reduce_scatter = prefer_reduce_scatter
+    as_option.allow_mixed_mesh_shape = True
 
     if other == "zero-3":
-        global_config.force_zero_stage_3 = True
+        as_option.force_zero_stage_3 = True
     elif other in ["shard-largest"]:
-        global_config.force_simple_heuristic = other
+        as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
 

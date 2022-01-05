@@ -259,3 +259,5 @@ if __name__ == "__main__":
                   model_name, method, to_str_round(value_dict, 4),
                   int(time.time())]
         write_tsv(heads, values, f"results_intra_ablation.tsv")
+
+        time.sleep(0.5)

@@ -8,9 +8,9 @@ import parax
 from parax import parallelize, global_config, set_parallelize_options, testing
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import map_to_shape, count_communication_primitives, print_used_time
+from parax.util import map_to_shape, count_communication_primitives, print_used_time, GB
 
-from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops, GB
+from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 
 as_option = global_config.default_autosharding_option
 

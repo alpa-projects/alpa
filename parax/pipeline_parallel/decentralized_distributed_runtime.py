@@ -3,7 +3,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, Sequence, List, Callable, Optional
+from typing import Any, Dict, Sequence, List, Callable, Optional, Union, Tuple
 
 from jax.core import Var
 from jax.interpreters import pxla
@@ -124,6 +124,10 @@ MemZeroWorkerExecutableConfig = namedtuple(
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig",
     ["exec_uuid", "hlo_proto", "strategy_config", "grad_sync_channel_ids"])
+
+ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
+                         MemZeroWorkerExecutableConfig,
+                         PartialGradWorkerExecutableConfig]
 
 
 def flatten_uuid_set(container):
@@ -450,16 +454,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
 
-    def _compile_task_configs(self, var_at):
+    def _compile_task_configs(self, var_at) \
+            -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
         """
         Assign uuids for each task and prepare configs.
 
         It resembles the __init__() method in DriverExecutables.
 
         Returns:
-            executable_config_lists (Dict[MeshHostWorker, Sequence[ExecutableConfig]]):
-                configs of executables put on each mesh
-            executable_uuids (Sequence[int]): uuid for each stage's executable
+            executable_config_lists: configs of executables put on each mesh;
+            executable_uuids: uuid for each sta ge's executable.
         """
         num_mesh = len(self.physical_meshes)
         executable_config_lists = {}
@@ -615,22 +619,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         arg_uuids[arg_idx, worker_idx])
         return input_local_uuid_list
 
-    def _compile_collect_outputs(self, var_at):
+    def _compile_collect_outputs(self, var_at) -> None:
         """
         Compile and generate output information.
 
         This function dispatches output information, including local uuid, local indices to global
         indices, and output specs to each mesh.
-
-        Returns:
-            output_local_uuid_list (Dict[MeshHostWorker, Sequence[np.ndarray]]):
-                output local uuid of each MeshHostWorker
-            mesh_output_indices (Sequence[Dict[int, int]]):
-                list[outvar_idx][mesh_idx] indicates the index of the output in
-                that mesh corresponding to outvar_idx-th global outputs
-            output_spec_list (Sequence[Sequence[ShardingSpec]]):
-                list[mesh_idx] is the ShardingSpec of all outputs from
-                PipelineWorkerExecutable in mesh_idx-th mesh.
         """
         num_mesh = len(self.physical_meshes)
 
@@ -667,17 +661,19 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     var_to_spec_all_meshes[mesh_idx][outvar])
             self.mesh_output_indices.append(mesh_out_indices)
 
-    def _compile_resharding_task(self, src_mesh_idx, dst_mesh_idx, src_uuids,
-                                 resharding_task: SymbolicReshardingTask, recv_uuids):
+    def _compile_resharding_task(self, src_mesh_idx: int, dst_mesh_idx: int,
+                                 src_uuids: np.ndarray,
+                                 resharding_task: SymbolicReshardingTask,
+                                 recv_uuids: np.ndarray):
         """
         Compile and generate SEND and RECV PipelineInstructions for a ReshardingTask.
 
         Args:
             src_mesh_idx: mesh index of the src mesh
             dst_mesh_idx: mesh index of the dst mesh
-            src_uuids (np.ndarray): uuids of resharded buffer in src mesh
-            resharding_task (ReshardingTask): the task to be compiled
-            recv_uuids (np.ndarray): uuids of resharded buffer in dst mesh
+            src_uuids: uuids of resharded buffer in src mesh
+            resharding_task: the task to be compiled
+            recv_uuids: uuids of resharded buffer in dst mesh
         """
         src_mesh = self.physical_meshes[src_mesh_idx]
         dst_mesh = self.physical_meshes[dst_mesh_idx]

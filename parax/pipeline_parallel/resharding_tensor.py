@@ -5,7 +5,9 @@ from typing import List, Any
 
 import numpy as np
 from jax.interpreters import pxla
-from jax.interpreters.pxla import Replicated
+from jax.interpreters.pxla import Replicated, ShardingSpec
+
+from parax.device_mesh import VirtualPhysicalMesh
 
 
 def unflatten_tile_index(index, shape):
@@ -34,7 +36,8 @@ class VirtualDistributedArray:
         sharding_spec (ShardingSpec): sharding spec of this array.
     """
 
-    def __init__(self, *, device_mesh, aval, sharding_spec):
+    def __init__(self, *, device_mesh: VirtualPhysicalMesh, aval,
+                 sharding_spec:ShardingSpec):
         self.device_mesh = device_mesh
         self.aval = aval
         self.sharding_spec = sharding_spec

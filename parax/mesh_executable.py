@@ -898,6 +898,17 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                      self).execute_on_worker(input_uuids, output_uuids,
                                              **kwargs)
 
+    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
+        """Profile the time cost of this executable with dummy inputs."""
+        skip_grad_sync = False
+        if 'skip_grad_sync' in kwargs:
+            skip_grad_sync = kwargs.pop('skip_grad_sync')
+        os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
+                                                    if skip_grad_sync else "")
+        if len(kwargs):
+            logger.warning(f"kwargs {(list(kwargs.keys()))} are ignored")
+        return profile_xla_executable(self.compiled, backend, local_devices)
+
 
 class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
     """The driver part of a buffer-allocation executable."""

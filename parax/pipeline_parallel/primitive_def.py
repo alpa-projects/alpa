@@ -1,4 +1,4 @@
-"""Define a new Jax primitive pipeline_maker to mark the boundary of pipeline computations"""
+"""Define a new Jax primitive pipeline_maker to mark the boundary of pipeline computations."""
 import numpy as np
 
 from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
@@ -31,14 +31,14 @@ def mark_pipeline(*args, name: str, mark_type: str):
             backward pass.
     """
     if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
-        raise ValueError('Unknown mark type: %s' % mark_type)
+        raise ValueError(f'Unknown mark type: {mark_type}')
     return pipeline_p.bind(*args, name=name, mark_type=mark_type)
 
 
 def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
     """Make a new jaxpr equation."""
     if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
-        raise ValueError('Unknown mark type: %s' % mark_type)
+        raise ValueError(f'Unknown mark type: {mark_type}')
     if len(outvars) == 0:
         outvars = [dropvar]
     return new_jaxpr_eqn(invars, outvars, pipeline_p, {
@@ -56,6 +56,7 @@ def mark_gradient(grad):
 
 
 def mark_hook_jaxpreqn(invars, outvars):
+    """TODO(zhuohan): docstring."""
     return new_jaxpr_eqn(invars, outvars, pipeline_p, {
         'name': 'hook',
         'mark_type': 'hook'
@@ -63,6 +64,7 @@ def mark_hook_jaxpreqn(invars, outvars):
 
 
 def xla_identity(c, *args, opaque=b'', op_type=None):
+    """TODO(zhuohan): docstring."""
 
     def all_index(shape, cur):
         out = []
@@ -94,6 +96,7 @@ def xla_identity(c, *args, opaque=b'', op_type=None):
 
 
 def flatten_shape_byte_sizes(shape):
+    """TODO(zhuohan): docstring."""
 
     def _flatten_shape_byte_sizes(shape):
         if shape.is_tuple():
@@ -109,6 +112,7 @@ def flatten_shape_byte_sizes(shape):
 
 
 def mark_pipeline_xla(c, *args, **kwargs):
+    """TODO(zhuohan): docstring."""
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)

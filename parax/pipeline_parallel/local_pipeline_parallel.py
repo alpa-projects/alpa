@@ -1,11 +1,12 @@
 """Pipeline parallel on a single device."""
-from typing import Sequence, Mapping, Any, Dict
+from typing import Sequence, Mapping, Any, Dict, List
 
 import jax
 from jax import linear_util as lu
 from jax._src.util import safe_map
 from jax.core import Var, ClosedJaxpr, Literal
 from jax.interpreters import partial_eval as pe
+from jax.interpreters.xla import DeviceArray
 
 from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.base_runtime import BaseRuntime
@@ -30,7 +31,7 @@ class LocalPipelineRunner:
         None
     """
 
-    def __init__(self, name, global_invals):
+    def __init__(self, name: str, global_invals: List[DeviceArray]):
         self.name = name
         self.env = {}
         self.global_invals = global_invals
@@ -42,9 +43,6 @@ class LocalPipelineRunner:
         Args:
             stage (PipelineComputation): The pipeline stage to run.
             invals (Dict[Var, Any], optional): Input value dict.
-
-        Returns:
-            Two dictionaries with values of pipeline & global output variables.
         """
         runnable = stage.get_runnable()
         invals_list = []

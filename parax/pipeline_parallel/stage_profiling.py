@@ -40,7 +40,7 @@ GB = 1024**3
 
 
 class BaseWorkerPoolWrapper(ABC):
-    """TODO(yonghao)."""
+    """Basic wrapper of ray's ActorPool."""
 
     @abstractmethod
     def __init__(self):
@@ -48,15 +48,15 @@ class BaseWorkerPoolWrapper(ABC):
         self.pool = None
 
     def submit(self, fn, value):
-        """TODO(yonghao)."""
+        """See ray.util.ActorPool.submit."""
         self.pool.submit(fn, value)
 
     def get_next(self):
-        """TODO(yonghao)."""
+        """See ray.util.ActorPool.get_next."""
         return self.pool.get_next()
 
     def get_next_unordered(self):
-        """TODO(yonghao)."""
+        """See ray.util.ActorPool.get_next_unordered."""
         return self.pool.get_next_unordered(
             timeout=global_config.profile_timeout)
 
@@ -71,7 +71,7 @@ class BaseWorkerPoolWrapper(ABC):
 
 
 def get_input_output_sharding_proto(proto, num_devices):
-    """TODO(yonghao): docstring."""
+    """Given proto of XlaComputation, return its input and output sharding."""
     if num_devices <= 1:
         return None, None
     computation = xla_client.XlaComputation(proto)
@@ -180,7 +180,7 @@ class CompileWorker:
 
     def compile_proto_with_search(self, stage_id, proto, jaxpr_args,
                                   autosharding_option, mesh_kwargs):
-        """TODO(yonghao): docstring."""
+        """Wrap compile_with_search."""
         built = xla_client.XlaComputation(proto)
         mesh_kwargs["as_option"] = autosharding_option
         return stage_id, compile_with_search(self.backend, built, *jaxpr_args,
@@ -201,12 +201,20 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
         self.local_worker = CompileWorker() if debug_mode else None
 
     def local_get(self, fn, *value):
-        """TODO(yonghao): docstring."""
+        """Debug use function.
+
+        This function submits the work to local worker instead of a remote ray
+        actor to help with debug.
+        """
         return fn(self.local_worker, *value)
 
 
 class ProfileWorker:
-    """TODO(yonghao): docstring."""
+    """A ray actor to profile a HLO Proto on a given mesh.
+
+    It requests gpu resources from ray. When exceptions is catched, it restarts
+    the whole mesh.
+    """
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
@@ -214,7 +222,30 @@ class ProfileWorker:
 
     def profile_impl(self, stage_id, compiled_output, profile_info,
                      intermediate_size, initial_size):
-        """TODO(yonghao): docstring."""
+        """Implementation of profile function.
+
+        This function first compile the HLO Proto into Mesh Executable, then
+        profiles the executable and computes the maximal number of stages
+        following up this stage.
+
+        Args:
+            stage_id (int): the stage id of the proto.
+            compiled_output: Compiled HLO Proto, strategy config, input sharding
+                spec and output sharding spec.
+            profile_info: input avals, output avals, donation mapping and
+                indices in outputs for accumulated gradients.
+            intermediate_size (int): Bytes of intermediates for a microbatch.
+            initial_size (int): Bytes of parameters initially stored, but will
+                be not used in the profiled computation, e.g. optimizer states.
+
+        Returns:
+            stage_id: the input stage id.
+            cost (float): the time to run the profiled stage.
+            max_stage (int): maximal number of stages following up this stage.
+            debug_info: other profiled outputs for debug use. This includes
+                peak memory during the computation, the total available memory,
+                the input intermediate size and input initial size.
+        """
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
         proto, config, input_shardings, output_sharding, _, _ = compiled_output
         donated_invars = (True,) * len(tot_donation) + (False,) * (
@@ -248,7 +279,12 @@ class ProfileWorker:
 
     def profile(self, stage_id, compiled_output, profile_info,
                 intermediate_size, initial_size):
-        """Run the profiling on this profile worker."""
+        """Run profiling on this profile worker.
+
+        If the RayActorError is catched, it retries until profile_maximum_retry
+        is reached. Otherwise, it directly returns. In both cases, the mesh
+        restarts.
+        """
         for _ in range(global_config.profile_maximum_retry):
             try:
                 return self.profile_impl(stage_id, compiled_output,
@@ -280,7 +316,7 @@ class ProfileWorkerPool(BaseWorkerPoolWrapper):
 
 
 class HloCostModelProfileWorker:
-    """TODO(yonghao): docstring."""
+    """A ray actor to estimate the cost of HLO Proto based on cost model."""
 
     def __init__(self, prof_result, num_devices, num_micro_batches):
         self.backend = xla_bridge.get_backend("gpu")
@@ -290,7 +326,7 @@ class HloCostModelProfileWorker:
 
     def profile(self, stage_id, compiled_output, profile_info,
                 intermediate_size, initial_size):
-        """TODO(yonghao): docstring."""
+        """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
         proto, config, _, _, _, _ = compiled_output
         xla_computation = xla_client.XlaComputation(proto)
@@ -394,7 +430,10 @@ def compile_all(stages):
 
 def profile_all(stages, compiled_outputs, meshes, num_layers,
                 num_auto_sharding_configs):
-    """TODO(yonghao): docstring."""
+    """Profile all compiled outputs on given meshes.
+
+    This function launches a profile worker pool and submits given tasks.
+    """
     compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs),
                            np.inf)
     max_n_succ_stages = np.full(
@@ -444,10 +483,11 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
             return compute_cost, max_n_succ_stages
-        (start, end,
-         config_idx), _, auto_sharding_config, _, _, _ = stages[stage_id]
+        ((start, end, config_idx), _, auto_sharding_config, _, _,
+         _) = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config
-        peak_memory, available_memory, intermediate_size, initial_size = debug_info
+        (peak_memory, available_memory, intermediate_size,
+         initial_size) = debug_info
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage
         pbar.write(
@@ -546,8 +586,9 @@ def generate_stage_info(all_layers,
 
     # TODO(yonghao): infer used_outside etc. in batches
     # TODO(yonghao): clean up code here
-    selected_donation_mapping, used_outside, layers = split_global_use_and_donate(
-        all_layers, selected_indices, donation_mapping, global_outvars)
+    (selected_donation_mapping, used_outside,
+     layers) = split_global_use_and_donate(all_layers, selected_indices,
+                                           donation_mapping, global_outvars)
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
@@ -695,7 +736,12 @@ def profile_layer_communication_cost(
         src_outvar_sharding_spec, dst_invar_sharding_spec,
         src_mesh: VirtualPhysicalMesh, dst_mesh: VirtualPhysicalMesh,
         collective_group: CollectiveGroup):
-    """TODO(yonghao): docstring."""
+    """Profile communication cost for given two stages.
+
+    It ignores the global load balance, but instead only consider the balance of
+    the task. However, as the communication is sequential and SPMD, this does
+    not hurt much.
+    """
     src_outvars = {v: idx for idx, v in enumerate(src.outvars)}
 
     backup_use_dummy_value = global_config.use_dummy_value_for_benchmarking
@@ -771,7 +817,11 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
 
 def compute_apply_grad_invar_size(input_sharding_protos, invars,
                                   selected_invars, logical_mesh_shape):
-    """TODO(yonghao): docstring."""
+    """Compute the size of parameters only used in apply gradient period.
+    
+    These parameters are never used in compute gradient period but stored on
+    the GPU, so they take memory and influence max_n_succ_stages.
+    """
 
     def get_byte(aval):
         return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
@@ -784,7 +834,7 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
             if var in selected_invars
         ])
         return tot
-    assert len(input_sharding_protos) == len(invars), input_sharding_protos
+    assert len(input_sharding_protos) == len(invars)
     sharding_specs = [
         hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto), aval,
                                       logical_mesh_shape)

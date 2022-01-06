@@ -331,7 +331,39 @@ def _get_layer_flops_prefix_sum(layers):
 def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
                      autosharding_configs, layers, donation_mapping,
                      global_outvars, apply_grad_layers, apply_grad_global_info):
-    """TODO(Yonghao): docstring."""
+    """Get computation cost for each possible (stage, mesh) configuration.
+
+    This Function enumerates all given submesh choices, then profiles compute
+    cost of all stage configuration under the submesh. For each submesh, it
+    slices the given mesh or the whole device cluster into submeshes to profile.
+
+    Args:
+        virtual_mesh: The whole virtual mesh. If profile_with_whole_ray_cluster
+            is turned off in global config, virtual_mesh is sliced into pieces
+            to run profiling. Otherwise, the whole device cluster is sliced for
+            profiling.
+        submesh_choices (List[Tuple[int]]): All available submesh shape choices.
+        autosharding_configs: All auto sharding configs for each submesh.
+        layers (Sequence[JaxPipelineComputation]): Layers for compute gradient.
+        donation_mapping: Donation mapping for all layers.
+        global_outvars: Global output variables for all layers.
+        apply_grad_layers (Sequence[JaxPipelineComputation]):
+            Apply gradient computations corresponding to each forward layers.
+        apply_grad_global_info: Donation mapping and outvars for apply gradient
+            stages.
+
+    Returns:
+        Two np.ndarray, each with shape (L, L, S, C), where L is the number of
+        forward layers, S is the number of submesh choices, and C is the maximal
+        number of autosharding configs for a submesh choice.
+        At index (i, j, s, c), the array stores the value under the condition:
+        the stage contains forward layers i, i+1, ... j and corresponding
+        backward layers, and runs under the s-th submesh and c-th auto sharding
+        config for the submesh.
+        compute_cost: The compute cost of all possible configurations.
+        max_n_succ_stages: The maximal number of stages follow up this one. This
+            is calculated by the number of 
+    """
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
@@ -519,6 +551,8 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
     return output_meshes
 
 
+# TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate 
+# gradient part instead of the whole computation
 def cluster_layers_and_slice_mesh(
         layers, mesh, donation_mapping, global_outvars, num_micro_batches,
         batch_size, jax_apply_layers, apply_grad_global_info,

@@ -91,6 +91,8 @@ if __name__ == "__main__":
                                     num_hosts, num_devices_per_host,
                                     args.local, args.use_separate_process)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
+        if np.mean(latencies) < 0:
+            tflops = -1
 
         # Log results
         heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",

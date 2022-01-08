@@ -1,3 +1,4 @@
+"""Benchmark one case of intra-op only parallelism."""
 from flax import linen as nn
 import jax
 import jax.numpy as jnp

@@ -1,3 +1,4 @@
+"""Benchmark one case of intra-op only parallelism."""
 import jax
 import jax.numpy as jnp
 import numpy as np

@@ -1,3 +1,4 @@
+"""The entry point of intra-op parallelism only benchmark."""
 import argparse
 from datetime import datetime
 
@@ -5,10 +6,10 @@ import numpy as np
 
 from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, GB
 
+from benchmark_2d_one_case import benchmark_one_case
 from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
 from paper_manual_moe_suite import fast_test_moe_suite, test_moe_suite, paper_moe_suite
 from benchmark_2d_one_case_wresnet import fast_test_wresnet_suite
-from benchmark_2d_one_case import benchmark_one_case
 
 
 benchmark_suites = {

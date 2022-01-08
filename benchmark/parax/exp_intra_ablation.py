@@ -1,4 +1,4 @@
-"""Intra-operator parallelism ablation study."""
+"""Intra-op parallelism ablation study."""
 import argparse
 import time
 
@@ -247,6 +247,7 @@ if __name__ == "__main__":
         param_count, ilp_objective, peak_mem, latencies, tflops = result
         if np.mean(latencies) < 0:
             tflops = -1
+
         value_dict = {
             "param_count": param_count / 1e9,
             "peak_mem": peak_mem / GB,

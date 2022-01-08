@@ -1,3 +1,4 @@
+"""Benchmark one case of intra-op only parallelism."""
 from flax import linen as nn, optim
 from flax.training import common_utils
 import jax

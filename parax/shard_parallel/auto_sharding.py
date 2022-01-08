@@ -191,25 +191,25 @@ def compile_with_search(backend: xla_extension.Client,
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
 
+    # Set configs for force_zero_stage_3
+    if as_option.force_zero_stage_3:
+        # Generate a strategy similar to ZeRO stage 3
+        force_data_parallel = True
+        prefer_reduce_scatter = True
+        reduce_scatter_aggressive_partition = True
+        all_gather_threshold = as_option.force_zero_stage_3_all_gather_threshold
+    else:
+        # Use default settings
+        force_data_parallel = as_option.force_data_parallel
+        prefer_reduce_scatter = as_option.prefer_reduce_scatter
+        reduce_scatter_aggressive_partition = False
+        all_gather_threshold = 1 << 60
+
     def _invoke_compilation(logical_mesh):
         global last_s_val
         global last_objective
 
         mesh_shape = logical_mesh.shape
-
-        # Set configs for force_zero_stage_3
-        if as_option.force_zero_stage_3:
-            # Generate a strategy similar to ZeRO stage 3
-            force_data_parallel = True
-            prefer_reduce_scatter = True
-            reduce_scatter_aggresive_partition = True
-            all_gather_threshold = as_option.force_zero_stage_3_all_gather_threshold
-        else:
-            # Use default settings
-            force_data_parallel = as_option.force_data_parallel
-            prefer_reduce_scatter = as_option.prefer_reduce_scatter
-            reduce_scatter_aggresive_partition = False
-            all_gather_threshold = 1 << 60
 
         # Set configs for force_data_parallel
         if force_data_parallel:
@@ -267,7 +267,7 @@ def compile_with_search(backend: xla_extension.Client,
                     as_option.allow_replicated_parameters,
                 "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
                 "auto_sharding::reduce_scatter_grad_acc_friendly": reduce_scatter_grad_acc_friendly,
-                "auto_sharding::reduce_scatter_aggresive_partition": reduce_scatter_aggresive_partition,
+                "auto_sharding::reduce_scatter_aggressive_partition": reduce_scatter_aggressive_partition,
                 "auto_sharding::batch_matmul_always_split_batch": True,
                 "auto_sharding::allow_recompute_heavy_op":
                     as_option.allow_recompute_heavy_op,
@@ -322,6 +322,7 @@ def compile_with_search(backend: xla_extension.Client,
                 logical_mesh)
             strategy_config = StrategyConfig(build_random_seed,
                                              logical_mesh.shape,
+                                             all_gather_threshold,
                                              as_option.all_reduce_threshold,
                                              solution_vector)
 
@@ -354,6 +355,7 @@ def compile_with_search(backend: xla_extension.Client,
     testing.last_compiled_executable = compiled
     testing.last_compiled_auto_sharding_objective = objective
     strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
+                                     all_gather_threshold,
                                      as_option.all_reduce_threshold,
                                      solution_vector)
 
@@ -453,7 +455,8 @@ def compile_with_given_strategy(
             "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
             # Communication combiner options
-            "combiner::all_gather_threshold": 1 << 60,
+            "combiner::all_gather_threshold":
+                strategy_config.all_gather_threshold,
             "combiner::all_reduce_threshold":
                 strategy_config.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,

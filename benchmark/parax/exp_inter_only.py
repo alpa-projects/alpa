@@ -1,4 +1,4 @@
-"""Intra operator ablation study"""
+"""Inter-op parallelism only e2e evaluation."""
 import argparse
 import time
 

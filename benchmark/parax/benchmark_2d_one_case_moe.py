@@ -1,3 +1,4 @@
+"""Benchmark one case of intra-op only parallelism."""
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,13 +8,12 @@ import parax
 from parax import global_config, set_parallelize_options, testing
 from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from parax.model.model_util import optax_adafactor
-from parax.util import count_communication_primitives, print_used_time, compute_param_number
+from parax.util import count_communication_primitives, print_used_time, compute_param_number, GB
 
 from benchmark.util import compute_moe_parameter_count
 from benchmark_2d_one_case_gpt_bert import get_train_step
 
-
-GB = 1024 ** 3
+as_option = global_config.default_autosharding_option
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -63,14 +63,14 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 
     if force_batch_dim_mapping:
         # Always map batch dim to mesh dim 0
-        global_config.force_batch_dim_to_mesh_dim = 0
-    global_config.prefer_reduce_scatter = prefer_reduce_scatter
-    global_config.allow_mixed_mesh_shape = True
+        as_option.force_batch_dim_to_mesh_dim = 0
+    as_option.prefer_reduce_scatter = prefer_reduce_scatter
+    as_option.allow_mixed_mesh_shape = True
 
     if other == "zero-3":
-        global_config.force_zero_stage_3 = True
+        as_option.force_zero_stage_3 = True
     elif other in ["shard-largest"]:
-        global_config.force_simple_heuristic = other
+        as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
 
@@ -117,7 +117,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last.hlo", "w") as fout:
+    with open("tmp/last_2d.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -144,6 +144,6 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)
-    peak_mem = physical_mesh.get_max_memory_allocated()
+    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 
     return parameter_count, ilp_objective, peak_mem, latencies, tflops

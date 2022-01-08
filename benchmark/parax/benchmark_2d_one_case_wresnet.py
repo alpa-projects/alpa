@@ -1,3 +1,4 @@
+"""Benchmark one case of intra-op only parallelism."""
 from flax import linen as nn, optim
 from flax.training import common_utils
 import jax
@@ -258,6 +259,6 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     # Compute statistics
     num_gpus = mesh_dim0 * mesh_dim1
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
-    peak_mem = physical_mesh.get_max_memory_allocated()
+    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 
     return param_count, ilp_objective, peak_mem, latencies, tflops

@@ -72,10 +72,10 @@ class VirtualDistributedArray:
         """Return the device assignment of each tile."""
         if self._tile_assignments is None:
             if self.replicated:
-                mesh_flat = np.arange(self.device_mesh.total_devices)
+                mesh_flat = np.arange(self.device_mesh.num_devices)
                 self._tile_assignments = np.reshape(
                     mesh_flat,
-                    self.tile_shape + [self.device_mesh.total_devices])
+                    self.tile_shape + [self.device_mesh.num_devices])
             else:
                 # Generate tile assignments using proto
                 proto = self._sharding_spec_proto

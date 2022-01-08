@@ -1,3 +1,4 @@
+"""Benchmark one case of intra-op only parallelism."""
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
@@ -8,9 +9,9 @@ import parax
 from parax import parallelize, global_config, set_parallelize_options, testing
 from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import map_to_shape, count_communication_primitives, print_used_time
+from parax.util import map_to_shape, count_communication_primitives, print_used_time, GB
 
-from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops, GB
+from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 
 as_option = global_config.default_autosharding_option
 
@@ -179,6 +180,6 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
                                 physical_mesh.num_devices,
                                 np.mean(latencies), use_remat)
     param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
-    peak_mem = physical_mesh.get_max_memory_allocated()
+    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 
     return param_count, ilp_objective, peak_mem, latencies, tflops

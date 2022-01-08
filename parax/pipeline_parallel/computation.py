@@ -205,7 +205,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
-                                         logical_mesh_shape, 1, None)
+                                         logical_mesh_shape, 1, 1, None)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
         hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()

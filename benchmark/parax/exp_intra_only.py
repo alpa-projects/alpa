@@ -1,4 +1,4 @@
-"""Intra-operator-parallelism-only e2e evaluation."""
+"""Intra-op parallelism only e2e evaluation."""
 import argparse
 import time
 
@@ -6,10 +6,11 @@ import numpy as np
 import ray
 
 from parax import DeviceCluster, global_config
-from parax.util import write_tsv, to_str_round
+from parax.util import write_tsv, to_str_round, GB
 from benchmark_2d_one_case import benchmark_one_case
 from paper_manual_gpt_suite import gpt_specs
 from paper_manual_moe_suite import moe_specs
+from paper_wresnet_suite import wresnet_specs
 
 benchmark_one_case_gpt = (lambda case, niter, num_host, num_devices_per_host:
     benchmark_one_case("gpt", case, niter, num_host, num_devices_per_host,
@@ -23,17 +24,6 @@ benchmark_one_case_wresnet = (lambda case, niter, num_host, num_devices_per_host
     benchmark_one_case("wresnet", case, niter, num_host, num_devices_per_host,
                        local=False, use_separate_process=True))
 
-wresnet_specs = {
-    #    I,   L,  C,   W,  dtype,  
-"250M": (224, 50, 160, 2,  "fp32"), 
-"500M": (224, 50, 224, 2,  "fp32"), 
-"1B":   (224, 50, 320, 2,  "fp32"), 
-"2B":   (224, 50, 448, 2,  "fp32"), 
-"4B":   (224, 50, 640, 2,  "fp32"), 
-"6.8B": (224, 50, 320, 16, "fp32"), 
-}
-
-GB = 1 << 30
 _ = None
 
 gpt_intra_only = [
@@ -43,7 +33,7 @@ gpt_intra_only = [
     (1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _,     _),
     (1024, *gpt_specs["6.7B"], 2,   8,   _,   _,   1,  64,  True,  True,  True,  _,     _),
-    (1024, *gpt_specs["15B"],  4,   8,  _,   _,   1,  128,  True,  True,  True,  _, _), # reduce_scatter_grad_acc_friendly = False, ALLREDUCE_THRESHOLD = 1 << 20
+    (1024, *gpt_specs["15B"],  4,   8,   _,   _,   1,  128,  True,  True,  True,  _, _), # reduce_scatter_grad_acc_friendly = False, ALLREDUCE_THRESHOLD = 1 << 20
 ]
 
 moe_intra_only = [
@@ -122,6 +112,9 @@ if __name__ == "__main__":
         # Benchmark case
         result = benchmark_func(args, niter, num_hosts, num_devices_per_host)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
+        if np.mean(latencies) < 0:
+            tflops = -1
+
         value_dict = {
             "param_count": param_count / 1e9,
             "peak_mem": peak_mem / GB,

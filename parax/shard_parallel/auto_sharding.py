@@ -455,7 +455,8 @@ def compile_with_given_strategy(
             "auto_sharding::device_mesh_shape": tuple(logical_mesh_shape),
 
             # Communication combiner options
-            "combiner::all_gather_threshold": strategy_config.all_gather_threshold,
+            "combiner::all_gather_threshold":
+                strategy_config.all_gather_threshold,
             "combiner::all_reduce_threshold":
                 strategy_config.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,

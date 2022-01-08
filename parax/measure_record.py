@@ -54,9 +54,8 @@ class StrategyConfig:
 
     @staticmethod
     def from_jsonable(value):
-        (build_random_seed, logical_mesh_shape,
-         all_gather_threshold, all_reduce_threshold,
-         auto_sharding_solution_vector) = value
+        (build_random_seed, logical_mesh_shape, all_gather_threshold,
+         all_reduce_threshold, auto_sharding_solution_vector) = value
         return StrategyConfig(build_random_seed, logical_mesh_shape,
                               all_gather_threshold, all_reduce_threshold,
                               np.array(auto_sharding_solution_vector))

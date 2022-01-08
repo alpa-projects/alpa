@@ -1,3 +1,4 @@
+"""Benchmark one case of inter-op + intra-op parallelism."""
 import argparse
 import pickle
 

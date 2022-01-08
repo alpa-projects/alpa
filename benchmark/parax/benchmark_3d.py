@@ -1,3 +1,4 @@
+"""The entry point of intra-op + inter-op parallelism benchmark."""
 import argparse
 from datetime import datetime
 import time

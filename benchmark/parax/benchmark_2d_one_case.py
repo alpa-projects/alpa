@@ -1,5 +1,4 @@
 """Benchmark one case of intra-op only parallelism."""
-
 import argparse
 import pickle
 

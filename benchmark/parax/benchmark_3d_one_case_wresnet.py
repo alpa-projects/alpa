@@ -1,3 +1,4 @@
+"""Benchmark one case of inter-op + intra-op parallelism."""
 from functools import partial
 
 from flax import linen as nn, optim

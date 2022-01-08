@@ -143,6 +143,6 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)
-    peak_mem = physical_mesh.get_max_memory_allocated()
+    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 
     return parameter_count, ilp_objective, peak_mem, latencies, tflops

@@ -79,7 +79,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_layers, acc_grad_invars, acc_grad_outvars)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    offload_remat(jax_pipeline_layers, gensym_func)
+    jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars

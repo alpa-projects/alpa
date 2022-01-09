@@ -608,10 +608,24 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
     return new_computations
 
 
-# TODO(yonghao): make it a pure function
 def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                   gensym_func):
-    """TODO(yonghao): docstring."""
+    """Offload remat call from forward to backward.
+
+    remat in Jax generates some remat_call in the forward part, but the output
+    of these remat_call is used only in the backward. Besides, these remat_call
+    only outputs constant. Hence, offloading them into the backward part does
+    not enlong any liveness interval, while helps reduce forward output size.
+
+    Args:
+        jax_pipeline_computations: pipeline stages including both forward and
+            backward, but no other.
+        gensym_func: gensym to create new Var different from existing ones.
+
+    Returns:
+        jax_pipeline_computations (Sequence[JaxPipelineComputation]):
+            computations after this transformation.
+    """
 
     def only_create_consts(jaxpr: Jaxpr):
         const_vars = OrderedSet()
@@ -669,36 +683,39 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         #  backward stage to add a dependency link from the forward stage to
         #  the backward stage. Should not need this once we fixed the stage
         #  slicing in XLA.
+        new_eqns = list(forward_stage.eqns)
         if add_dummy_dependency_var:
             dummy_outvar = gensym_func(Literal(0).aval)
             dummy_eqn = new_jaxpr_eqn([Literal(0), Literal(0)], [dummy_outvar],
                                       jax.lax.add_p, {})
-            forward_stage.eqns.insert(-1, dummy_eqn)
+            new_eqns.insert(-1, dummy_eqn)
             new_invars.append(dummy_outvar)
             marked_dummy_outvar = gensym_func(dummy_outvar.aval)
             new_outvars.append(marked_dummy_outvar)
 
-        forward_stage.eqns[-1] = mark_pipeline_jaxpreqn(
-            new_invars, new_outvars, previous_end.params["name"], "end")
-        forward_stage.outvars.clear()
-        forward_stage.outvars.extend(new_outvars)
+        new_eqns[-1] = mark_pipeline_jaxpreqn(new_invars, new_outvars,
+                                              previous_end.params["name"],
+                                              "end")
+        new_forward = JaxPipelineComputation(forward_stage.name,
+                                             forward_stage.invars, new_outvars,
+                                             new_eqns, forward_stage.consts_dir)
         # add invars and eqn into backward stage
         previous_start = backward_stage.eqns[0]
         new_invars = []
         new_outvars = []
+        new_eqns = list(backward_stage.eqns)
         for i, o in zip(previous_start.invars, previous_start.outvars):
             if i in removed_after_end_marker:
                 mapping[i] = o
                 continue
             new_invars.append(i)
             new_outvars.append(o)
-            backward_stage.invars.append(i)
 
         if add_dummy_dependency_var:
             new_invars.append(marked_dummy_outvar)
             new_outvars.append(gensym_func(marked_dummy_outvar.aval))
 
-        backward_stage.eqns[0] = mark_pipeline_jaxpreqn(
+        new_eqns[0] = mark_pipeline_jaxpreqn(
             new_invars, new_outvars, previous_start.params["name"], "start")
         backward_stage.invars.clear()
         backward_stage.invars.extend(new_invars)
@@ -710,12 +727,19 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
             mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars,
                                        eqn.primitive, eqn.params,
                                        eqn.source_info)
-            backward_stage.eqns.insert(1, mapped_eqn)
+            new_eqns.insert(1, mapped_eqn)
+        new_backward = JaxPipelineComputation(backward_stage.name, new_invars,
+                                              backward_stage.outvars, new_eqns)
+        return new_forward, new_backward
 
     num_layers = len(jax_pipeline_computations) // 2
+    new_computations = [None] * len(jax_pipeline_computations)
     for i in range(num_layers):
-        task_offloader(jax_pipeline_computations[i],
-                       jax_pipeline_computations[-i - 1])
+        new_forward, new_backward = task_offloader(
+            jax_pipeline_computations[i], jax_pipeline_computations[-i - 1])
+        new_computations[i] = new_forward
+        new_computations[-i - 1] = new_backward
+    return new_computations
 
 
 def rearrange_vars(vars,
@@ -924,7 +948,12 @@ def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
         used (OrderedSet[Var]): out variables used later
         new_marker_name (str): name of merged pipeline used in marker
         donation_mapping (Dict[Var, Var]): donation mapping of merged jaxpr, may have redundant items
-        insert_hook_after (): TODO(zhuohan).
+        insert_hook_after (int): index of a layer to insert a hook after it.
+            The hook records sharding specs of all tensors cross it.
+
+    Returns:
+        The merged ClosedJaxpr. If insert_hook_after is not None, it returns
+        invars of the hook as well.
     """
     new_invars_dict = {}
     new_outvars_dict = {}

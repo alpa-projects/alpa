@@ -417,10 +417,12 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
         f"time: {time.time():.0f}.")
 
     # Compile
+    rank_0_print(host_id, "compile")
     shapes, compiled = _compile_profiling_executable(backend, shapes, op_func,
                                                      num_devices)
 
     # Warm up
+    rank_0_print(host_id, "warmup")
     device_inputs = []
     for j, (shape, dtype) in enumerate(shapes):
         if j == 0:
@@ -439,6 +441,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
 
     # Run profiling
+    rank_0_print(host_id, "run_profiling")
     device_inputs[0] = [
         backend.buffer_from_pyval(np.int32(number), local_devices[k])
         for k in range(len(local_devices))
@@ -450,13 +453,15 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     [d.synchronize_all_activity() for d in local_devices]
     toc = time.time()
 
+    # Return
+    rank_0_print(host_id, "return")
     mean_time = (toc - tic) / number
     return mean_time
 
 
 def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                     cache_filename):
-    """Profile a list of HLO operators."""
+    """Profile a list of HLO operators on a worker."""
     results = []
     num_devices_per_node = 8
     save_every = 15
@@ -468,24 +473,31 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     else:
         cache_dict = {}
 
-    for i, op_info in enumerate(op_infos):
-        if op_info in cache_dict:
-            rank_0_print(host_id, f"Hit cache {op_info}...")
-            results.append(cache_dict[op_info])
-            continue
+    all_cache_hit = True
+    try:
+        for i, op_info in enumerate(op_infos):
+            if op_info in cache_dict:
+                rank_0_print(host_id, f"Hit cache {op_info}...")
+                results.append(cache_dict[op_info])
+                continue
 
-        mean_time = profile_one_hlo_op(backend, local_devices, host_id,
-                                       num_devices, num_devices_per_node,
-                                       op_info)
-        cache_dict[op_info] = mean_time
-        results.append(mean_time)
+            print(f"Worker {host_id}, op {i} begin", flush=True)
+            all_cache_hit = False
+            mean_time = profile_one_hlo_op(backend, local_devices, host_id,
+                                           num_devices, num_devices_per_node,
+                                           op_info)
+            cache_dict[op_info] = mean_time
+            results.append(mean_time)
 
-        if host_id == 0 and ((i + 1) % save_every == 0 or
-                             i == len(op_infos) - 1):
-            rank_0_print(host_id, "Save cache...")
-            pickle.dump(cache_dict, open(cache_filename, "wb"))
+            if host_id == 0 and ((i + 1) % save_every == 0 or
+                                 i == len(op_infos) - 1):
+                rank_0_print(host_id, "Save cache...")
+                pickle.dump(cache_dict, open(cache_filename, "wb"))
+            print(f"Worker {host_id}, op {i} end", flush=True)
+    except Exception as e:
+        print(f"Worker {host_id} exception {e}", flush=True)
 
-    return np.array(results)
+    return np.array(results), all_cache_hit
 
 
 def profile_dot(device_cluster, cache_filename):
@@ -499,7 +511,7 @@ def profile_dot(device_cluster, cache_filename):
         for i in range(0, 48):
             n = 128 * i
             op_infos.append(("dot", (n, n, n, dtype)))
-    results = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
+    results, _ = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
 
     dot_cost_dict = defaultdict(list)
     for i in range(len(op_infos)):
@@ -557,8 +569,8 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
     print_used_time(None)
 
     ##### Profile compute cost
-    dot_cost_dict = profile_dot(device_cluster, cache_filename)
-    print_used_time("Profile dot")
+    #dot_cost_dict = profile_dot(device_cluster, cache_filename)
+    #print_used_time("Profile dot")
 
     ##### Profile communication cost
 
@@ -570,6 +582,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
 
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
+    submesh_choices = [(8, 8)]
 
     prof_database = ProfilingResultDatabase()
     for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
@@ -594,27 +607,43 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
         physical_mesh = tmp_mesh.get_physical_mesh()
         available_memory_per_device = physical_mesh.get_available_memory()
 
+        def get_op_info_key(op_info):
+            # return (op_type, replica_group)
+            return (op_info[0], op_info[1][0])
+
         # Profile operators in batch to resolve some deadlock issues
-        batch_size = 30
-        batch_timeout = batch_size * 20
         results = []
         s = 0
         while s < len(op_infos):
+            # Decide batch size
+            batch_key = get_op_info_key(op_infos[s])
+            batch_size = 1
+            while (s + batch_size < len(op_infos) and
+                   get_op_info_key(op_infos[s + batch_size]) == batch_key):
+                batch_size += 1
+
+            print(f"Batch size: {batch_size}, key: {batch_key}")
+
+            # Profile a batch
             try:
-                batch_result = physical_mesh.profile_hlo_ops(
+                batch_result, all_cache_hit = physical_mesh.profile_hlo_ops(
                     op_infos[s:s + batch_size],
                     cache_filename,
-                    timeout=batch_timeout)
+                    timeout=batch_size * 10)
             except ray.exceptions.RayError:
+                batch_result = None
+                all_cache_hit = False
+
+            if batch_result is not None:
+                results.extend(batch_result)
+                s += batch_size
+
+            # Reboot physical mesh
+            if not all_cache_hit:
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None
-                time.sleep(30)
+                time.sleep(15)
                 physical_mesh = tmp_mesh.get_physical_mesh()
-                continue
-            #batch_result = physical_mesh.profile_hlo_ops(op_infos[s:s + batch_size],
-            #                                             timeout=batch_timeout)
-            results.extend(batch_result)
-            s += batch_size
 
         # Parse results
         all_gather_cost_dict = defaultdict(list)

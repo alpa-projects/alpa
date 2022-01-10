@@ -493,7 +493,7 @@ class PhysicalDeviceMesh:
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 # "NCCL_SHM_DISABLE": "1",
-                # "NCCL_DEBUG": "INFO",
+                #"NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",

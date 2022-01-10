@@ -3,6 +3,7 @@ from collections import defaultdict
 import os
 import pickle
 import time
+import threading
 
 import numpy as np
 from jax.lib import xla_client, xla_bridge, xla_extension
@@ -466,6 +467,20 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     return mean_time
 
 
+def run_with_timeout(func, args=(), kwargs={}, timeout=None):
+    ret_value = []
+    def _target_func():
+        ret_value.append(func(*args, **kwargs))
+
+    t = threading.Thread(target=_target_func)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError
+
+    return ret_value[0]
+
+
 def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                     cache_filename):
     """Profile a list of HLO operators on a worker."""
@@ -493,12 +508,12 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 results.append(cache_dict[op_info])
                 continue
 
-            print(f"Worker {host_id}, op {i} begin", flush=True)
+            # Profile one op
             all_cache_hit = False
-            barrier()
-            mean_time = profile_one_hlo_op(backend, local_devices, host_id,
-                                           num_devices, num_devices_per_node,
-                                           op_info)
+            run_with_timeout(barrier, timeout=10)
+            mean_time = run_with_timeout(profile_one_hlo_op,
+                (backend, local_devices, host_id, num_devices,
+                 num_devices_per_node, op_info), timeout=20)
             cache_dict[op_info] = mean_time
             results.append(mean_time)
 
@@ -506,9 +521,11 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                                  i == len(op_infos) - 1):
                 rank_0_print(host_id, "Save cache...")
                 pickle.dump(cache_dict, open(cache_filename, "wb"))
-            print(f"Worker {host_id}, op {i} end", flush=True)
-    except Exception as e:
-        print(f"Worker {host_id} exception {e}", flush=True)
+    except TimeoutError:
+        print(f"Worker {host_id} timeout error", flush=True)
+        return None, False
+    except RuntimeError:
+        print(f"Worker {host_id} runtime error", flush=True)
 
     return np.array(results), all_cache_hit
 
@@ -642,7 +659,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
                 batch_result, all_cache_hit = physical_mesh.profile_hlo_ops(
                     op_infos[s:s + batch_size],
                     cache_filename,
-                    timeout=batch_size * 5)
+                    timeout=batch_size * 10)
             except ray.exceptions.RayError:
                 batch_result = None
                 all_cache_hit = False
@@ -656,7 +673,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
                 print("Reboot physical mesh")
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None
-                time.sleep(15)
+                time.sleep(10)
                 physical_mesh = tmp_mesh.get_physical_mesh()
 
         # Parse results

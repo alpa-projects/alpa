@@ -408,6 +408,17 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
             work = 1 << 31
         number = min(max(12, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
+    elif op_info[0] == "barrier":
+        replica_groups, dtype, size = (tuple(i for i in range(num_devices)),), "f32", 1
+        dtype = to_np_dtype(dtype)
+        shapes = [((size,), dtype), ((size,), dtype)]
+
+        def op_func(operands):
+            channel_id = backend.create_channel_handle()
+            out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
+                                 channel_id)
+            operands[-1] = out
+        work = number = 1
     else:
         raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
@@ -417,12 +428,10 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
         f"time: {time.time():.0f}.")
 
     # Compile
-    rank_0_print(host_id, "compile")
     shapes, compiled = _compile_profiling_executable(backend, shapes, op_func,
                                                      num_devices)
 
     # Warm up
-    rank_0_print(host_id, "warmup")
     device_inputs = []
     for j, (shape, dtype) in enumerate(shapes):
         if j == 0:
@@ -441,7 +450,6 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
 
     # Run profiling
-    rank_0_print(host_id, "run_profiling")
     device_inputs[0] = [
         backend.buffer_from_pyval(np.int32(number), local_devices[k])
         for k in range(len(local_devices))
@@ -454,7 +462,6 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     toc = time.time()
 
     # Return
-    rank_0_print(host_id, "return")
     mean_time = (toc - tic) / number
     return mean_time
 
@@ -473,6 +480,11 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     else:
         cache_dict = {}
 
+    def barrier():
+        profile_one_hlo_op(backend, local_devices, host_id,
+                           num_devices, num_devices_per_node,
+                           ("barrier",))
+
     all_cache_hit = True
     try:
         for i, op_info in enumerate(op_infos):
@@ -483,6 +495,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
 
             print(f"Worker {host_id}, op {i} begin", flush=True)
             all_cache_hit = False
+            barrier()
             mean_time = profile_one_hlo_op(backend, local_devices, host_id,
                                            num_devices, num_devices_per_node,
                                            op_info)
@@ -629,7 +642,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
                 batch_result, all_cache_hit = physical_mesh.profile_hlo_ops(
                     op_infos[s:s + batch_size],
                     cache_filename,
-                    timeout=batch_size * 10)
+                    timeout=batch_size * 5)
             except ray.exceptions.RayError:
                 batch_result = None
                 all_cache_hit = False
@@ -640,6 +653,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
 
             # Reboot physical mesh
             if not all_cache_hit:
+                print("Reboot physical mesh")
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None
                 time.sleep(15)

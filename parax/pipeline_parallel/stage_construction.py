@@ -274,8 +274,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 apply_grad_layers[idx] for idx in indices[start:end + 1]
             ]
             stage_name = f"stage_{start}_{end}"
-            (compile_info, intermediate_vars, profile_info,
-             apply_info) = generate_stage_info(
+            (intermediate_vars, stage_config) = generate_stage_info(
                  layers,
                  layer_indices,
                  donation_mapping,
@@ -291,8 +290,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 if autosharding_config is not None:
                     stage_indices = (start, end, config_idx)
                     stages.append(
-                        (stage_indices, compile_info, autosharding_config,
-                         intermediate_vars, profile_info, apply_info))
+                        (stage_indices, stage_config, autosharding_config,
+                         intermediate_vars))
 
     if len(stages) == 0:
         compute_cost = np.full(

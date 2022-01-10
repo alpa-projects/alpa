@@ -45,6 +45,21 @@ CompileOutput = namedtuple("CompileOutput", [
     "apply_grad_input_sharding_protos"
 ])
 
+CompileConfig = namedtuple("CompileConfig", [
+    "model_proto", "input_avals", "output_avals", "donate_invars",
+    "output_acc_grad_indices"
+])
+
+ProfileConfig = namedtuple(
+    "ProfileConfig",
+    ["input_avals", "output_avals", "donate_invars", "output_acc_grad_indices"])
+
+ApplyGradConfig = namedtuple("ApplyGradConfig",
+                             ["invars", "apply_grad_only_invars"])
+
+StageConfig = namedtuple("StageConfig",
+                         ["compile_config", "profile_config", "apply_grad_config"])
+
 
 class BaseWorkerPoolWrapper(ABC):
     """Basic wrapper of ray's ActorPool."""
@@ -104,8 +119,7 @@ class CompileWorker:
         self.cnt = 0
         self.backend = xla_bridge.get_backend("gpu")
 
-    def compile_stage_for_profiling(self, stage_id, proto, avals, out_avals,
-                                    donate_invars, output_acc_grad_indices,
+    def compile_stage_for_profiling(self, stage_id, config: CompileConfig,
                                     logical_mesh, autosharding_option,
                                     num_micro_batches):
         """
@@ -113,11 +127,7 @@ class CompileWorker:
 
         Args:
             stage_id: the index of the input stage.
-            proto: the proto of XlaComputation to be compiled
-            avals: input avals
-            out_avals: output avals
-            donate_invars: donate invars of the computation to be compiled
-            output_acc_grad_indices: TODO(yonghao)
+            config: configs for compilation.
             logical_mesh: the logical mesh for compilation.
             autosharding_option: the global config dictionary for compilation setting.
             num_micro_batches: the number of microbatches.
@@ -129,7 +139,7 @@ class CompileWorker:
         self.cnt += 1
 
         # Compile with search to get sharding annotations.
-        jaxpr_args = (avals, out_avals, donate_invars)
+        jaxpr_args = (config.input_avals, config.output_avals, config.donate_invars)
         mesh_kwargs = {
             "logical_mesh_choices": [logical_mesh],
             "return_mode": "stage_and_hook_protos",
@@ -143,7 +153,7 @@ class CompileWorker:
         try:
             _, (proto_names, protos, hooked_proto,
                 strategy_config) = self.compile_proto_with_search(
-                    stage_id, proto, jaxpr_args, autosharding_option,
+                    stage_id, config.model_proto, jaxpr_args, autosharding_option,
                     mesh_kwargs)
         except RuntimeError:
             logger.warning("Unexpected error in compile time")
@@ -169,7 +179,7 @@ class CompileWorker:
             apply_grad_input_sharding_protos = None
 
         # Compile accumulate_grad part to fully optimized
-        rewrite_for_grad_acc = len(output_acc_grad_indices) > 0
+        rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
         compiled = compile_with_given_strategy(
             self.backend,
             sharding_annotated_computation,
@@ -178,7 +188,7 @@ class CompileWorker:
             HloProtoStatus.SHARDING_ANNOTATED,
             bypass_device_assignment_check=True,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
-            rewrite_grad_acc_indices=output_acc_grad_indices)
+            rewrite_grad_acc_indices=config.output_acc_grad_indices)
         optimized_proto = compiled.hlo_modules(
         )[0].as_serialized_hlo_module_proto()
         return stage_id, CompileOutput(optimized_proto, strategy_config,
@@ -407,8 +417,7 @@ def compile_all(stages):
     Compile all input stages.
 
     Args:
-        stages: List of info for compilation. Each info is a tuple with:
-            (proto, in_avals, out_avals, donate_invars)
+        stages: List of info for compilation.
     """
     num_cpus = int(
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
@@ -416,15 +425,11 @@ def compile_all(stages):
     default_autosharding_option = global_config.default_autosharding_option
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
-    for stage_id, (_, compile_info, auto_sharding_config, _, _,
-                   _) in enumerate(stages):
+    for stage_id, (_, stage_config, auto_sharding_config, _) in enumerate(stages):
         logical_mesh, autosharding_option_dict = auto_sharding_config
-        (proto, avals, out_avals, donate_invars,
-         output_acc_grad_indices) = compile_info
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
-            (stage_id, proto, avals, out_avals, donate_invars,
-             output_acc_grad_indices, logical_mesh,
+            (stage_id, stage_config.compile_config, logical_mesh,
              default_autosharding_option.deepcopy_and_update(
                  autosharding_option_dict), global_config.num_micro_batches))
 
@@ -469,14 +474,14 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         config = compiled_output.strategy_config
         hooked_proto = compiled_output.intermediate_proto
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-        _, _, _, intermediate_vars, profile_info, apply_info = stage
+        _, stage_config, _, intermediate_vars = stage
         intermediate_size = compute_intermediate_size(hooked_proto,
                                                       intermediate_vars,
                                                       config.logical_mesh_shape)
         apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, *apply_info, config.logical_mesh_shape)
+            apply_in_shardings, stage_config.apply_grad_config, config.logical_mesh_shape)
         profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (stage_id, compiled_output, profile_info,
+                               (stage_id, compiled_output, stage_config.profile_config,
                                 intermediate_size, apply_grad_input_size))
 
     pbar = tqdm.tqdm(stages)
@@ -494,8 +499,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
             return compute_cost, max_n_succ_stages
-        ((start, end, config_idx), _, auto_sharding_config, _, _,
-         _) = stages[stage_id]
+        ((start, end, config_idx), _, auto_sharding_config, _) = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config
         (peak_memory, available_memory, intermediate_size,
          initial_size) = debug_info
@@ -606,12 +610,6 @@ def generate_stage_info(all_layers,
     merged, intermediate_vars = merge_computation_jaxprs(
         jaxprs, used_outside, None, selected_donation_mapping,
         insert_hook_after)
-    if apply_grad_info is not None:
-        (apply_grad_layers, apply_grad_donation,
-         apply_grad_outvars) = apply_grad_info
-        merged_apply = merge_computation_jaxprs(
-            [layer.closed_jaxpr() for layer in apply_grad_layers],
-            apply_grad_outvars, None, apply_grad_donation)
 
     outvars = OrderedSet(merged.jaxpr.outvars)
     tot_donation = [
@@ -636,15 +634,20 @@ def generate_stage_info(all_layers,
         i for i, var in enumerate(merged.jaxpr.outvars)
         if var in acc_grad_outvars
     ]
-    profile_info = (compute_avals, compute_out_avals, list(tot_donation),
-                    output_acc_grad_indices)
+    profile_config = ProfileConfig(compute_avals, compute_out_avals,
+                                   list(tot_donation), output_acc_grad_indices)
 
-    apply_info = None, None
+    apply_info = ApplyGradConfig(None, None)
 
     if apply_grad_info is not None:
-        only_for_apply = OrderedSet(merged_apply.jaxpr.invars).difference(
+        (apply_grad_layers, apply_grad_donation,
+         apply_grad_outvars) = apply_grad_info
+        merged_apply = merge_computation_jaxprs(
+            [layer.closed_jaxpr() for layer in apply_grad_layers],
+            apply_grad_outvars, None, apply_grad_donation)
+        apply_only_invars = OrderedSet(merged_apply.jaxpr.invars).difference(
             new_invars).difference(new_outvars)
-        apply_info = (merged_apply.jaxpr.invars, only_for_apply)
+        apply_info = ApplyGradConfig(merged_apply.jaxpr.invars, apply_only_invars)
         new_eqns = []
         gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
         for stage_name, closed_jaxpr in zip(
@@ -702,9 +705,10 @@ def generate_stage_info(all_layers,
 
     built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
     proto = built.as_serialized_hlo_module_proto()
-    compile_info = (proto, avals, out_avals, tot_donation,
-                    output_acc_grad_indices)
-    return compile_info, intermediate_vars, profile_info, apply_info
+    compile_config = CompileConfig(proto, avals, out_avals, tot_donation,
+                                   output_acc_grad_indices)
+    stage_config = StageConfig(compile_config, profile_config, apply_info)
+    return intermediate_vars, stage_config
 
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,
@@ -839,19 +843,19 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
                               logical_mesh_shape)
 
 
-def compute_apply_grad_invar_size(input_sharding_protos, invars,
-                                  selected_invars, logical_mesh_shape):
+def compute_apply_grad_invar_size(input_sharding_protos,
+                                  config: ApplyGradConfig, logical_mesh_shape):
     """Compute the size of parameters only used in apply gradient period.
 
     These parameters are never used in compute gradient period but stored on
     the GPU, so they take memory and influence max_n_succ_stages.
     """
-    avals = [v.aval for v in invars]
+    avals = [v.aval for v in config.invars]
     if np.prod(logical_mesh_shape) == 1:
         selected_sharding_specs = None
-        ordered_selected_vars = list(selected_invars)
+        ordered_selected_vars = list(config.apply_grad_only_invars)
     else:
-        assert len(input_sharding_protos) == len(invars)
+        assert len(input_sharding_protos) == len(config.invars)
         sharding_specs = [
             hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto),
                                           aval, logical_mesh_shape)
@@ -859,8 +863,8 @@ def compute_apply_grad_invar_size(input_sharding_protos, invars,
         ]
         ordered_selected_vars = []
         selected_sharding_specs = []
-        for var, spec in zip(invars, sharding_specs):
-            if var in selected_invars:
+        for var, spec in zip(config.invars, sharding_specs):
+            if var in config.apply_grad_only_invars:
                 ordered_selected_vars.append(var)
                 selected_sharding_specs.append(spec)
     return _compute_vars_size(selected_sharding_specs, ordered_selected_vars,

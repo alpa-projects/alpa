@@ -1,4 +1,5 @@
 """Functionalities about profiling the stages."""
+from collections import namedtuple
 import gc
 import logging
 from typing import Dict, OrderedDict, Sequence
@@ -37,6 +38,12 @@ logger.setLevel(logging.INFO)
 
 INFINITY_N_STAGES = 4096
 GB = 1024**3
+
+CompileOutput = namedtuple("CompileOutput", [
+    "model_proto", "strategy_config", "input_sharding_protos",
+    "output_sharding_proto", "intermediate_proto",
+    "apply_grad_input_sharding_protos"
+])
 
 
 class BaseWorkerPoolWrapper(ABC):
@@ -174,9 +181,10 @@ class CompileWorker:
             rewrite_grad_acc_indices=output_acc_grad_indices)
         optimized_proto = compiled.hlo_modules(
         )[0].as_serialized_hlo_module_proto()
-        return stage_id, (optimized_proto, strategy_config,
-                          input_sharding_protos, output_sharding_proto,
-                          hooked_proto, apply_grad_input_sharding_protos)
+        return stage_id, CompileOutput(optimized_proto, strategy_config,
+                                       input_sharding_protos,
+                                       output_sharding_proto, hooked_proto,
+                                       apply_grad_input_sharding_protos)
 
     def compile_proto_with_search(self, stage_id, proto, jaxpr_args,
                                   autosharding_option, mesh_kwargs):
@@ -220,11 +228,11 @@ class ProfileWorker:
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
 
-    def profile_impl(self, stage_id, compiled_output, profile_info,
-                     intermediate_size, initial_size):
+    def _profile_impl(self, stage_id, compiled_output, profile_info,
+                      intermediate_size, initial_size):
         """Implementation of profile function.
 
-        This function first compile the HLO Proto into Mesh Executable, then
+        The profiler first compile the HLO Proto into Mesh Executable, then
         profiles the executable and computes the maximal number of stages
         following up this stage.
 
@@ -247,18 +255,20 @@ class ProfileWorker:
                 the input intermediate size and input initial size.
         """
         avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
-        proto, config, input_shardings, output_sharding, _, _ = compiled_output
+        input_shardings = compiled_output.input_sharding_protos
+        output_sharding = compiled_output.output_sharding_proto
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        hlo_module = xla_client.XlaComputation(proto).as_hlo_module()
+        hlo_module = xla_client.XlaComputation(
+            compiled_output.model_proto).as_hlo_module()
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
                 [_xla.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(
                 _xla.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, hlo_module, config, avals, out_avals, donated_invars,
-            output_acc_grad_indices)
+            self.mesh, hlo_module, compiled_output.strategy_config, avals,
+            out_avals, donated_invars, output_acc_grad_indices)
 
         # Run profiling
         self.mesh.reset_memory_stats()
@@ -287,9 +297,9 @@ class ProfileWorker:
         """
         for _ in range(global_config.profile_maximum_retry):
             try:
-                return self.profile_impl(stage_id, compiled_output,
-                                         profile_info, intermediate_size,
-                                         initial_size)
+                return self._profile_impl(stage_id, compiled_output,
+                                          profile_info, intermediate_size,
+                                          initial_size)
             except RayActorError:
                 logger.warning("Meet ray actor error in profiling")
                 self.restart(forced=True)
@@ -328,15 +338,14 @@ class HloCostModelProfileWorker:
                 intermediate_size, initial_size):
         """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
-        proto, config, _, _, _, _ = compiled_output
-        xla_computation = xla_client.XlaComputation(proto)
+        xla_computation = xla_client.XlaComputation(compiled_output.model_proto)
 
         hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
         try:
             compiled = compile_with_given_strategy(
                 self.backend,
                 xla_computation,
-                config,
+                compiled_output.strategy_config,
                 self.num_devices,
                 hlo_proto_status,
                 bypass_device_assignment_check=True,
@@ -428,8 +437,8 @@ def compile_all(stages):
     return compiled_outputs
 
 
-def profile_all(stages, compiled_outputs, meshes, num_layers,
-                num_auto_sharding_configs):
+def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
+                num_layers, num_auto_sharding_configs):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
@@ -457,7 +466,9 @@ def profile_all(stages, compiled_outputs, meshes, num_layers,
                    stage) in enumerate(zip(compiled_outputs, stages)):
         if compiled_output is None:
             continue
-        _, config, _, _, hooked_proto, apply_in_shardings = compiled_output
+        config = compiled_output.strategy_config
+        hooked_proto = compiled_output.intermediate_proto
+        apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
         _, _, _, intermediate_vars, profile_info, apply_info = stage
         intermediate_size = compute_intermediate_size(hooked_proto,
                                                       intermediate_vars,
@@ -787,67 +798,70 @@ def profile_layer_communication_cost(
     return tot_cost
 
 
+def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
+    """Compute bytes of selected_vars with given sharding proto and logical mesh."""
+
+    def get_byte(shape, dtype):
+        return np.prod(shape) * np.dtype(dtype).itemsize
+
+    if len(selected_vars) == 0:
+        return 0
+
+    avals = [v.aval for v in selected_vars]
+    if np.prod(logical_mesh_shape) == 1:
+        return sum([get_byte(aval.shape, aval.dtype) for aval in avals])
+
+    sharded_shapes = [
+        get_shard_shape(aval, spec)
+        for aval, spec in zip(avals, sharding_specs)
+    ]
+
+    return sum([
+        get_byte(shape, aval.dtype)
+        for shape, aval in zip(sharded_shapes, avals)
+    ])
+
+
 def compute_intermediate_size(serialized_proto, intermediate_vars,
                               logical_mesh_shape):
     """Compute bytes of serialized proto."""
-
-    def get_byte(aval):
-        return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
-
     if len(intermediate_vars) == 0:
         return 0
 
     avals = [v.aval for v in intermediate_vars]
     if np.prod(logical_mesh_shape) == 1:
-        tot = sum([get_byte(aval) for aval in avals])
-        return tot
-    hlo_sharding = _xla.HloSharding(serialized_proto[0])
-    sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
-                                                   logical_mesh_shape)
-    sharded_shapes = [
-        get_shard_shape(aval, spec)
-        for aval, spec in zip(avals, sharding_specs)
-    ]
-    tot = sum([
-        np.prod(shape) * np.dtype(aval.dtype).itemsize
-        for shape, aval in zip(sharded_shapes, avals)
-    ])
-    return tot
+        sharding_specs = None
+    else:
+        hlo_sharding = _xla.HloSharding(serialized_proto[0])
+        sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
+                                                       logical_mesh_shape)
+    return _compute_vars_size(sharding_specs, intermediate_vars,
+                              logical_mesh_shape)
 
 
 def compute_apply_grad_invar_size(input_sharding_protos, invars,
                                   selected_invars, logical_mesh_shape):
     """Compute the size of parameters only used in apply gradient period.
-    
+
     These parameters are never used in compute gradient period but stored on
     the GPU, so they take memory and influence max_n_succ_stages.
     """
-
-    def get_byte(aval):
-        return np.prod(aval.shape) * np.dtype(aval.dtype).itemsize
-
     avals = [v.aval for v in invars]
     if np.prod(logical_mesh_shape) == 1:
-        tot = sum([
-            get_byte(aval)
-            for (var, aval) in zip(invars, avals)
-            if var in selected_invars
-        ])
-        return tot
-    assert len(input_sharding_protos) == len(invars)
-    sharding_specs = [
-        hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto), aval,
-                                      logical_mesh_shape)
-        for sharding_proto, aval in zip(input_sharding_protos, avals)
-    ]
-    sharded_shapes = [
-        get_shard_shape(aval, spec)
-        for aval, spec in zip(avals, sharding_specs)
-    ]
-    selected_sharded_bytes = [
-        np.prod(shape) * np.dtype(aval.dtype).itemsize
-        for var, shape, aval in zip(invars, sharded_shapes, avals)
-        if var in selected_invars
-    ]
-    tot = sum(selected_sharded_bytes)
-    return tot
+        selected_sharding_specs = None
+        ordered_selected_vars = list(selected_invars)
+    else:
+        assert len(input_sharding_protos) == len(invars)
+        sharding_specs = [
+            hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto),
+                                          aval, logical_mesh_shape)
+            for sharding_proto, aval in zip(input_sharding_protos, avals)
+        ]
+        ordered_selected_vars = []
+        selected_sharding_specs = []
+        for var, spec in zip(invars, sharding_specs):
+            if var in selected_invars:
+                ordered_selected_vars.append(var)
+                selected_sharding_specs.append(spec)
+    return _compute_vars_size(selected_sharding_specs, ordered_selected_vars,
+                              logical_mesh_shape)

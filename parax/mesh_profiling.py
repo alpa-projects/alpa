@@ -509,8 +509,14 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                            num_devices, num_devices_per_node,
                            ("barrier",), only_once=True)
 
+    old_cache_len = len(cache_dict)
     all_cache_hit = True
     save_new = False
+    if op_infos[0][0] in ["all-gather", "all-reduce", "all-to-all", "reduce-scatter"]:
+        run_barrier = True
+    else:
+        run_barrier = False
+
     try:
         for i, op_info in enumerate(op_infos):
             if op_info in cache_dict:
@@ -518,7 +524,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 results.append(cache_dict[op_info])
                 continue
 
-            if all_cache_hit == True:
+            if all_cache_hit == True and run_barrier:
                 # First time, create the nccl communicator
                 run_with_timeout(barrier, timeout=default_timeout)
                 dummy_op_info = ("all-reduce", (op_info[1][0], op_info[1][1], 1))
@@ -529,15 +535,16 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
 
             # Profile one op
             all_cache_hit = False
-            run_with_timeout(barrier, timeout=default_timeout)
+            if run_barrier:
+                run_with_timeout(barrier, timeout=default_timeout)
             mean_time = run_with_timeout(profile_one_hlo_op,
                 (backend, local_devices, host_id, num_devices,
                  num_devices_per_node, op_info), timeout=single_timeout)
             cache_dict[op_info] = mean_time
             results.append(mean_time)
 
-            if host_id == 0 and ((i + 1) % save_every == 0 or
-                                 i == len(op_infos) - 1):
+            if host_id == 0 and (i + 1) % save_every == 0:
+                old_cache_len = len(cache_dict)
                 rank_0_print(host_id, "Save cache...")
                 pickle.dump(cache_dict, open(cache_filename, "wb"))
                 save_new = True
@@ -547,6 +554,11 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     except RuntimeError:
         print(f"Worker {host_id} runtime error", flush=True)
         return None, False, save_new
+
+    if host_id == 0 and len(cache_dict) > old_cache_len:
+        rank_0_print(host_id, "Save cache...")
+        pickle.dump(cache_dict, open(cache_filename, "wb"))
+        save_new = True
 
     return np.array(results), all_cache_hit, save_new
 
@@ -620,8 +632,8 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
     print_used_time(None)
 
     ##### Profile compute cost
-    #dot_cost_dict = profile_dot(device_cluster, cache_filename)
-    #print_used_time("Profile dot")
+    dot_cost_dict = profile_dot(device_cluster, cache_filename)
+    print_used_time("Profile dot")
 
     ##### Profile communication cost
 

@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     run_cmd("mkdir -p tmp")
 
-    comm_size_range = (0, 29)
+    comm_size_range = (0, 30)
     cluster = DeviceCluster()
     # Must use an absolute efs filename because ray actors are on distributed workers.
     prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range,

@@ -160,6 +160,16 @@ class ProfilingResultDatabase:
              mesh_result) in new_database.data.items():
             self.update_one_mesh(cluster_key, mesh_shape, mesh_result)
 
+    def insert_dummy_mesh_result(self, cluster_key, mesh_shape):
+        """Insert dummy results for a mesh."""
+        key = (cluster_key, mesh_shape)
+        assert key not in self.data
+
+        # Copy data from mesh shape (1, 1)
+        src_key = (cluster_key, (1, 1))
+        assert src_key in self.data
+        self.data[key] = self.data[src_key]
+
     def save(self, filename):
         pickle.dump(self.data, open(filename, "wb"))
 

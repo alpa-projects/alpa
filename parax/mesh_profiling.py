@@ -634,6 +634,13 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
 
+    # Load failed batch keys
+    failed_batch_keys_filename = "tmp/failed_batch_keys.pkl"
+    if os.path.exists(failed_batch_keys_filename):
+        failed_batch_keys = pickle.load(open(failed_batch_keys_filename, "rb"))
+    else:
+        failed_batch_keys = set()
+
     prof_database = ProfilingResultDatabase()
     for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
         print(f"Mesh shape: {(num_hosts, num_devices_per_host)}")
@@ -676,15 +683,20 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
             print(f"Batch size: {batch_size}, key: {batch_key}")
 
             # Profile a batch
-            try:
-                batch_result, all_cache_hit, save_new = physical_mesh.profile_hlo_ops(
-                    op_infos[s:s + batch_size],
-                    cache_filename,
-                    single_timeout=(1 + fail_ct) * 100,
-                    batch_timeout=batch_size * 20)
-            except ray.exceptions.RayError:
-                batch_result = None
-                all_cache_hit = False
+            if batch_key not in failed_batch_keys:
+                try:
+                    batch_result, all_cache_hit, save_new = physical_mesh.profile_hlo_ops(
+                        op_infos[s:s + batch_size],
+                        cache_filename,
+                        single_timeout=(1 + fail_ct) * 50,
+                        batch_timeout=batch_size * 20)
+                except ray.exceptions.RayError:
+                    batch_result = None
+                    all_cache_hit = save_new = False
+            else:
+                batch_result = [np.inf] * batch_size
+                all_cache_hit = True
+                save_new = False
 
             if batch_result is not None:
                 results.extend(batch_result)
@@ -695,8 +707,9 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
             else:
                 fail_ct += 1
 
-            if fail_ct > 3:
-                exit(-1)
+            if fail_ct > 5:  # Skip this batch if there are too many errors
+                failed_batch_keys.add(batch_key)
+                pickle.dump(failed_batch_keys, open(failed_batch_keys_filename, "wb"))
 
             # Reboot physical mesh
             if not all_cache_hit:

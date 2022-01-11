@@ -6,7 +6,7 @@ from cupy.cuda import nccl
 import logging
 from operator import attrgetter
 import time
-from typing import Any, List, Union, Sequence, Tuple
+from typing import Any, List, Union, Sequence, Tuple, Optional
 
 import numpy as np
 import ray
@@ -326,11 +326,13 @@ class MeshHostWorker:
         return
 
     ##### Profiling Related Functions #####
-    def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str):
+    def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
+                        single_timeout: float):
         num_devices = self.num_hosts * len(self.local_devices)
         return mesh_profiling.profile_hlo_ops(op_infos, self.backend,
                                               self.local_devices, self.host_id,
-                                              num_devices, cache_filename)
+                                              num_devices, cache_filename,
+                                              single_timeout)
 
     def profile_executable_with_dummy_inputs(self, uuid: int, **kwargs):
         return self.executables[uuid].profile_with_dummy_inputs(
@@ -493,7 +495,7 @@ class PhysicalDeviceMesh:
                 #"XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "XLA_PYTHON_CLIENT_PREALLOCATE": "False",  # Note(Hao): remove this
                 # "NCCL_SHM_DISABLE": "1",
-                # "NCCL_DEBUG": "INFO",
+                #"NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
                 # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
                 # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
@@ -755,13 +757,16 @@ class PhysicalDeviceMesh:
     ##### Profiling related Functions #####
     def profile_hlo_ops(self,
                         op_infos: Sequence[Tuple],
-                        cache_filename,
-                        timeout=None):
+                        cache_filename: str,
+                        single_timeout: Optional[float] = None,
+                        batch_timeout: Optional[float] = None):
         assert self.is_distributed
         tasks = []
         for w in self.workers:
-            tasks.append(w.profile_hlo_ops.remote(op_infos, cache_filename))
-        return ray.get(tasks, timeout=timeout)[0]
+            tasks.append(
+                w.profile_hlo_ops.remote(op_infos, cache_filename,
+                                         single_timeout))
+        return ray.get(tasks, timeout=batch_timeout)[0]
 
     def get_remote_timer(self, timer_name: str):
         if self.is_distributed:

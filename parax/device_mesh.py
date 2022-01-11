@@ -763,7 +763,9 @@ class PhysicalDeviceMesh:
         assert self.is_distributed
         tasks = []
         for w in self.workers:
-            tasks.append(w.profile_hlo_ops.remote(op_infos, cache_filename, single_timeout))
+            tasks.append(
+                w.profile_hlo_ops.remote(op_infos, cache_filename,
+                                         single_timeout))
         return ray.get(tasks, timeout=batch_timeout)[0]
 
     def get_remote_timer(self, timer_name: str):

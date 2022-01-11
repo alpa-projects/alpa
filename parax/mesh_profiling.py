@@ -316,8 +316,13 @@ def rank_0_print(host_id, msg):
         print(msg, flush=True)
 
 
-def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
-                       num_devices_per_node, op_info, only_once=False):
+def profile_one_hlo_op(backend,
+                       local_devices,
+                       host_id,
+                       num_devices,
+                       num_devices_per_node,
+                       op_info,
+                       only_once=False):
     """Profile one HLO operator."""
     if op_info[0] == "dot":
         n, m, k, dtype_str = op_info[1]
@@ -420,7 +425,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
         number = min(max(10, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
     elif op_info[0] == "barrier":
-        replica_groups, dtype, size = (tuple(i for i in range(num_devices)),), "f32", 1
+        replica_groups, dtype, size = (tuple(
+            i for i in range(num_devices)),), "f32", 1
         dtype = to_np_dtype(dtype)
         shapes = [((size,), dtype), ((size,), dtype)]
 
@@ -429,6 +435,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
             out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
                                  channel_id)
             operands[-1] = out
+
         work = number = 1
     else:
         raise NotImplementedError(f"Invalid op: {op_info[0]}")
@@ -487,6 +494,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
 
 def run_with_timeout(func, args=(), kwargs={}, timeout=None):
     ret_value = []
+
     def _target_func():
         ret_value.append(func(*args, **kwargs))
 
@@ -515,14 +523,19 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
         cache_dict = {}
 
     def barrier():
-        profile_one_hlo_op(backend, local_devices, host_id,
-                           num_devices, num_devices_per_node,
-                           ("barrier",), only_once=True)
+        profile_one_hlo_op(backend,
+                           local_devices,
+                           host_id,
+                           num_devices,
+                           num_devices_per_node, ("barrier",),
+                           only_once=True)
 
     old_cache_len = len(cache_dict)
     all_cache_hit = True
     save_new = False
-    if op_infos[0][0] in ["all-gather", "all-reduce", "all-to-all", "reduce-scatter"]:
+    if op_infos[0][0] in [
+            "all-gather", "all-reduce", "all-to-all", "reduce-scatter"
+    ]:
         run_barrier = True
     else:
         run_barrier = False
@@ -537,8 +550,10 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
             if all_cache_hit == True and run_barrier:
                 # First time, create the nccl communicator
                 run_with_timeout(barrier, timeout=default_timeout)
-                dummy_op_info = ("all-reduce", (op_info[1][0], op_info[1][1], 1))
-                mean_time = run_with_timeout(profile_one_hlo_op,
+                dummy_op_info = ("all-reduce", (op_info[1][0], op_info[1][1],
+                                                1))
+                mean_time = run_with_timeout(
+                    profile_one_hlo_op,
                     (backend, local_devices, host_id, num_devices,
                      num_devices_per_node, dummy_op_info, True),
                     timeout=default_timeout)
@@ -547,9 +562,11 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
             all_cache_hit = False
             if run_barrier:
                 run_with_timeout(barrier, timeout=default_timeout)
-            mean_time = run_with_timeout(profile_one_hlo_op,
+            mean_time = run_with_timeout(
+                profile_one_hlo_op,
                 (backend, local_devices, host_id, num_devices,
-                 num_devices_per_node, op_info), timeout=single_timeout)
+                 num_devices_per_node, op_info),
+                timeout=single_timeout)
             cache_dict[op_info] = mean_time
             results.append(mean_time)
 
@@ -731,7 +748,8 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
 
             if fail_ct > 5:  # Skip this batch if there are too many errors
                 failed_batch_keys.add(batch_key)
-                pickle.dump(failed_batch_keys, open(failed_batch_keys_filename, "wb"))
+                pickle.dump(failed_batch_keys,
+                            open(failed_batch_keys_filename, "wb"))
 
             # Reboot physical mesh
             if not all_cache_hit:

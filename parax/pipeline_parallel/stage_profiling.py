@@ -9,7 +9,8 @@ import ray
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
 import tqdm
-from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, new_jaxpr_eqn, named_call_p)
+from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, new_jaxpr_eqn,
+                      named_call_p)
 from jax.interpreters import pxla
 import jax.numpy as jnp
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
@@ -553,8 +554,8 @@ def generate_stage_info(all_layers,
         (apply_grad_layers, apply_grad_donation,
          apply_grad_outvars) = apply_grad_info
         merged_apply = merge_computation_jaxprs(
-            [layer.closed_jaxpr() for layer in apply_grad_layers], apply_grad_outvars,
-            None, apply_grad_donation)
+            [layer.closed_jaxpr() for layer in apply_grad_layers],
+            apply_grad_outvars, None, apply_grad_donation)
 
     outvars = OrderedSet(merged.jaxpr.outvars)
     tot_donation = [
@@ -590,7 +591,9 @@ def generate_stage_info(all_layers,
         apply_info = (merged_apply.jaxpr.invars, only_for_apply)
         new_eqns = []
         gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
-        for stage_name, closed_jaxpr in zip(["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX], [merged, merged_apply]):
+        for stage_name, closed_jaxpr in zip(
+            ["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX],
+            [merged, merged_apply]):
             mapped_invars = [
                 gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.invars
             ]

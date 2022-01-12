@@ -78,12 +78,13 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(cls,  # noqa
-             task_uuid,
-             output_uuids,
-             set_empty_buffer,
-             allgather_uuid=None,
-             info=""):
+    def Recv(
+            cls,  # noqa
+            task_uuid,
+            output_uuids,
+            set_empty_buffer,
+            allgather_uuid=None,
+            info=""):
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
@@ -95,7 +96,7 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Free(cls, input_uuids, info=""): # noqa
+    def Free(cls, input_uuids, info=""):  # noqa
         return cls(opcode=PipelineInstType.FREE,
                    task_uuid=None,
                    input_uuids=input_uuids,
@@ -401,8 +402,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             # numpy for (arg, device)
             accumulated_uuids = [[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
-                for uuid in list(uuids)]
-                for uuids in list(accumulated_uuids)]
+                for uuid in list(uuids)
+            ]
+                                 for uuids in list(accumulated_uuids)]
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(accumulated_uuids))
             accumulated_uuid_lists[worker] = accumulated_uuids

@@ -74,8 +74,7 @@ class VirtualDistributedArray:
             if self.replicated:
                 mesh_flat = np.arange(self.device_mesh.num_devices)
                 self._tile_assignments = np.reshape(
-                    mesh_flat,
-                    self.tile_shape + [self.device_mesh.num_devices])
+                    mesh_flat, self.tile_shape + [self.device_mesh.num_devices])
             else:
                 # Generate tile assignments using proto
                 proto = self._sharding_spec_proto
@@ -238,11 +237,8 @@ class TileSlice(Tile):
     offset: List[slice]
 
     def __init__(self, tile, offset):
-        super().__init__(tile.index,
-                         tile.index_flat,
-                         tile.replica_device_ids,
-                         tile.replica_device_strs,
-                         tile.indices)
+        super().__init__(tile.index, tile.index_flat, tile.replica_device_ids,
+                         tile.replica_device_strs, tile.indices)
         self.offset = offset
 
     @property

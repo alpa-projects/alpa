@@ -11,13 +11,15 @@ ops = xc.ops
 
 
 class PipelineMarkerTest(unittest.TestCase):
+
     def setUp(self):
         np.random.seed(1337)
 
     def test_xla_graph(self):
         c = xc.XlaBuilder("xla_graph_with_marker")
 
-        parameter_shape = xc.Shape.array_shape(np.dtype(np.float32), (10, 8), (0, 1))
+        parameter_shape = xc.Shape.array_shape(np.dtype(np.float32), (10, 8),
+                                               (0, 1))
         x = ops.Parameter(c, 0, parameter_shape)
         y = ops.Parameter(c, 1, parameter_shape)
 

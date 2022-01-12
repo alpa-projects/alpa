@@ -86,12 +86,10 @@ class PipelineSchedule(metaclass=ABCMeta):
     def pprint_schedule(self, to_print=False):
         """Pretty print the schedule."""
         printout = "\n"
-        device_str = " ".join(
-            [f"d{d:<8}" for d in range(self.num_mesh)])
+        device_str = " ".join([f"d{d:<8}" for d in range(self.num_mesh)])
         printout = printout + f"Clock k : {device_str} \n"
         for clock, scheds in enumerate(self.schedules):
-            sched_str = " ".join(
-                [f"{str(sched):<8}" for sched in scheds])
+            sched_str = " ".join([f"{str(sched):<8}" for sched in scheds])
             printout = printout + f"Clock {clock:<2}: {sched_str} \n"
         if to_print:
             logger.info(printout)

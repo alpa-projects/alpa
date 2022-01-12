@@ -17,8 +17,9 @@ import ray
 
 from parax import DeviceCluster
 from parax.pipeline_parallel.stage_profiling import (
-    ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info, compile_all,
-    profile_all, compute_intermediate_size, compute_apply_grad_invar_size)
+    ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info,
+    compile_all, profile_all, compute_intermediate_size,
+    compute_apply_grad_invar_size)
 from parax.util import get_ray_namespace_str, OrderedSet
 from parax.testing import (BertLayerModel, create_train_state,
                            get_bert_layer_train_step)
@@ -121,17 +122,11 @@ class StageConstructUtilTest(unittest.TestCase):
         return (jax_pipeline_layers, donation_mapping, acc_grad_outvars,
                 jax_apply_layers, apply_grad_donation, global_outvars)
 
-    def _assert_avals_allmatch(self, aval_seq_a, aval_seq_b):
-        assert len(aval_seq_a) == len(aval_seq_b), f"{len(aval_seq_a)} != {len(aval_seq_b)}"
-        aval_seq_a = sorted(aval_seq_a, key=_aval_key)
-        aval_seq_b = sorted(aval_seq_b, key=_aval_key)
-        for a, b in zip(aval_seq_a, aval_seq_b):
-            assert a.shape == b.shape and a.dtype == b.dtype
-
-    def _test_generate_stage_config_indices(self, info, indices):
+    def _generate_stage_info(self, info, start, end):
         (compute_layers, donation_mapping, compute_outvars, apply_grad_layers,
          apply_grad_donate_map, global_outvars) = info
         # create other configs
+        indices = list(range(start, end + 1))
         compute_layer_indices = []
         for idx in indices:
             compute_layer_indices.append(idx)
@@ -143,7 +138,34 @@ class StageConstructUtilTest(unittest.TestCase):
                              global_outvars)
         intermediate_vars, stage_config = generate_stage_info(
             compute_layers, compute_layer_indices, donation_mapping,
-            compute_outvars, "tmp", 0, apply_grad_config)
+            compute_outvars, "tmp", end - start, apply_grad_config)
+        return intermediate_vars, stage_config
+
+    def _assert_avals_allmatch(self, aval_seq_a, aval_seq_b):
+        assert len(aval_seq_a) == len(
+            aval_seq_b), f"{len(aval_seq_a)} != {len(aval_seq_b)}"
+        aval_seq_a = sorted(aval_seq_a, key=_aval_key)
+        aval_seq_b = sorted(aval_seq_b, key=_aval_key)
+        for a, b in zip(aval_seq_a, aval_seq_b):
+            assert a.shape == b.shape and a.dtype == b.dtype
+
+    def _test_generate_stage_config_indices(self, info, start, end):
+        (compute_layers, donation_mapping, compute_outvars, apply_grad_layers,
+         apply_grad_donate_map, global_outvars) = info
+        # create other configs
+        indices = list(range(start, end + 1))
+        compute_layer_indices = []
+        for idx in indices:
+            compute_layer_indices.append(idx)
+            compute_layer_indices.append(len(compute_layers) - idx - 1)
+        compute_layer_indices = sorted(compute_layer_indices)
+        apply_grad_indices = indices
+        apply_grad_selected = [apply_grad_layers[i] for i in apply_grad_indices]
+        apply_grad_config = (apply_grad_selected, apply_grad_donate_map,
+                             global_outvars)
+        intermediate_vars, stage_config = self._generate_stage_info(
+            compute_layers, compute_layer_indices, donation_mapping,
+            compute_outvars, "tmp", end - start, apply_grad_config)
         aval = lambda x: [v.aval for v in x]
         # check intermediate vars. It is only to compute intermediate size, so
         # only check aval
@@ -247,14 +269,28 @@ class StageConstructUtilTest(unittest.TestCase):
         (closed_jaxpr, output_tree,
          donated_invars) = self._create_n_layer_jaxpr_with_donation(n_layers=4)
         info = self._post_process_jaxpr(closed_jaxpr, donated_invars)
-        self._test_generate_stage_config_indices(info, [0])
-        self._test_generate_stage_config_indices(info, [0, 1])
-        self._test_generate_stage_config_indices(info, [1, 2])
-        self._test_generate_stage_config_indices(info, [2, 3])
+        self._test_generate_stage_config_indices(info, 0, 0)
+        self._test_generate_stage_config_indices(info, 3, 3)
+        self._test_generate_stage_config_indices(info, 0, 1)
+        self._test_generate_stage_config_indices(info, 1, 2)
+        self._test_generate_stage_config_indices(info, 2, 3)
+        self._test_generate_stage_config_indices(info, 0, 3)
+
+    def test_compile_all(self):
+        (closed_jaxpr, output_tree,
+         donated_invars) = self._create_n_layer_jaxpr_with_donation(n_layers=4)
+        info = self._post_process_jaxpr(closed_jaxpr, donated_invars)
+        stages = []
+        test_intervals = [(0, 0), (3, 3), (0, 1), (1, 2), (2, 3), (0, 3)]
+        # TODO(yonghao): compile all and check:
+        # 1. number of all-reduce in each compiled model proto
+        # 2. tensor's sharding protos when force batch dim to mesh dim
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(StageConstructUtilTest("test_generate_stage_config"))
+    suite.addTest(StageConstructUtilTest("test_compile_all"))
     return suite
 
 

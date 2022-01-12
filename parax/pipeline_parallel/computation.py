@@ -124,8 +124,8 @@ class JaxPipelineComputation(PipelineComputation):
                    invars=closed_jaxpr.jaxpr.invars,
                    outvars=closed_jaxpr.jaxpr.outvars,
                    eqns=closed_jaxpr.eqns,
-                   consts_dir=dict(zip(closed_jaxpr.jaxpr.constvars,
-                                       closed_jaxpr.consts)))
+                   consts_dir=dict(
+                       zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)))
 
 
 @dataclass
@@ -376,9 +376,10 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
 
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "start":
-            assert current_computation is None, ("Defining a pipeline computation "
-                                                 "inside a pipeline computation is "
-                                                 "not allowed.")
+            assert current_computation is None, (
+                "Defining a pipeline computation "
+                "inside a pipeline computation is "
+                "not allowed.")
             current_computation = JaxPipelineComputation(
                 name=eqn.params["name"])
             for var in eqn.invars:
@@ -515,10 +516,14 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
 
         for eqn in computation.eqns[1:-1]:
             new_computation.eqns.append(
-                eqn._replace(invars=[get_var_mapping(computation_var_mapping, var)
-                                     for var in eqn.invars],
-                             outvars=[get_var_mapping(computation_var_mapping, var)
-                                      for var in eqn.outvars]))
+                eqn._replace(invars=[
+                    get_var_mapping(computation_var_mapping, var)
+                    for var in eqn.invars
+                ],
+                             outvars=[
+                                 get_var_mapping(computation_var_mapping, var)
+                                 for var in eqn.outvars
+                             ]))
 
         pipeline_end_invars = [
             get_var_mapping(computation_var_mapping, var)
@@ -755,21 +760,25 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_computations_from_protos(jax_computations, computation_protos,
-                                      donate_invars, donatable_lists,
-                                      acc_grad_outvars, strategy_config):
+def generate_computations_from_protos(jax_computations, computation_names,
+                                      computation_protos, donate_invars,
+                                      donatable_lists, acc_grad_outvars,
+                                      strategy_config):
     """Generate XLA computation from protos."""
+    proto_dict = {
+        name: proto
+        for name, proto in zip(computation_names, computation_protos)
+    }
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto,
+            auto_sharded_hlo_proto=proto_dict[computation.name],
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
             acc_grad_outvars=acc_grad_outvars,
             donatables=donatables)
-        for computation, proto, donate_invars, donatables in zip(
-            jax_computations, computation_protos, donate_invars,
-            donatable_lists)
+        for computation, donate_invars, donatables in zip(
+            jax_computations, donate_invars, donatable_lists)
     ]
     return computations
 

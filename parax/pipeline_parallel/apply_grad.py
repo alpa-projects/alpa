@@ -18,6 +18,7 @@ logger.setLevel(logging.INFO)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
+APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
 
 
 def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
@@ -134,7 +135,8 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                     pipe_start.outvars +
                     # pylint: disable=cell-var-from-loop
                     map(lambda x: grad_in_after_pipe[x], to_acc),
-                    pipe_start.params['name'], pipe_start.params['mark_type'])
+                    pipe_start.params['name'],
+                    pipe_start.params['mark_type'])
                 new_eqns.append(new_pipe_start)
                 # add normal eqns
                 new_eqns.extend(pipe_eqns)
@@ -149,7 +151,8 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                     # pylint: disable=cell-var-from-loop
                     eqn.invars + map(lambda x: grad_out_before_pipe[x], to_acc),
                     eqn.outvars + map(lambda x: grad_outs[x], to_acc),
-                    eqn.params['name'], eqn.params['mark_type'])
+                    eqn.params['name'],
+                    eqn.params['mark_type'])
                 last_pipe_end = new_pipe_end
                 new_eqns.append(new_pipe_end)
                 pipe_start = None
@@ -471,7 +474,8 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
                 new_map[invar] = gensym_fn(invar.aval)
         for outvar in jaxpr.jaxpr.outvars:
             if not isinstance(outvar, Var):
-                raise NotImplementedError("outvar of apply grad cannot be literal")
+                raise NotImplementedError(
+                    "outvar of apply grad cannot be literal")
             if outvar in jaxpr.jaxpr.invars:
                 if outvar not in outvar_map:
                     outvar_map[outvar] = gensym_fn(outvar.aval)
@@ -482,7 +486,7 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
             map(lambda x: get_var_mapping(mask, x), jaxpr.jaxpr.invars))
         new_outvars = list(
             map(lambda x: get_var_mapping(outvar_map, x), jaxpr.jaxpr.outvars))
-        name = str(i) + '_apply_grad'
+        name = str(i) + APPLY_GRAD_MARKER_SUFFIX
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,
                                               name=name,

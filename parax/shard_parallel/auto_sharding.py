@@ -310,7 +310,7 @@ def compile_with_search(backend: xla_extension.Client,
         logical_mesh = logical_mesh_choices[0]
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
         if multiple_stages:
-            hlo_stages = get_auto_sharded_hlo_stages()
+            hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
             hooked_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
         from parax.mesh_executable import NormalMeshDriverExecutable
@@ -362,9 +362,9 @@ def compile_with_search(backend: xla_extension.Client,
     if return_mode == "executable":
         return compiled, strategy_config
     elif return_mode == "stage_protos":
-        return hlo_stages, strategy_config
+        return hlo_stage_names, hlo_stages, strategy_config
     elif return_mode == "stage_and_hook_protos":
-        return hlo_stages, hooked_proto, strategy_config
+        return hlo_stage_names, hlo_stages, hooked_proto, strategy_config
     else:
         raise ValueError("Invalid return mode:" + return_mode)
 
@@ -898,14 +898,17 @@ def _call_solver_serialized_args(
 
 # Auto-sharded pipeline stages.
 # These global variables are used to receive values from XLA c++ passes.
+auto_sharded_hlo_stage_names = None
 auto_sharded_hlo_stages = None
 
 hooked_sharding_protos = None
 
 
-def set_auto_sharded_hlo_stages(hlo_module_protos: Sequence[bytes]):
+def set_auto_sharded_hlo_stages(stages: Tuple[Sequence[str], Sequence[bytes]]):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
-    global auto_sharded_hlo_stages
+    hlo_module_names, hlo_module_protos = stages
+    global auto_sharded_hlo_stage_names, auto_sharded_hlo_stages
+    auto_sharded_hlo_stage_names = hlo_module_names
     auto_sharded_hlo_stages = hlo_module_protos
 
 
@@ -916,7 +919,7 @@ def set_hooked_sharding_protos(hlo_module_proto: bytes):
 
 def get_auto_sharded_hlo_stages() -> Sequence[bytes]:
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
-    return auto_sharded_hlo_stages
+    return auto_sharded_hlo_stage_names, auto_sharded_hlo_stages
 
 
 def get_hooked_sharding_protos() -> bytes:

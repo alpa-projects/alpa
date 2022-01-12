@@ -41,8 +41,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         ), "no physical mesh, cannot do auto gpipe without cached cost"
 
     if not isinstance(devices, VirtualPhysicalMesh):
-        raise RuntimeError(f"Unrecognized type of `devices`, got: {type(devices)},"
-                           "expected type: `VirtualPhysicalMesh`.")
+        raise RuntimeError(
+            f"Unrecognized type of `devices`, got: {type(devices)},"
+            "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
     num_micro_batches = global_config.num_micro_batches
@@ -72,6 +73,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
+    assert (len(jax_pipeline_layers) == len(
+        set(layer.name for layer in jax_pipeline_layers))
+           ), "All layers must have unique names."
     jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_layers, acc_grad_invars, acc_grad_outvars)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
@@ -151,10 +155,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_micro_batches)
     else:
-        raise RuntimeError(
-            f"Unrecognized pipeline parallel schedule. "
-            f"Got {global_config.pipeline_parallel_schedule}. "
-            f"Available ones are `gpipe` or `1f1b`.")
+        raise RuntimeError(f"Unrecognized pipeline parallel schedule. "
+                           f"Got {global_config.pipeline_parallel_schedule}. "
+                           f"Available ones are `gpipe` or `1f1b`.")
     if logger.level == logging.DEBUG:
         logger.debug(schedule.pprint_schedule(to_print=False))
 
@@ -225,7 +228,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1)
-    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v) # noqa
+    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v)  # noqa
     compile_intermediate = [None] * num_meshes
     total_flops = 0
     default_autosharding_option = global_config.default_autosharding_option
@@ -283,13 +286,14 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     if global_config.pipeline_distributed_compile:
         for _ in range(num_meshes):
-            mesh_idx, (computation_protos,
+            mesh_idx, (computation_names, computation_protos,
                        strategy_config) = compile_workers.get_next_unordered()
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_protos(
-                jax_computations, computation_protos, computation_donate_invars,
-                donatable_dict[mesh_idx], acc_grad_outvars, strategy_config)
+                jax_computations, computation_names, computation_protos,
+                computation_donate_invars, donatable_dict[mesh_idx],
+                acc_grad_outvars, strategy_config)
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage

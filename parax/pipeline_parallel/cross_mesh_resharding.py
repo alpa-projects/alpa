@@ -87,8 +87,8 @@ class EagerReshardingTask(ReshardingTask):
                 ]
                 device_str_to_buf_map[
                     receiver] = self.same_destination_group_send_recv(
-                    src_array, senders, src_tiles, dst_tile,
-                    indices_in_dst_tiles, receiver)
+                        src_array, senders, src_tiles, dst_tile,
+                        indices_in_dst_tiles, receiver)
         # Assemble the buffer based on the order present in indices
         for i, device_str in enumerate(
                 self.task_spec.dst.device_mesh.device_strs):
@@ -119,9 +119,10 @@ class EagerReshardingTask(ReshardingTask):
                                      dtype=dtype)
         # Put an empty buffer first.
         ray.get(
-            receiver_worker.put_non_zero_buffer.remote(
-                result_buf.uuid, result_buf.device_id, dst_tile.tile_shape,
-                result_buf.dtype))
+            receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
+                                                       result_buf.device_id,
+                                                       dst_tile.tile_shape,
+                                                       result_buf.dtype))
         receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
             receiver]
         for i, sender in enumerate(senders):
@@ -323,13 +324,13 @@ class SymbolicReshardingTask(ReshardingTask):
             receiver = self.dst_mesh.device_strs[flatten_id]
             participant_worker = self.collective_group.device_str_to_mesh_worker_map[
                 receiver]
-            _, _, group_idx, _ = self._allgather_receiver_step_and_offset(receiver)
+            _, _, group_idx, _ = self._allgather_receiver_step_and_offset(
+                receiver)
             post_allgather_indices = self._indices_in_dst_post_allgather(
                 indices, receiver, False)
             group_spec = self._allgather_tasks[participant_worker].setdefault(
                 group_idx,
-                ReshardingAllGatherSpec(device_ids=[],
-                                        tensor_slices=[]))
+                ReshardingAllGatherSpec(device_ids=[], tensor_slices=[]))
             group_spec.device_ids.append(flatten_id %
                                          self.dst_mesh.num_devices_per_host)
             group_spec.tensor_slices.append(post_allgather_indices)
@@ -656,7 +657,9 @@ class ReshardingTaskSpec:
     def strategy(self):
         """Return the communication strategy for this resharding task spec."""
         if not self._strategy:
-            raise RuntimeError("Generate and set strategy in the cross-mesh communicator first.")
+            raise RuntimeError(
+                "Generate and set strategy in the cross-mesh communicator first."
+            )
         return self._strategy
 
     def get_participant_device_strs(self):
@@ -732,7 +735,8 @@ class CrossMeshCommunicator:
         # Generate a send/recv strategies for all resharding tasks by looking at their load.
         for _, _, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
-                strategy = self._generate_send_recv_resharding_strategy_by_loads(spec)
+                strategy = self._generate_send_recv_resharding_strategy_by_loads(
+                    spec)
                 spec.set_resharding_strategy(strategy)
 
     @property
@@ -806,7 +810,8 @@ class CrossMeshCommunicator:
                 assert len(new_mapping) < 3, "Only support 1D and 2D mesh"
 
                 dst_sharding_spec = pxla.ShardingSpec(new_sharding, new_mapping)
-                logger.debug(f"output sharding spec rewritten to {dst_sharding_spec}")
+                logger.debug(
+                    f"output sharding spec rewritten to {dst_sharding_spec}")
                 extra_slice = (dim, shard_axes[dim], extra_sharding)
                 break
             dim += 1

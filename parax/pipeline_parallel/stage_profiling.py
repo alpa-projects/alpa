@@ -9,7 +9,8 @@ import ray
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
 import tqdm
-from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, new_jaxpr_eqn, named_call_p)
+from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, new_jaxpr_eqn,
+                      named_call_p)
 from jax.interpreters import pxla
 import jax.numpy as jnp
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
@@ -18,6 +19,7 @@ from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysi
 from parax.global_env import global_config
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
+from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
     merge_computation_jaxprs, rearrange_vars)
@@ -132,7 +134,7 @@ class CompileWorker:
             "record_file": None,
         }
         try:
-            _, (protos, hooked_proto,
+            _, (proto_names, protos, hooked_proto,
                 strategy_config) = self.compile_proto_with_search(
                     stage_id, proto, jaxpr_args, autosharding_option,
                     mesh_kwargs)
@@ -152,6 +154,7 @@ class CompileWorker:
              acc_grad_proto, logical_mesh.num_devices)
 
         if len(protos) > 1:
+            assert proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
             apply_grad_proto = protos[1]
             apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
                 apply_grad_proto, logical_mesh.num_devices)
@@ -555,8 +558,8 @@ def generate_stage_info(all_layers,
         (apply_grad_layers, apply_grad_donation,
          apply_grad_outvars) = apply_grad_info
         merged_apply = merge_computation_jaxprs(
-            [layer.closed_jaxpr() for layer in apply_grad_layers], apply_grad_outvars,
-            None, apply_grad_donation)
+            [layer.closed_jaxpr() for layer in apply_grad_layers],
+            apply_grad_outvars, None, apply_grad_donation)
 
     outvars = OrderedSet(merged.jaxpr.outvars)
     tot_donation = [
@@ -592,7 +595,9 @@ def generate_stage_info(all_layers,
         apply_info = (merged_apply.jaxpr.invars, only_for_apply)
         new_eqns = []
         gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
-        for idx, closed_jaxpr in enumerate([merged, merged_apply]):
+        for stage_name, closed_jaxpr in zip(
+            ["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX],
+            [merged, merged_apply]):
             mapped_invars = [
                 gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.invars
             ]
@@ -602,18 +607,18 @@ def generate_stage_info(all_layers,
             new_eqns.append(
                 mark_pipeline_jaxpreqn(closed_jaxpr.jaxpr.invars,
                                        mapped_invars,
-                                       name=str(idx),
+                                       name=stage_name,
                                        mark_type="start"))
             new_eqns.append(
                 new_jaxpr_eqn(mapped_invars,
                               mapped_outvars,
                               named_call_p,
-                              params=dict(name=str(idx),
+                              params=dict(name=stage_name,
                                           call_jaxpr=closed_jaxpr.jaxpr)))
             new_eqns.append(
                 mark_pipeline_jaxpreqn(mapped_outvars,
                                        closed_jaxpr.jaxpr.outvars,
-                                       name=str(idx),
+                                       name=stage_name,
                                        mark_type="end"))
 
         all_invars = OrderedSet(new_invars).union(

@@ -13,8 +13,8 @@ from parax.global_env import global_config
 from parax.pipeline_parallel.computation import (JaxPipelineComputation,
                                                  merge_computation_jaxprs)
 from parax.pipeline_parallel.layer_stats import eqn_flops
-from parax.pipeline_parallel.stage_profiling import (
-    generate_stage_info, compile_all, profile_all)
+from parax.pipeline_parallel.stage_profiling import (generate_stage_info,
+                                                     compile_all, profile_all)
 from parax.timer import timers
 from parax.util import OrderedSet
 
@@ -62,8 +62,10 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
                             #   necessary. It can be optimized by sorting
                             #   the logical mesh shapes.
                             for n_config in range(num_autosharding_configs):
-                                if s - 1 <= max_n_succ_stages[i, k - 1, m, n_config]:
-                                    stage_cost = compute_cost[i, k - 1, m, n_config]
+                                if s - 1 <= max_n_succ_stages[i, k - 1, m,
+                                                              n_config]:
+                                    stage_cost = compute_cost[i, k - 1, m,
+                                                              n_config]
                                     new_cost = f[s - 1, k, j -
                                                  n_submesh_devices] + stage_cost
                                     if (stage_cost <= max_stage_cost and
@@ -196,9 +198,10 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
             if num_devices % mp_size == 0:
                 dp_size = num_devices // mp_size
                 if batch_size % dp_size == 0:
-                    results.append(
-                        (virtual_submesh.get_logical_mesh((dp_size, mp_size)),
-                         {"force_batch_dim_to_mesh_dim": 0}))
+                    results.append((virtual_submesh.get_logical_mesh(
+                        (dp_size, mp_size)), {
+                            "force_batch_dim_to_mesh_dim": 0
+                        }))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
@@ -262,7 +265,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 + layer_flops_prefix_sum[2 * num_layers - start] -
                 layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
             if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
-                    (computation_source_ratio < flops_ratio / (1 + tolerance))):
+                (computation_source_ratio < flops_ratio / (1 + tolerance))):
                 continue
             layer_indices = (
                 indices[start:end + 1] +

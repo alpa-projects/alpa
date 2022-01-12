@@ -278,9 +278,9 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                                   compute_costs_avg + 5)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
-    LAYER_HEAVY_OP_LOWER_BOUND = 3 # noqa
+    LAYER_HEAVY_OP_LOWER_BOUND = 3  # noqa
     if sum(non_trivial) / layer_num < LAYER_HEAVY_OP_LOWER_BOUND:
-        LAYER_HEAVY_OP_LOWER_BOUND = int(sum(non_trivial) / layer_num) # noqa
+        LAYER_HEAVY_OP_LOWER_BOUND = int(sum(non_trivial) / layer_num)  # noqa
         logger.warning(
             "Too few non-trivial ops (dot, conv), which may influence"
             " auto-sharding performance")
@@ -412,8 +412,11 @@ def layer_level_jaxpr_transformation(fn: Callable,
                 layer_num = search_layer_num(jaxpr, eps, layer_eps)
             costs = get_layer_construction_costs(jaxpr,
                                                  cost_criteria=cost_criteria)
-            sliced_eqns, _ = cluster_jaxpr_by_cost(
-                jaxpr, layer_num, eps, costs, cost_criteria=cost_criteria)
+            sliced_eqns, _ = cluster_jaxpr_by_cost(jaxpr,
+                                                   layer_num,
+                                                   eps,
+                                                   costs,
+                                                   cost_criteria=cost_criteria)
         else:
             if lift_markers:
                 jaxpr = lift_pipeline_marker(jaxpr)

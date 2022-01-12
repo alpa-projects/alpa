@@ -149,7 +149,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     for i in range(niter):
         state = train_step(state, batch, rngkey)
 
-    latencies = executable.get_execution_time_costs(warmup=2)
+    latencies = executable.get_execution_time_costs(warmup=1)
     print_used_time("Benchmark")
 
     mem_allocated = executable.get_memory_allocated()

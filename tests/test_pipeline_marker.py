@@ -12,8 +12,8 @@ class PipelineMarkerTest(unittest.TestCase):
 
     def test_xla_graph(self):
         c = xc.XlaBuilder("simple_graph")
-        
-        parameter_shape = xc.Shape.array_shape(np.float32, (10, 8), (0, 1))
+
+        parameter_shape = xc.Shape.array_shape(np.dtype(np.float32), (10, 8), (0, 1))
         x = ops.Parameter(c, 0, parameter_shape)
         y = ops.Parameter(c, 1, parameter_shape)
 

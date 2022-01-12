@@ -590,7 +590,7 @@ def generate_stage_info(all_layers,
         apply_info = (merged_apply.jaxpr.invars, only_for_apply)
         new_eqns = []
         gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
-        for idx, closed_jaxpr in enumerate([merged, merged_apply]):
+        for stage_name, closed_jaxpr in zip(["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX], [merged, merged_apply]):
             mapped_invars = [
                 gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.invars
             ]
@@ -600,18 +600,18 @@ def generate_stage_info(all_layers,
             new_eqns.append(
                 mark_pipeline_jaxpreqn(closed_jaxpr.jaxpr.invars,
                                        mapped_invars,
-                                       name=str(idx),
+                                       name=stage_name,
                                        mark_type="start"))
             new_eqns.append(
                 new_jaxpr_eqn(mapped_invars,
                               mapped_outvars,
                               named_call_p,
-                              params=dict(name=str(idx),
+                              params=dict(name=stage_name,
                                           call_jaxpr=closed_jaxpr.jaxpr)))
             new_eqns.append(
                 mark_pipeline_jaxpreqn(mapped_outvars,
                                        closed_jaxpr.jaxpr.outvars,
-                                       name=str(idx),
+                                       name=stage_name,
                                        mark_type="end"))
 
         all_invars = OrderedSet(new_invars).union(

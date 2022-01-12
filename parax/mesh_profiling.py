@@ -42,9 +42,11 @@ class MeshProfilingResult:
 
     def make_monotonic(self):
         """Make the bandwidth monotonically increase along with the communication size."""
-        for cost_dict in [self.all_gather_cost_dict, self.all_reduce_cost_dict,
-                          self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
-                          self.dot_cost_dict]:
+        for cost_dict in [
+                self.all_gather_cost_dict, self.all_reduce_cost_dict,
+                self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
+                self.dot_cost_dict
+        ]:
             new_cost_dict = {}
 
             for key, value in cost_dict.items():
@@ -63,7 +65,9 @@ class MeshProfilingResult:
                     else:
                         new_times[i] = sizes[i] / bandwidth[i]
 
-                new_value = [(value[i][0], new_times[i]) for i in range(len(value))]
+                new_value = [
+                    (value[i][0], new_times[i]) for i in range(len(value))
+                ]
                 new_cost_dict[key] = new_value
 
             cost_dict.update(new_cost_dict)
@@ -71,9 +75,11 @@ class MeshProfilingResult:
     def sort_cost_lists(self):
         """Sort the items in the list from smallest to largest. This is the format required
         by the HLO cost model in c++."""
-        for cost_dict in [self.all_gather_cost_dict, self.all_reduce_cost_dict,
-                          self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
-                          self.dot_cost_dict]:
+        for cost_dict in [
+                self.all_gather_cost_dict, self.all_reduce_cost_dict,
+                self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
+                self.dot_cost_dict
+        ]:
             new_cost_dict = {}
 
             for key, value in cost_dict.items():

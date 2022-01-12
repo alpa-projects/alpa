@@ -571,10 +571,10 @@ def cluster_layers_and_slice_mesh(
                     mesh, submesh_choices, autosharding_configs, layers,
                     donation_mapping, global_outvars, jax_apply_layers,
                     apply_grad_global_info)
-            best_cost, solution = dp(num_layers, mesh.num_devices,
-                                     num_micro_batches, submesh_choices,
-                                     num_autosharding_configs, compute_cost,
-                                     max_n_succ_stages)
+            _, solution = dp(num_layers, mesh.num_devices,
+                             num_micro_batches, submesh_choices,
+                             num_autosharding_configs, compute_cost,
+                             max_n_succ_stages)
 
             # Parse solution
             forward_stage_layer_ids = [
@@ -596,7 +596,6 @@ def cluster_layers_and_slice_mesh(
             ]
 
             # Print and store the results
-            print("Result cost:", best_cost)
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
             print("Result meshes:", submesh_shapes)
             print("Result logical_mesh_shapes:", logical_mesh_shapes)

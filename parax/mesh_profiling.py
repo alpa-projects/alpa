@@ -9,7 +9,7 @@ import numpy as np
 from jax.lib import xla_client, xla_bridge, xla_extension
 import ray
 
-from parax.util import GB, print_used_time, XlaPassContext
+from parax.util import GB, print_used_time, XlaPassContext, to_str_round
 
 ops = xla_client.ops
 
@@ -38,7 +38,56 @@ class MeshProfilingResult:
         self.op_cost_dict = []
 
     def update(self, new_mesh_result):
-        pass
+        raise NotImplementedError
+
+    def make_monotonic(self):
+        """Make the bandwidth monotonically increase along with the communication size."""
+        for cost_dict in [
+                self.all_gather_cost_dict, self.all_reduce_cost_dict,
+                self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
+                self.dot_cost_dict
+        ]:
+            new_cost_dict = {}
+
+            for key, value in cost_dict.items():
+                sizes = np.array([x[0] for x in value])
+                times = np.array([x[1] for x in value])
+
+                # make bandwidth monotonically increasing
+                bandwidth = sizes / times
+                for i in range(1, len(bandwidth)):
+                    bandwidth[i] = max(bandwidth[i], bandwidth[i - 1])
+
+                new_times = np.empty_like(times)
+                for i in range(len(times)):
+                    if sizes[i] == 0 or bandwidth[i] == 0:
+                        new_times[i] = value[i][1]
+                    else:
+                        new_times[i] = sizes[i] / bandwidth[i]
+
+                new_value = [
+                    (value[i][0], new_times[i]) for i in range(len(value))
+                ]
+                new_cost_dict[key] = new_value
+
+            cost_dict.update(new_cost_dict)
+
+    def sort_cost_lists(self):
+        """Sort the items in the list from smallest to largest. This is the format required
+        by the HLO cost model in c++."""
+        for cost_dict in [
+                self.all_gather_cost_dict, self.all_reduce_cost_dict,
+                self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
+                self.dot_cost_dict
+        ]:
+            new_cost_dict = {}
+
+            for key, value in cost_dict.items():
+                sizes = [x[0] for x in value]
+                indices = np.argsort(sizes)
+                new_cost_dict[key] = [value[i] for i in indices]
+
+            cost_dict.update(new_cost_dict)
 
     def estimate_all_gather(self, group, size, dtype):
         ret = (
@@ -53,53 +102,6 @@ class MeshProfilingResult:
                                     self.all_reduce_cost_dict) -
             self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict))
         return ret
-
-    def multiply_scale(self, factor):
-        """
-        Multiply the time cost by a constant factor.
-
-        This is used to make the scale of time cost similar to the old alpha-beta model.
-        """
-        self._multiply_scale_internal(factor, self.all_gather_cost_dict)
-        self._multiply_scale_internal(factor, self.all_reduce_cost_dict)
-        self._multiply_scale_internal(factor, self.all_to_all_cost_dict)
-        self._multiply_scale_internal(factor, self.reduce_scatter_cost_dict)
-
-    def make_monotonic(self):
-        """Make the bandwidth monotonically increase along with the communication size."""
-        self._make_monotonic_internal(self.all_gather_cost_dict)
-        self._make_monotonic_internal(self.all_reduce_cost_dict)
-        self._make_monotonic_internal(self.all_to_all_cost_dict)
-        self._make_monotonic_internal(self.reduce_scatter_cost_dict)
-        self._make_monotonic_internal(self.dot_cost_dict)
-
-    def _make_monotonic_internal(self, cost_dict):
-        new_cost_dict = {}
-
-        for key, value in cost_dict.items():
-            # make bandwidth monotonically increasing
-            sizes = np.array([x[0] for x in value])
-            times = np.array([x[1] for x in value])
-            bandwidth = sizes / times
-            for i in range(1, len(bandwidth)):
-                bandwidth[i] = max(bandwidth[i], bandwidth[i - 1])
-
-            new_times = np.empty_like(times)
-            for i in range(len(times)):
-                if sizes[i] == 0 or bandwidth[i] == 0:
-                    new_times[i] = value[i][1]
-                else:
-                    new_times[i] = sizes[i] / bandwidth[i]
-
-            new_value = [(value[i][0], new_times[i]) for i in range(len(value))]
-            new_cost_dict[key] = new_value
-
-        cost_dict.update(new_cost_dict)
-
-    def _multiply_scale_internal(self, factor, cost_dict):
-        for value in cost_dict.values():
-            for i in range(len(value)):
-                value[i] = (value[i][0], value[i][1] * factor)
 
     def _estimate_internal(self, group, size, dtype, cost_dict):
         key = (group, dtype)
@@ -124,7 +126,14 @@ class MeshProfilingResult:
             right_cost - left_cost) + left_cost
 
     def __str__(self):
-        ret = "=== all_reduce_cost_dict ===\n"
+        ret = "=== dot_cost_dict ===\n"
+        for key, value in self.dot_cost_dict.items():
+            sizes = np.array([x[0] for x in value])
+            times = np.array([x[1] for x in value])
+            tflops = sizes / times / 1e12
+            ret += f"Key: {key}\nTFLOPS: {to_str_round(tflops, 2)}\n\n"
+
+        ret += "=== all_reduce_cost_dict ===\n"
         for key, value in self.all_reduce_cost_dict.items():
             num_devices = len(key[0][0])
             sizes = np.array([x[0] for x in value])
@@ -133,16 +142,15 @@ class MeshProfilingResult:
                               1) / num_devices * sizes * to_np_dtype(
                                   key[1]).itemsize
             bandwidth = comm_bytes / times / GB
-            bandwidth_str = ", ".join(f"{x:.2f}" for x in bandwidth)
-            ret += f"Key: {key}\nBandwidth: {bandwidth_str}\n"
+            ret += f"Key: {key}\nBandwidth: {to_str_round(bandwidth, 2)}\n\n"
         return ret
 
 
 class ProfilingResultDatabase:
     """A database that stores profiling results for multiple device mesh shapes."""
 
-    def __init__(self, data={}):
-        self.data = data
+    def __init__(self, data=None):
+        self.data = data or {}
 
     def query(self, cluster_key, mesh_shape):
         key = (cluster_key, mesh_shape)
@@ -804,6 +812,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
         mesh_result.all_to_all_cost_dict = all_to_all_cost_dict
         mesh_result.reduce_scatter_cost_dict = reduce_scatter_cost_dict
         mesh_result.available_memory_per_device = available_memory_per_device
+        mesh_result.sort_cost_lists()
         mesh_result.make_monotonic()
         prof_database.update_one_mesh(cluster_key,
                                       (num_hosts, num_devices_per_host),

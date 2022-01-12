@@ -202,7 +202,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
-    elif option == "only_dp":
+    elif option == "dp_only":
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
             "force_batch_dim_to_mesh_dim": 0
         }))
@@ -302,7 +302,6 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         timers("stage-construction-profiling").suspend()
         return compute_cost, max_n_succ_stages
 
-    # TODO(zhuohan): set the number of workers as a tunable parameter
     print("- Compile all stages")
     compiled_outputs = compile_all(stages)
     timers("stage-construction-compilation").suspend()

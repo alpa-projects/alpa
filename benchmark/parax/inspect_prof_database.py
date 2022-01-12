@@ -20,3 +20,7 @@ if __name__ == "__main__":
     # Print results
     print("Meshes:")
     print(list(prof_database.data.keys()))
+    print()
+
+    mesh_result = prof_database.query("default", (1, 2))
+    print(mesh_result)

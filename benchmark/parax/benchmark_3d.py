@@ -36,7 +36,7 @@ benchmark_suites = {
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", choices=list(benchmark_suites.keys()), type=str, required=True)
-    parser.add_argument("--niter", type=int, default=5,
+    parser.add_argument("--niter", type=int, default=3,
         help="The number of benchmark iterations")
     parser.add_argument("--num-hosts", type=int, default=None)
     parser.add_argument("--num-devices-per-host", type=int, default=None)

@@ -317,6 +317,10 @@ class HloCostModelProfileWorker:
                                         grad_sync_channel_ids)
         del compiled
 
+        #with open(f"/home/ubuntu/efs/parax/benchmark/parax/tmp/"
+        #          f"profile_stage_{stage_id}.hlo", "w") as fout:
+        #    fout.write(hlo_module.to_string())
+
         if np.mean(cost) == np.inf:
             max_stage = -1
         else:

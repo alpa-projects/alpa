@@ -62,7 +62,7 @@ class PipelineMarkerTest(unittest.TestCase):
             b = x * y
             a, b = mark_pipeline(a, b, mark_type="start", name="1")
             z = a + b
-            z = mark_pipeline(z, mark_type="end", name="1")
+            z, = mark_pipeline(z, mark_type="end", name="1")
             return z
 
         z_without_jit = f(x_np, y_np)
@@ -75,6 +75,7 @@ class PipelineMarkerTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(PipelineMarkerTest("test_xla_graph"))
+    suite.addTest(PipelineMarkerTest("test_jax_graph"))
     return suite
 
 

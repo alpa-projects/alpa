@@ -24,7 +24,7 @@ default_overwrite_dict = {
     "auto_stage_construction_imbalance_tolerance": 1e5,
     "logical_mesh_search_space": "all",
     "use_hlo_cost_model": True,
-    "profiling_database_filename": "prof_database.pkl",
+    "profiling_database_filename": "prof_database_4_node_20220111.pkl",
 }
 
 
@@ -56,6 +56,8 @@ paper_auto_gpt_suite = {
      # get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
      get_auto_test_case("6.7B", [64, 128], [32, 34]) +
      get_auto_test_case("15B", [128, 256, 512], [32, 34])),
+64: (get_auto_test_case("15B", [64, 128], [8, 32]) +
+     get_auto_test_case("39B", [128, 256, 512], [8, 32])),
 }
 
 test_auto_gpt_suite = {

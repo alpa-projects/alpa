@@ -42,8 +42,8 @@ class PipelineMarkerTest(unittest.TestCase):
         print("=" * 60)
         print(compiled_c.hlo_modules()[0].to_string())
 
-        x_np = np.random.rand(10, 8)
-        y_np = np.random.rand(10, 8)
+        x_np = np.random.rand(10, 8).astype(np.float32)
+        y_np = np.random.rand(10, 8).astype(np.float32)
 
         x = backend.buffer_from_pyval(x_np)
         y = backend.buffer_from_pyval(y_np)

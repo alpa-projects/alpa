@@ -18,6 +18,7 @@ from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysi
 from parax.global_env import global_config
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
+from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
     merge_computation_jaxprs, rearrange_vars)
@@ -132,7 +133,7 @@ class CompileWorker:
             "record_file": None,
         }
         try:
-            _, (protos, hooked_proto,
+            _, (proto_names, protos, hooked_proto,
                 strategy_config) = self.compile_proto_with_search(
                     stage_id, proto, jaxpr_args, autosharding_option,
                     mesh_kwargs)
@@ -152,6 +153,7 @@ class CompileWorker:
              acc_grad_proto, logical_mesh.num_devices)
 
         if len(protos) > 1:
+            assert proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
             apply_grad_proto = protos[1]
             apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
                 apply_grad_proto, logical_mesh.num_devices)

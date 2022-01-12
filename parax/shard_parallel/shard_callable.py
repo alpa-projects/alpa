@@ -20,6 +20,7 @@ from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverE
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
+from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from parax.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 
 
@@ -245,7 +246,7 @@ def shard_parallel_internal_gradient_accumulation(
         built.as_hlo_module())
     flop_count *= num_micro_batches
 
-    hlo_protos, strategy_config = compile_with_search(
+    hlo_proto_names, hlo_protos, strategy_config = compile_with_search(
         backend,
         built,
         avals,
@@ -262,6 +263,7 @@ def shard_parallel_internal_gradient_accumulation(
         search_task=search_task,
         record_file=record_file)
     assert len(hlo_protos) == 2
+    assert hlo_proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
     # Compile these two HLOs separately to get two XLA executables
     accumulate_grad = xc.XlaComputation(hlo_protos[0])

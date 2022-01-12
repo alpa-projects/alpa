@@ -311,7 +311,6 @@ def compile_with_search(backend: xla_extension.Client,
         compiled, solution_vector, objective = _invoke_compilation(logical_mesh)
         if multiple_stages:
             hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
-            print("hlo_stage_names", hlo_stage_names)
             hooked_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
         from parax.mesh_executable import NormalMeshDriverExecutable
@@ -363,9 +362,9 @@ def compile_with_search(backend: xla_extension.Client,
     if return_mode == "executable":
         return compiled, strategy_config
     elif return_mode == "stage_protos":
-        return hlo_stages, strategy_config
+        return hlo_stage_names, hlo_stages, strategy_config
     elif return_mode == "stage_and_hook_protos":
-        return hlo_stages, hooked_proto, strategy_config
+        return hlo_stage_names, hlo_stages, hooked_proto, strategy_config
     else:
         raise ValueError("Invalid return mode:" + return_mode)
 

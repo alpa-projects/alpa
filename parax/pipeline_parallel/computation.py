@@ -755,20 +755,21 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_computations_from_protos(jax_computations, computation_protos,
+def generate_computations_from_protos(jax_computations, computation_names, computation_protos,
                                       donate_invars, donatable_lists,
                                       acc_grad_outvars, strategy_config):
     """Generate XLA computation from protos."""
+    proto_dict = {name: proto for name, proto in zip(computation_names, computation_protos)}
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto,
+            auto_sharded_hlo_proto=proto_dict[computation.name],
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
             acc_grad_outvars=acc_grad_outvars,
             donatables=donatables)
-        for computation, proto, donate_invars, donatables in zip(
-            jax_computations, computation_protos, donate_invars,
+        for computation, donate_invars, donatables in zip(
+            jax_computations, donate_invars,
             donatable_lists)
     ]
     return computations

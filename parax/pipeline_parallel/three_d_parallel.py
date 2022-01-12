@@ -283,12 +283,13 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     if global_config.pipeline_distributed_compile:
         for _ in range(num_meshes):
-            mesh_idx, (computation_protos,
+            mesh_idx, (computation_names,
+                       computation_protos,
                        strategy_config) = compile_workers.get_next_unordered()
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_protos(
-                jax_computations, computation_protos, computation_donate_invars,
+                jax_computations, computation_names, computation_protos, computation_donate_invars,
                 donatable_dict[mesh_idx], acc_grad_outvars, strategy_config)
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

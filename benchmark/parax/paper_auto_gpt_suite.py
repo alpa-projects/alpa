@@ -4,6 +4,7 @@ gpt_specs = {
 # Note: that head_size = hidden_size / #head
         # S，    H，    #L,   #head,  V,
 "TEST": (128,   128,   2,     8,    512,   ),
+"TEST2":(1024,  2560,  4,     32,   51200, ),
 "125M": (1024,  768,   12,    12,   51200, ),
 "350M": (1024,  1024,  24,    16,   51200, ),
 "760M": (1024,  1536,  24,    16,   51200, ),
@@ -40,26 +41,12 @@ def get_auto_test_case(model_name, n_microbatches, num_layers,
 
 
 paper_auto_gpt_suite = {
-# 1: (get_auto_test_case("125M", [16, 32, 64, 128, 256], [6]) +
-#     get_auto_test_case("350M", [32, 64, 128, 256, 512], [6])),
-# 2: (get_auto_test_case("350M", [16, 32, 64, 128, 256], [6]) +
-#     get_auto_test_case("760M", [32, 64, 128, 256, 512], [6])),
-# 4: (get_auto_test_case("760M", [16, 32, 64, 128, 256], [6]) +
-#     get_auto_test_case("1.3B", [32, 64, 128, 256, 512], [6])),
-# 8: (get_auto_test_case("1.3B", [16, 32, 64, 128, 256], [6]) +
-#     get_auto_test_case("2.7B", [32, 64, 128, 256, 512], [8])),
-2: (get_auto_test_case("350M", [16, 32, 64, 128], [6]) +
-    get_auto_test_case("760M", [32, 64, 128, 256], [6]) +
-    get_auto_test_case("350M", [32], [12]) +
-    get_auto_test_case("760M", [64], [12])),
-4: (get_auto_test_case("760M", [16, 32, 64], [6]) +
-    get_auto_test_case("1.3B", [32, 64, 128], [6]) +
-    get_auto_test_case("760M", [32], [12]) +
-    get_auto_test_case("1.3B", [64], [12])),
-8: (get_auto_test_case("1.3B", [64, 128, 256], [6]) +
-    get_auto_test_case("2.7B", [64, 128, 256], [8]) +
-    get_auto_test_case("1.3B", [16], [12]) +
-    get_auto_test_case("2.7B", [64], [16])),
+2: (get_auto_test_case("760M", [32, 64, 128, 256], [6]) +
+    get_auto_test_case("760M", [32, 64], [12])),
+4: (get_auto_test_case("1.3B", [32, 64, 128], [6]) +
+    get_auto_test_case("1.3B", [32, 64], [12])),
+8: (get_auto_test_case("2.7B", [64, 128, 256], [8]) +
+    get_auto_test_case("2.7B", [64, 128], [16])),
 16: (# get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
      get_auto_test_case("6.7B", [32, 64, 128, 256], [32, 34])
      # get_auto_test_case("2.7B", [64], [16]) +
@@ -76,8 +63,8 @@ test_auto_gpt_suite = {
 2: get_auto_test_case("350M", [64], [6]),
 4: get_auto_test_case("760M", [64], [6]),
 8: get_auto_test_case("2.7B", [128], [8]),
-# 8: get_auto_test_case("TEST", [2], [2]),
-# 16: get_auto_test_case("2.7B", [16], [8]),
+#8: get_auto_test_case("TEST", [2], [2]),
+#8: get_auto_test_case("TEST2", [128], [4]),
 16: get_auto_test_case("6.7B", [256], [8]),
 }
 

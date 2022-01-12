@@ -8,8 +8,6 @@ class AutoStageClusteringTest(PipelineBasicTest):
     def test_mlp_auto_stage_clustering(self):
         self.run_mlp(pipeline_stage_mode="auto_gpipe")
 
-    # FIXME(zhuohan)
-    @unittest.skip("Same Issue in auto layer slicing")
     def test_mlp_auto_layer_and_stage(self):
         self.run_mlp(manual_pipeline_layer=False,
                      pipeline_stage_mode="auto_gpipe")

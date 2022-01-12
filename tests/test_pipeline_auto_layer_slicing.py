@@ -6,11 +6,6 @@ from parax.testing import PipelineBasicTest
 
 class AutoSlicingTest(PipelineBasicTest):
 
-    # FIXME(zhuohan): The following test fails because stage slicing
-    #   in XLA will move the stages around and thus don't have correct order
-    #   if stages on a same mesh doesn't have dependecies. Need to fix this
-    #   in stage slicing in XLA.
-    @unittest.skip("Some issue in XLA")
     def test_mlp_auto_layer_slicing(self):
         self.run_mlp(manual_pipeline_layer=False)
 

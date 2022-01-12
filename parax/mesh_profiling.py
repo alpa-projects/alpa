@@ -143,8 +143,8 @@ class MeshProfilingResult:
 class ProfilingResultDatabase:
     """A database that stores profiling results for multiple device mesh shapes."""
 
-    def __init__(self, data={}):
-        self.data = data
+    def __init__(self, data=None):
+        self.data = data or {}
 
     def query(self, cluster_key, mesh_shape):
         key = (cluster_key, mesh_shape)

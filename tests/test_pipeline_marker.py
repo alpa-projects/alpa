@@ -1,9 +1,10 @@
 import unittest
 
 import numpy as np
+import jax
 from jax.lib import xla_client as xc, xla_bridge as xb
 
-from parax.pipeline_parallel.primitive_def import mark_pipeline_xla
+from parax.pipeline_parallel.primitive_def import mark_pipeline, mark_pipeline_xla
 from parax.testing import assert_allclose
 
 ops = xc.ops
@@ -14,7 +15,7 @@ class PipelineMarkerTest(unittest.TestCase):
         np.random.seed(1337)
 
     def test_xla_graph(self):
-        c = xc.XlaBuilder("simple_graph")
+        c = xc.XlaBuilder("xla_graph_with_marker")
 
         parameter_shape = xc.Shape.array_shape(np.dtype(np.float32), (10, 8), (0, 1))
         x = ops.Parameter(c, 0, parameter_shape)
@@ -48,6 +49,27 @@ class PipelineMarkerTest(unittest.TestCase):
         z_np = a_np + b_np
 
         assert_allclose(z, z_np)
+
+    def test_jax_graph(self):
+        x_np = np.random.rand(10, 8).astype(np.float32)
+        y_np = np.random.rand(10, 8).astype(np.float32)
+        a_np = x_np + y_np
+        b_np = x_np * y_np
+        z_np = a_np + b_np
+
+        def f(x, y):
+            a = x + y
+            b = x * y
+            a, b = mark_pipeline(a, b, mark_type="start", name="1")
+            z = a + b
+            z = mark_pipeline(z, mark_type="end", name="1")
+            return z
+
+        z_without_jit = f(x_np, y_np)
+        f = jax.jit(f)
+        z_with_jit = f(x_np, y_np)
+        assert_allclose(z_with_jit, z_np)
+        assert_allclose(z_without_jit, z_np)
 
 
 def suite():

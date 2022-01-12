@@ -34,13 +34,7 @@ class PipelineMarkerTest(unittest.TestCase):
         z = ops.GetTupleElement(output_tuple, 0)
 
         c = c.build(z)
-        print("=" * 60)
-        print(c.as_hlo_text())
-
         compiled_c = backend.compile(c)
-
-        print("=" * 60)
-        print(compiled_c.hlo_modules()[0].to_string())
 
         x_np = np.random.rand(10, 8).astype(np.float32)
         y_np = np.random.rand(10, 8).astype(np.float32)

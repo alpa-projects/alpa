@@ -12,10 +12,10 @@ class PipelineMarkerTest(unittest.TestCase):
 
     def test_xla_graph(self):
         c = xc.XlaBuilder("simple_graph")
-        x = ops.Parameter(c, 0, xc.shape_from_pyval(
-            np.ones((10, 8), dtype=np.float32)))
-        y = ops.Parameter(c, 1, xc.shape_from_pyval(
-            np.ones((10, 8), dtype=np.float32)))
+        
+        parameter_shape = xc.Shape.array_shape(np.float32, (10, 8), (0, 1))
+        x = ops.Parameter(c, 0, parameter_shape)
+        y = ops.Parameter(c, 1, parameter_shape)
 
         backend = xb.get_backend("gpu")
 

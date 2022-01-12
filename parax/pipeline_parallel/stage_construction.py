@@ -202,7 +202,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
-    elif option == "only_dp":
+    elif option == "dp_only":
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
             "force_batch_dim_to_mesh_dim": 0
         }))
@@ -302,7 +302,6 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         timers("stage-construction-profiling").suspend()
         return compute_cost, max_n_succ_stages
 
-    # TODO(zhuohan): set the number of workers as a tunable parameter
     print("- Compile all stages")
     compiled_outputs = compile_all(stages)
     timers("stage-construction-compilation").suspend()
@@ -572,9 +571,10 @@ def cluster_layers_and_slice_mesh(
                     mesh, submesh_choices, autosharding_configs, layers,
                     donation_mapping, global_outvars, jax_apply_layers,
                     apply_grad_global_info)
-            _, solution = dp(num_layers, mesh.num_devices, num_micro_batches,
-                             submesh_choices, num_autosharding_configs,
-                             compute_cost, max_n_succ_stages)
+            best_cost, solution = dp(num_layers, mesh.num_devices,
+                                     num_micro_batches, submesh_choices,
+                                     num_autosharding_configs, compute_cost,
+                                     max_n_succ_stages)
 
             # Parse solution
             forward_stage_layer_ids = [
@@ -596,6 +596,7 @@ def cluster_layers_and_slice_mesh(
             ]
 
             # Print and store the results
+            print("Result cost:", best_cost)
             print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
             print("Result meshes:", submesh_shapes)
             print("Result logical_mesh_shapes:", logical_mesh_shapes)

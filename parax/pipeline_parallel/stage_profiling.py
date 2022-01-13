@@ -10,8 +10,7 @@ import ray
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
 import tqdm
-from jax.core import (ClosedJaxpr, Jaxpr, Var, gensym, new_jaxpr_eqn,
-                      named_call_p)
+from jax.core import (ClosedJaxpr, Var, gensym)
 from jax.interpreters import pxla
 import jax.numpy as jnp
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
@@ -24,7 +23,7 @@ from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_co
 from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
-    merge_computation_jaxprs, merge_with_call, rearrange_vars)
+    merge_marked_jaxprs_with_named_call, merge_with_call, rearrange_vars)
 from parax.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
 from parax.pipeline_parallel.resharding_tensor import VDA
@@ -613,8 +612,8 @@ def generate_stage_info(all_layers,
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
-    merged, intermediate_vars = merge_computation_jaxprs(
-        jaxprs, used_outside, None, selected_donation_mapping,
+    merged, intermediate_vars = merge_marked_jaxprs_with_named_call(
+        jaxprs, used_outside, selected_donation_mapping, name + "_compute",
         insert_hook_after)
 
     outvars = OrderedSet(merged.jaxpr.outvars)
@@ -645,9 +644,9 @@ def generate_stage_info(all_layers,
     if apply_grad_info is not None:
         (apply_grad_layers, apply_grad_donation,
          apply_grad_outvars) = apply_grad_info
-        merged_apply = merge_computation_jaxprs(
+        merged_apply = merge_marked_jaxprs_with_named_call(
             [layer.closed_jaxpr() for layer in apply_grad_layers],
-            apply_grad_outvars, None, apply_grad_donation)
+            apply_grad_outvars, apply_grad_donation, name + "_apply")
         apply_only_invars = OrderedSet(merged_apply.jaxpr.invars).difference(
             new_invars).difference(new_outvars)
         apply_info = ApplyGradConfig(merged_apply.jaxpr.invars,

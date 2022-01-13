@@ -997,111 +997,105 @@ def merge_with_call(jaxprs: Sequence[ClosedJaxpr],
     return closed_jaxpr, is_donated
 
 
-def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
-                             used: OrderedSet[Var],
-                             new_marker_name=None,
-                             donation_mapping=None,
-                             insert_hook_after=None) -> ClosedJaxpr:
+def _wrap_by_marker(jaxpr: Jaxpr, name, gensym_fn):
+    eqns = []
+    new_invars = jaxpr.invars + jaxpr.constvars
+    new_outvars = list(jaxpr.outvars)
+    sym_invars = [gensym_fn(var.aval) for var in new_invars]
+    sym_outvars = [gensym_fn(var.aval) for var in new_outvars]
+    eqns.append(mark_pipeline_jaxpreqn(new_invars, sym_invars, name, "start"))
+    params = dict(name=name,
+                  call_jaxpr=Jaxpr([], new_invars, new_outvars, jaxpr.eqns))
+    eqns.append(new_jaxpr_eqn(sym_invars, sym_outvars, named_call_p, params))
+    eqns.append(mark_pipeline_jaxpreqn(sym_outvars, new_outvars, name, "end"))
+    return Jaxpr(list(jaxpr.constvars), list(jaxpr.invars), new_outvars, eqns)
+
+
+def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
+                                        may_outvars: OrderedSet[Var],
+                                        donation_map=None,
+                                        prefix=None,
+                                        insert_hook_after=None,
+                                        wrap_with_marker=False,
+                                        gensym_fn=None) -> ClosedJaxpr:
     """
     Merge continuous jaxprs and remove pipe markers.
 
     Args:
-        jaxprs (Sequence[ClosedJaxpr]): jaxprs to be merged
-        used (OrderedSet[Var]): out variables used later
-        new_marker_name (str): name of pipeline marker for merged jaxpr
-        donation_mapping (Dict[Var, Var]): donation mapping of merged jaxpr, may have redundant items
-        insert_hook_after (int): index of a layer to insert a hook after it.
+        jaxprs: jaxprs to be merged.
+        may_outvars: outvars of the merged jaxpr.
+        donation_map: donation map of merged jaxpr, may have redundant items.
+        prefix: name of pipeline marker for merged jaxpr
+        insert_hook_after: index of a layer to insert a hook after it.
             The hook records sharding specs of all tensors cross it.
+        wrap_with_marker: Whether the returned jaxpr has pipeline marker
 
     Returns:
         The merged ClosedJaxpr. If insert_hook_after is not None, it returns
         invars of the hook as well.
     """
-    new_invars_dict = {}
-    new_outvars_dict = {}
-    new_eqns = []
-    var_map = {}
 
-    # handle const vars:
-    new_constvars = {}
-    for jaxpr in jaxprs:
-        new_constvars.update(dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts)))
-
-    for idx, jaxpr in enumerate(jaxprs):
-        # handle pipeline start marker:
-        pipe_start = jaxpr.eqns[0]
-        for invar, outvar in zip(pipe_start.invars, pipe_start.outvars):
-            if invar not in var_map:
-                # is not local output, the outvar is kept
-                if invar in new_constvars:
-                    continue
-                # is already set in earlier computations
-                if invar in new_invars_dict:
-                    var_map[outvar] = new_invars_dict[invar]
-                    continue
-                new_invars_dict[invar] = outvar
-            else:
-                # is local output, the outvar is redirected
-                var_map[outvar] = var_map[invar]
-        # handle normal eqns
+    def unwrap_with_call(jaxpr, name):
+        assert jaxpr.eqns[0].primitive == pipeline_p
+        assert jaxpr.eqns[-1].primitive == pipeline_p
+        used_var = OrderedSet()
         for eqn in jaxpr.eqns[1:-1]:
-            new_local_invars = [get_var_mapping(var_map, v) for v in eqn.invars]
-            new_eqns.append(
-                new_jaxpr_eqn(new_local_invars, eqn.outvars, eqn.primitive,
-                              eqn.params, eqn.source_info))
-        # handle pipeline end marker
-        pipe_end = jaxpr.eqns[-1]
-        for invar, outvar in zip(pipe_end.invars, pipe_end.outvars):
-            if outvar in used:
-                new_outvars_dict[outvar] = get_var_mapping(var_map, invar)
-            var_map[outvar] = get_var_mapping(var_map, invar)
-        if idx == insert_hook_after:
+            used_var.update([var for var in eqn.invars if isinstance(var, Var)])
+        used_var.intersection_update(jaxpr.eqns[0].outvars)
+        new_invars = {}
+        for invar, outvar in zip(jaxpr.eqns[0].invars, jaxpr.eqns[0].outvars):
+            if outvar in used_var:
+                new_invars[outvar] = invar
+        new_jaxpr = clone_jaxpr(jaxpr, new_invars.keys(), jaxpr.eqns[-1].invars,
+                                jaxpr.eqns[1:-1])
+        return _wrap_with_call(new_jaxpr, list(new_invars.values()),
+                               jaxpr.eqns[-1].outvars, name)
+
+    def has_output(jaxpr):
+        return len([v for v in jaxpr.outvars if not isinstance(v, DropVar)])
+
+    name_prefix = prefix or ""
+    new_eqns = []
+    invars = []
+    env = OrderedSet()
+    const_dir = dict()
+    outvars = OrderedSet()
+    gensym_fn = gensym_fn or gensym([j.jaxpr for j in jaxprs])
+    # Merge everything together
+    for i, jaxpr in enumerate(jaxprs):
+        const_dir.update(zip(jaxpr.jaxpr.constvars, jaxpr.consts))
+        if has_output(jaxpr.jaxpr):
+            call_eqn = unwrap_with_call(jaxpr, name_prefix + str(i))
+            new_eqns.append(call_eqn)
+            invars.extend(OrderedSet(call_eqn.invars).difference(env))
+            env.update(call_eqn.invars + call_eqn.outvars)
+        if insert_hook_after == i:
             new_eqns.append(mark_hook_jaxpreqn([], []))
-
+        outvars.update(jaxpr.jaxpr.outvars)
+    outvars.intersection_update(may_outvars)
+    # handle hook
     if insert_hook_after is not None:
-        gensym_fn = gensym([j.jaxpr for j in jaxprs])
         new_hook = rewrite_hook(new_eqns, gensym_fn)
-
-    constvars = OrderedSet(new_constvars.keys())
-    new_invars = [k for k in new_invars_dict if k not in constvars]
-    new_outvars = list(new_outvars_dict.keys())
-
-    if donation_mapping:
-        new_invars_set = OrderedSet(new_invars)
-        new_outvars_set = OrderedSet(new_outvars)
-        donation_mapping = {
+    # handle donation
+    if donation_map:
+        new_invars_set = OrderedSet(invars)
+        new_outvars_set = OrderedSet(outvars)
+        donation_map = {
             k: v
-            for k, v in donation_mapping.items()
+            for k, v in donation_map.items()
             if k in new_invars_set and v in new_outvars_set
         }
-        new_invars = rearrange_vars(new_invars, donation_mapping.keys())
-        new_outvars = rearrange_vars(new_outvars, donation_mapping.values())
-    if new_marker_name is not None:
-        new_pipe_start = mark_pipeline_jaxpreqn(
-            new_invars, [new_invars_dict[v] for v in new_invars],
-            new_marker_name, "start")
-        new_pipe_end = mark_pipeline_jaxpreqn(
-            [new_outvars_dict[v] for v in new_outvars], new_outvars,
-            new_marker_name, "end")
-        new_eqns = [new_pipe_start] + new_eqns + [new_pipe_end]
-        new_jaxpr = ClosedJaxpr(
-            Jaxpr(list(new_constvars.keys()), new_invars, new_outvars,
-                  new_eqns), list(new_constvars.values()))
-    else:
-        new_jaxpr = ClosedJaxpr(
-            Jaxpr(list(new_constvars.keys()), new_invars, new_outvars, [
-                new_jaxpr_eqn(
-                    new_invars, new_outvars, named_call_p,
-                    dict(name="tmp",
-                         call_jaxpr=Jaxpr(
-                             list(new_constvars.keys()),
-                             [new_invars_dict[v] for v in new_invars],
-                             [new_outvars_dict[v] for v in new_outvars],
-                             new_eqns)))
-            ]), list(new_constvars.values()))
+        invars = rearrange_vars(invars, donation_map.keys())
+        outvars = rearrange_vars(outvars, donation_map.values())
+    # wrap with marker
+    jaxpr = Jaxpr(const_dir.keys(), invars, outvars, new_eqns)
+    if wrap_with_marker:
+        jaxpr = _wrap_by_marker(jaxpr, prefix, gensym_fn)
+    closed_jaxpr = ClosedJaxpr(jaxpr, const_dir.values())
+    # handle wrap with marker
     if insert_hook_after is not None:
-        return new_jaxpr, new_hook.invars
-    return new_jaxpr
+        return closed_jaxpr, new_hook.invars
+    return closed_jaxpr
 
 
 def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):

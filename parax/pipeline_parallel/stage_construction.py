@@ -10,8 +10,8 @@ import tqdm
 
 from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from parax.global_env import global_config
-from parax.pipeline_parallel.computation import (JaxPipelineComputation,
-                                                 merge_computation_jaxprs)
+from parax.pipeline_parallel.computation import (
+    JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
 from parax.pipeline_parallel.layer_stats import eqn_flops
 from parax.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                      compile_all, profile_all)
@@ -275,23 +275,22 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
             ]
             stage_name = f"stage_{start}_{end}"
             (intermediate_vars, stage_config) = generate_stage_info(
-                 layers,
-                 layer_indices,
-                 donation_mapping,
-                 global_outvars,
-                 stage_name,
-                 insert_hook_after=end - start,
-                 apply_grad_info=(selected_apply_grad_layers,
-                                  *apply_grad_global_info))
+                layers,
+                layer_indices,
+                donation_mapping,
+                global_outvars,
+                stage_name,
+                insert_hook_after=end - start,
+                apply_grad_info=(selected_apply_grad_layers,
+                                 *apply_grad_global_info))
             if is_full_mesh:
                 intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
                     autosharding_configs):
                 if autosharding_config is not None:
                     stage_indices = (start, end, config_idx)
-                    stages.append(
-                        (stage_indices, stage_config, autosharding_config,
-                         intermediate_vars))
+                    stages.append((stage_indices, stage_config,
+                                   autosharding_config, intermediate_vars))
 
     if len(stages) == 0:
         compute_cost = np.full(
@@ -550,7 +549,7 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
     return output_meshes
 
 
-# TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate 
+# TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate
 # gradient part instead of the whole computation
 def cluster_layers_and_slice_mesh(
         layers, mesh, donation_mapping, global_outvars, num_micro_batches,
@@ -675,9 +674,9 @@ def cluster_layers_and_slice_mesh(
         for stage_id, layer_ids in enumerate(stage_layer_ids):
             stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
             stage_name = str(stage_id)
-            merged_stage_jaxpr = merge_computation_jaxprs(
-                stage_layer_jaxprs, stage_outvars[stage_id], stage_name,
-                donation_mapping)
+            merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(
+                stage_layer_jaxprs, stage_outvars[stage_id], donation_mapping,
+                stage_name, wrap_with_marker=True)
             merged_stage = JaxPipelineComputation.from_closed_jaxpr(
                 stage_name, merged_stage_jaxpr)
             merged_stages.append(merged_stage)

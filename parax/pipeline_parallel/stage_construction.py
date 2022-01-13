@@ -675,8 +675,11 @@ def cluster_layers_and_slice_mesh(
             stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
             stage_name = str(stage_id)
             merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(
-                stage_layer_jaxprs, stage_outvars[stage_id], donation_mapping,
-                stage_name, wrap_with_marker=True)
+                stage_layer_jaxprs,
+                stage_outvars[stage_id],
+                donation_mapping,
+                stage_name,
+                wrap_with_marker=True)
             merged_stage = JaxPipelineComputation.from_closed_jaxpr(
                 stage_name, merged_stage_jaxpr)
             merged_stages.append(merged_stage)

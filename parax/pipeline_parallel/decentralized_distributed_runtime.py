@@ -78,13 +78,12 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(
-            cls,  # noqa
-            task_uuid,
-            output_uuids,
-            set_empty_buffer,
-            allgather_uuid=None,
-            info=""):
+    def Recv(cls,
+             task_uuid,
+             output_uuids,
+             set_empty_buffer,
+             allgather_uuid=None,
+             info=""):  # noqa
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,

@@ -512,15 +512,16 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
             outvars=pipeline_start_outvars_without_literal))
 
         for eqn in computation.eqns[1:-1]:
+            invars = [
+                get_var_mapping(computation_var_mapping, var)
+                for var in eqn.invars
+            ]
+            outvars = [
+                get_var_mapping(computation_var_mapping, var)
+                for var in eqn.outvars
+            ]
             new_computation.eqns.append(
-                eqn._replace(invars=[
-                    get_var_mapping(computation_var_mapping, var)
-                    for var in eqn.invars
-                ],
-                             outvars=[
-                                 get_var_mapping(computation_var_mapping, var)
-                                 for var in eqn.outvars
-                             ]))
+                eqn._replace(invars=invars, outvars=outvars))
 
         pipeline_end_invars = [
             get_var_mapping(computation_var_mapping, var)
@@ -787,10 +788,7 @@ def generate_computations_from_protos(jax_computations, computation_names,
                                       donatable_lists, acc_grad_outvars,
                                       strategy_config):
     """Generate XLA computation from protos."""
-    proto_dict = {
-        name: proto
-        for name, proto in zip(computation_names, computation_protos)
-    }
+    proto_dict = dict(zip(computation_names, computation_protos))
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             auto_sharded_hlo_proto=proto_dict[computation.name],
@@ -1058,7 +1056,7 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
     new_eqns = []
     invars = []
     env = OrderedSet()
-    const_dir = dict()
+    const_dir = {}
     outvars = OrderedSet()
     gensym_fn = gensym_fn or gensym([j.jaxpr for j in jaxprs])
     # Merge everything together
@@ -1123,7 +1121,7 @@ def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
 def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
                                     gensym_fn):
     """Get donation mapping of selected computation and add some input.
-    
+
     If an outvar is donated from an invar not in the corrent computation, the
     function add the invar and create a new computation and corresponding donate
     mapping.

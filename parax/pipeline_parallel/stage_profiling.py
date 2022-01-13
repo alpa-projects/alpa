@@ -2,7 +2,7 @@
 from collections import namedtuple
 import gc
 import logging
-from typing import Dict, OrderedDict, Sequence
+from typing import Dict, Sequence
 from abc import ABC, abstractmethod
 
 import numpy as np

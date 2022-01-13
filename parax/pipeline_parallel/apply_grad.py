@@ -173,10 +173,10 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
     return new_closed_jaxpr, update_outs, grad_in_to_out
 
 
-def get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
-                                      global_invars, donated_invars,
-                                      donation_mapping):
-    """TODO(Yonghao): docstring."""
+def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
+                                       global_invars, donated_invars,
+                                       donation_mapping):
+    """Infer outvar constraints of apply gradient based on donation."""
     outvar_mesh = {}
     donated_global_vars = {
         invar for invar, donate in zip(global_invars, donated_invars) if donate
@@ -219,11 +219,11 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
         if donated_invars[idx]:
             donation_mapping[invar] = global_outvars[idx]
     # create outvar constraints
-    outvar_mesh = get_apply_grad_outvar_constraints(jax_pipeline_stages,
-                                                    stage_to_mesh,
-                                                    global_invars,
-                                                    donated_invars,
-                                                    donation_mapping)
+    outvar_mesh = _get_apply_grad_outvar_constraints(jax_pipeline_stages,
+                                                     stage_to_mesh,
+                                                     global_invars,
+                                                     donated_invars,
+                                                     donation_mapping)
 
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
                                                    gradvar_to_mesh, outvar_mesh,

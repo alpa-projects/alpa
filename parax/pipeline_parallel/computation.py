@@ -941,15 +941,25 @@ def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
                          params=params)
 
 
-def merge_with_call(jaxprs: Sequence[ClosedJaxpr],
-                    names: Sequence[str],
-                    outvars,
-                    donation_map=None,
-                    add_marker: bool = False,
-                    gensym_fn=None):
+def _rearrange_in_out_for_donation(invars, outvars, donation_map):
+    outvar_set = set(outvars)
+    donated_invars = [
+        var for var in invars
+        if (var in donation_map and donation_map[var] in outvar_set)
+    ]
+    donated_outvars = [donation_map[var] for var in donated_invars]
+    invars = rearrange_vars(invars, donated_invars)
+    outvars = rearrange_vars(outvars, donated_outvars)
+    num_donated = len(donated_invars)
+    return invars, outvars, num_donated
+
+
+def merge_unmarked_with_call(jaxprs: Sequence[ClosedJaxpr],
+                             names: Sequence[str],
+                             outvars,
+                             donation_map=None):
     """Merge a sequence of jaxprs (no pipeline marker) using named call."""
-    if gensym_fn is None and add_marker:
-        gensym_fn = gensym([closed_jaxpr.jaxpr for closed_jaxpr in jaxprs])
+    gensym_fn = gensym([closed_jaxpr.jaxpr for closed_jaxpr in jaxprs])
     eqns = []
     invars = OrderedSet()
     intermediates = OrderedSet()
@@ -959,36 +969,24 @@ def merge_with_call(jaxprs: Sequence[ClosedJaxpr],
         intermediates.update(closed_jaxpr.jaxpr.outvars)
         const_dir.update(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
         jaxpr = closed_jaxpr.jaxpr
-        if add_marker:
-            mapped_invars = [gensym_fn(var.aval) for var in jaxpr.invars]
-            mapped_outvars = [gensym_fn(var.aval) for var in jaxpr.outvars]
-            eqns.append(
-                mark_pipeline_jaxpreqn(jaxpr.invars, mapped_invars, stage_name,
-                                       "start"))
-            eqn_invars = mapped_invars
-            eqn_outvars = mapped_outvars
-        else:
-            eqn_invars = jaxpr.invars
-            eqn_outvars = jaxpr.outvars
+
+        sym_invars = [gensym_fn(var.aval) for var in jaxpr.invars]
+        sym_outvars = [gensym_fn(var.aval) for var in jaxpr.outvars]
         eqns.append(
-            _wrap_with_call(closed_jaxpr, eqn_invars, eqn_outvars, stage_name))
-        if add_marker:
-            eqns.append(
-                mark_pipeline_jaxpreqn(mapped_outvars, jaxpr.outvars,
-                                       stage_name, "end"))
+            mark_pipeline_jaxpreqn(jaxpr.invars, sym_invars, stage_name,
+                                   "start"))
+        eqns.append(
+            _wrap_with_call(closed_jaxpr, sym_invars, sym_outvars, stage_name))
+        eqns.append(
+            mark_pipeline_jaxpreqn(sym_outvars, jaxpr.outvars, stage_name,
+                                   "end"))
     invars.difference_update(intermediates)
     # handle donation
     num_donated = 0
     if donation_map:
-        outvar_set = set(outvars)
-        donated_invars = [
-            var for var in invars
-            if (var in donation_map and donation_map[var] in outvar_set)
-        ]
-        donated_outvars = [donation_map[var] for var in donated_invars]
-        invars = rearrange_vars(invars, donated_invars)
-        outvars = rearrange_vars(outvars, donated_outvars)
-        num_donated = len(donated_invars)
+        (invars, outvars,
+         num_donated) = _rearrange_in_out_for_donation(invars, outvars,
+                                                       donation_map)
     is_donated = [True] * num_donated + [False] * (len(invars) - num_donated)
     jaxpr = Jaxpr(const_dir.keys(), invars, outvars, eqns)
     closed_jaxpr = ClosedJaxpr(jaxpr, const_dir.values())
@@ -1076,15 +1074,8 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
         new_hook = rewrite_hook(new_eqns, gensym_fn)
     # handle donation
     if donation_map:
-        new_invars_set = OrderedSet(invars)
-        new_outvars_set = OrderedSet(outvars)
-        donation_map = {
-            k: v
-            for k, v in donation_map.items()
-            if k in new_invars_set and v in new_outvars_set
-        }
-        invars = rearrange_vars(invars, donation_map.keys())
-        outvars = rearrange_vars(outvars, donation_map.values())
+        invars, outvars, _ = _rearrange_in_out_for_donation(
+            invars, outvars, donation_map)
     # wrap with marker
     jaxpr = Jaxpr(const_dir.keys(), invars, outvars, new_eqns)
     if wrap_with_marker:

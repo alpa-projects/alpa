@@ -23,7 +23,8 @@ from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_co
 from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
-    merge_marked_jaxprs_with_named_call, merge_with_call, rearrange_vars)
+    merge_marked_jaxprs_with_named_call, merge_unmarked_with_call,
+    rearrange_vars)
 from parax.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
 from parax.pipeline_parallel.resharding_tensor import VDA
@@ -656,8 +657,9 @@ def generate_stage_info(all_layers,
         all_outvars = list(all_outvars)
         donation_map = dict(apply_grad_donation)
         donation_map.update(selected_donation_mapping)
-        merged, is_donated = merge_with_call([merged, merged_apply], names,
-                                             all_outvars, donation_map, True)
+        merged, is_donated = merge_unmarked_with_call([merged, merged_apply],
+                                                      names, all_outvars,
+                                                      donation_map)
 
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]

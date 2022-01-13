@@ -163,7 +163,7 @@ class StageConstructUtilTest(unittest.TestCase):
         apply_grad_selected = [apply_grad_layers[i] for i in apply_grad_indices]
         apply_grad_config = (apply_grad_selected, apply_grad_donate_map,
                              global_outvars)
-        intermediate_vars, stage_config = self._generate_stage_info(
+        intermediate_vars, stage_config = generate_stage_info(
             compute_layers, compute_layer_indices, donation_mapping,
             compute_outvars, "tmp", end - start, apply_grad_config)
         aval = lambda x: [v.aval for v in x]

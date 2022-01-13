@@ -16,22 +16,24 @@ from jax.interpreters import pxla
 import jax.numpy as jnp
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
-from parax.device_mesh import DistributedArray, PhysicalDeviceMesh, VirtualPhysicalMesh, _shard_device_array
+from parax.device_mesh import (DistributedArray, PhysicalDeviceMesh,
+                               VirtualPhysicalMesh, _shard_device_array)
 from parax.global_env import global_config
 from parax.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
 from parax.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
 from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from parax.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
-    merge_computation_jaxprs, rearrange_vars)
-from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec
-from parax.pipeline_parallel.primitive_def import mark_pipeline_jaxpreqn
+    merge_computation_jaxprs, merge_with_call, rearrange_vars)
+from parax.pipeline_parallel.cross_mesh_resharding import (
+    SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
 from parax.pipeline_parallel.resharding_tensor import VDA
 from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus,
                                                 hlo_sharding_to_sharding_spec)
-from parax.util import get_shard_shape, jaxpr_to_hlo_computation, OrderedSet
+from parax.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_computation,
+                        OrderedSet)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -57,8 +59,8 @@ ProfileConfig = namedtuple(
 ApplyGradConfig = namedtuple("ApplyGradConfig",
                              ["invars", "apply_grad_only_invars"])
 
-StageConfig = namedtuple("StageConfig",
-                         ["compile_config", "profile_config", "apply_grad_config"])
+StageConfig = namedtuple(
+    "StageConfig", ["compile_config", "profile_config", "apply_grad_config"])
 
 
 class BaseWorkerPoolWrapper(ABC):
@@ -139,7 +141,8 @@ class CompileWorker:
         self.cnt += 1
 
         # Compile with search to get sharding annotations.
-        jaxpr_args = (config.input_avals, config.output_avals, config.donate_invars)
+        jaxpr_args = (config.input_avals, config.output_avals,
+                      config.donate_invars)
         mesh_kwargs = {
             "logical_mesh_choices": [logical_mesh],
             "return_mode": "stage_and_hook_protos",
@@ -153,8 +156,8 @@ class CompileWorker:
         try:
             _, (proto_names, protos, hooked_proto,
                 strategy_config) = self.compile_proto_with_search(
-                    stage_id, config.model_proto, jaxpr_args, autosharding_option,
-                    mesh_kwargs)
+                    stage_id, config.model_proto, jaxpr_args,
+                    autosharding_option, mesh_kwargs)
         except RuntimeError:
             logger.warning("Unexpected error in compile time")
             return stage_id, None
@@ -425,7 +428,8 @@ def compile_all(stages):
     default_autosharding_option = global_config.default_autosharding_option
 
     compile_workers = CompileWorkerPool(num_cpus, num_gpus)
-    for stage_id, (_, stage_config, auto_sharding_config, _) in enumerate(stages):
+    for stage_id, (_, stage_config, auto_sharding_config,
+                   _) in enumerate(stages):
         logical_mesh, autosharding_option_dict = auto_sharding_config
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
@@ -479,10 +483,12 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
                                                       intermediate_vars,
                                                       config.logical_mesh_shape)
         apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, stage_config.apply_grad_config, config.logical_mesh_shape)
-        profile_workers.submit(lambda w, v: w.profile.remote(*v),
-                               (stage_id, compiled_output, stage_config.profile_config,
-                                intermediate_size, apply_grad_input_size))
+            apply_in_shardings, stage_config.apply_grad_config,
+            config.logical_mesh_shape)
+        profile_workers.submit(
+            lambda w, v: w.profile.remote(*v),
+            (stage_id, compiled_output, stage_config.profile_config,
+             intermediate_size, apply_grad_input_size))
 
     pbar = tqdm.tqdm(stages)
     for _ in pbar:
@@ -499,7 +505,8 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
             return compute_cost, max_n_succ_stages
-        ((start, end, config_idx), _, auto_sharding_config, _) = stages[stage_id]
+        ((start, end, config_idx), _, auto_sharding_config,
+         _) = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config
         (peak_memory, available_memory, intermediate_size,
          initial_size) = debug_info
@@ -599,7 +606,6 @@ def generate_stage_info(all_layers,
     """Combine selected layers together for profiling."""
     backend = xla_bridge.get_backend("gpu")
 
-    # TODO(yonghao): infer used_outside etc. in batches
     # TODO(yonghao): clean up code here
     (selected_donation_mapping, used_outside,
      layers) = split_global_use_and_donate(all_layers, selected_indices,
@@ -612,21 +618,18 @@ def generate_stage_info(all_layers,
         insert_hook_after)
 
     outvars = OrderedSet(merged.jaxpr.outvars)
-    tot_donation = [
+    is_donated = [
         invar in selected_donation_mapping and
         selected_donation_mapping[invar] in outvars
         for invar in merged.jaxpr.invars
     ]
     donated_invars = [
-        invar for d, invar in zip(tot_donation, merged.jaxpr.invars) if d
+        invar for d, invar in zip(is_donated, merged.jaxpr.invars) if d
     ]
+    donated_outvars = [selected_donation_mapping[v] for v in donated_invars]
     new_invars = rearrange_vars(merged.jaxpr.invars, donated_invars)
-    new_outvars = rearrange_vars(
-        merged.jaxpr.outvars,
-        [selected_donation_mapping[v] for v in donated_invars])
-    merged = ClosedJaxpr(
-        Jaxpr(merged.jaxpr.constvars, new_invars, new_outvars,
-              merged.jaxpr.eqns), merged.consts)
+    new_outvars = rearrange_vars(merged.jaxpr.outvars, donated_outvars)
+    merged = clone_jaxpr(merged, new_invars, new_outvars)
     compute_avals = [var.aval for var in merged.jaxpr.invars]
     compute_out_avals = [var.aval for var in merged.jaxpr.outvars]
     acc_grad_outvars = set(global_outvars)
@@ -635,7 +638,7 @@ def generate_stage_info(all_layers,
         if var in acc_grad_outvars
     ]
     profile_config = ProfileConfig(compute_avals, compute_out_avals,
-                                   list(tot_donation), output_acc_grad_indices)
+                                   list(is_donated), output_acc_grad_indices)
 
     apply_info = ApplyGradConfig(None, None)
 
@@ -647,65 +650,22 @@ def generate_stage_info(all_layers,
             apply_grad_outvars, None, apply_grad_donation)
         apply_only_invars = OrderedSet(merged_apply.jaxpr.invars).difference(
             new_invars).difference(new_outvars)
-        apply_info = ApplyGradConfig(merged_apply.jaxpr.invars, apply_only_invars)
-        new_eqns = []
-        gensym_fn = gensym([merged.jaxpr, merged_apply.jaxpr])
-        for stage_name, closed_jaxpr in zip(
-            ["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX],
-            [merged, merged_apply]):
-            mapped_invars = [
-                gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.invars
-            ]
-            mapped_outvars = [
-                gensym_fn(var.aval) for var in closed_jaxpr.jaxpr.outvars
-            ]
-            new_eqns.append(
-                mark_pipeline_jaxpreqn(closed_jaxpr.jaxpr.invars,
-                                       mapped_invars,
-                                       name=stage_name,
-                                       mark_type="start"))
-            new_eqns.append(
-                new_jaxpr_eqn(mapped_invars,
-                              mapped_outvars,
-                              named_call_p,
-                              params=dict(name=stage_name,
-                                          call_jaxpr=closed_jaxpr.jaxpr)))
-            new_eqns.append(
-                mark_pipeline_jaxpreqn(mapped_outvars,
-                                       closed_jaxpr.jaxpr.outvars,
-                                       name=stage_name,
-                                       mark_type="end"))
-
-        all_invars = OrderedSet(new_invars).union(
-            merged_apply.jaxpr.invars).difference(new_outvars)
+        apply_info = ApplyGradConfig(merged_apply.jaxpr.invars,
+                                     apply_only_invars)
+        names = ["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX]
         all_outvars = OrderedSet(new_outvars).union(merged_apply.jaxpr.outvars)
-        all_invars = list(all_invars)
         all_outvars = list(all_outvars)
-
-        apply_grad_donated_invars = list(
-            OrderedSet(merged_apply.jaxpr.invars).intersection(
-                apply_grad_donation.keys()))
-        all_donated_invars = donated_invars + apply_grad_donated_invars
-        all_donated_outvars = [
-            selected_donation_mapping[v] for v in donated_invars
-        ] + [apply_grad_donation[v] for v in apply_grad_donated_invars]
-        all_invars = rearrange_vars(all_invars, all_donated_invars)
-        all_outvars = rearrange_vars(all_outvars, all_donated_outvars)
-        all_const_dict = OrderedDict(zip(merged.jaxpr.constvars, merged.consts))
-        all_const_dict.update(
-            zip(merged_apply.jaxpr.constvars, merged_apply.consts))
-        merged = ClosedJaxpr(
-            Jaxpr(list(all_const_dict.keys()), all_invars, all_outvars,
-                  new_eqns), list(all_const_dict.values()))
-        tot_donation = [True] * len(all_donated_invars) + [False] * (
-            len(all_invars) - len(all_donated_invars))
+        donation_map = dict(apply_grad_donation)
+        donation_map.update(selected_donation_mapping)
+        merged, is_donated = merge_with_call([merged, merged_apply], names,
+                                             all_outvars, donation_map, True)
 
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
 
-    built = jaxpr_to_hlo_computation(name, merged, tot_donation, backend)
+    built = jaxpr_to_hlo_computation(name, merged, is_donated, backend)
     proto = built.as_serialized_hlo_module_proto()
-    compile_config = CompileConfig(proto, avals, out_avals, tot_donation,
+    compile_config = CompileConfig(proto, avals, out_avals, is_donated,
                                    output_acc_grad_indices)
     stage_config = StageConfig(compile_config, profile_config, apply_info)
     return intermediate_vars, stage_config

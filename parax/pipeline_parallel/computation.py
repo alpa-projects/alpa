@@ -28,7 +28,7 @@ from parax.shard_parallel.auto_sharding import (compile_with_search,
                                                 hlo_sharding_to_sharding_spec,
                                                 HloProtoStatus)
 from parax.global_env import global_config
-from parax.util import (OrderedSet, get_compile_options,
+from parax.util import (OrderedSet, clone_jaxpr, get_compile_options,
                         jaxpr_to_hlo_computation, setup_computation_alias,
                         log_jaxpr, compile_dummy_zero_constant, get_var_mapping)
 
@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-# TODO(yonghao): Many redundant Jaxpr visit in this file. Wrap JaxprEqn for "ReplaceAllUseWith"
 @dataclass
 class PipelineComputation(ABC):
     """
@@ -806,6 +805,56 @@ def generate_computations_from_protos(jax_computations, computation_names,
     return computations
 
 
+def generate_sharded_xla_computations_arguments(
+        name: str, jax_computations: Sequence[JaxPipelineComputation],
+        computation_donate_invars):
+    """
+    Generates the arguments for distributed compilation.
+
+    Similar to generate_sharded_xla_computations but only generate arguments.
+    """
+    invars = OrderedSet()
+    outvars = OrderedSet()
+    donation_mapping = {}
+    eqns = []
+    consts_dir = {}
+    for computation, donation in zip(jax_computations,
+                                     computation_donate_invars):
+        consts_dir.update(computation.consts_dir)
+        # Do not add local invars into the invars
+        invars.update([var for var in computation.invars if var not in outvars])
+        outvars.update(computation.outvars)
+        for idx, var in enumerate(computation.invars):
+            if not donation[idx] or var not in invars:
+                continue
+            donation_mapping[computation.invars[idx]] = computation.outvars[idx]
+        eqns += computation.eqns
+    invars = rearrange_vars(invars, donation_mapping.keys())
+    outvars = rearrange_vars(outvars, donation_mapping.values())
+    jaxpr = Jaxpr(
+        constvars=list(consts_dir.keys()),
+        invars=list(invars),
+        outvars=list(outvars),
+        eqns=eqns,
+    )
+
+    donation_num = len(donation_mapping)
+    dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) -
+                                                                donation_num)
+    closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
+    backend_name = "gpu"
+    backend = xb.get_backend(backend_name)
+    built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars,
+                                     backend)
+    flops = xla_extension.hlo_module_count_flop_dot_conv_only(
+        built.as_hlo_module())
+    in_avals = [var.aval for var in invars]
+    out_avals = [var.aval for var in outvars]
+    jaxpr_args = in_avals, out_avals, dummy_donated_invars
+    proto = built.as_serialized_hlo_module_proto()
+    return proto, jaxpr_args, flops
+
+
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
@@ -857,56 +906,6 @@ def generate_sharded_xla_computations(
     return computations, flops
 
 
-def generate_sharded_xla_computations_arguments(
-        name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars):
-    """
-    Generates the arguments for distributed compilation.
-
-    Similar to generate_sharded_xla_computations but only generate arguments.
-    """
-    invars = OrderedSet()
-    outvars = OrderedSet()
-    donation_mapping = {}
-    eqns = []
-    consts_dir = {}
-    for computation, donation in zip(jax_computations,
-                                     computation_donate_invars):
-        consts_dir.update(computation.consts_dir)
-        # Do not add local invars into the invars
-        invars.update([var for var in computation.invars if var not in outvars])
-        outvars.update(computation.outvars)
-        for idx, var in enumerate(computation.invars):
-            if not donation[idx] or var not in invars:
-                continue
-            donation_mapping[computation.invars[idx]] = computation.outvars[idx]
-        eqns += computation.eqns
-    invars = rearrange_vars(invars, donation_mapping.keys())
-    outvars = rearrange_vars(outvars, donation_mapping.values())
-    jaxpr = Jaxpr(
-        constvars=list(consts_dir.keys()),
-        invars=list(invars),
-        outvars=list(outvars),
-        eqns=eqns,
-    )
-
-    donation_num = len(donation_mapping)
-    dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) -
-                                                                donation_num)
-    closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
-    backend_name = "gpu"
-    backend = xb.get_backend(backend_name)
-    built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars,
-                                     backend)
-    flops = xla_extension.hlo_module_count_flop_dot_conv_only(
-        built.as_hlo_module())
-    in_avals = [var.aval for var in invars]
-    out_avals = [var.aval for var in outvars]
-    jaxpr_args = in_avals, out_avals, dummy_donated_invars
-    proto = built.as_serialized_hlo_module_proto()
-    return proto, jaxpr_args, flops
-
-
 def rewrite_hook(eqns, gensym_fn):
     """TODO(zhuohan)."""
     for idx, eqn in enumerate(eqns):
@@ -932,6 +931,70 @@ def rewrite_hook(eqns, gensym_fn):
                     e.outvars, e.primitive, e.params)
             return new_hook
     return None
+
+
+def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
+    new_invars = closed_jaxpr.jaxpr.invars + closed_jaxpr.jaxpr.constvars
+    jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[]).jaxpr
+    params = dict(name=name, call_jaxpr=jaxpr)
+    return new_jaxpr_eqn(invars + closed_jaxpr.consts,
+                         outvars,
+                         named_call_p,
+                         params=params)
+
+
+def merge_with_call(jaxprs: Sequence[ClosedJaxpr],
+                    names: Sequence[str],
+                    outvars,
+                    donation_map=None,
+                    add_marker: bool = False,
+                    gensym_fn=None):
+    """Merge a sequence of jaxprs (no pipeline marker) using named call."""
+    if gensym_fn is None and add_marker:
+        gensym_fn = gensym([closed_jaxpr.jaxpr for closed_jaxpr in jaxprs])
+    eqns = []
+    invars = OrderedSet()
+    intermediates = OrderedSet()
+    const_dir = {}
+    for stage_name, closed_jaxpr in zip(names, jaxprs):
+        invars.update(closed_jaxpr.jaxpr.invars)
+        intermediates.update(closed_jaxpr.jaxpr.outvars)
+        const_dir.update(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+        jaxpr = closed_jaxpr.jaxpr
+        if add_marker:
+            mapped_invars = [gensym_fn(var.aval) for var in jaxpr.invars]
+            mapped_outvars = [gensym_fn(var.aval) for var in jaxpr.outvars]
+            eqns.append(
+                mark_pipeline_jaxpreqn(jaxpr.invars, mapped_invars, stage_name,
+                                       "start"))
+            eqn_invars = mapped_invars
+            eqn_outvars = mapped_outvars
+        else:
+            eqn_invars = jaxpr.invars
+            eqn_outvars = jaxpr.outvars
+        eqns.append(
+            _wrap_with_call(closed_jaxpr, eqn_invars, eqn_outvars, stage_name))
+        if add_marker:
+            eqns.append(
+                mark_pipeline_jaxpreqn(mapped_outvars, jaxpr.outvars,
+                                       stage_name, "end"))
+    invars.difference_update(intermediates)
+    # handle donation
+    num_donated = 0
+    if donation_map:
+        outvar_set = set(outvars)
+        donated_invars = [
+            var for var in invars
+            if (var in donation_map and donation_map[var] in outvar_set)
+        ]
+        donated_outvars = [donation_map[var] for var in donated_invars]
+        invars = rearrange_vars(invars, donated_invars)
+        outvars = rearrange_vars(outvars, donated_outvars)
+        num_donated = len(donated_invars)
+    is_donated = [True] * num_donated + [False] * (len(invars) - num_donated)
+    jaxpr = Jaxpr(const_dir.keys(), invars, outvars, eqns)
+    closed_jaxpr = ClosedJaxpr(jaxpr, const_dir.values())
+    return closed_jaxpr, is_donated
 
 
 def merge_computation_jaxprs(jaxprs: Sequence[ClosedJaxpr],
@@ -1112,8 +1175,7 @@ def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
 
 
 def split_donate_invars(donation_mapping,
-                        stages: Sequence[JaxPipelineComputation],
-                        gensym_fn):
+                        stages: Sequence[JaxPipelineComputation], gensym_fn):
     """
     Split donated invars for sliced jaxprs, then rewrite stages.
 

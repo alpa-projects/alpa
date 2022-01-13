@@ -513,6 +513,19 @@ class XlaPassContext:
 ########################################
 ##### Jaxpr Utilities
 ########################################
+def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
+                invars=None,
+                outvars=None,
+                eqns=None,
+                constvars=None,
+                consts=None):
+    constvars = constvars or closed_jaxpr.jaxpr.constvars
+    invars = invars or closed_jaxpr.jaxpr.invars
+    outvars = outvars or closed_jaxpr.jaxpr.outvars
+    eqns = eqns or closed_jaxpr.jaxpr.eqns
+    consts = consts or closed_jaxpr.consts
+    jaxpr = Jaxpr(constvars, invars, outvars, eqns)
+    return ClosedJaxpr(jaxpr, consts)
 
 
 def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,

@@ -11,7 +11,8 @@ from parax.pipeline_parallel.computation import JaxPipelineComputation
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
 from parax.pipeline_parallel.schedules import gen_dependency_with_stages
-from parax.util import slices_to_jaxpr, OrderedSet, get_var_mapping
+from parax.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
+                        get_var_mapping)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -165,9 +166,8 @@ def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
                 # collect gradients in this computation
                 to_acc.append(outvar)
     last_pipe_end.params["name"] += "_grad_acc_boundary"
-    jaxpr = Jaxpr(compute_jaxpr.jaxpr.constvars, new_glob_invars,
-                  new_glob_outvars, new_eqns)
-    new_closed_jaxpr = ClosedJaxpr(jaxpr, compute_jaxpr.consts)
+    new_closed_jaxpr = clone_jaxpr(compute_jaxpr, new_glob_invars,
+                                   new_glob_outvars, new_eqns)
     # We do not modify donate_invars here, as it is only to append Trues
     # Instead return grad outs to help modify apply_grad
     return new_closed_jaxpr, update_outs, grad_in_to_out
@@ -271,9 +271,9 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
         new_outvars = [map_var(var) for var in eqn.outvars]
         new_eqns.append(
             new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, eqn.params))
-    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_glob_invars,
-                      new_glob_outvars, new_eqns)
-    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+    new_jaxpr = clone_jaxpr(closed_jaxpr, new_glob_invars, new_glob_outvars,
+                            new_eqns)
+    return new_jaxpr
 
 
 def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
@@ -306,9 +306,10 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
     new_eqns.extend(replaced.jaxpr.eqns)
     new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, final_invars, final_outvars,
                       new_eqns)
+    new_jaxpr = clone_jaxpr(closed_jaxpr, final_invars, final_outvars, new_eqns)
     global_outvars = list(
         map(lambda x: get_var_mapping(mapping, x), global_outvars))
-    return ClosedJaxpr(new_jaxpr, closed_jaxpr.consts), global_outvars
+    return new_jaxpr, global_outvars
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
@@ -502,9 +503,8 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
                     name, new_invars, new_outvars, new_eqns,
                     dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts))))
         else:
-            new_jaxpr = Jaxpr(jaxpr.jaxpr.constvars, new_invars, new_outvars,
-                              new_eqns)
-            results.append(ClosedJaxpr(new_jaxpr, jaxpr.consts))
+            new_jaxpr = clone_jaxpr(jaxpr, new_invars, new_outvars, new_eqns)
+            results.append(new_jaxpr)
     return results, outvar_map
 
 

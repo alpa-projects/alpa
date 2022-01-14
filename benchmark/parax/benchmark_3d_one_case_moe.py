@@ -126,7 +126,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
-    if auto_pipeline:
+    if pipeline_stage_mode == "auto_gpipe":
         compilation_times = {k : timers(k).elapsed() for k in
                 ["stage-construction", "stage-construction-dp",
                  "stage-construction-compilation", "stage-construction-profiling"]}

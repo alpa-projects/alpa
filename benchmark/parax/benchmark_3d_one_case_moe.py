@@ -122,7 +122,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size,
+                                dtype, auto_layer, fine_grained_remat=True)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

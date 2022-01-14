@@ -72,7 +72,7 @@ def create_train_state(rngkey, model, batch, dtype):
 
 
 def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
-                   auto_layer=False, remat_layer_boundary=True):
+                   auto_layer=False, fine_grained_remat=False):
 
     add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size >= 1))
 
@@ -101,14 +101,15 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
         if add_pipeline_marker:
             loss_func = manual_layer_construction(loss_func)
         elif auto_layer:
-            if remat_layer_boundary:
-                loss_func = automatic_layer_construction(loss_func,
-                                                         remat_layer=use_remat,
-                                                         layer_num=pipeline_mp_size)
-            else:
+            if fine_grained_remat:
                 if use_remat:
                     loss_func = automatic_remat(loss_func, layer_num=num_layers)
                 loss_func = automatic_layer_construction(loss_func, layer_num=pipeline_mp_size)
+            else:
+                loss_func = automatic_layer_construction(loss_func,
+                                                         remat_layer=use_remat,
+                                                         layer_num=pipeline_mp_size)
+
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training

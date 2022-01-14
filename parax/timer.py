@@ -63,7 +63,7 @@ class _Timer:
     def elapsed(self, mode: str = "average"):
         """Calculate the elapsed time."""
         if not self.costs:
-            raise RuntimeError("Empty costs.")
+            return 0.0
         if mode == "average":
             return sum(self.costs) / len(self.costs)
         elif mode == "sum":

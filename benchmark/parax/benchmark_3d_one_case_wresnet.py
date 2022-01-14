@@ -15,7 +15,7 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
 from parax.model.wide_resnet import get_wide_resnet, TrainState
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
 from parax.timer import timers
-from parax.util import map_to_shape, print_used_time, compute_param_number, GB
+from parax.util import map_to_shape, print_used_time, compute_param_number, GB, to_str_round
 
 # B = batch_size, I = image_size,
 # L = num_layers, C = num_base_channels, W = width_factor, 
@@ -216,6 +216,7 @@ def benchmark_wresnet_internal(benchmark_case, niter,
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches,
                             pipeline_stage_mode="auto_gpipe",
+                            #cache_compute_cost="compute-cost-2022-01-14-12-35-01.npy",
                             logical_mesh_search_space=logical_mesh_search_space)
     global_config.auto_stage_construction_imbalance_tolerance = 0.4
 

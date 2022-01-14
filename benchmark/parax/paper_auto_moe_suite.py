@@ -1,3 +1,4 @@
+"""Benchmark suite for auto moe."""
 
 moe_specs = {
 #         S,    H,      L,     #head,   V,      E,   S_
@@ -14,7 +15,7 @@ moe_specs = {
 _ = None
 
 dummy_arguments = (1, 1, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
-fixed_params = (False, True,  True, True) # FM, Remat, RS, AP
+fixed_params = (False, True, True, True) # FM, Remat, RS, AP
 max_global_batch_size = 1024
 
 default_overwrite_dict = {
@@ -24,11 +25,13 @@ default_overwrite_dict = {
     "profiling_database_filename": "prof_database.pkl",
 }
 
-def get_auto_test_case(model_name, n_microbatches, num_layers, overwrite_global_config_dict=None):
+def get_auto_test_case(model_name, n_microbatches, num_layers,
+                       overwrite_global_config_dict=None):
     if overwrite_global_config_dict is None:
         overwrite_global_config_dict = default_overwrite_dict
     return [(max_global_batch_size, *moe_specs[model_name],
-             *dummy_arguments, num_layer, n_microbatch, *fixed_params, overwrite_global_config_dict)
+             *dummy_arguments, num_layer, n_microbatch, *fixed_params,
+             overwrite_global_config_dict)
             for n_microbatch in n_microbatches
             for num_layer in num_layers]
 
@@ -37,7 +40,7 @@ paper_auto_moe_suite = {
 4: (get_auto_test_case("1.3B", [16, 32, 64], [8])),
 8: (get_auto_test_case("2.4B", [16, 32, 64], [8])),
 16: (get_auto_test_case("10B", [16, 32, 64], [8])),
-32: (get_auto_test_case("27B", [16, 32, 64], [16])),
+32: (get_auto_test_case("27B", [16, 32, 64], [4, 8, 16])),
 }
 
 test_auto_moe_suite = {

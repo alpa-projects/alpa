@@ -321,8 +321,12 @@ class ProfileWorker:
             except RayActorError:
                 logger.warning("Meet ray actor error in profiling")
                 self.restart(forced=True)
-            except RuntimeError:
-                logger.warning("Meet unexpected error in profiling")
+            except RuntimeError as e:
+                logger.warning(f"Meet runtime error in profiling: {e}")
+                self.restart(forced=True)
+                break
+            except AssertionError as e:
+                logger.warning(f"Meet assertion error in profiling: {e}")
                 self.restart(forced=True)
                 break
         return stage_id, np.inf, -1, (np.inf, 0, 0, 0)

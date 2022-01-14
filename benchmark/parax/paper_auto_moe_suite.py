@@ -42,19 +42,14 @@ paper_auto_moe_suite = {
 8: (get_auto_test_case("2.4B", [16, 32, 64], [8])),
 16: (get_auto_test_case("10B", [16, 32, 64], [8])),
 32: (get_auto_test_case("27B", [16, 32, 64], [4, 8, 16])),
+64: (get_auto_test_case("70B", [16, 32, 64], [4, 8, 16])),
 }
 
 test_auto_moe_suite = {
 1:  get_auto_test_case("380M", [64], [4]),
 2:  get_auto_test_case("690M", [64], [4]),
-#4:  get_auto_test_case("1.3B", [64], [8]),
-4: get_auto_test_case("1.3B", [64], [8], "manual_gpipe", {
-    "forward_stage_layer_ids": [[0, 1], [2, 3], [4, 5], [6, 7]],
-    "sub_physical_mesh_shapes": [(1, 1)] * 4,
-    "sub_logical_mesh_shapes": [(1, 1)] * 4,
-    "submesh_autosharding_option_dicts": [{}] * 4,
-}),
+4:  get_auto_test_case("1.3B", [64], [8]),
 8:  get_auto_test_case("2.4B", [16], [8]),
 16: get_auto_test_case("10B",  [32], [8]),
-32: get_auto_test_case("27B",  [32], [8]),
+32: get_auto_test_case("27B",  [32], [4]),
 }

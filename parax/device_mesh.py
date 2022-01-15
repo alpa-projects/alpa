@@ -77,8 +77,7 @@ class MeshHostWorker:
                                                   node_id=host_id)
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
-        self.allgather_communicators = nccl.NcclCommunicator.initAll(
-            list(range(len(self.local_devices))))
+        self.allgather_communicators = {}
         self.buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
@@ -267,6 +266,8 @@ class MeshHostWorker:
     def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
                   tensor_slices: Sequence[slice]):
         cupy_buffers = []
+        communicators = self.allgather_communicators[repr(sorted(device_ids))]
+        relative_idx = dict(zip(sorted(device_ids), range(len(device_ids))))
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
@@ -274,7 +275,7 @@ class MeshHostWorker:
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
             ind, n_elements = infer_offset_and_n_elements(tensor_slice)
             cupy_slice = cupy_buffer[ind]
-            self.allgather_communicators[device_id].allGather(
+            communicators[relative_idx[device_id]].allGather(
                 nccl_util.get_tensor_ptr(cupy_slice),
                 nccl_util.get_tensor_ptr(cupy_buffer), n_elements,
                 nccl_util.get_nccl_tensor_dtype(cupy_buffer),
@@ -314,7 +315,15 @@ class MeshHostWorker:
                                recv_tile_spec.gpu_idx, task.group_name)
 
     def put_resharding_allgather_task(self, uuid, tasks):
-        self.allgather_tasks[uuid] = ReshardingAllGatherTask(tasks)
+        all_gather_task = ReshardingAllGatherTask(tasks)
+        allgather_specs = all_gather_task.allgather_specs
+        for group_idx in allgather_specs:
+            allgather_spec: ReshardingAllGatherSpec = allgather_specs[group_idx]
+            device_ids = sorted(allgather_spec.device_ids)
+            if repr(device_ids) not in self.allgather_communicators:
+                communicators = nccl.NcclCommunicator.initAll(list(device_ids))
+                self.allgather_communicators[repr(device_ids)] = communicators
+        self.allgather_tasks[uuid] = all_gather_task
 
     def run_allgather_task(self, uuid, buffer_uuids):
         task: ReshardingAllGatherTask = self.allgather_tasks[uuid]

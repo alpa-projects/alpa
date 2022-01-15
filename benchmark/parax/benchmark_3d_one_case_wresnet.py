@@ -206,7 +206,7 @@ def benchmark_wresnet_internal(benchmark_case, niter,
         num_micro_batches = None
 
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
-    as_option.allow_mixed_mesh_shape = False
+    as_option.allow_mixed_mesh_shape = True
 
     device_cluster = DeviceCluster()
     host_ids = None if num_hosts == None else list(range(num_hosts))

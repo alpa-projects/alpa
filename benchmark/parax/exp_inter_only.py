@@ -30,6 +30,7 @@ gpt_inter_only = [
     # model,                   LD0, LD1, PD0, PD1, PP, NB,   FM,    Remat, RS,    Stage, _
     (1024, *gpt_specs["350M"], 1,   1,   1,   1,   1,  64,   True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["350M"], 1,   1,   1,   1,   1,  128,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["350M"], 1,   1,   1,   1,   1,  256,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["760M"], 1,   1,   1,   1,   2,  64,   True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["760M"], 1,   1,   1,   1,   2,  128,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["760M"], 1,   1,   1,   1,   2,  256,  True,  True,  True,  "uniform_layer_gpipe", _),
@@ -42,21 +43,20 @@ gpt_inter_only = [
     (1024, *gpt_specs["2.7B"], 1,   1,   1,   1,   8,  256,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["2.7B"], 1,   1,   1,   1,   8,  512,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["2.7B"], 1,   1,   1,   1,   8,  1024, True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 128,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["6.7B"], 1,   1,   1,   1,   16, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["15B"],  1,   1,   1,   1,   32, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["15B"],  1,   1,   1,   1,   32, 128,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["15B"],  1,   1,   1,   1,   32, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *gpt_specs["15B"],  1,   1,   1,   1,   32, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 128,  True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *gpt_specs["15B"],  1,   1,   1,   1,   32, 1024,  True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 128,  True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *gpt_specs["39B"],  1,   1,   1,   1,   32, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
 ]
 
 moe_inter_only = [
@@ -80,10 +80,10 @@ moe_inter_only = [
     (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 256,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
     (1024, *moe_specs["10B"],  2048, 1,   1,   1,   1,   16, 1024, True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *moe_specs["27B"],  2048, 1,   1,   1,   1,   32, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *moe_specs["27B"],  2048, 1,   1,   1,   1,   32, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *moe_specs["70B"],  2048, 1,   1,   1,   1,   64, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
-    (1024, *moe_specs["70B"],  2048, 1,   1,   1,   1,   64, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
+    (1024, *moe_specs["27B"],  2048, 1,   1,   1,   1,   32, 512,  True,  True,  True,  "uniform_layer_gpipe", _), # eps = 6, LAYER_HEAVY_OP_LOWER_BOUND = 1
+    (1024, *moe_specs["27B"],  2048, 1,   1,   1,   1,   32, 1024,  True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *moe_specs["70B"],  2048, 1,   1,   1,   1,   64, 64,   True,  True,  True,  "uniform_layer_gpipe", _),
+    #(1024, *moe_specs["70B"],  2048, 1,   1,   1,   1,   64, 512,  True,  True,  True,  "uniform_layer_gpipe", _),
 ]
 
 wresnet_inter_only = [

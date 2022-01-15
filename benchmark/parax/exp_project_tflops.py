@@ -17,18 +17,16 @@ def project_tflops(micro_batch_size, batch_sizes, latencies, tflops, queries):
     return ret_latencies, ret_tflops
 
 # gpt - 4 nodes
-ret_latencies, ret_tflops = project_tflops(
+latencies, tflops = project_tflops(
     32, [64, 128], [39.09, 42.525], [6.6104, None], queries=[64, 128, 256, 1024])
-print("gpt", ret_latencies, ret_tflops)
+print(f"gpt, latency: {latencies}, tflops: {tflops}")
 
 # moe - 4 nodes
-ret_latencies, ret_tflops = project_tflops(
-    32, [64, 128], [31.5075, 59.4105], [1.0895, None], queries=[64, 128, 256, 1024])
-print("moe", ret_latencies, ret_tflops)
+latencies, tflops = project_tflops(
+    32, [64, 128], [28.2863, 50.6981], [1.2883, None], queries=[64, 128, 256, 1024])
+print(f"moe, latency: {latencies}, tflops: {tflops}")
 
 # wresnet - 4 nodes
-ret_latencies, ret_tflops = project_tflops(
-    32, [64, 128], [32.6111, 54.1155], [0.3807, None], queries=[64, 128, 256, 1536])
-print("wresnet", ret_latencies, ret_tflops)
-
-
+latencies, tflops = project_tflops(
+    32, [64, 128], [37.0612, 43.3694], [0.3398, None], queries=[64, 128, 256, 1536])
+print(f"wresnet, latency: {latencies}, tflops: {tflops}")

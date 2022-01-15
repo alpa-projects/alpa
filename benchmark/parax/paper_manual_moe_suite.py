@@ -8,7 +8,7 @@ _ = None
 # LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
 # PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
 # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, AP = auto_pipeline
+# RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
 
 fast_test_moe_suite = {  # key = number of gpus, value = a list of cases
 1: [
@@ -40,13 +40,13 @@ moe_specs = {
 
 }
 
-#               Remat, RS,   AP
-fixed_params = (True,  True, False)
+#               Remat, RS,   pipeline_stage_mode
+fixed_params = (True,  True, "uniform_layer_gpipe")
 
 
 test_moe_suite = {
 1: [
-    # B,      model,                          LD0, LD1, PD0, PD1, PP, NB, FM,    (Remat, RS, AP), EP (deepspeed-only)
+    # B,      model,                          LD0, LD1, PD0, PD1, PP, NB, FM,    (Remat, RS, Stage), EP (deepspeed-only)
     (8,  *moe_specs["380M"],  8 * 1024 // 2,  1,   1,   1,   1,   1,  1,  False, *fixed_params,  1),
 ],
 
@@ -74,7 +74,7 @@ test_moe_suite = {
 
 paper_moe_suite = {
 1: [
-    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, AP), _
+    # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Stage), _
     #1 GPUs, deepspeed max bs = 8, parax = 16
     (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     (32,    *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
@@ -93,7 +93,7 @@ paper_moe_suite = {
     # MP is always worse
     # ===============================
     # 380M model
-    # B,      model,                              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, AP), _
+    # B,      model,                              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Stage), _
     (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     (64,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
     (256,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
@@ -151,7 +151,7 @@ paper_moe_suite = {
 ],
 
 4: [
-    # B,      model,                              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, AP), _
+    # B,      model,                              LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Stage), _
     (16,     *moe_specs["380M"],  8 * 1024 // 2,   2,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     # ================================
     # 690M model

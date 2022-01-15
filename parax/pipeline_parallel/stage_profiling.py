@@ -158,8 +158,8 @@ class CompileWorker:
                 strategy_config) = self.compile_proto_with_search(
                     stage_id, config.model_proto, jaxpr_args,
                     autosharding_option, mesh_kwargs)
-        except RuntimeError:
-            logger.warning("Unexpected error in compile time")
+        except RuntimeError as e:
+            logger.warning(f"Compilation error for stage {stage_id} : {e}")
             return stage_id, None
 
         assert (len(protos) <=
@@ -183,15 +183,20 @@ class CompileWorker:
 
         # Compile accumulate_grad part to fully optimized
         rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
-        compiled = compile_with_given_strategy(
-            self.backend,
-            sharding_annotated_computation,
-            strategy_config,
-            logical_mesh.num_devices,
-            HloProtoStatus.SHARDING_ANNOTATED,
-            bypass_device_assignment_check=True,
-            rewrite_for_grad_acc=rewrite_for_grad_acc,
-            rewrite_grad_acc_indices=config.output_acc_grad_indices)
+        try:
+            compiled = compile_with_given_strategy(
+                self.backend,
+                sharding_annotated_computation,
+                strategy_config,
+                logical_mesh.num_devices,
+                HloProtoStatus.SHARDING_ANNOTATED,
+                bypass_device_assignment_check=True,
+                rewrite_for_grad_acc=rewrite_for_grad_acc,
+                rewrite_grad_acc_indices=config.output_acc_grad_indices)
+        except IndexError as e:
+            logger.warning(f"Compilation error for stage {stage_id} : {e}")
+            return stage_id, None
+
         optimized_proto = compiled.hlo_modules(
         )[0].as_serialized_hlo_module_proto()
         return stage_id, CompileOutput(optimized_proto, strategy_config,
@@ -471,10 +476,12 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
     else:
         profile_workers = ProfileWorkerPool(meshes)
 
+    succ_compile_ct = 0
     for stage_id, (compiled_output,
                    stage) in enumerate(zip(compiled_outputs, stages)):
         if compiled_output is None:
             continue
+
         config = compiled_output.strategy_config
         hooked_proto = compiled_output.intermediate_proto
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
@@ -489,8 +496,9 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             lambda w, v: w.profile.remote(*v),
             (stage_id, compiled_output, stage_config.profile_config,
              intermediate_size, apply_grad_input_size))
+        succ_compile_ct += 1
 
-    pbar = tqdm.tqdm(stages)
+    pbar = tqdm.tqdm(range(succ_compile_ct))
     for _ in pbar:
         try:
             (stage_id, cost, max_stage,

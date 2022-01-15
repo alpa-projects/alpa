@@ -424,7 +424,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     apply_grad_invars = new_invars
     combined_eqns.append(
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p,
-                      {"mark_type": "start"}, None))
+            {"mark_type": "start", "name": APPLY_GRAD_MARKER_SUFFIX}, None))
 
     # Append eqns for gradient reduction
     for i in range(num_grads):
@@ -453,7 +453,8 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     new_outvars = [gensym_func(x.aval) for x in old_outvars]
     combined_eqns.append(
         new_jaxpr_eqn(old_outvars, new_outvars, pipeline_p,
-                      {"mark_type": "end"}, None))
+                      {"mark_type": "end",
+                       "name": APPLY_GRAD_MARKER_SUFFIX}, None))
 
     # Make the new jaxpr
     combined_jaxpr = ClosedJaxpr(

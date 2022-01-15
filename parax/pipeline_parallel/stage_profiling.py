@@ -92,6 +92,7 @@ class BaseWorkerPoolWrapper(ABC):
             else:
                 w.__ray_terminate__.remote()
         gc.collect()
+        time.sleep(5)
 
 
 def get_input_output_sharding_proto(proto, num_devices):
@@ -334,6 +335,7 @@ class ProfileWorker:
     def restart(self, forced):
         """Restart the physical mesh."""
         self.mesh.shutdown(forced=forced)
+        time.sleep(3)
         self.mesh = self.virtual_mesh.get_physical_mesh()
 
 

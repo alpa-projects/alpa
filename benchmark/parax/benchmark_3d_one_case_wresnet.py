@@ -55,6 +55,13 @@ paper_auto_wresnet_suite = {  # key = number of gpus, value = a list of cases
     #(1536, 224, 50,  640,  2,  "fp32", 32, False, True,  True, "single_node_model_parallel"),
     (1520, 224, 50,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel"),
 ],
+
+64: [
+    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
+    (1536, 224, 50,  320,  32, "fp32", 32, False, False, True,  "single_node_model_parallel"),
+    (1520, 224, 50,  320,  32, "fp32", 38, False, False, True,  "single_node_model_parallel"),
+    (1536, 224, 50,  320,  32, "fp32", 48, False, False, True,  "single_node_model_parallel"),
+],
 }
 
 
@@ -191,6 +198,7 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         num_micro_batches, force_batch_dim_mapping,\
         prefer_reduce_scatter, use_remat, logical_mesh_search_space = benchmark_case
+    pipeline_stage_mode = "auto_gpipe"
     if dtype == "fp32":
         dtype = jnp.float32
     elif dtype == "fp16":
@@ -215,10 +223,9 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches,
-                            pipeline_stage_mode="auto_gpipe",
-                            #cache_compute_cost="compute-cost-2022-01-14-12-35-01.npy",
+                            pipeline_stage_mode=pipeline_stage_mode,
                             logical_mesh_search_space=logical_mesh_search_space)
-    global_config.auto_stage_construction_imbalance_tolerance = 0.4
+    global_config.auto_stage_construction_imbalance_tolerance = 0.25
 
     # Prepare input batch
     num_classes = 1024

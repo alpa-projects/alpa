@@ -10,6 +10,7 @@ gpt_specs = {
 "1.3B": (1024,  2048,  24,    32,   51200, ),
 "2.7B": (1024,  2560,  32,    32,   51200, ),
 "6.7B": (1024,  4096,  32,    32,   51200, ),
+"15B-24L":  (1024,  5120,  24,    40,   51200, ),
 "15B":  (1024,  5120,  48,    40,   51200, ),
 "39B":  (1024,  8192,  48,    64,   51200, ),
 "76B":  (1024,  10240, 60,    80,   51200, ),
@@ -68,6 +69,18 @@ test_auto_gpt_suite = {
 #8: get_auto_test_case("TEST", [2], [2]),
 #8: get_auto_test_case("TEST2", [128], [4]),
 16: get_auto_test_case("6.7B", [256], [8]),
+32: get_auto_test_case("15B-24L", [64], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[i] for i in range(4)],
+    "sub_physical_mesh_shapes": [(1, 8)] * 4,
+    "sub_logical_mesh_shapes": [(2, 4)] * 4,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4,
+}),
+64: get_auto_test_case("15B", [64], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[i] for i in range(8)],
+    "sub_physical_mesh_shapes": [(1, 8)] * 8,
+    "sub_logical_mesh_shapes": [(2, 4)] * 8,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 8,
+})
 }
 
 result_auto_gpt_suite = {

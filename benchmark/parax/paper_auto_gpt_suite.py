@@ -24,6 +24,7 @@ default_overwrite_dict = {
     "logical_mesh_search_space": "all",
     "use_hlo_cost_model": True,
     "profiling_database_filename": "prof_database_4_node_20220111.pkl",
+    "submesh_choices_mode": "small_power_of_two",
 }
 
 

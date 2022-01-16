@@ -166,6 +166,11 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         while i <= num_hosts:
             submesh_choices.append((i, num_devices_per_host))
             i *= 2
+    elif global_config.submesh_choices_mode == "small_power_of_two":
+        i = 2
+        while i <= min(num_hosts, 4):
+            submesh_choices.append((i, num_devices_per_host))
+            i *= 2
     else:
         raise ValueError(f"Invalid submesh_choices: "
                          f"{global_config.submesh_choices}")

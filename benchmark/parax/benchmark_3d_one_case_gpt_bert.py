@@ -132,7 +132,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
 
     # Parallel configs
     fine_grained_remat = False
-    if pipeline_stage_mode in ["auto_gpipe" "manual_gpipe"]:
+    if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
         auto_layer = True
     else:
         assert pipeline_stage_mode == "uniform_layer_gpipe"

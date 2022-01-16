@@ -61,7 +61,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
 
     # Parallel configs
     fine_grained_remat = True
-    if pipeline_stage_mode in ["auto_gpipe" "manual_gpipe"]:
+    if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
         auto_layer = True
     else:
         assert pipeline_stage_mode == "uniform_layer_gpipe"

@@ -67,8 +67,20 @@ test_moe_suite = {
 ],
 
 32: [
-]
+],
 
+64: [
+    # error: OOM
+    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  32,   False, *fixed_params, 1),
+    # 37 TFLOPS
+    (1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  64,   False, *fixed_params, 1),
+    # bug: one worker hangs
+    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  128,  False, *fixed_params, 1),
+    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  256,  False, *fixed_params, 1),
+    # bug: invalid shardin spec after _rewrite_allgather_specs
+    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  512,  False, *fixed_params, 1),
+    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  1024, False, *fixed_params, 1),
+],
 }
 
 

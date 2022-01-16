@@ -48,7 +48,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size, \
         l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,\
         num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter, \
-        auto_pipeline, overwrite_global_config_dict = benchmark_case
+        pipeline_stage_mode, overwrite_global_config_dict = benchmark_case
     dtype = jnp.float16
     tie_word_embeddings = False
 
@@ -60,11 +60,10 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         expert_group_size = expected_expert_group_size
 
     # Parallel configs
-    auto_layer = auto_pipeline
+    auto_layer = pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]
     grad_func = parax.grad
 
     if force_batch_dim_mapping:
-        # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
@@ -74,7 +73,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
 
-    if not auto_pipeline:
+    if pipeline_stage_mode == "uniform_layer_gpipe":
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 num_micro_batches=num_micro_batches,
@@ -84,7 +83,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     else:
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
-                                pipeline_stage_mode="auto_gpipe",
+                                pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches)
 
     if isinstance(overwrite_global_config_dict, dict):
@@ -100,9 +99,9 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     }
     print_used_time("Prepare input")
 
+    # Init train state
     add_manual_layer_construction_marker = ((not auto_layer) and (pipeline_mp_size > 1))
 
-    # Init train state
     model = FlaxMoEForLMModule(MoEConfig(
         num_hidden_layers=num_layers,
         hidden_size=hidden_size,
@@ -127,7 +126,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
-    if auto_pipeline:
+    if pipeline_stage_mode == "auto_gpipe":
         compilation_times = {k : timers(k).elapsed() for k in
                 ["stage-construction", "stage-construction-dp",
                  "stage-construction-compilation", "stage-construction-profiling"]}
@@ -149,7 +148,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     for i in range(niter):
         state = train_step(state, batch, rngkey)
 
-    latencies = executable.get_execution_time_costs(warmup=2)
+    latencies = executable.get_execution_time_costs(warmup=1)
     print_used_time("Benchmark")
 
     mem_allocated = executable.get_memory_allocated()

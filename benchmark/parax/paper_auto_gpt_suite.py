@@ -1,7 +1,6 @@
-# suite for gpt benchmarking
+"""Benchmark suite for auto gpt."""
 
 gpt_specs = {
-# Note: that head_size = hidden_size / #head
         # S，    H，    #L,   #head,  V,
 "TEST": (128,   128,   2,     8,    512,   ),
 "TEST2":(1024,  2560,  4,     32,   51200, ),

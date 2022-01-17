@@ -146,7 +146,9 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     print_used_time("Compile (worker)")
 
     for i in range(niter):
+        print(f"Iteration: {i}....")
         state = train_step(state, batch, rngkey)
+        executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
     print_used_time("Benchmark")

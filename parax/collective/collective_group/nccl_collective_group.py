@@ -503,7 +503,7 @@ class NCCLGroup(BaseGroup):
             nccl_uid = self._generate_nccl_uid(group_key)
         else:
             rendezvous = Rendezvous(group_key)
-            rendezvous.meet()
+            rendezvous.meet(timeout_s=3000)
             nccl_uid = rendezvous.get_nccl_id()
 
             # Recycle the NCCLUniqueIDStore named actor *pro-activately* to

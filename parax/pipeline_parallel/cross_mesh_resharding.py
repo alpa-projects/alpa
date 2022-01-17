@@ -221,7 +221,9 @@ class SymbolicReshardingTask(ReshardingTask):
         flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
         # Reconstruct logical mesh info
         dst_spec = self.task_spec.dst_sharding_spec
-        dst_mesh_shape = [(dst_spec.sharding[mesh_map.axis].chunks[0]
+
+        chunked_axes = [i for i, s in enumerate(dst_spec.sharding) if isinstance(s, pxla.Chunked)]
+        dst_mesh_shape = [(dst_spec.sharding[chunked_axes[mesh_map.axis]].chunks[0]
                            if isinstance(mesh_map, pxla.ShardedAxis) else 1)
                           for mesh_map in dst_spec.mesh_mapping]
         assert len(dst_mesh_shape) < 3, "Only support 1D and 2D mesh"
@@ -800,7 +802,12 @@ class CrossMeshCommunicator:
                         shard_axes[dim] = 1
                     else:
                         shard_axes[dim] = 0
-                shard_axes_reversed = {v: k for k, v in shard_axes.items()}
+                # shard_axes_reversed = {v: k for k, v in shard_axes.items()}
+                squeezed_shard_axes = []
+                for k in sorted(shard_axes.keys()):
+                    squeezed_shard_axes.append(shard_axes[k])
+                shard_axes_reversed = {v: k for k, v in enumerate(squeezed_shard_axes)}
+
                 # Should be always sharded
                 new_mapping = [
                     pxla.ShardedAxis(shard_axes_reversed[i])

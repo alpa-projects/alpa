@@ -448,7 +448,11 @@ def compile_all(stages):
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
-        stage_id, compiled_output = compile_workers.get_next_unordered()
+        try:
+            stage_id, compiled_output = compile_workers.get_next_unordered()
+        except TimeoutError:
+            logger.warning("Compile worker timeout")
+            continue
         compiled_outputs[stage_id] = compiled_output
 
     compile_workers.shutdown()

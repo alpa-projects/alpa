@@ -57,7 +57,7 @@ paper_auto_gpt_suite = {
      # get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
      get_auto_test_case("6.7B", [64, 128], [32, 34]) +
      get_auto_test_case("15B", [128, 256, 512], [32, 34])),
-64: (get_auto_test_case("39B", [128, 256, 512, 1024], [8])),
+64: (get_auto_test_case("39B", [256, 512, 1024], [8])),
 }
 
 test_auto_gpt_suite = {
@@ -74,7 +74,7 @@ test_auto_gpt_suite = {
     "sub_logical_mesh_shapes": [(2, 4)] * 4,
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4,
 }),
-64: get_auto_test_case("15B", [64], [8], "manual_gpipe", {
+64: get_auto_test_case("39B", [256], [8], "manual_gpipe", {
     "forward_stage_layer_ids": [[i] for i in range(8)],
     "sub_physical_mesh_shapes": [(1, 8)] * 8,
     "sub_logical_mesh_shapes": [(2, 4)] * 8,

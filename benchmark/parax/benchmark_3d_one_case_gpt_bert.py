@@ -59,7 +59,8 @@ def create_train_state(rngkey, model, batch, dtype):
 
     tx = optax.chain(
         #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+        # optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+        optax.sgd(learning_rate=1e-2)
     )
     mixed_precision = (dtype == jnp.float16)
     state = TrainState.create(

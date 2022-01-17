@@ -68,6 +68,9 @@ test_gpt_suite = {
 
 32: [
     (1024,  *gpt_specs["6.7B"],  4,   1,   1,   4,   8,  32,    True,  *fixed_params),
+],
+
+64: [
 ]
 
 }
@@ -824,10 +827,10 @@ paper_gpt_suite = {
 ],
 
 64: [
-    # 13B model
-
-    #==================
     # 39B model
+    (1024,  *gpt_specs["39B"],  1,   4,   1,   4,   16,  1024,    True,  *fixed_params),
+    (1024,  *gpt_specs["39B"],  1,   8,   1,   8,   8,  512,    True,  *fixed_params),
+    # Parax suites
 
 ]
 }

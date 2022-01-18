@@ -77,9 +77,9 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         set(layer.name for layer in jax_pipeline_layers))
            ), "All layers must have unique names."
     jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_layers, acc_grad_invars, acc_grad_outvars)
+        jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    offload_remat(jax_pipeline_layers, gensym_func)
+    jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars
@@ -141,7 +141,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
                                                global_invars, global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
-        donation_mapping, jax_all_stages)
+        donation_mapping, jax_all_stages, gensym_func)
 
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":

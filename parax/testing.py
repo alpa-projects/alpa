@@ -152,8 +152,13 @@ def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):
         return train_step
 
 
-def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat,
-                              num_layers):
+def get_bert_layer_train_step(use_parallel,
+                              manual_pipeline_layer,
+                              test_remat,
+                              num_layers,
+                              decorate=None):
+    if decorate is None:
+        decorate = use_parallel
 
     def train_step(state, batch):
 
@@ -164,7 +169,7 @@ def get_bert_layer_train_step(use_parallel, manual_pipeline_layer, test_remat,
                 mark_pipeline(name=str(num_layers - 1), mark_type='end')
             return loss
 
-        if use_parallel:
+        if decorate:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          test_remat, num_layers)
             grads = grad(loss_func)(state.params)

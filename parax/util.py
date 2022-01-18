@@ -19,7 +19,8 @@ import jax
 from jax._src.api import FLAGS
 from jax._src.dlpack import from_dlpack, to_dlpack
 from jax.api_util import shaped_abstractify
-from jax.core import ClosedJaxpr, DropVar, Jaxpr, Literal, ShapedArray, Var
+from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
+                      ShapedArray, Var)
 from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla, pxla
 from jax.interpreters import partial_eval as pe
@@ -513,6 +514,20 @@ class XlaPassContext:
 ########################################
 ##### Jaxpr Utilities
 ########################################
+def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
+                invars: Sequence[Atom] = None,
+                outvars: Sequence[Var] = None,
+                eqns: Sequence[JaxprEqn] = None,
+                constvars: Sequence[Var] = None,
+                consts: Sequence = None):
+    """Clone a jaxpr and replace members if they are provided."""
+    constvars = constvars or closed_jaxpr.jaxpr.constvars
+    invars = invars or closed_jaxpr.jaxpr.invars
+    outvars = outvars or closed_jaxpr.jaxpr.outvars
+    eqns = eqns or closed_jaxpr.jaxpr.eqns
+    consts = consts or closed_jaxpr.consts
+    jaxpr = Jaxpr(constvars, invars, outvars, eqns)
+    return ClosedJaxpr(jaxpr, consts)
 
 
 def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,

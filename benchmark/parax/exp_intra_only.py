@@ -48,6 +48,9 @@ moe_intra_only = [
     (64,   *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  2,  False, True,  True,  _, _),
     (128,  *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  4,  False, True,  True,  _, _),
     (256,  *moe_specs["27B"],  2048, 1,   32,  _,   _,   1,  8,  False, True,  True,  _, _),
+    (32,   *moe_specs["70B"],  2048, 1,   64,  _,   _,   1,  8,  True,  True,  True,  _, _), # allow_all_to_all = False
+    (64,   *moe_specs["70B"],  2048, 1,   64,  _,   _,   1,  16, True,  True,  True,  _, _),
+    (128,  *moe_specs["70B"],  2048, 1,   64,  _,   _,   1,  32, True,  True,  True,  _, _),
 ]
 
 wresnet_intra_only = [
@@ -60,6 +63,9 @@ wresnet_intra_only = [
     (64,   *wresnet_specs["6.8B"], 4,  8,  2,  False, True, _, _),
     (128,  *wresnet_specs["6.8B"], 4,  8,  4,  False, True, _, _),
     (256,  *wresnet_specs["6.8B"], 4,  8,  8,  False, True, _, _),
+    (16,   *wresnet_specs["13B"], 4,  16,  2,  False, True, _, _),
+    (32,   *wresnet_specs["13B"], 4,  16,  4,  False, True, _, _),
+    (64,   *wresnet_specs["13B"], 4,  16,  8,  False, True, _, _),
 ]
 
 suites = [

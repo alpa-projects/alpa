@@ -710,7 +710,8 @@ class PhysicalDeviceMesh:
                         self.workers[0].get_memory_allocated.remote())
                     before_memory_peak = ray.get(
                         self.workers[0].get_max_memory_allocated.remote())
-                    arg = xla.canonicalize_dtype(arg)
+                    if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
+                        arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
                     input_bufs.append(buf_refs)
                     if donated and hasattr(arg, "delete"):

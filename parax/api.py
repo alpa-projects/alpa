@@ -13,11 +13,11 @@ from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from parax.global_env import global_config
-from parax.pipeline_parallel.local_pipeline_parallel import local_pipeline_parallel_callable
+from parax.pipeline_parallel.local_pipeline_parallel import (local_pipeline_parallel_callable)
 from parax.pipeline_parallel.primitive_def import mark_gradient
 from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from parax.shard_parallel.shard_callable import shard_parallel_callable
-from parax.util import auto_donate_argnums, auto_static_argnums
+from parax.util import (auto_donate_argnums, auto_static_argnums, abstractify_with_aval)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -94,10 +94,6 @@ def parallelize(fun: Callable = None,
             batch_invars = donation_vector(batch_tuple, dyn_args, kwargs)
 
             # JIT compile and call the compiled func
-            def abstractify_with_aval(x):
-                return (x if isinstance(x, jax.ShapeDtypeStruct)
-                        else xla.abstractify(x))
-
             abstract_args = unsafe_map(abstractify_with_aval, args_flat)
             devices = global_config.devices
             if isinstance(devices, list):

@@ -141,10 +141,5 @@ def init_dummy(self, *args, **kwargs):
     return jax.tree_util.tree_map(lambda x: jnp.full(x.shape, 1e-8, x.dtype),
                                   avals)
 
-def init_aval(self, *args, **kwargs):
-    avals = jax.eval_shape(self.init, *args, **kwargs)
-    return avals
-
 
 setattr(flax.linen.module.Module, "init_dummy", init_dummy)
-setattr(flax.linen.module.Module, "init_aval", init_aval)

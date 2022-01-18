@@ -2,6 +2,7 @@
 from functools import wraps
 from typing import Callable, Optional, Sequence, Union
 
+import jax
 from jax import linear_util as lu, api
 from jax._src.util import safe_map, HashableFunction
 from jax.api_util import (argnums_partial, donation_vector,
@@ -93,7 +94,11 @@ def parallelize(fun: Callable = None,
             batch_invars = donation_vector(batch_tuple, dyn_args, kwargs)
 
             # JIT compile and call the compiled func
-            abstract_args = unsafe_map(xla.abstractify, args_flat)
+            def abstractify_with_aval(x):
+                return (x if isinstance(x, jax.ShapeDtypeStruct)
+                        else xla.abstractify(x))
+
+            abstract_args = unsafe_map(abstractify_with_aval, args_flat)
             devices = global_config.devices
             if isinstance(devices, list):
                 devices = tuple(devices)

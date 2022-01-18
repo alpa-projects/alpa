@@ -1,6 +1,6 @@
 """Transformations and utilities to process gradient accumulation and apply_gradient."""
 import logging
-from typing import Sequence, Dict
+from typing import Sequence, Dict, Tuple
 
 from jax._src.util import safe_map
 from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
@@ -47,17 +47,19 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
     return compute_grad, apply_grad, split_eqn
 
 
-def compute_grad_to_accumulate_grad(compute_jaxpr: ClosedJaxpr, gensym_fn):
+def compute_grad_to_accumulate_grad(
+        compute_jaxpr: ClosedJaxpr,
+        gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
     """
     Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
 
     Args:
-        compute_jaxpr (ClosedJaxpr): the original jaxpr
+        compute_jaxpr: the original jaxpr
         gensym_fn: gensym function
     Returns:
-        acc_grad_jaxpr (ClosedJaxpr): The accumulate grad jaxpr
-        update_outs (Dict[Var, Var]): From original output(grad) to new output(acc grad)
-        grad_in_to_out (Dict[Var, Var]): From accumulated gradient inputs to outputs
+        acc_grad_jaxpr: The accumulate grad jaxpr
+        update_outs: From original output(grad) to new output(acc grad)
+        grad_in_to_out: From accumulated gradient inputs to outputs
     """
     raw_gradients = OrderedSet([
         outvar for outvar in compute_jaxpr.jaxpr.outvars
@@ -314,18 +316,18 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                          outvar_mesh: Dict[Var, OrderedSet[int]], mesh_num,
-                         donation_mapping):
+                         donation_mapping: Dict[Var, Var]):
     """
     Slice the apply gradient jaxpr based on mesh allocation information.
 
     Args:
-        closed_jaxpr (ClosedJaxpr): closed jaxpr of apply_gradient function.
-        grad_mesh (Dict[Var, int]): some invars should be at certain mesh;
+        closed_jaxpr: closed jaxpr of apply_gradient function.
+        grad_mesh: some invars should be at certain mesh;
             If not in the dict, the variable should be a global parameter.
-        outvar_mesh (Dict[Var, int]): some outvars should be at certain mesh.
-        mesh_num (int): number of meshes. If a mesh does not have apply gradient computation,
+        outvar_mesh: some outvars should be at certain mesh.
+        mesh_num: number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
-        donation_mapping (Dict[Var, Var]): donation mapping for global invars
+        donation_mapping: donation mapping for global invars
 
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
@@ -452,7 +454,10 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     return jaxprs, info
 
 
-def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
+def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
+                          mask: Dict[Var, Var],
+                          gensym_fn,
+                          computation=False):
     """
     Add pipeline markers for sliced apply grads, keep invars and outvars still unless.
 
@@ -461,10 +466,10 @@ def apply_grad_add_marker(jaxprs, mask, gensym_fn, computation=False):
     In the second case, the final outvar is recorded in outvar_map.
 
     Args:
-        jaxprs(Sequence[ClosedJaxpr]): sliced apply grads.
+        jaxprs: sliced apply grads.
         mask: mask[gradient] is the corresponding accumulated gradient(real invar).
         gensym_fn: gensym function of the whole jaxpr.
-        computation(Bool): output JaxPipelineComputation or ClosedJaxpr.
+        computation: output JaxPipelineComputation or ClosedJaxpr.
     """
     results = []
     outvar_map = {}

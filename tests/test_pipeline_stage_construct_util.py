@@ -29,6 +29,15 @@ def _aval_key(a):
     return (a.shape, repr(a.dtype))
 
 
+def _assert_avals_allmatch(aval_seq_a, aval_seq_b):
+    assert len(aval_seq_a) == len(
+        aval_seq_b), f"{len(aval_seq_a)} != {len(aval_seq_b)}"
+    aval_seq_a = sorted(aval_seq_a, key=_aval_key)
+    aval_seq_b = sorted(aval_seq_b, key=_aval_key)
+    for a, b in zip(aval_seq_a, aval_seq_b):
+        assert a.shape == b.shape and a.dtype == b.dtype
+
+
 class StageConstructUtilTest(unittest.TestCase):
 
     def setUp(self):
@@ -141,14 +150,6 @@ class StageConstructUtilTest(unittest.TestCase):
             compute_outvars, "tmp", end - start, apply_grad_config)
         return intermediate_vars, stage_config
 
-    def _assert_avals_allmatch(self, aval_seq_a, aval_seq_b):
-        assert len(aval_seq_a) == len(
-            aval_seq_b), f"{len(aval_seq_a)} != {len(aval_seq_b)}"
-        aval_seq_a = sorted(aval_seq_a, key=_aval_key)
-        aval_seq_b = sorted(aval_seq_b, key=_aval_key)
-        for a, b in zip(aval_seq_a, aval_seq_b):
-            assert a.shape == b.shape and a.dtype == b.dtype
-
     def _test_generate_stage_config_indices(self, info, start, end):
         (compute_layers, donation_mapping, compute_outvars, apply_grad_layers,
          apply_grad_donate_map, global_outvars) = info
@@ -187,7 +188,7 @@ class StageConstructUtilTest(unittest.TestCase):
         for idx in indices:
             forward_output.update(compute_layers[idx].outvars)
         intermediate = forward_output.intersection(backward_input)
-        self._assert_avals_allmatch(aval(intermediate_vars), aval(intermediate))
+        _assert_avals_allmatch(aval(intermediate_vars), aval(intermediate))
         # check apply grad config
         config: ApplyGradConfig = stage_config.apply_grad_config
         apply_grad_invars = set()

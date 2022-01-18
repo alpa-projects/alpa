@@ -2,7 +2,7 @@
 import math
 from datetime import datetime
 from time import time
-from typing import Sequence, List
+from typing import Sequence, List, Tuple
 
 import numba
 import numpy as np
@@ -326,12 +326,15 @@ def _get_layer_flops_prefix_sum(layers):
     return layer_flops_prefix_sum
 
 
-def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
-                     autosharding_configs, layers, donation_mapping,
-                     global_outvars, apply_grad_layers, apply_grad_global_info):
+def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
+                     submesh_choices: List[Tuple[int]], autosharding_configs,
+                     layers: Sequence[JaxPipelineComputation], donation_mapping,
+                     global_outvars,
+                     apply_grad_layers: Sequence[JaxPipelineComputation],
+                     apply_grad_global_info):
     """Get computation cost for each possible (stage, mesh) configuration.
 
-    This Function enumerates all given submesh choices, then profiles compute
+    This function enumerates all given submesh choices, then profiles compute
     cost of all stage configuration under the submesh. For each submesh, it
     slices the given mesh or the whole device cluster into submeshes to profile.
 
@@ -340,13 +343,14 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
             is turned off in global config, virtual_mesh is sliced into pieces
             to run profiling. Otherwise, the whole device cluster is sliced for
             profiling.
-        submesh_choices (List[Tuple[int]]): All available submesh shape choices.
+        submesh_choices: All available submesh shape choices.
         autosharding_configs: All auto sharding configs for each submesh.
-        layers (Sequence[JaxPipelineComputation]): Layers for compute gradient.
+        layers: Layers for computing and
+            accumulating gradients (forward + backward).
         donation_mapping: Donation mapping for all layers.
         global_outvars: Global output variables for all layers.
-        apply_grad_layers (Sequence[JaxPipelineComputation]):
-            Apply gradient computations corresponding to each forward layers.
+        apply_grad_layers: Apply gradient computations corresponding to each
+            forward layers.
         apply_grad_global_info: Donation mapping and outvars for apply gradient
             stages.
 
@@ -359,8 +363,8 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh, submesh_choices,
         backward layers, and runs under the s-th submesh and c-th auto sharding
         config for the submesh.
         compute_cost: The compute cost of all possible configurations.
-        max_n_succ_stages: The maximal number of stages follow up this one. This
-            is calculated by the number of 
+        max_n_succ_stages: The maximal number of succeeding stages. This
+            is calculated based on memory constraints.
     """
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2

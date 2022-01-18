@@ -255,19 +255,19 @@ class ProfileWorker:
         following up this stage.
 
         Args:
-            stage_id (int): the stage id of the proto.
+            stage_id: the stage id of the proto.
             compiled_output: Compiled HLO Proto, strategy config, input sharding
                 spec and output sharding spec.
             profile_info: input avals, output avals, donation mapping and
                 indices in outputs for accumulated gradients.
-            intermediate_size (int): Bytes of intermediates for a microbatch.
-            initial_size (int): Bytes of parameters initially stored, but will
+            intermediate_size: Bytes of intermediates for a microbatch.
+            initial_size: Bytes of parameters initially stored, but will
                 be not used in the profiled computation, e.g. optimizer states.
 
         Returns:
             stage_id: the input stage id.
             cost (float): the time to run the profiled stage.
-            max_stage (int): maximal number of stages following up this stage.
+            max_stage: maximal number of stages following up this stage.
             debug_info: other profiled outputs for debug use. This includes
                 peak memory during the computation, the total available memory,
                 the input intermediate size and input initial size.
@@ -543,11 +543,11 @@ def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
     it then returns `donation_mapping` and `global_use` of each selected layer.
 
     Args:
-        layers (Sequence[JaxPipelineComputation]): all layers
-        layer_indices (OrderedSet[int]): indices of selected layers, they are
-        assumed to be in the same mesh
-        donation_mapping (Dict[Var, Var]): known global donation mapping
-        global_outvars (Sequence[Var]): global outvars
+        layers: all layers
+        layer_indices: indices of selected layers, they are assumed to be in
+            the same mesh
+        donation_mapping: known global donation mapping
+        global_outvars: global outvars
 
     Returns:
         donation_mapping: donation mapping of all picked layers

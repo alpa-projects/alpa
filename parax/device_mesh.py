@@ -12,6 +12,7 @@ import numpy as np
 import ray
 
 from jax import core, xla, eval_shape, device_put
+from jax._src.api import ShapeDtypeStruct
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
@@ -1279,6 +1280,10 @@ def _shard_distributed_array(array, device_mesh, indices):
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh
 for t in array_types:
     shard_arg_handlers[t] = _shard_array
+# Note: ShapedArray and ShapeDtypeStruct only works when
+#   global_config.use_dummy_value_for_benchmarking is True
+shard_arg_handlers[ShapedArray] = _shard_array
+shard_arg_handlers[ShapeDtypeStruct] = _shard_array
 shard_arg_handlers[xla._DeviceArray] = _shard_device_array
 shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 shard_arg_handlers[DistributedArray] = _shard_distributed_array

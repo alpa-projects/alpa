@@ -17,7 +17,8 @@ from parax.pipeline_parallel.layer_stats import (is_nontrivial, eqn_flops,
                                                  log_layer_slicing_stats)
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
-from parax.util import slices_to_jaxpr, OrderedSet, get_var_mapping
+from parax.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
+                        get_var_mapping)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -61,9 +62,7 @@ def lift_pipeline_marker(jaxpr: ClosedJaxpr):
             eqn.params["name"] = str(cnt)
             if eqn.params["mark_type"] == "end":
                 cnt += 1
-    return ClosedJaxpr(
-        Jaxpr(jaxpr.jaxpr.constvars, jaxpr.jaxpr.invars, jaxpr.jaxpr.outvars,
-              new_eqns), jaxpr.consts)
+    return clone_jaxpr(jaxpr, eqns=new_eqns)
 
 
 def transform_pipeline_forward(fn: Callable,
@@ -164,16 +163,12 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
                                    str(i), 'end'))
-    new_jaxpr = Jaxpr(
-        closed_jaxpr.jaxpr.constvars,
-        closed_jaxpr.jaxpr.invars,
-        [
-            get_var_mapping(var_mapping, var)
-            for var in closed_jaxpr.jaxpr.outvars
-        ],
-        new_eqns,
-    )
-    new_closed_jaxpr = ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+    new_outvars = [
+        get_var_mapping(var_mapping, var) for var in closed_jaxpr.jaxpr.outvars
+    ]
+    new_closed_jaxpr = clone_jaxpr(closed_jaxpr,
+                                   outvars=new_outvars,
+                                   eqns=new_eqns)
     return new_closed_jaxpr
 
 
@@ -197,9 +192,7 @@ def remat_jaxpr(origin_jaxpr, sliced_eqns, add_pipeline_marks):
                      policy=None)))
         if add_pipeline_marks:
             new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'end'))
-    new_closed_jaxpr = ClosedJaxpr(
-        Jaxpr(origin_jaxpr.jaxpr.constvars, origin_jaxpr.jaxpr.invars,
-              origin_jaxpr.jaxpr.outvars, new_eqns), origin_jaxpr.consts)
+    new_closed_jaxpr = clone_jaxpr(origin_jaxpr, eqns=new_eqns)
     return new_closed_jaxpr
 
 
@@ -210,9 +203,7 @@ def insert_marker(origin_jaxpr, sliced_eqns):
         new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'start'))
         new_eqns.extend(slices)
         new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'end'))
-    return ClosedJaxpr(
-        Jaxpr(origin_jaxpr.jaxpr.constvars, origin_jaxpr.jaxpr.invars,
-              origin_jaxpr.jaxpr.outvars, new_eqns), origin_jaxpr.consts)
+    return clone_jaxpr(origin_jaxpr, eqns=new_eqns)
 
 
 def jaxpr_eqns_input_sizes(jaxpr) -> np.ndarray:

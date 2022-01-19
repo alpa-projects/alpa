@@ -78,13 +78,12 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(
-            cls,  # noqa
-            task_uuid,
-            output_uuids,
-            set_empty_buffer,
-            allgather_uuid=None,
-            info=""):
+    def Recv(cls,
+             task_uuid,
+             output_uuids,
+             set_empty_buffer,
+             allgather_uuid=None,
+             info=""):  # noqa
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
@@ -149,8 +148,7 @@ def logging_instructions(instructions):
         logger.debug(f">>> ins_idx {ins_idx}: op code {instruction.opcode}...")
 
 
-def get_dict(d: Dict[Any, Dict], k) -> Dict:
-    """TODO(yonghao): docstring."""
+def _get_dict(d: Dict[Any, Dict], k) -> Dict:
     return d.setdefault(k, {})
 
 
@@ -340,7 +338,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for outvar in stage.outvars:
                     key = (repr(outvar), batch_idx)
                     # get uuids of this outvar
-                    get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
+                    _get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
                         physical_mesh.num_devices).reshape(
                             -1, num_devices_per_host)
 
@@ -453,7 +451,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         transposed = output_uuids.transpose([1, 0, 2])
         for var_idx in range(len(variables)):
             key = keys[var_idx]
-            get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
+            _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
 
     def _compile_task_configs(self, var_at) \
@@ -615,7 +613,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     num_args, -1, physical_mesh.num_devices_per_host)
             for arg_idx, key in enumerate(mesh_arg_lists[mesh_idx]):
                 key = repr(key[0]), key[1]
-                get_dict(var_at, key)[mesh_idx] = arg_uuids[arg_idx]
+                _get_dict(var_at, key)[mesh_idx] = arg_uuids[arg_idx]
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     input_local_uuid_list.setdefault(worker, []).append(
                         arg_uuids[arg_idx, worker_idx])
@@ -951,7 +949,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 mesh.reset_remote_timer(name)
 
     def get_total_allocation_size(self):
-        """TODO(yonghao): docstring."""
+        """Get the total allocated memory size of each mesh."""
         # TODO: compute the theoretical total allocation size
         raise NotImplementedError()
 

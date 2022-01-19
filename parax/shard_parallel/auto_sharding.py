@@ -6,7 +6,7 @@ import multiprocessing
 import time
 import traceback
 from typing import Sequence, Optional, Union, Tuple
-from warnings import warn
+import warnings
 
 import numpy as np
 from jax.core import ShapedArray
@@ -847,17 +847,19 @@ def _call_solver_serialized_args(
     verbose = False
 
     msg = verbose
-    time_limit = 2000
+    time_limit = 600
     assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), (
         "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
     )
-    solver = pulp.COIN_CMD(
-        mip=True,
-        msg=msg,
-        #timeLimit=time_limit,
-        threads=multiprocessing.cpu_count())
-    # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
-    prob.solve(solver)
+
+    with warnings.catch_warnings():  # disable CBC warnings
+        warnings.simplefilter("ignore")
+        solver = pulp.COIN_CMD(mip=True,
+                               msg=msg,
+                               timeLimit=time_limit,
+                               threads=multiprocessing.cpu_count())
+        # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
+        prob.solve(solver)
 
     status = prob.status
     objective = pulp.value(prob.objective)
@@ -891,7 +893,7 @@ def _call_solver_serialized_args(
     last_s_val = s_val
 
     if objective > INFINITY_COST:
-        warn("Detect unexpected behaviors in the auto-sharding pass.")
+        warnings.warn("Detect unexpected behaviors in the auto-sharding pass.")
 
     return s_val, e_val, objective, status
 

@@ -185,7 +185,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
-    as_option.allow_mixed_mesh_shape = False
+    as_option.allow_mixed_mesh_shape = True
     if other == "zero-3":
         as_option.force_zero_stage_3 = True
     elif other in ["shard-largest"]:

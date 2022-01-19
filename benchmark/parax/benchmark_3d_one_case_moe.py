@@ -60,7 +60,18 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         expert_group_size = expected_expert_group_size
 
     # Parallel configs
-    auto_layer = pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]
+    fine_grained_remat = True
+    if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
+        auto_layer = True
+    else:
+        assert pipeline_stage_mode == "uniform_layer_gpipe"
+        if num_layers % pipeline_mp_size == 0:
+            auto_layer = False
+        else:
+            print("Use auto-layer because #layer is not divisible by pipeline mp size.")
+            fine_grained_remat = False
+            auto_layer = True
+
     grad_func = parax.grad
 
     if force_batch_dim_mapping:
@@ -122,7 +133,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer)
+    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size,
+                                dtype, auto_layer, fine_grained_remat)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

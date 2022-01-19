@@ -14,7 +14,8 @@ from parax import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, automatic_layer_construction)
 from parax.model.wide_resnet import get_wide_resnet, TrainState
 from parax.pipeline_parallel.stage_construction import get_last_dp_result
-from parax.util import map_to_shape, print_used_time, compute_param_number, GB
+from parax.timer import timers
+from parax.util import map_to_shape, print_used_time, compute_param_number, GB, to_str_round
 
 # B = batch_size, I = image_size,
 # L = num_layers, C = num_base_channels, W = width_factor, 
@@ -204,10 +205,8 @@ def benchmark_wresnet_internal(benchmark_case, niter,
         use_grad_acc = False
         num_micro_batches = None
 
-    as_option.force_batch_dim_mapping = force_batch_dim_mapping
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
-    as_option.allow_mixed_mesh_shape = False
-    global_config.auto_stage_construction_imbalance_tolerance = 0.4
+    as_option.allow_mixed_mesh_shape = True
 
     device_cluster = DeviceCluster()
     host_ids = None if num_hosts == None else list(range(num_hosts))
@@ -217,7 +216,9 @@ def benchmark_wresnet_internal(benchmark_case, niter,
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches,
                             pipeline_stage_mode="auto_gpipe",
+                            #cache_compute_cost="compute-cost-2022-01-14-12-35-01.npy",
                             logical_mesh_search_space=logical_mesh_search_space)
+    global_config.auto_stage_construction_imbalance_tolerance = 0.4
 
     # Prepare input batch
     num_classes = 1024
@@ -246,13 +247,10 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     executable = train_step.get_executable(state, batch)
     print_used_time("Compile (driver)")
 
-    if pipeline_stage_mode == "auto_gpipe":
-        compilation_times = {k : timers(k).elapsed() for k in
-                ["stage-construction", "stage-construction-dp",
-                 "stage-construction-compilation", "stage-construction-profiling"]}
-        print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
-    else:
-        compilation_times = None
+    compilation_times = {k : timers(k).elapsed() for k in
+            ["stage-construction", "stage-construction-dp",
+             "stage-construction-compilation", "stage-construction-profiling"]}
+    print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
 
     # Dump hlo ir for debugging
     stage_hlo_texts = executable.get_hlo_text()
@@ -293,9 +291,6 @@ def benchmark_wresnet_internal(benchmark_case, niter,
             pstr += f"Exec {k}: {profiled[k][0]}s; "
         print(pstr)
     executable.shutdown()
-
-    # Restore global config
-    global_config.restore(backup)
 
     return (parameter_count, mem_allocated, max_mem_allocated, latencies,
             tflops, tflops, compilation_times) + get_last_dp_result()

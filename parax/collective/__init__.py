@@ -4,7 +4,7 @@ from parax.collective.collective import (
     get_collective_group_size, allreduce, allreduce_multigpu, barrier, reduce,
     reduce_multigpu, broadcast, broadcast_multigpu, allgather,
     allgather_multigpu, reducescatter, reducescatter_multigpu, send,
-    send_multigpu, recv, recv_multigpu)
+    send_multigpu, recv, recv_multigpu, check_and_get_group)
 
 __all__ = [
     "nccl_available", "gloo_available", "is_group_initialized",
@@ -13,5 +13,5 @@ __all__ = [
     "allreduce", "allreduce_multigpu", "barrier", "reduce", "reduce_multigpu",
     "broadcast", "broadcast_multigpu", "allgather", "allgather_multigpu",
     "reducescatter", "reducescatter_multigpu", "send", "send_multigpu", "recv",
-    "recv_multigpu"
+    "recv_multigpu", "check_and_get_group"
 ]

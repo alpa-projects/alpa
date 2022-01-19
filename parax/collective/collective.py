@@ -696,6 +696,9 @@ def _check_and_get_group(group_name):
     return g
 
 
+check_and_get_group = _check_and_get_group
+
+
 def _check_single_tensor_input(tensor):
     """Check if the tensor is with a supported type."""
     if isinstance(tensor, np.ndarray):

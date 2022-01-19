@@ -506,10 +506,10 @@ class NCCLGroup(BaseGroup):
             print("rank=0 get communicator: {}...".format(end_time - start_time))
         else:
             rendezvous = Rendezvous(group_key)
-            # start_time = time.time()
+            start_time = time.time()
             rendezvous.meet(timeout_s=3000)
-            # end_time = time.time()
-            # print("rank>0 get communicator: {}...".format(end_time - start_time))
+            end_time = time.time()
+            print("rank>0 get communicator: {}...".format(end_time - start_time))
             nccl_uid = rendezvous.get_nccl_id()
 
             # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
@@ -649,10 +649,13 @@ class NCCLGroup(BaseGroup):
         Returns:
             None
         """
+        start_time = time.time()
         comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
                                            peer_gpu_idx)
         self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                         peer_gpu_idx)
+        end_time = time.time()
+        print(f"new creating communicator takes: {end_time - start_time}...")
 
     def _point2point(self, tensors, p2p_fn, peer_rank: int, peer_gpu_idx: int):
         """A method to encapsulate all peer-to-peer calls (i.e., send/recv).

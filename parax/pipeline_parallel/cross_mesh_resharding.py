@@ -16,7 +16,7 @@ from parax.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_
 from parax.util import OrderedSet
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 resharding_task_counter = 0
 
@@ -281,22 +281,6 @@ class SymbolicReshardingTask(ReshardingTask):
                 worker.put_resharding_allgather_task.remote(uuid, task))
         ray.get(task_dones)
 
-        # make the send/recv p2p communicators
-        task_dones = []
-        logger.debug("Creating p2p communicators...")
-        for worker, task in self.sender_tasks.items():
-            uuid = self.send_worker_task_ids[worker]
-            task_dones.append(
-                worker.init_reshading_send_communicators.remote(uuid, task, self.collective_group.group_name)
-            )
-        for worker, task in self.receiver_tasks.items():
-            uuid = self.recv_worker_task_ids[worker]
-            task_dones.append(
-                worker.init_reshading_recv_communicators.remote(uuid, task, self.collective_group.group_name)
-            )
-        ray.get(task_dones)
-        logger.debug("Created all p2p communicators.")
-
     def _create_resharding_communicators(self):
         """Create the NCCL communicators in advance."""
         communicator_params = set()
@@ -304,12 +288,13 @@ class SymbolicReshardingTask(ReshardingTask):
             dst_rank = self.collective_group.worker_to_rank_map[worker]
             for recv_task in recv_tasks:
                 dst_gpu_idx = recv_task.device_id
-                tile_spec = recv_task.tile_specs
-                src_rank = tile_spec.rank
-                src_gpu_idx = tile_spec.gpu_idx
-                param = [src_rank, src_gpu_idx, dst_rank, dst_gpu_idx]
-                if param not in communicator_params:
-                    communicator_params.add(param)
+                tile_specs = recv_task.tile_specs
+                for tile_spec in tile_specs:
+                    src_rank = tile_spec.rank
+                    src_gpu_idx = tile_spec.gpu_idx
+                    param = (src_rank, src_gpu_idx, dst_rank, dst_gpu_idx)
+                    if param not in communicator_params:
+                        communicator_params.add(param)
 
         # now init
         group_name = self.collective_group.group_name
@@ -319,7 +304,7 @@ class SymbolicReshardingTask(ReshardingTask):
             src_worker = self.collective_group.mesh_workers[src_rank]
             dst_worker = self.collective_group.mesh_workers[dst_rank]
             task_dones.append(
-                src_worker.init_p2p_communicators.remote(group_name, src_rank, src_gpu_idx,
+                src_worker.init_p2p_communicator.remote(group_name, src_rank, src_gpu_idx,
                                                          dst_rank, dst_gpu_idx)
             )
             task_dones.append(
@@ -530,7 +515,7 @@ class CollectiveGroup:
         logger.debug("Trying to create ray.collective groups among participants.")
         for rank, worker in enumerate(self.mesh_workers):
             task_dones.append(
-                worker.init_collective_group(world_size, rank, "nccl", self.group_name))
+                worker.init_collective_group.remote(world_size, rank, "nccl", self.group_name))
         ray.get(task_dones)
         logger.debug(f"The group {self.group_name} has been created." )
 

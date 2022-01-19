@@ -94,10 +94,10 @@ def abstractify_with_aval(x):
     if isinstance(x, ShapedArray):
         return x
     elif isinstance(x, ShapeDtypeStruct):
-        return ShapedArray(x.shape, x.dtype,
-                           named_shape=x.named_shape)
+        return ShapedArray(x.shape, x.dtype, named_shape=x.named_shape)
     else:
         return xla.abstractify(x)
+
 
 ########################################
 ##### Data Structure Utilities

@@ -365,14 +365,21 @@ class TrainState(train_state.TrainState):
         )
 
     @classmethod
-    def create_aval(cls, *, apply_fn, params, tx, mixed_precision=False, **kwargs):
+    def create_aval(cls,
+                    *,
+                    apply_fn,
+                    params,
+                    tx,
+                    mixed_precision=False,
+                    **kwargs):
         """Creates a new instance with `step=0` and initialized `opt_state`."""
         opt_state = jax.eval_shape(tx.init, params)
 
         if mixed_precision:
             master_copy = params
-            params = jax.eval_shape(lambda p: jax.tree_util.tree_map(
-                lambda x: jnp.asarray(x, dtype=jnp.float16), p), params)
+            params = jax.eval_shape(
+                lambda p: jax.tree_util.tree_map(
+                    lambda x: jnp.asarray(x, dtype=jnp.float16), p), params)
         else:
             master_copy = None
 

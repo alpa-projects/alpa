@@ -222,10 +222,15 @@ class SymbolicReshardingTask(ReshardingTask):
         # Reconstruct logical mesh info
         dst_spec = self.task_spec.dst_sharding_spec
 
-        chunked_axes = [i for i, s in enumerate(dst_spec.sharding) if isinstance(s, pxla.Chunked)]
-        dst_mesh_shape = [(dst_spec.sharding[chunked_axes[mesh_map.axis]].chunks[0]
-                           if isinstance(mesh_map, pxla.ShardedAxis) else 1)
-                          for mesh_map in dst_spec.mesh_mapping]
+        chunked_axes = [
+            i for i, s in enumerate(dst_spec.sharding)
+            if isinstance(s, pxla.Chunked)
+        ]
+        dst_mesh_shape = [
+            (dst_spec.sharding[chunked_axes[mesh_map.axis]].chunks[0]
+             if isinstance(mesh_map, pxla.ShardedAxis) else 1)
+            for mesh_map in dst_spec.mesh_mapping
+        ]
         assert len(dst_mesh_shape) < 3, "Only support 1D and 2D mesh"
         # rewrite indices
         if mesh_axis == 0:
@@ -806,7 +811,9 @@ class CrossMeshCommunicator:
                 squeezed_shard_axes = []
                 for k in sorted(shard_axes.keys()):
                     squeezed_shard_axes.append(shard_axes[k])
-                shard_axes_reversed = {v: k for k, v in enumerate(squeezed_shard_axes)}
+                shard_axes_reversed = {
+                    v: k for k, v in enumerate(squeezed_shard_axes)
+                }
 
                 # Should be always sharded
                 new_mapping = [

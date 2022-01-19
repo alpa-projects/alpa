@@ -1264,8 +1264,7 @@ def _shard_abstract_array(x, device_mesh, indices):
         shard_shape = []
         for i, s in enumerate(index):
             filled_slice = s.indices(x.shape[i])
-            dim_size = len(range(filled_slice.start, filled_slice.stop,
-                                 filled_slice.step))
+            dim_size = len(range(*filled_slice))
             shard_shape.append(dim_size)
         shard = x.__class__(shape=tuple(shard_shape), dtype=x.dtype)
         shards.append(shard)

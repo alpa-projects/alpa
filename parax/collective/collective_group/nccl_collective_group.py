@@ -496,14 +496,20 @@ class NCCLGroup(BaseGroup):
                 "Send and recv happens on the same process! "
                 "parax.collective does not support this case as of now. "
                 "Alternatively, consider doing GPU to GPU memcpy?")
-
+        import time
         group_key = self._generate_group_key(comm_key)
         if my_p2p_rank == 0:
             logger.info("Rank-0 process to put the NCCL unique ID")
+            start_time = time.time()
             nccl_uid = self._generate_nccl_uid(group_key)
+            end_time = time.time()
+            print("rank=0 get communicator: {}...".format(end_time - start_time))
         else:
             rendezvous = Rendezvous(group_key)
+            # start_time = time.time()
             rendezvous.meet(timeout_s=3000)
+            # end_time = time.time()
+            # print("rank>0 get communicator: {}...".format(end_time - start_time))
             nccl_uid = rendezvous.get_nccl_id()
 
             # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
@@ -566,13 +572,23 @@ class NCCLGroup(BaseGroup):
         Returns:
             NCCLUniqueID (str): NCCL unique ID.
         """
+        import time
+        start_time = time.time()
         group_uid = nccl_util.get_nccl_unique_id()
+        end_time = time.time()
+        print("get_nccl_unique_id takes {}...".format(end_time - start_time))
         store_name = get_store_name(key)
         # Avoid a potential circular dependency in ray/actor.py
+        start_time = time.time()
         from parax.collective.util import NCCLUniqueIDStore
         store = NCCLUniqueIDStore.options(
             name=store_name, lifetime="detached").remote(store_name)
+        end_time = time.time()
+        print("creating NCCL UniqueIDStore takes {}...".format(end_time - start_time))
+        start_time = time.time()
         ray.get([store.set_id.remote(group_uid)])
+        end_time = time.time()
+        print("store.set_id takes {}...".format(end_time - start_time))
         return group_uid
 
     def _collective(self,
@@ -622,6 +638,21 @@ class NCCLGroup(BaseGroup):
         nccl_util.groupEnd()
         if postprocess_fn:
             postprocess_fn(streams)
+
+    def create_p2p_communicator(self, my_gpu_idx: int, peer_rank: int, peer_gpu_idx: int):
+        """A public method to create p2p communicators
+
+        Args:
+            peer_rank (int): the rank of the peer process.
+            peer_gpu_idx (int): the index of the gpu on the peer process.
+
+        Returns:
+            None
+        """
+        comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
+                                           peer_gpu_idx)
+        self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
+                                        peer_gpu_idx)
 
     def _point2point(self, tensors, p2p_fn, peer_rank: int, peer_gpu_idx: int):
         """A method to encapsulate all peer-to-peer calls (i.e., send/recv).

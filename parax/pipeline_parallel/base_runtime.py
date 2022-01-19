@@ -10,6 +10,7 @@ from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, CollectiveGroup, SymbolicReshardingTask)
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
+from parax.global_env import global_config
 
 
 class BaseRuntime(metaclass=ABCMeta):
@@ -189,7 +190,10 @@ class BaseDistributedRuntime(BaseRuntime):
                 cg = CollectiveGroup(list(device_str_groups[i][j]),
                                      self.physical_meshes[i],
                                      self.physical_meshes[j])
-                cg.instantiate()
+                if global_config.eagerly_create_communicators:
+                    cg.instantiate_now()
+                else:
+                    cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
 

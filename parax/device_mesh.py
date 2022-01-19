@@ -158,6 +158,15 @@ class MeshHostWorker:
         return self.executables[uuid].get_total_allocation_size()
 
     ##### Cross Mesh Resharding Related Functions #####
+    @staticmethod
+    def init_collective_group(self, world_size, rank, backend, group_name):
+        """Initialize the collective group eagerly."""
+        col.init_collective_group(world_size,
+                                  rank,
+                                  backend=backend,
+                                  group_name=group_name)
+        return 0
+
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
     # (2) XLA low-level PyLocalBuffer, which is not index-able
@@ -293,6 +302,17 @@ class MeshHostWorker:
     def put_resharding_recv_task(self, uuid, tasks, group_name):
         self.recv_tasks[uuid] = ReshardingRecvTask(recv_specs=tasks,
                                                    group_name=group_name)
+
+    def init_p2p_communicators(self, group_name, my_rank, my_gpu_idx,
+                               peer_rank, peer_gpu_idx):
+        assert col.is_group_initialized(group_name)
+        assert col.get_rank(group_name) == my_rank
+        g = col._check_and_get_group(group_name)
+        g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx)
+        return True
+
+    def init_resharding_recv_communicators(self, uuid, task, group_name):
+        task = self.recv_tasks[uuid]
 
     def run_resharding_send_task(self, uuid, buf_uuids):
         task: ReshardingSendTask = self.send_tasks[uuid]

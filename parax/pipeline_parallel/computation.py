@@ -873,7 +873,7 @@ def generate_sharded_xla_computations(
 
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
-    computation_protos, strategy_config = compile_with_search(
+    _, computation_protos, strategy_config = compile_with_search(
         backend,
         built,
         in_avals,

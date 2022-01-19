@@ -212,7 +212,7 @@ class StageConstructUtilTest(unittest.TestCase):
             input_vars.difference_update(compute_layers[idx].outvars)
         input_vars.update(apply_grad_only_invars)
         input_avals = [var.aval for var in input_vars]
-        self._assert_avals_allmatch(input_avals, config.input_avals)
+        _assert_avals_allmatch(input_avals, config.input_avals)
 
         available_outvars = OrderedSet(compute_outvars)
         available_outvars.update(global_outvars)
@@ -226,7 +226,7 @@ class StageConstructUtilTest(unittest.TestCase):
             output_vars.update(layer.outvars)
         output_vars.intersection_update(available_outvars)
         output_avals = [var.aval for var in output_vars]
-        self._assert_avals_allmatch(output_avals, config.output_avals)
+        _assert_avals_allmatch(output_avals, config.output_avals)
         # Check of the two below is based on that donated inputs/outputs are
         # prior than others.
         backward_outs = OrderedSet()
@@ -256,14 +256,14 @@ class StageConstructUtilTest(unittest.TestCase):
         for idx in compute_layer_indices:
             input_vars.difference_update(compute_layers[idx].outvars)
         input_avals = [var.aval for var in input_vars]
-        self._assert_avals_allmatch(input_avals, config.input_avals)
+        _assert_avals_allmatch(input_avals, config.input_avals)
 
         output_vars = OrderedSet()
         for idx in compute_layer_indices:
             output_vars.update(compute_layers[idx].outvars)
         output_vars.intersection_update(available_outvars)
         output_avals = [var.aval for var in output_vars]
-        self._assert_avals_allmatch(output_avals, config.output_avals)
+        _assert_avals_allmatch(output_avals, config.output_avals)
         config.donate_invars
 
     def test_generate_stage_config(self):

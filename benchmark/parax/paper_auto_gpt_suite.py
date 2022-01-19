@@ -83,7 +83,7 @@ test_auto_gpt_suite = {
 64: get_auto_test_case("39B", [256], [8], "manual_gpipe", {
     "forward_stage_layer_ids": [[i] for i in range(8)],
     "sub_physical_mesh_shapes": [(1, 8)] * 8,
-    "sub_logical_mesh_shapes": [(2, 4)] * 8,
+    "sub_logical_mesh_shapes": [(1, 8)] * 8,
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 8,
 })
 }

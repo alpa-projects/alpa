@@ -1253,6 +1253,25 @@ def _shard_array(x, device_mesh, indices):
     return _device_mesh_put(device_mesh, [x[i] for i in indices])
 
 
+def _shard_abstract_array(x, device_mesh, indices):
+    # Create shards according to indices for ShapedArray or ShapeDtypeStruct
+    # Note: ShapedArray and ShapeDtypeStruct only works when
+    #   global_config.use_dummy_value_for_benchmarking is True
+    assert global_config.use_dummy_value_for_benchmarking
+    shards = []
+    for index in indices:
+        assert len(index) == len(x.shape)
+        shard_shape = []
+        for i, s in enumerate(index):
+            filled_slice = s.indices(x.shape[i])
+            dim_size = len(range(filled_slice.start, filled_slice.stop,
+                                 filled_slice.step))
+            shard_shape.append(dim_size)
+        shard = x.__class__(shape=tuple(shard_shape), dtype=x.dtype)
+        shards.append(shard)
+    return _device_mesh_put(device_mesh, shards)
+
+
 def _shard_device_array(array, device_mesh, indices):
     # Create shards according to indices for a DeviceArray
     if global_config.use_dummy_value_for_benchmarking:
@@ -1281,10 +1300,8 @@ def _shard_distributed_array(array, device_mesh, indices):
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh
 for t in array_types:
     shard_arg_handlers[t] = _shard_array
-# Note: ShapedArray and ShapeDtypeStruct only works when
-#   global_config.use_dummy_value_for_benchmarking is True
-shard_arg_handlers[ShapedArray] = _shard_array
-shard_arg_handlers[ShapeDtypeStruct] = _shard_array
+shard_arg_handlers[ShapedArray] = _shard_abstract_array
+shard_arg_handlers[ShapeDtypeStruct] = _shard_abstract_array
 shard_arg_handlers[xla._DeviceArray] = _shard_device_array
 shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 shard_arg_handlers[DistributedArray] = _shard_distributed_array

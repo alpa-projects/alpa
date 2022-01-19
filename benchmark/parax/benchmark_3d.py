@@ -84,6 +84,7 @@ if __name__ == "__main__":
              num_micro_batches, force_batch_dim_mapping,
              prefer_reduce_scatter, use_remat, logical_mesh_search_space) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
+            overwrite_global_config_dict = {}
             pipeline_stage_mode = "auto_gpipe"
             pipeline_mp_size = 1
         else:

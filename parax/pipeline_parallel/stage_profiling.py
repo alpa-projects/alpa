@@ -321,8 +321,12 @@ class ProfileWorker:
             except RayActorError:
                 logger.warning("Meet ray actor error in profiling")
                 self.restart(forced=True)
-            except RuntimeError:
-                logger.warning("Meet unexpected error in profiling")
+            except RuntimeError as e:
+                logger.warning(f"Meet runtime error in profiling: {e}")
+                self.restart(forced=True)
+                break
+            except AssertionError as e:
+                logger.warning(f"Meet assertion error in profiling: {e}")
                 self.restart(forced=True)
                 break
         return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
@@ -444,7 +448,11 @@ def compile_all(stages):
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
-        stage_id, compiled_output = compile_workers.get_next_unordered()
+        try:
+            stage_id, compiled_output = compile_workers.get_next_unordered()
+        except TimeoutError:
+            logger.warning("Compile worker timeout")
+            continue
         compiled_outputs[stage_id] = compiled_output
 
     compile_workers.shutdown()

@@ -18,15 +18,25 @@ def project_tflops(micro_batch_size, batch_sizes, latencies, tflops, queries):
 
 # gpt - 4 nodes
 latencies, tflops = project_tflops(
-    32, [64, 128], [39.09, 42.525], [6.6104, None], queries=[64, 128, 256, 1024])
-print(f"gpt, latency: {latencies}, tflops: {tflops}")
+    32, [128, 256], [42.525, 53.2671], [12.1367, None], queries=[64, 128, 256, 1024])
+print(f"gpt 4 node, latency: {latencies}, tflops: {tflops}")
 
 # moe - 4 nodes
 latencies, tflops = project_tflops(
-    32, [64, 128], [28.2863, 50.6981], [1.2883, None], queries=[64, 128, 256, 1024])
-print(f"moe, latency: {latencies}, tflops: {tflops}")
+    32, [128, 256], [50.6981, 95.2731], [1.3457, None], queries=[64, 128, 256, 1024])
+print(f"moe 4 node, latency: {latencies}, tflops: {tflops}")
+
+# moe - 8 nodes
+latencies, tflops = project_tflops(
+    32, [128, 256], [157.1711, 319.2686], [0.221, None], queries=[64, 128, 256, 1024])
+print(f"moe 8 node, latency: {latencies}, tflops: {tflops}")
 
 # wresnet - 4 nodes
 latencies, tflops = project_tflops(
-    32, [64, 128], [37.0612, 43.3694], [0.3398, None], queries=[64, 128, 256, 1536])
-print(f"wresnet, latency: {latencies}, tflops: {tflops}")
+    32, [128, 256], [43.3694, 53.4454], [0.582, None], queries=[64, 128, 256, 1536])
+print(f"wresnet 4 node, latency: {latencies}, tflops: {tflops}")
+
+# wresnet - 8 nodes
+latencies, tflops = project_tflops(
+    8, [32, 64], [41.1547, 49.596], [0.1496, None], queries=[16, 32, 64, 1536])
+print(f"wresnet 8 node, latency: {latencies}, tflops: {tflops}")

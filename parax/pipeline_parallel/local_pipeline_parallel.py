@@ -4,7 +4,7 @@ from typing import Sequence, Mapping, Any, Dict, List
 import jax
 from jax import linear_util as lu
 from jax._src.util import safe_map
-from jax.core import Var, ClosedJaxpr, Literal
+from jax.core import Var, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import DeviceArray
 
@@ -181,10 +181,11 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
+    gensym_func = gensym([closed_jaxpr.jaxpr])
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         closed_jaxpr)
     jax_pipeline_stages = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_stages, global_invars, global_outvars)
+        jax_pipeline_stages, global_invars, global_outvars, gensym_func)
     xla_pipeline_stages = [
         XlaPipelineComputation.from_jax_pipeline_computation(stage)
         for stage in jax_pipeline_stages

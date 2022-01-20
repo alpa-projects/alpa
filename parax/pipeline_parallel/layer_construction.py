@@ -1,5 +1,5 @@
 """Cluster small ops into layers and rematerialize at layer boundary."""
-from functools import wraps
+from functools import partial, wraps
 import logging
 from typing import Callable, Union
 
@@ -12,7 +12,7 @@ from jax.interpreters.partial_eval import remat_call_p
 import numba
 import numpy as np
 
-from parax.pipeline_parallel.layer_stats import (is_nontrivial, eqn_flops,
+from parax.pipeline_parallel.layer_stats import (global_invar_size, is_nontrivial, eqn_flops,
                                                  heavy_count,
                                                  log_layer_slicing_stats)
 from parax.pipeline_parallel.primitive_def import (pipeline_p,
@@ -244,6 +244,8 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         cost_fn = eqn_flops
     elif cost_criteria == "count":
         cost_fn = heavy_count
+    elif cost_criteria == "input_memory":
+        cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
     compute_costs = np.array(
@@ -262,7 +264,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
     length = len(jaxpr.eqns)
     non_trivial, input_sizes, compute_costs = costs
     compute_costs_avg = compute_costs.sum() / layer_num
-    if cost_criteria == "flops":
+    if cost_criteria == "flops" or cost_criteria == "input_memory":
         compute_costs_bound = compute_costs_avg * (1 + eps)
     elif cost_criteria == "count":
         compute_costs_bound = max(compute_costs_avg * (1 + eps),

@@ -158,6 +158,15 @@ class MeshHostWorker:
         return self.executables[uuid].get_total_allocation_size()
 
     ##### Cross Mesh Resharding Related Functions #####
+    @staticmethod
+    def init_collective_group(world_size, rank, backend, group_name):
+        """Initialize the collective group eagerly."""
+        col.init_collective_group(world_size,
+                                  rank,
+                                  backend=backend,
+                                  group_name=group_name)
+        return 0
+
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
     # (2) XLA low-level PyLocalBuffer, which is not index-able
@@ -262,6 +271,21 @@ class MeshHostWorker:
                 xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+
+    def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx,
+                              peer_rank, peer_gpu_idx, nccl_uid):
+        """Initialize the P2P communicator from within the mesh workers."""
+        assert col.is_group_initialized(group_name)
+        assert col.get_rank(group_name) == my_rank
+        g = col.check_and_get_group(group_name)
+        g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx, nccl_uid)
+        return True
+
+    def generate_nccl_uid(self, group_name):
+        """Generate the NCCL unique ID in advance."""
+        g = col.check_and_get_group(group_name)
+        uid = g.generate_nccl_uid()
+        return uid
 
     def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
                   tensor_slices: Sequence[slice]):

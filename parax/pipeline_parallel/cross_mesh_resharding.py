@@ -169,6 +169,10 @@ class SymbolicReshardingTask(ReshardingTask):
         # generate the above states
         self._compile()
 
+        # create communicators
+        if global_config.eagerly_create_communicators:
+            self._create_resharding_communicators()
+
     @property
     def sender_tasks(self):
         """Return sender sub-tasks."""
@@ -244,6 +248,7 @@ class SymbolicReshardingTask(ReshardingTask):
         This function does the following:
         (1) generate send, recv, and allgather tasks (if needed),
         (2) put all tasks to their corresponding MeshHostWorkers.
+        (3) pre-generate NCCL communicators for those tasks.
         """
         self._compile_send_recv_tasks()
         if self.is_local_allgather_task:
@@ -273,6 +278,39 @@ class SymbolicReshardingTask(ReshardingTask):
             task_dones.append(
                 worker.put_resharding_allgather_task.remote(uuid, task))
         ray.get(task_dones)
+
+    def _create_resharding_communicators(self):
+        """Create the NCCL communicators in advance."""
+        communicator_params = set()
+        for worker, recv_tasks in self.receiver_tasks.items():
+            dst_rank = self.collective_group.worker_to_rank_map[worker]
+            for recv_task in recv_tasks:
+                dst_gpu_idx = recv_task.device_id
+                tile_specs = recv_task.tile_specs
+                for tile_spec in tile_specs:
+                    src_rank = tile_spec.rank
+                    src_gpu_idx = tile_spec.gpu_idx
+                    param = (src_rank, src_gpu_idx, dst_rank, dst_gpu_idx)
+                    if param not in communicator_params:
+                        communicator_params.add(param)
+
+        # now init the communicators
+        group_name = self.collective_group.group_name
+        for param in communicator_params:
+            task_dones = []
+            src_rank ,src_gpu_idx, dst_rank, dst_gpu_idx = param
+            src_worker = self.collective_group.mesh_workers[src_rank]
+            dst_worker = self.collective_group.mesh_workers[dst_rank]
+            nccl_uid = ray.get(src_worker.generate_nccl_uid.remote(group_name))
+            task_dones.append(
+                src_worker.init_p2p_communicator.remote(group_name, src_rank, src_gpu_idx,
+                                                        dst_rank, dst_gpu_idx, nccl_uid)
+            )
+            task_dones.append(
+                dst_worker.init_p2p_communicator.remote(group_name, dst_rank, dst_gpu_idx,
+                                                        src_rank, src_gpu_idx, nccl_uid)
+            )
+            ray.get(task_dones)
 
     def _compile_send_recv_tasks(self):
         """Generate all send/recv tasks."""
@@ -430,6 +468,7 @@ class CollectiveGroup:
         self.device_str_to_mesh_worker_map = {}
         self.device_str_to_host_id_map = {}
         self.device_str_to_device_id_map = {}
+        self.worker_to_rank_map = {}
 
         # arranged following the rank order
         num_host = len(self.src_mesh.host_ips) + len(self.dst_mesh.host_ips)
@@ -457,8 +496,10 @@ class CollectiveGroup:
                 self.device_str_to_host_id_map[device_str] = i
                 self.device_str_to_device_id_map[device_str] = j
 
+        self.worker_to_rank_map = {worker: r for r, worker in enumerate(self.mesh_workers)}
+
     def instantiate(self):
-        """Instantiate the collective group in Ray."""
+        """Instantiate the collective group in Ray lazily."""
         options = {
             "group_name": self.group_name,
             "world_size": len(self.mesh_workers),
@@ -466,6 +507,17 @@ class CollectiveGroup:
             "backend": "nccl"
         }
         col.create_collective_group(self.mesh_workers, **options)
+
+    def instantiate_now(self):
+        """Instantiate the collective group eagerly (but not communicators)."""
+        world_size = len(self.mesh_workers)
+        task_dones = []
+        logger.debug("Trying to create ray.collective groups among participants.")
+        for rank, worker in enumerate(self.mesh_workers):
+            task_dones.append(
+                worker.init_collective_group.remote(world_size, rank, "nccl", self.group_name))
+        ray.get(task_dones)
+        logger.debug(f"The group {self.group_name} has been created." )
 
     def destroy(self):
         """Destroy the NCCL collective group at exit."""

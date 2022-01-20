@@ -454,7 +454,7 @@ class NCCLGroup(BaseGroup):
                     streams[i].wait_event(events[i])
 
     def _get_nccl_p2p_communicator(self, comm_key, my_gpu_idx, peer_rank,
-                                   peer_gpu_idx):
+                                   peer_gpu_idx, nccl_uid=None):
         """Create or retrieve an NCCL communicator for p2p tasks.
 
         Note(Hao): this function is not thread-safe now.
@@ -496,23 +496,22 @@ class NCCLGroup(BaseGroup):
                 "Send and recv happens on the same process! "
                 "parax.collective does not support this case as of now. "
                 "Alternatively, consider doing GPU to GPU memcpy?")
-
         group_key = self._generate_group_key(comm_key)
         if my_p2p_rank == 0:
-            logger.info("Rank-0 process to put the NCCL unique ID")
-            nccl_uid = self._generate_nccl_uid(group_key)
+            if nccl_uid is None:
+                nccl_uid = self._generate_nccl_uid(group_key)
         else:
-            rendezvous = Rendezvous(group_key)
-            rendezvous.meet(timeout_s=3000)
-            nccl_uid = rendezvous.get_nccl_id()
-
-            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
-            # avoid named actor leak.
-            if rendezvous.get_access_counter() == 2:
-                logger.debug(
-                    "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                    "will go out of context and be destroyed.")
-                rendezvous.destroy_store()
+            if nccl_uid is None:
+                rendezvous = Rendezvous(group_key)
+                rendezvous.meet(timeout_s=3000)
+                nccl_uid = rendezvous.get_nccl_id()
+                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+                # avoid named actor leak.
+                if rendezvous.get_access_counter() == 2:
+                    logger.debug(
+                        "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                        "will go out of context and be destroyed.")
+                    rendezvous.destroy_store()
 
         # create the p2p communicators
         with nccl_util.Device(my_gpu_idx):
@@ -520,7 +519,6 @@ class NCCLGroup(BaseGroup):
             stream = get_stream_pool(my_gpu_idx).get_stream()
             event = cupy.cuda.Event()
 
-        # TODO(Fu): lock and might need to add event
         self._dev_comm_map[comm_key] = [comm]
         self._dev_streams_map[comm_key] = [stream]
         self._dev_event_map[comm_key] = [event]
@@ -552,6 +550,10 @@ class NCCLGroup(BaseGroup):
             logger.info(
                 "The store with name {} has been destroyed somewhere else.")
             pass
+
+    def generate_nccl_uid(self):
+        group_uid = nccl_util.get_nccl_unique_id()
+        return group_uid
 
     def _generate_nccl_uid(self, key):
         """Generate an NCCL unique ID for initializing communicators.
@@ -622,6 +624,27 @@ class NCCLGroup(BaseGroup):
         nccl_util.groupEnd()
         if postprocess_fn:
             postprocess_fn(streams)
+
+    def create_p2p_communicator(self,
+                                my_gpu_idx: int,
+                                peer_rank: int,
+                                peer_gpu_idx: int,
+                                nccl_uid: str=None):
+        """A public method to create p2p communicators
+
+        Args:
+            my_gpu_idx (int): the gpu index on self rank.
+            peer_rank (int): the rank of the peer process.
+            peer_gpu_idx (int): the index of the gpu on the peer process.
+            nccl_uid (str, optional): optionally to provide the NCCLUniqueID in advance.
+
+        Returns:
+            None
+        """
+        comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
+                                           peer_gpu_idx)
+        self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
+                                        peer_gpu_idx, nccl_uid)
 
     def _point2point(self, tensors, p2p_fn, peer_rank: int, peer_gpu_idx: int):
         """A method to encapsulate all peer-to-peer calls (i.e., send/recv).

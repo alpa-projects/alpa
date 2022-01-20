@@ -1,4 +1,7 @@
 """Abstract runtime classes and methods."""
+import logging
+import time
+
 from abc import ABCMeta, abstractmethod
 from typing import List, Any
 
@@ -10,6 +13,10 @@ from parax.device_mesh import PhysicalDeviceMesh
 from parax.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, CollectiveGroup, SymbolicReshardingTask)
 from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
+from parax.global_env import global_config
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class BaseRuntime(metaclass=ABCMeta):
@@ -113,7 +120,11 @@ class BaseDistributedRuntime(BaseRuntime):
 
         # TODO(Hao): this establish_nccl_groups needs to be improved to cover allgather.
         self._establish_nccl_groups()
+
+        start_time = time.time()
         self._compile_resharding_tasks()
+        end_time = time.time()
+        logger.info(f"Compile resharding tasks takes {end_time - start_time}....")
 
     def run(self, *args, **kwargs):
         """The runtime invocation interface."""
@@ -179,6 +190,7 @@ class BaseDistributedRuntime(BaseRuntime):
                 device_str_groups[j][i] = device_str_groups[j][i] | participants
 
         # construct groups
+        start_time = time.time()
         for i in range(self.num_mesh):
             for j in range(self.num_mesh):
                 if i >= j:
@@ -189,9 +201,14 @@ class BaseDistributedRuntime(BaseRuntime):
                 cg = CollectiveGroup(list(device_str_groups[i][j]),
                                      self.physical_meshes[i],
                                      self.physical_meshes[j])
-                cg.instantiate()
+                if global_config.eagerly_create_communicators:
+                    cg.instantiate_now()
+                else:
+                    cg.instantiate()
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
+        end_time = time.time()
+        logger.info(f"Initialize collective group takes {end_time - start_time}...")
 
     def _compile_resharding_tasks(self):
         """Create and compile all resharding (send/recv/allgather) tasks."""

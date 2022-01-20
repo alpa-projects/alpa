@@ -69,10 +69,10 @@ class MeshHostWorker:
             xla_client._xla.get_distributed_runtime_client(
                 server_address, host_id))
         logger.debug(
-            "Trying to connect to xla runtime at {}...".format(server_address))
+            f"{host_id}: Trying to connect to xla runtime at {server_address}")
         status = self.distributed_client.connect()
         logger.debug(
-            "Success to connect to xla runtime at {}...".format(server_address))
+            f"{host_id}: Success to connect to xla runtime at {server_address}")
         self.backend = xla_client.make_gpu_client(self.distributed_client,
                                                   node_id=host_id)
         # Monkey patch the backend
@@ -404,6 +404,9 @@ class MeshHostWorker:
         col.destroy_collective_group(group_name)
 
 
+used_port_set = set((None,))
+
+
 class PhysicalDeviceMesh:
     """
     A physical device mesh to run computation distributedly.
@@ -480,15 +483,17 @@ class PhysicalDeviceMesh:
 
     def _launch_xla_servers(self):
         # Launch distributed xla runtime
-        port = np.random.randint(20000, 23000)
+        port = None
+        while port in used_port_set:
+            port = np.random.randint(20000, 25000)
+        used_port_set.add(port)
+
         self.server_address = f"{self.head_ip}:{port}"
         self.service_server = None
-        logger.debug(
-            "Trying to start XLA gRPC server on port: {}...".format(port))
+        logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
-        logger.debug(
-            "Success to start XLA gRPC server on port: {}...".format(port))
+        logger.debug(f"Success to start XLA gRPC server on port: {port}...")
         time.sleep(0.5)
 
         # Launch workers

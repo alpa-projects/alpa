@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
+LAYER_HEAVY_OP_LOWER_BOUND = 3
+DEFAULT_EPS = 0.6
+DEFAULT_COST_CRITERIA = "flops"
+
+
 def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
     """Slices eqns by pipeline markers."""
     sliced_eqns = []
@@ -241,16 +246,18 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
                           dtype=np.int32)
     input_sizes = jaxpr_eqns_input_sizes(jaxpr)
     if cost_criteria == "flops":
-        cost_fn = eqn_flops
+        compute_costs = np.array(
+            [eqn_flops(eqn) if nt else 0 for nt, eqn in zip(nontrivial, jaxpr.eqns)],
+            dtype=np.float64)
     elif cost_criteria == "count":
-        cost_fn = heavy_count
+        compute_costs = np.array(
+            [heavy_count(eqn) if nt else 0 for nt, eqn in zip(nontrivial, jaxpr.eqns)],
+            dtype=np.float64)
     elif cost_criteria == "input_memory":
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
+        compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns], dtype=np.float64)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
-    compute_costs = np.array(
-        [cost_fn(eqn) if nt else 0 for nt, eqn in zip(nontrivial, jaxpr.eqns)],
-        dtype=np.float64)
     return nontrivial, input_sizes, compute_costs
 
 
@@ -258,7 +265,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                           layer_num: int,
                           eps: float,
                           costs,
-                          cost_criteria="flops"):
+                          cost_criteria):
     """Clusters the jaxpr by cost."""
     layer_num = int(layer_num)
     length = len(jaxpr.eqns)
@@ -271,9 +278,9 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                                   compute_costs_avg + 5)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
-    LAYER_HEAVY_OP_LOWER_BOUND = 3  # noqa
-    if sum(non_trivial) / layer_num < LAYER_HEAVY_OP_LOWER_BOUND:
-        LAYER_HEAVY_OP_LOWER_BOUND = int(sum(non_trivial) / layer_num)  # noqa
+    layer_heavy_op_lower_bound = LAYER_HEAVY_OP_LOWER_BOUND
+    if sum(non_trivial) / layer_num < layer_heavy_op_lower_bound:
+        layer_heavy_op_lower_bound = int(sum(non_trivial) / layer_num)  # noqa
         logger.warning(
             "Too few non-trivial ops (dot, conv), which may influence"
             " auto-sharding performance")
@@ -288,13 +295,13 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                 if non_trivial[r - 1]:
                     cnt += 1
                     total_compute_cost += compute_costs[r - 1]
-                if cnt < LAYER_HEAVY_OP_LOWER_BOUND:
+                if cnt < layer_heavy_op_lower_bound:
                     if total_compute_cost >= compute_costs_bound:
                         blocked[left, r] = 0
                     continue
                 if (total_compute_cost >= compute_costs_bound and
                         non_trivial[r - 1] and
-                        cnt > LAYER_HEAVY_OP_LOWER_BOUND):
+                        cnt > layer_heavy_op_lower_bound):
                     break
                 blocked[left, r] = 0
         return blocked
@@ -353,6 +360,21 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
                     if r == -1 else "unknown error")
     solution = list(reversed(reversed_sliced_eqns))
 
+    #print("dp solution")
+    #for i, eqns in enumerate(solution):
+    #    invars = OrderedSet()
+    #    for eqn in eqns:
+    #        invars.update([var for var in eqn.invars if isinstance(var, Var)])
+    #    invars.intersection_update(jaxpr.jaxpr.invars)
+    #    print(f"mesh: {i},  set_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+
+    #    invars = []
+    #    for eqn in eqns:
+    #        tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
+    #        tmp_set.intersection_update(jaxpr.jaxpr.invars)
+    #        invars.extend(list(tmp_set))
+    #    print(f"mesh: {i}, list_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+
     solution_info = {
         "total_cost": value,
     }
@@ -386,8 +408,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                      layer_construction: bool = False,
                                      auto_layer_boundary: bool = False,
                                      layer_num: Union[int, str] = None,
-                                     eps: float = 0.6,
-                                     cost_criteria: str = "flops",
+                                     eps: float = DEFAULT_EPS,
+                                     cost_criteria: str = DEFAULT_COST_CRITERIA,
                                      layer_eps: float = 0.0,
                                      lift_markers: bool = False):
     """TODO(zhuohan): docstring."""
@@ -460,8 +482,8 @@ def manual_remat(fn: Callable, static_argnums=(), lift_markers=False):
 def automatic_remat(fn: Callable,
                     static_argnums=(),
                     layer_num: Union[int, str] = None,
-                    eps: float = 0.6,
-                    cost_criteria: str = "flops",
+                    eps: float = DEFAULT_EPS,
+                    cost_criteria: str = DEFAULT_COST_CRITERIA,
                     layer_eps: float = 0.0):
     """Rematerialize an input function with automatic boundaries.
 
@@ -527,8 +549,8 @@ def automatic_layer_construction(fn: Callable,
                                  static_argnums=(),
                                  remat_layer=False,
                                  layer_num: int = None,
-                                 eps: float = 0.6,
-                                 cost_criteria: str = "flops",
+                                 eps: float = DEFAULT_EPS,
+                                 cost_criteria: str = DEFAULT_COST_CRITERIA,
                                  layer_eps: float = 0.0):
     """Automatically cluster the equations in a jaxpr into layers.
 

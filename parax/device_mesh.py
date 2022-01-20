@@ -274,6 +274,7 @@ class MeshHostWorker:
 
     def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx,
                               peer_rank, peer_gpu_idx, nccl_uid):
+        """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
         assert col.get_rank(group_name) == my_rank
         g = col.check_and_get_group(group_name)
@@ -281,6 +282,7 @@ class MeshHostWorker:
         return True
 
     def generate_nccl_uid(self, group_name):
+        """Generate the NCCL unique ID in advance."""
         g = col.check_and_get_group(group_name)
         uid = g.generate_nccl_uid()
         return uid

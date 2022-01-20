@@ -1,6 +1,6 @@
 """Cross mesh resharding for pipeline parallelism."""
 import logging
-from typing import List, Any, Set, Tuple
+from typing import List, Any
 
 import numpy as np
 import ray
@@ -16,7 +16,7 @@ from parax.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_
 from parax.util import OrderedSet
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 resharding_task_counter = 0
 

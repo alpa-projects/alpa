@@ -121,8 +121,10 @@ class BaseDistributedRuntime(BaseRuntime):
         # TODO(Hao): this establish_nccl_groups needs to be improved to cover allgather.
         self._establish_nccl_groups()
 
-
+        start_time = time.time()
         self._compile_resharding_tasks()
+        end_time = time.time()
+        logger.info(f"Compile resharding tasks takes {end_time - start_time}....")
 
     def run(self, *args, **kwargs):
         """The runtime invocation interface."""
@@ -206,7 +208,7 @@ class BaseDistributedRuntime(BaseRuntime):
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
         end_time = time.time()
-        logger.debug(f"Initialize collective group takes {end_time - start_time}...")
+        logger.info(f"Initialize collective group takes {end_time - start_time}...")
 
     def _compile_resharding_tasks(self):
         """Create and compile all resharding (send/recv/allgather) tasks."""

@@ -68,9 +68,11 @@ class MeshHostWorker:
         self.distributed_client = (
             xla_client._xla.get_distributed_runtime_client(
                 server_address, host_id))
-        logger.debug(f"{host_id}: Trying to connect to xla runtime at {server_address}")
+        logger.debug(
+            f"{host_id}: Trying to connect to xla runtime at {server_address}")
         status = self.distributed_client.connect()
-        logger.debug(f"{host_id}: Success to connect to xla runtime at {server_address}")
+        logger.debug(
+            f"{host_id}: Success to connect to xla runtime at {server_address}")
         self.backend = xla_client.make_gpu_client(self.distributed_client,
                                                   node_id=host_id)
         # Monkey patch the backend

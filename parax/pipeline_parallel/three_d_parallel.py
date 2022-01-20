@@ -179,6 +179,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Launch all physical meshes in parallel
     physical_meshes = [None] * len(sliced_meshes)
+
     def launch_physical_mesh(i):
         physical_meshes[i] = sliced_meshes[i].get_physical_mesh()
 

@@ -20,10 +20,11 @@ fixed_params = (False, True, True) # FM, Remat, RS
 max_global_batch_size = 1024
 
 default_overwrite_dict = {
-    "auto_stage_construction_imbalance_tolerance": 1e5,
+    "auto_stage_construction_imbalance_tolerance": 1.0,
     "logical_mesh_search_space": "all",
     "use_hlo_cost_model": True,
-    "profiling_database_filename": "prof_database.pkl",
+    "profiling_database_filename": "prof_database_4_node_20220111.pkl",
+    "submesh_choices_mode": "small_power_of_two",
 }
 
 
@@ -46,25 +47,28 @@ paper_auto_gpt_suite = {
     get_auto_test_case("1.3B", [32, 64], [12])),
 8: (get_auto_test_case("2.7B", [64, 128, 256], [8]) +
     get_auto_test_case("2.7B", [64, 128], [16])),
-16: (# get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
-     get_auto_test_case("6.7B", [32, 64, 128, 256], [32, 34])
-     # get_auto_test_case("2.7B", [64], [16]) +
-     # get_auto_test_case("6.7B", [128], [16])
-     ),
-32: (# get_auto_test_case("6.7B", [16, 32, 64, 128], [8]) +
-     # get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
-     get_auto_test_case("6.7B", [64, 128], [32, 34]) +
-     get_auto_test_case("15B", [128, 256, 512], [32, 34])),
+16: get_auto_test_case("6.7B", [32, 64, 128, 256], [8]),
+32: get_auto_test_case("15B", [64, 128, 256, 512], [8]),
+64: get_auto_test_case("39B", [128, 256, 512, 1024], [8]),
 }
 
 test_auto_gpt_suite = {
 1: get_auto_test_case("125M", [64], [6]),
 2: get_auto_test_case("350M", [64], [6]),
-4: get_auto_test_case("760M", [64], [6]),
+4: get_auto_test_case("760M", [64], [6], "manual_gpipe", {
+    "forward_stage_layer_ids": [[0, 1, 2], [3, 4, 5]],
+    "sub_physical_mesh_shapes": [(1, 2)] * 2,
+    "sub_logical_mesh_shapes": [(2, 1)] * 2,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2,
+}),
 8: get_auto_test_case("2.7B", [128], [8]),
-#8: get_auto_test_case("TEST", [2], [2]),
-#8: get_auto_test_case("TEST2", [128], [4]),
 16: get_auto_test_case("6.7B", [256], [8]),
+64: get_auto_test_case("39B", [256], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[i] for i in range(8)],
+    "sub_physical_mesh_shapes": [(1, 8)] * 8,
+    "sub_logical_mesh_shapes": [(1, 8)] * 8,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 8,
+})
 }
 
 result_auto_gpt_suite = {

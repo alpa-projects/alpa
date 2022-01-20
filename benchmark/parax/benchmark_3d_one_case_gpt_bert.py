@@ -71,6 +71,29 @@ def create_train_state(rngkey, model, batch, dtype):
     return state
 
 
+def create_train_state_aval(rngkey, model, batch, dtype):
+    params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
+                            batch["attention_mask"], batch["token_type_ids"],
+                            batch["position_ids"])
+
+    def weight_decay_mask(pytree):
+        # do not use weight decay on layer norm and bias.
+        return jax.tree_map(lambda x: x.ndim > 1, pytree)
+
+    tx = optax.chain(
+        #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
+        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+    )
+    mixed_precision = (dtype == jnp.float16)
+    state = TrainState.create_aval(
+        apply_fn=model.apply,
+        params=params,
+        tx=tx,
+        mixed_precision=mixed_precision,
+        dynamic_scale=None)
+    return state
+
+
 def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
                    auto_layer=False, fine_grained_remat=False):
 
@@ -119,7 +142,7 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
 
 
 def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
-                                num_hosts, num_devices_per_host):
+                                num_hosts, num_devices_per_host, aval_train_state=True):
     print_used_time(None)
 
     # Model configs
@@ -215,7 +238,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    state = create_train_state(rngkey, model, batch, dtype)
+    if aval_train_state:
+        state = create_train_state_aval(rngkey, model, batch, dtype)
+    else:
+        state = create_train_state(rngkey, model, batch, dtype)
     print_used_time("Create train state")
 
     # Compile executable

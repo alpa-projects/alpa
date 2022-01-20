@@ -16,7 +16,7 @@ import cupy as cp
 import flax
 from flax.training import train_state
 import jax
-from jax._src.api import FLAGS
+from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.dlpack import from_dlpack, to_dlpack
 from jax.api_util import shaped_abstractify
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
@@ -88,6 +88,15 @@ def auto_donate_argnums(args: Sequence[Any]):
         return False
 
     return [i for i in range(len(args)) if should_donate(args[i])]
+
+
+def abstractify_with_aval(x):
+    if isinstance(x, ShapedArray):
+        return x
+    elif isinstance(x, ShapeDtypeStruct):
+        return ShapedArray(x.shape, x.dtype, named_shape=x.named_shape)
+    else:
+        return xla.abstractify(x)
 
 
 ########################################

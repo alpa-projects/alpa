@@ -12,6 +12,7 @@ from parax.model.gpt_model import FlaxGPTForLMModule
 from parax.util import map_to_shape, count_communication_primitives, print_used_time, GB
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
+from benchmark_3d_one_case_gpt_bert import create_train_state_aval
 
 as_option = global_config.default_autosharding_option
 
@@ -137,7 +138,8 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    state = create_train_state(rngkey, model, dtype, batch)
+    #state = create_train_state(rngkey, model, dtype, batch)
+    state = create_train_state_aval(rngkey, model, batch, dtype)
     print_used_time("Create train state")
 
     # Compile executable
@@ -169,6 +171,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         latencies = [-1]
     else:
         for i in range(niter):
+            print(f"Iteration {i}...")
             state = train_step(state, batch, rngkey)
 
         latencies = executable.get_execution_time_costs(warmup=warmup)

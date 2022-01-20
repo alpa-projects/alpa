@@ -36,6 +36,8 @@ gpt_intra_only = [
     (64,   *gpt_specs["15B"],  4,   8,   _,   _,   1,  8,   True,  True,  True,  _, _), # all_reduce_threshold = 1<<20
     (128,  *gpt_specs["15B"],  4,   8,   _,   _,   1,  16,  True,  True,  True,  _, _),
     (256,  *gpt_specs["15B"],  4,   8,   _,   _,   1,  32,  True,  True,  True,  _, _),
+    (16,   *gpt_specs["39B"],  2,   32,   _,   _,   1,  8,   True,  True,  True,  _, _),
+    (32,   *gpt_specs["39B"],  2,   32,   _,   _,   1,  16,  True,  True,  True,  _, _),
 ]
 
 moe_intra_only = [

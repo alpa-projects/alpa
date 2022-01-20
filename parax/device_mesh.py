@@ -272,6 +272,19 @@ class MeshHostWorker:
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
+    def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx,
+                              peer_rank, peer_gpu_idx, nccl_uid):
+        assert col.is_group_initialized(group_name)
+        assert col.get_rank(group_name) == my_rank
+        g = col.check_and_get_group(group_name)
+        g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx, nccl_uid)
+        return True
+
+    def generate_nccl_uid(self, group_name):
+        g = col.check_and_get_group(group_name)
+        uid = g.generate_nccl_uid()
+        return uid
+
     def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
                   tensor_slices: Sequence[slice]):
         cupy_buffers = []
@@ -302,14 +315,6 @@ class MeshHostWorker:
     def put_resharding_recv_task(self, uuid, tasks, group_name):
         self.recv_tasks[uuid] = ReshardingRecvTask(recv_specs=tasks,
                                                    group_name=group_name)
-
-    def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx,
-                              peer_rank, peer_gpu_idx):
-        assert col.is_group_initialized(group_name)
-        assert col.get_rank(group_name) == my_rank
-        g = col.check_and_get_group(group_name)
-        g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx)
-        return True
 
     def run_resharding_send_task(self, uuid, buf_uuids):
         task: ReshardingSendTask = self.send_tasks[uuid]

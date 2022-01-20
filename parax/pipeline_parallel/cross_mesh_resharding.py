@@ -296,20 +296,21 @@ class SymbolicReshardingTask(ReshardingTask):
                     if param not in communicator_params:
                         communicator_params.add(param)
 
-        # now init
+        # now init the communicators
         group_name = self.collective_group.group_name
         for param in communicator_params:
             task_dones = []
             src_rank ,src_gpu_idx, dst_rank, dst_gpu_idx = param
             src_worker = self.collective_group.mesh_workers[src_rank]
             dst_worker = self.collective_group.mesh_workers[dst_rank]
+            nccl_uid = ray.get(src_worker.generate_nccl_uid.remote(group_name))
             task_dones.append(
                 src_worker.init_p2p_communicator.remote(group_name, src_rank, src_gpu_idx,
-                                                         dst_rank, dst_gpu_idx)
+                                                        dst_rank, dst_gpu_idx, nccl_uid)
             )
             task_dones.append(
                 dst_worker.init_p2p_communicator.remote(group_name, dst_rank, dst_gpu_idx,
-                                                        src_rank, src_gpu_idx)
+                                                        src_rank, src_gpu_idx, nccl_uid)
             )
             ray.get(task_dones)
 

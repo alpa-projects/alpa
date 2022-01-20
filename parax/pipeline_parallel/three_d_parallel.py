@@ -178,18 +178,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                             get_hlo_texts=True)
 
     # Launch all physical meshes in parallel
-    physical_meshes = [None] * len(sliced_meshes)
-
-    def launch_physical_mesh(i):
-        physical_meshes[i] = sliced_meshes[i].get_physical_mesh()
-
-    threads = []
-    for i in range(len(sliced_meshes)):
-        t = threading.Thread(target=launch_physical_mesh, args=(i,))
-        t.start()
-        threads.append(t)
-    for i in range(len(sliced_meshes)):
-        threads[i].join()
+    physical_meshes = launch_physical_meshes(sliced_meshes)
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
@@ -314,3 +303,21 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     compile_workers.shutdown()
 
     return xla_stages, total_flops
+
+
+def launch_physical_meshes(virtual_meshes):
+    """Launch physical meshes in parallel."""
+    physical_meshes = [None] * len(virtual_meshes)
+
+    def launch_func(i):
+        physical_meshes[i] = virtual_meshes[i].get_physical_mesh()
+
+    threads = []
+    for i in range(len(virtual_meshes)):
+        t = threading.Thread(target=launch_func, args=(i,))
+        t.start()
+        threads.append(t)
+    for i in range(len(virtual_meshes)):
+        threads[i].join()
+
+    return physical_meshes

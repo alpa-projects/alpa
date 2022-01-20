@@ -242,30 +242,25 @@ class DisjointDict:
 
     def __init__(self):
         self.values = dict()
-        self.reversed_mapping = dict()
 
     def update(self, keys, values):
         for key, value in zip(keys, values):
-            value = self.recursive_lookup(value)
             self.values[key] = value
-            self._reversed_recursive_update(key, value)
-
-    def _reversed_recursive_update(self, key, value):
-        if key in self.reversed_mapping:
-            reversed_mapping = self.reversed_mapping[key]
-            self.reversed_mapping.setdefault(value,
-                                             set()).update(reversed_mapping)
-            self.reversed_mapping.pop(key)
-            for k in reversed_mapping:
-                self.values[k] = value
-        self.reversed_mapping.setdefault(value, set()).add(key)
 
     def recursive_lookup(self, key):
-        if key in self.values:
-            value = self.values[key]
-            assert value not in self.values
-            return value
-        return key
+        lookup_queue = [key]
+        value = None
+        while len(lookup_queue):
+            k = lookup_queue.pop()
+            if value is not None:
+                self.values[k] = value
+                continue
+            if k not in self.values:
+                value = k
+                continue
+            lookup_queue.append(k)
+            lookup_queue.append(self.values[k])
+        return value
 
     def keys(self):
         return list(self.values.keys())

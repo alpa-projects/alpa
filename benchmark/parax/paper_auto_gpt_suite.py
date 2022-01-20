@@ -10,7 +10,6 @@ gpt_specs = {
 "1.3B": (1024,  2048,  24,    32,   51200, ),
 "2.7B": (1024,  2560,  32,    32,   51200, ),
 "6.7B": (1024,  4096,  32,    32,   51200, ),
-"15B-24L":  (1024,  5120,  24,    40,   51200, ),
 "15B":  (1024,  5120,  48,    40,   51200, ),
 "39B":  (1024,  8192,  48,    64,   51200, ),
 "76B":  (1024,  10240, 60,    80,   51200, ),
@@ -48,22 +47,14 @@ paper_auto_gpt_suite = {
     get_auto_test_case("1.3B", [32, 64], [12])),
 8: (get_auto_test_case("2.7B", [64, 128, 256], [8]) +
     get_auto_test_case("2.7B", [64, 128], [16])),
-16: (# get_auto_test_case("2.7B", [16, 32, 64, 128], [8]) +
-     get_auto_test_case("6.7B", [32, 64, 128, 256], [32, 34])
-     # get_auto_test_case("2.7B", [64], [16]) +
-     # get_auto_test_case("6.7B", [128], [16])
-     ),
-32: (# get_auto_test_case("6.7B", [16, 32, 64, 128], [8]) +
-     # get_auto_test_case("15B", [64, 128, 256, 512], [8]) +
-     get_auto_test_case("6.7B", [64, 128], [32, 34]) +
-     get_auto_test_case("15B", [128, 256, 512], [32, 34])),
-64: (get_auto_test_case("39B", [128, 256, 512, 1024], [8])),
+16: get_auto_test_case("6.7B", [32, 64, 128, 256], [8]),
+32: get_auto_test_case("15B", [64, 128, 256, 512], [8]),
+64: get_auto_test_case("39B", [128, 256, 512, 1024], [8]),
 }
 
 test_auto_gpt_suite = {
 1: get_auto_test_case("125M", [64], [6]),
 2: get_auto_test_case("350M", [64], [6]),
-# 4: get_auto_test_case("760M", [64], [6]),
 4: get_auto_test_case("760M", [64], [6], "manual_gpipe", {
     "forward_stage_layer_ids": [[0, 1, 2], [3, 4, 5]],
     "sub_physical_mesh_shapes": [(1, 2)] * 2,
@@ -71,15 +62,7 @@ test_auto_gpt_suite = {
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2,
 }),
 8: get_auto_test_case("2.7B", [128], [8]),
-#8: get_auto_test_case("TEST", [2], [2]),
-#8: get_auto_test_case("TEST2", [128], [4]),
 16: get_auto_test_case("6.7B", [256], [8]),
-32: get_auto_test_case("15B-24L", [64], [8], "manual_gpipe", {
-    "forward_stage_layer_ids": [[i] for i in range(4)],
-    "sub_physical_mesh_shapes": [(1, 8)] * 4,
-    "sub_logical_mesh_shapes": [(2, 4)] * 4,
-    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4,
-}),
 64: get_auto_test_case("39B", [256], [8], "manual_gpipe", {
     "forward_stage_layer_ids": [[i] for i in range(8)],
     "sub_physical_mesh_shapes": [(1, 8)] * 8,

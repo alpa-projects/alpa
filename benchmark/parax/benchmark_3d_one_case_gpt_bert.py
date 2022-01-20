@@ -141,7 +141,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         else:
             print("Use auto-layer because #layer is not divisible by pipeline mp size.")
             auto_layer = True
-            fine_grained_remat = True
+            fine_grained_remat = num_layers > pipeline_mp_size
 
     grad_func = parax.grad
 

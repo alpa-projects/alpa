@@ -1,5 +1,6 @@
 """Generate callables that combines intra- and inter-op parallelisms."""
 import logging
+import threading
 
 from jax import linear_util as lu
 from jax.core import gensym
@@ -176,8 +177,20 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                             global_outvars=global_outvars,
                             get_hlo_texts=True)
 
+    # Launch all physical meshes in parallel
+    physical_meshes = [None] * len(sliced_meshes)
+    def launch_physical_mesh(i):
+        physical_meshes[i] = sliced_meshes[i].get_physical_mesh()
+
+    threads = []
+    for i in range(len(sliced_meshes)):
+        t = threading.Thread(target=launch_physical_mesh, args=(i,))
+        t.start()
+        threads.append(t)
+    for i in range(len(sliced_meshes)):
+        threads[i].join()
+
     # Wrap all things into a distributed runtime
-    physical_meshes = [mesh.get_physical_mesh() for mesh in sliced_meshes]
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
     jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
                                          global_invars=global_invars,

@@ -2,6 +2,7 @@
 from collections import namedtuple
 import gc
 import logging
+import time
 from typing import Dict, Sequence
 from abc import ABC, abstractmethod
 
@@ -70,6 +71,7 @@ class BaseWorkerPoolWrapper(ABC):
     def __init__(self):
         self.actors = None
         self.pool = None
+        self.is_shutdown = False
 
     def submit(self, fn, value):
         """See ray.util.ActorPool.submit."""
@@ -92,7 +94,12 @@ class BaseWorkerPoolWrapper(ABC):
             else:
                 w.__ray_terminate__.remote()
         gc.collect()
+        self.is_shutdown = True
         time.sleep(10)
+
+    def __del__(self):
+        if not self.is_shutdown:
+            self.shutdown()
 
 
 def get_input_output_sharding_proto(proto, num_devices):
@@ -439,7 +446,7 @@ def compile_all(stages):
     num_gpus = int(ray.available_resources()["GPU"])
     default_autosharding_option = global_config.default_autosharding_option
 
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus, int(min(max(ray.available_resources()["CPU"] // num_cpus, 1), 10)))
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus, int(min(max(ray.available_resources()["CPU"] // num_cpus // 2, 1), 10)))
     for stage_id, (_, stage_config, auto_sharding_config,
                    _) in enumerate(stages):
         logical_mesh, autosharding_option_dict = auto_sharding_config
@@ -455,6 +462,8 @@ def compile_all(stages):
             stage_id, compiled_output = compile_workers.get_next_unordered()
         except TimeoutError:
             logger.warning("Compile worker timeout")
+        except RayActorError:
+            logger.warning("A Compile worker died unexpectedly")
             continue
         compiled_outputs[stage_id] = compiled_output
 

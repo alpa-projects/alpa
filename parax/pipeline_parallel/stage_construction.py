@@ -317,6 +317,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         compiled_outputs = compile_all(stages)
     except RayActorError as e:
         logger.warning(f"Compilation fatal error: {e}")
+        timers("stage-construction-compilation").suspend()
         return compute_cost, max_n_succ_stages, is_profiled
     timers("stage-construction-compilation").suspend()
 

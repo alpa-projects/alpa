@@ -1,5 +1,5 @@
 """Functions related with computing the stats during layer construction."""
-from typing import List
+from typing import List, Set
 
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
@@ -137,3 +137,9 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
     print(" - Invars of each stage:")
     get_cross_slice_vars(origin_jaxpr.jaxpr, slices)
     print("-" * 61)
+
+
+def global_invar_size(invars: Set[Var], eqn: JaxprEqn):
+    input_vars = set([v for v in eqn.invars if isinstance(v, Var)])
+    size = sum([(var.aval.size * var.aval.dtype.itemsize) for var in invars.intersection(input_vars)])
+    return size

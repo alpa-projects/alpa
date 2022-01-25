@@ -36,6 +36,9 @@ gpt_intra_only = [
     (64,   *gpt_specs["15B"],  4,   8,   _,   _,   1,  8,   True,  True,  True,  _, _), # all_reduce_threshold = 1<<20
     (128,  *gpt_specs["15B"],  4,   8,   _,   _,   1,  16,  True,  True,  True,  _, _),
     (256,  *gpt_specs["15B"],  4,   8,   _,   _,   1,  32,  True,  True,  True,  _, _),
+    (16,   *gpt_specs["39B"],  2,   32,  _,   _,   1,  8,   True,  True,  True,  _, _),
+    (32,   *gpt_specs["39B"],  2,   32,  _,   _,   1,  16,  True,  True,  True,  _, _),
+    (64,   *gpt_specs["39B"],  2,   32,  _,   _,   1,  32,  True,  True,  True,  _, _),
 ]
 
 moe_intra_only = [
@@ -63,9 +66,9 @@ wresnet_intra_only = [
     (64,   *wresnet_specs["6.8B"], 4,  8,  2,  False, True, _, _),
     (128,  *wresnet_specs["6.8B"], 4,  8,  4,  False, True, _, _),
     (256,  *wresnet_specs["6.8B"], 4,  8,  8,  False, True, _, _),
-    (16,   *wresnet_specs["13B"], 4,  16,  2,  False, True, _, _),
-    (32,   *wresnet_specs["13B"], 4,  16,  4,  False, True, _, _),
-    (64,   *wresnet_specs["13B"], 4,  16,  8,  False, True, _, _),
+    (16,   *wresnet_specs["13B"],  4,  16, 2,  False, True, _, _),
+    (32,   *wresnet_specs["13B"],  4,  16, 4,  False, True, _, _),
+    (64,   *wresnet_specs["13B"],  4,  16, 8,  False, True, _, _),
 ]
 
 suites = [

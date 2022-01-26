@@ -1,7 +1,7 @@
 """Define a new Jax primitive pipeline_maker to mark the boundary of pipeline computations."""
 import numpy as np
 
-from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, dropvar
+from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, DropVar, abstract_unit
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -40,7 +40,7 @@ def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
     if mark_type not in ('start', 'end', 'jvp_start', 'jvp_end'):
         raise ValueError(f'Unknown mark type: {mark_type}')
     if len(outvars) == 0:
-        outvars = [dropvar]
+        outvars = [DropVar(abstract_unit)]
     return new_jaxpr_eqn(invars, outvars, pipeline_p, {
         'name': name,
         'mark_type': mark_type

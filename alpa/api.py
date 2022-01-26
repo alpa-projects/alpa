@@ -3,7 +3,8 @@ from functools import wraps
 from typing import Callable, Optional, Sequence, Union
 
 import jax
-from jax import linear_util as lu, api
+from jax import linear_util as lu
+from jax._src import api
 from jax._src.util import safe_map, HashableFunction
 from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums)

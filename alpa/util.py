@@ -16,6 +16,7 @@ import cupy as cp
 import flax
 from flax.training import train_state
 import jax
+from jax._src import dispatch
 from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.dlpack import from_dlpack, to_dlpack
 from jax.api_util import shaped_abstractify
@@ -307,28 +308,34 @@ def get_compile_options(num_replicas: int, num_partitions: int,
 
 def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
                              donated_invars: Sequence[bool], backend):
-    """Convert a jaxpr to a XLA HLO computation."""
+    """Convert a jaxpr to a XLA HLO computation.
+
+    Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
+    """
     backend_name = backend.platform
     in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
     consts = closed_jaxpr.consts
-    map(xla.prefetch, it.chain(consts, xla.jaxpr_literals(closed_jaxpr.jaxpr)))
+    map(dispatch.prefetch,
+        it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
 
     # Convert jaxpr to XLA HLO
     tuple_args = False
-    c = xb.make_computation_builder(name)
+    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
+    name_stack = xla.extend_name_stack(xla.wrap_name(name, 'parallelize'))
+    c = xc.XlaBuilder(name)
     xla_consts = xla._xla_consts(c, consts)
     xla_args, donated_invars = xla._xla_callable_args(
         c, in_avals, tuple_args, donated_invars=donated_invars)
-    axis_env = xla.AxisEnv(nreps=1, names=(),
-                           sizes=())  # All named axes have been vmapped
-    out_nodes = xla.jaxpr_subcomp(c, closed_jaxpr.jaxpr, backend_name, axis_env,
-                                  xla_consts, name, *xla_args)
+    ctx = xla.TranslationContext(c, backend_name, axis_env, name_stack)
+    out_nodes = xla.jaxpr_subcomp(ctx, closed_jaxpr.jaxpr, xla_consts,
+                                  *xla_args)
     out_tuple = xc.ops.Tuple(c, out_nodes)
 
     # Set up aliases (donating invars)
     if donated_invars:
         if backend.platform in ("gpu", "tpu"):
-            donation_results = xla.set_up_aliases(c, xla_args, out_tuple,
+            donation_results = xla.set_up_aliases(c, xla_args,
+                                                  c.GetShape(out_tuple),
                                                   donated_invars, tuple_args)
         if any(donation_results):
             unused_donations = [
@@ -339,8 +346,7 @@ def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
             warn("Some donated buffers were not usable: {}".format(
                 ", ".join(unused_donations)))
 
-    built = c.build(out_tuple)
-    return built
+    return c.build(out_tuple)
 
 
 def setup_computation_alias(xla_computation: xc.XlaComputation,

@@ -7,10 +7,11 @@ from typing import Callable, Sequence, Optional
 import numpy as np
 
 from jax import linear_util as lu, disable_jit
+import jax._src.lib.xla_bridge as xb
 from jax.core import Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym, ShapedArray
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
-from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
+from jax.lib import xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
@@ -62,7 +63,7 @@ def shard_parallel_callable(
 
     # Get physical mesh and logical mesh.
     if devices is None:
-        devices = PhysicalDeviceMesh(devices=xb.devices())
+        devices = PhysicalDeviceMesh(devices=xb.local_devices())
     elif isinstance(devices, (list, tuple)):
         devices = PhysicalDeviceMesh(devices=devices)
     elif isinstance(devices, DeviceCluster):

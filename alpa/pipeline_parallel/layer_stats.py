@@ -21,12 +21,14 @@ def call_to_xla_computation(eqn: JaxprEqn):
     name_stack = xla.extend_name_stack(prim.name)
 
     def aval(v):
-      if type(v) is Literal:
-        return abstractify(v.val)
-      else:
-        return v.aval
+        if type(v) is Literal:
+            return abstractify(v.val)
+        else:
+            return v.aval
 
-    op_metadata = xla.make_op_metadata(prim, eqn.params, source_info=eqn.source_info)
+    op_metadata = xla.make_op_metadata(prim,
+                                       eqn.params,
+                                       source_info=eqn.source_info)
     c.set_op_metadata(op_metadata)
     in_nodes, _ = xla._xla_callable_args(
         c, list(map(lambda x: x.aval, eqn.invars)),
@@ -34,8 +36,8 @@ def call_to_xla_computation(eqn: JaxprEqn):
     axis_env = xla.AxisEnv(1, (), ())
     ctx = xla.TranslationContext(c, backend.platform, axis_env, name_stack)
     rule = xla._translations[eqn.primitive]
-    ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
-               *in_nodes, **eqn.params)
+    ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars), *in_nodes,
+               **eqn.params)
     c.clear_op_metadata()
 
     try:

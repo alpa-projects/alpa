@@ -7,7 +7,7 @@ from jax import core, lax, numpy as jnp
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   wrap_name)
 from jax.lib import xla_client as xc
-from jax.lib.xla_bridge import get_backend as default_get_backend
+from jax._src.lib.xla_bridge import get_backend as default_get_backend
 
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.primitive_def import xla_identity
@@ -19,6 +19,12 @@ from alpa.pipeline_parallel.primitive_def import xla_identity
 override_backend = None
 
 
+def set_override_backend(backend):
+    """Enable the JAX backend monkey patch."""
+    global override_backend
+    override_backend = backend
+
+
 def override_get_backend(*args, **kwargs):
     """Override the `get_backend` in JAX to use PJRT backend managed by Alpa."""
     global override_backend
@@ -27,14 +33,8 @@ def override_get_backend(*args, **kwargs):
     return default_get_backend(*args, **kwargs)
 
 
+setattr(jax._src.lib.xla_bridge, "get_backend", override_get_backend)
 setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
-
-
-def set_override_backend(backend):
-    """Enable the JAX backend monkey patch."""
-    global override_backend
-    override_backend = backend
-
 
 ########################################
 ##### Monkey patch Jax

@@ -22,7 +22,7 @@ def run_unittest_files(files, args):
             continue
         if args.filter is not None and args.filter not in filename:
             continue
-        if not args.enable_slow_tests and "auto_stage" in filename:
+        if not args.enable_slow_tests and "stage_construction" in filename:
             continue
 
         def func():

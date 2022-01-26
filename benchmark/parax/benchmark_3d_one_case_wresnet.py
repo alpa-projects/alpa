@@ -55,7 +55,19 @@ paper_auto_wresnet_suite = {  # key = number of gpus, value = a list of cases
     #(1536, 224, 50,  640,  2,  "fp32", 32, False, True,  True, "single_node_model_parallel"),
     (1520, 224, 50,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel"),
 ],
+
+64: [
+    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
+    # (1536, 224, 50,  320,  32, "fp32", 32, False, False, True,  "single_node_model_parallel"),
+    # (1520, 224, 50,  320,  32, "fp32", 38, False, False, True,  "single_node_model_parallel"),
+    # (1536, 224, 101,  320,  16, "fp32", 48, False, False, True,  "single_node_model_parallel"),
+    (1520, 224, 101,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel"),
+    # (1536, 224, 50,  320,  32, "fp32", 48, False, False, True,  "single_node_model_parallel"),
+    # (1536, 224, 50,  320,  32, "fp32", 48, False, False, True,  "single_node_model_parallel"),
+],
 }
+
+resnet_layer_to_parax_layer = {50: 16, 101: 33}
 
 
 as_option = global_config.default_autosharding_option
@@ -117,13 +129,13 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc, use_remat):
+def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
 
     @parallelize
     def train_step(state, batch):
 
         @partial(automatic_layer_construction,
-                 layer_num=16,
+                 layer_num=resnet_layer_to_parax_layer[num_layers],
                  remat_layer=use_remat)
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
@@ -191,6 +203,7 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         num_micro_batches, force_batch_dim_mapping,\
         prefer_reduce_scatter, use_remat, logical_mesh_search_space = benchmark_case
+    pipeline_stage_mode = "auto_gpipe"
     if dtype == "fp32":
         dtype = jnp.float32
     elif dtype == "fp16":
@@ -215,10 +228,9 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     set_parallelize_options(devices=virtual_mesh,
                             strategy="3d_parallel",
                             num_micro_batches=num_micro_batches,
-                            pipeline_stage_mode="auto_gpipe",
-                            #cache_compute_cost="compute-cost-2022-01-14-12-35-01.npy",
+                            pipeline_stage_mode=pipeline_stage_mode,
                             logical_mesh_search_space=logical_mesh_search_space)
-    global_config.auto_stage_construction_imbalance_tolerance = 0.4
+    global_config.auto_stage_construction_imbalance_tolerance = 0.25
 
     # Prepare input batch
     num_classes = 1024
@@ -239,7 +251,7 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 
@@ -285,11 +297,11 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     del state
     del metrics
-    for i, profiled in enumerate(executable.profile_all_executables()):
-        pstr = f"Mesh {i}: "
-        for k in profiled:
-            pstr += f"Exec {k}: {profiled[k][0]}s; "
-        print(pstr)
+    # for i, profiled in enumerate(executable.profile_all_executables()):
+    #     pstr = f"Mesh {i}: "
+    #     for k in profiled:
+    #         pstr += f"Exec {k}: {profiled[k][0]}s; "
+    #     print(pstr)
     executable.shutdown()
 
     return (parameter_count, mem_allocated, max_mem_allocated, latencies,

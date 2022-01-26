@@ -70,6 +70,7 @@ class BaseWorkerPoolWrapper(ABC):
     def __init__(self):
         self.actors = None
         self.pool = None
+        self.is_shutdown = False
 
     def submit(self, fn, value):
         """See ray.util.ActorPool.submit."""
@@ -92,6 +93,11 @@ class BaseWorkerPoolWrapper(ABC):
             else:
                 w.__ray_terminate__.remote()
         gc.collect()
+        self.is_shutdown = True
+
+    def __del__(self):
+        if not self.is_shutdown:
+            self.shutdown()
 
 
 def get_input_output_sharding_proto(proto, num_devices):
@@ -452,6 +458,8 @@ def compile_all(stages):
             stage_id, compiled_output = compile_workers.get_next_unordered()
         except TimeoutError:
             logger.warning("Compile worker timeout")
+        except RayActorError:
+            logger.warning("A Compile worker died unexpectedly")
             continue
         compiled_outputs[stage_id] = compiled_output
 
@@ -460,15 +468,12 @@ def compile_all(stages):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_layers, num_auto_sharding_configs):
+                num_layers, num_auto_sharding_configs, mesh_cached_result):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
     """
-    compute_cost = np.full((num_layers, num_layers, num_auto_sharding_configs),
-                           np.inf)
-    max_n_succ_stages = np.full(
-        (num_layers, num_layers, num_auto_sharding_configs), -1)
+    compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
     if global_config.use_hlo_cost_model:
         num_cpus = int(
@@ -493,7 +498,9 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         config = compiled_output.strategy_config
         hooked_proto = compiled_output.intermediate_proto
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-        _, stage_config, _, intermediate_vars = stage
+        (start, end, config_idx), stage_config, _, intermediate_vars = stage
+        if is_profiled[start, end, config_idx]:
+            continue
         intermediate_size = compute_intermediate_size(hooked_proto,
                                                       intermediate_vars,
                                                       config.logical_mesh_shape)
@@ -515,12 +522,12 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             profile_workers.shutdown(force=True)
             logger.warning("After waiting for too long, "
                            "all profile workers are forcely killed")
-            return compute_cost, max_n_succ_stages
-        except RuntimeError:
+            return compute_cost, max_n_succ_stages, is_profiled
+        except (RuntimeError, RayActorError):
             profile_workers.shutdown(force=True)
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
-            return compute_cost, max_n_succ_stages
+            return compute_cost, max_n_succ_stages, is_profiled
         ((start, end, config_idx), _, auto_sharding_config,
          _) = stages[stage_id]
         logical_mesh, auto_sharding_global_config = auto_sharding_config
@@ -528,6 +535,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
          initial_size) = debug_info
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage
+        is_profiled[start, end, config_idx] = 1
         pbar.write(
             f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
             f" max_n_succ_stage={max_stage},"
@@ -537,7 +545,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             f" init={initial_size / GB:.3f}GB,"
             f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
     profile_workers.shutdown()
-    return compute_cost, max_n_succ_stages
+    return compute_cost, max_n_succ_stages, is_profiled
 
 
 def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],

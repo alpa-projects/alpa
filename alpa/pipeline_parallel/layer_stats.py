@@ -3,35 +3,45 @@ from typing import List, Set
 
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import JaxprEqn, Var, CallPrimitive, DropVar
+from jax.core import JaxprEqn, Var, CallPrimitive, DropVar, Literal
 from jax.interpreters import xla
 from alpa.util import OrderedSet
 
 
 def call_to_xla_computation(eqn: JaxprEqn):
-    """Convert a jaxpr equation to a XLA computation for FLOP analysis."""
+    """Convert a jaxpr equation to a XLA computation for FLOP analysis.
+    
+    Reference code: jax/jax/interpreters/xla.py::jaxpr_subcomp
+    """
     xe = xc._xla
     prim = eqn.primitive
     backend = xb.get_backend("gpu")
 
-    c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
+    c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
+    name_stack = xla.extend_name_stack(prim.name)
 
-    name = xla.extend_name_stack(prim.name)
+    def aval(v):
+        if type(v) is Literal:
+            return abstractify(v.val)
+        else:
+            return v.aval
 
-    op_metadata = xla.make_op_metadata(prim, eqn.params)
+    op_metadata = xla.make_op_metadata(prim,
+                                       eqn.params,
+                                       source_info=eqn.source_info)
     c.set_op_metadata(op_metadata)
-    xla_args, _ = xla._xla_callable_args(
+    in_nodes, _ = xla._xla_callable_args(
         c, list(map(lambda x: x.aval, eqn.invars)),
         len(eqn.invars) > 100)
     axis_env = xla.AxisEnv(1, (), ())
-
-    new_params = xla.check_backend_params(eqn.params, backend)
-    rule = xla.call_translations[eqn.primitive]
-    ans = rule(c, axis_env, xla_args, name, backend=backend, **new_params)
-
-    assert isinstance(ans, xe.XlaOp)
+    ctx = xla.TranslationContext(c, backend.platform, axis_env, name_stack)
+    rule = xla._translations[eqn.primitive]
+    ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars), *in_nodes,
+               **eqn.params)
     c.clear_op_metadata()
+
     try:
+        ans = xc.ops.Tuple(c, ans)
         return c.build(ans)
     except RuntimeError as e:
         msg = (
@@ -43,7 +53,7 @@ def call_to_xla_computation(eqn: JaxprEqn):
 
 def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
-    if eqn.primitive in xla.call_translations:
+    if eqn.primitive in xla._translations:
         xla_computation = call_to_xla_computation(eqn)
     else:
         xla_computation = xla.primitive_subcomputation(

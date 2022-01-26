@@ -126,7 +126,7 @@ class BaseDistributedRuntime(BaseRuntime):
         start_time = time.time()
         self._compile_resharding_tasks()
         end_time = time.time()
-        logger.info(
+        logger.debug(
             f"Compile resharding tasks takes {end_time - start_time:.2f}")
 
     def run(self, *args, **kwargs):
@@ -211,7 +211,7 @@ class BaseDistributedRuntime(BaseRuntime):
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
         end_time = time.time()
-        logger.info(
+        logger.debug(
             f"Initialize collective group takes {end_time - start_time:.2f}")
 
     def _compile_resharding_tasks(self):

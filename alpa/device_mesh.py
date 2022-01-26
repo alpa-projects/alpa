@@ -782,8 +782,8 @@ class PhysicalDeviceMesh:
                     ret.append(dis_array)
                 return ret
         else:
-            outs_handler = pxla.avals_to_results_handler(
-                1, len(self.devices), sharding_specs, avals)
+            outs_handler = pxla.local_avals_to_results_handler(
+                sharding_specs, avals)
         return outs_handler
 
     def delete_remote_executable(self, executable: MeshDriverExecutable):

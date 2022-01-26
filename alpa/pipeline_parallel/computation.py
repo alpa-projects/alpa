@@ -7,6 +7,7 @@ from typing import Sequence, Any, Dict
 import jax
 from jax import jit
 from jax._src.util import partial, safe_map
+from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
                       ShapedArray)
@@ -173,10 +174,12 @@ class XlaPipelineComputation(PipelineComputation):
         )
 
         compiled = backend.compile(xla_computation, compile_options=options)
-        result_handlers = map(partial(xla.aval_to_result_handler, device),
+        result_handlers = map(partial(dispatch.aval_to_result_handler, device),
                               out_avals)
+        buffer_counts = (None if len(out_avals) == 1 else
+            [dispatch.aval_to_num_buffers(aval) for aval in out_avals])
         kept_var_idx = range(len(self.invars))
-        return partial(xla._execute_compiled, compiled, out_avals,
+        return partial(dispatch._execute_compiled, self.name, compiled, buffer_counts,
                        result_handlers, kept_var_idx)
 
     def get_hlo_text(self):

@@ -7,7 +7,7 @@ from jax import core, lax, numpy as jnp
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   wrap_name)
 from jax.lib import xla_client as xc
-from jax.lib.xla_bridge import get_backend as default_get_backend
+from jax._src.lib.xla_bridge import get_backend as default_get_backend
 
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.primitive_def import xla_identity
@@ -19,6 +19,12 @@ from alpa.pipeline_parallel.primitive_def import xla_identity
 override_backend = None
 
 
+def set_override_backend(backend):
+    """Enable the JAX backend monkey patch."""
+    global override_backend
+    override_backend = backend
+
+
 def override_get_backend(*args, **kwargs):
     """Override the `get_backend` in JAX to use PJRT backend managed by Alpa."""
     global override_backend
@@ -27,14 +33,8 @@ def override_get_backend(*args, **kwargs):
     return default_get_backend(*args, **kwargs)
 
 
+setattr(jax._src.lib.xla_bridge, "get_backend", override_get_backend)
 setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
-
-
-def set_override_backend(backend):
-    """Enable the JAX backend monkey patch."""
-    global override_backend
-    override_backend = backend
-
 
 ########################################
 ##### Monkey patch Jax
@@ -62,23 +62,20 @@ jax.random.fold_in = remove_fold_in
 remat_using_while_backup = jax.xla._remat_using_while
 
 
-def _remat_using_identity(c, axis_env, in_nodes, name_stack, backend, name,
-                          call_jaxpr):
+def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
     if global_config.remat_using_while:
-        return remat_using_while_backup(c, axis_env, in_nodes, name_stack,
-                                        backend, name, call_jaxpr)
+        return remat_using_while_backup(ctx, in_nodes, name, call_jaxpr)
 
-    bias_args = xla_identity(c, *in_nodes, op_type="remat_begin")
-    bias_args = [
-        xops.GetTupleElement(bias_args, i) for i in range(len(in_nodes))
-    ]
-    outs = jaxpr_subcomp(
-        c, call_jaxpr, backend, axis_env, (),
-        extend_name_stack(name_stack, wrap_name(name, "remat")), *bias_args)
-    # TODO: using an identity at the end can reduce little memory in 1 GPU,
+    c = ctx.builder
+    args = xla_identity(c, *in_nodes, op_type="remat_begin")
+    args = [xops.GetTupleElement(args, i) for i in range(len(in_nodes))]
+    body_ctx = ctx.replace(
+        name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, "remat")))
+    outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
+    # TODO: using an identity at the end can reduce little memory on 1 GPU,
     # but there are still some bugs
     # return xla_identity(c, *outs, op_type="remat_end")
-    return xc.ops.Tuple(c, outs)
+    return outs
 
 
 jax.xla._remat_using_while = _remat_using_identity

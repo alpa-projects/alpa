@@ -5,15 +5,15 @@ from jax.core import DropVar, jaxpr_as_fun, gensym
 import jax.numpy as jnp
 import numpy as np
 
-import parax
-from parax.pipeline_parallel.manual_layer_slicing import manual_layer_slicing
-from parax.pipeline_parallel.computation import (
+import alpa
+from alpa.pipeline_parallel.manual_layer_slicing import manual_layer_slicing
+from alpa.pipeline_parallel.computation import (
     apply_grad_add_marker, compute_grad_to_accumulate_grad, apply_grad_get_mean,
     get_var_mapping, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks, mark_gradvar_to_mesh, slice_apply_gradient,
     replace_all_with)
-from parax.pipeline_parallel.three_d_parallel import split_compute_grad_and_apply_grad, split_donate_invars
-from parax.pipeline_parallel.primitive_def import mark_pipeline
+from alpa.pipeline_parallel.three_d_parallel import split_compute_grad_and_apply_grad, split_donate_invars
+from alpa.pipeline_parallel.primitive_def import mark_pipeline
 
 from flax import linen as nn, optim
 
@@ -57,7 +57,7 @@ def loss_func(params, x, y):
 
 
 def train_step(optimizer, batch):
-    grad_param, _x, _y = parax.grad(loss_func,
+    grad_param, _x, _y = alpa.grad(loss_func,
                                     argnums=(0, 1, 2))(optimizer.target,
                                                        batch['x'], batch['y'])
     new_optimizer = optimizer.apply_gradient(grad_param)

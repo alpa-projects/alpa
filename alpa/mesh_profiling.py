@@ -9,7 +9,7 @@ import numpy as np
 from jax.lib import xla_client, xla_bridge, xla_extension
 import ray
 
-from parax.util import GB, print_used_time, XlaPassContext, to_str_round
+from alpa.util import GB, print_used_time, XlaPassContext, to_str_round
 
 ops = xla_client.ops
 
@@ -663,7 +663,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
 def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
     """Profile costs for all dot and communication primitives."""
-    from parax.pipeline_parallel.stage_construction import get_submesh_choices
+    from alpa.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
     ##### Profile compute cost

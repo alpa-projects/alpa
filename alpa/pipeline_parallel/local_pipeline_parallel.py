@@ -8,9 +8,9 @@ from jax.core import Var, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import DeviceArray
 
-from parax.device_mesh import PhysicalDeviceMesh
-from parax.pipeline_parallel.base_runtime import BaseRuntime
-from parax.pipeline_parallel.computation import (
+from alpa.device_mesh import PhysicalDeviceMesh
+from alpa.pipeline_parallel.base_runtime import BaseRuntime
+from alpa.pipeline_parallel.computation import (
     PipelineComputation, XlaPipelineComputation, XlaShardedPipelineComputation,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)

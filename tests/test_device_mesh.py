@@ -10,8 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-from parax import DeviceCluster, parallelize, set_parallelize_options, testing
-from parax.testing import assert_allclose
+from alpa import DeviceCluster, parallelize, set_parallelize_options, testing
+from alpa.testing import assert_allclose
 
 
 class DeviceMeshTest(unittest.TestCase):

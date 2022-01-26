@@ -5,8 +5,8 @@ import pickle
 import jax
 import ray
 
-from parax import global_config, PhysicalDeviceMesh, DeviceCluster
-from parax.util import run_cmd
+from alpa import global_config, PhysicalDeviceMesh, DeviceCluster
+from alpa.util import run_cmd
 
 from benchmark_2d_one_case_gpt_bert import benchmark_gpt_bert_internal
 from benchmark_2d_one_case_moe import benchmark_moe_internal

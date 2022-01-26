@@ -12,8 +12,8 @@ from flax import linen as nn
 from flax import optim
 import ray
 
-import parax
-from parax import parallelize, global_config, testing, PhysicalDeviceMesh, DeviceCluster
+import alpa
+from alpa import parallelize, global_config, testing, PhysicalDeviceMesh, DeviceCluster
 
 
 def get_number_of_lines(filename):
@@ -66,7 +66,7 @@ class SearchAPITest(unittest.TestCase):
         optimizer = train_step(optimizer, {"x": x, "y": y}, model.apply)
 
     def test_search_single_host(self):
-        parax.set_parallelize_options(
+        alpa.set_parallelize_options(
             devices=jax.devices(),
             search_logical_mesh_shape=True,
             mesh_shape_search_mode="measurement",
@@ -78,7 +78,7 @@ class SearchAPITest(unittest.TestCase):
     def test_search_multi_host(self):
         physical_mesh = DeviceCluster().get_physical_mesh()
 
-        parax.set_parallelize_options(
+        alpa.set_parallelize_options(
             devices=physical_mesh,
             search_logical_mesh_shape=True,
             mesh_shape_search_mode="measurement",
@@ -91,7 +91,7 @@ class SearchAPITest(unittest.TestCase):
     @unittest.skip("This test is broken due to unsupported collective permute.")
     def test_measurement_record(self):
         filename = "tmp.json"
-        parax.set_parallelize_options(
+        alpa.set_parallelize_options(
             devices=jax.devices(),
             search_logical_mesh_shape=True,
             mesh_shape_search_mode="measurement",

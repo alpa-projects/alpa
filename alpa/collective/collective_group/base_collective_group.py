@@ -2,7 +2,7 @@
 from abc import ABCMeta
 from abc import abstractmethod
 
-from parax.collective.types import (AllReduceOptions, BarrierOptions,
+from alpa.collective.types import (AllReduceOptions, BarrierOptions,
                                     ReduceOptions, AllGatherOptions,
                                     BroadcastOptions, ReduceScatterOptions)
 

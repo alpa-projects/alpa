@@ -32,14 +32,14 @@ import numpy as np
 import ray
 import tqdm
 
-from parax.global_env import global_config
+from alpa.global_env import global_config
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
 FLAGS.experimental_cpp_jit = False
 
 ########################################
-##### Parax API Utilities
+##### Alpa API Utilities
 ########################################
 
 

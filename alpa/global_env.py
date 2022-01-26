@@ -45,7 +45,7 @@ class AutoShardingOption:
 
 
 class GlobalConfig:
-    """The global configuration of parax.
+    """The global configuration of alpa.
 
     See also the docstring of `set_parallelize_options` for the meanings
     of the member variables.
@@ -109,8 +109,8 @@ class GlobalConfig:
         self.print_xla_compilation_time = False
 
         ########## Options of ray namespace ##########
-        self.default_ray_namespace_prefix = "parax-train"
-        self.unittest_ray_namespace_prefix = "parax-unittest"
+        self.default_ray_namespace_prefix = "alpa-train"
+        self.unittest_ray_namespace_prefix = "alpa-unittest"
 
     def backup(self):
         """Backup the configs."""

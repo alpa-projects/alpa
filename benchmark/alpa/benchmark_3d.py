@@ -5,7 +5,7 @@ import time
 
 import numpy as np
 
-from parax.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round, GB
+from alpa.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round, GB
 
 from benchmark_3d_one_case import benchmark_one_case
 from benchmark_3d_one_case_wresnet import paper_auto_wresnet_suite
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     model_type = args.suite.split(".")[0]
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_parax_{args.exp_name}_{date_str}.tsv"
+    output_name = f"{model_type}_alpa_{args.exp_name}_{date_str}.tsv"
 
     # Run all cases
     for benchmark_case in suite:

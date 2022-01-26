@@ -8,7 +8,7 @@ except ImportError:
                       "Please run 'pip install pygloo' to install pygloo.")
 
 import ray
-from parax.collective.types import ReduceOp, torch_available
+from alpa.collective.types import ReduceOp, torch_available
 from ray.util.queue import _QueueActor
 
 GLOO_REDUCE_OP_MAP = {

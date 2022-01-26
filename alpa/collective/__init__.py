@@ -1,4 +1,4 @@
-from parax.collective.collective import (
+from alpa.collective.collective import (
     nccl_available, gloo_available, is_group_initialized, init_collective_group,
     destroy_collective_group, create_collective_group, get_rank,
     get_collective_group_size, allreduce, allreduce_multigpu, barrier, reduce,

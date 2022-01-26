@@ -10,9 +10,9 @@ from flax.training.train_state import TrainState
 import optax
 import ray
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
-from parax.mesh_profiling import estimate_hlo_module_cost
-from parax.util import map_to_shape
+from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
+from alpa.mesh_profiling import estimate_hlo_module_cost
+from alpa.util import map_to_shape
 
 
 class HloCostModelTest(unittest.TestCase):

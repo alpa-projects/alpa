@@ -2,8 +2,8 @@ from flax import optim, linen as nn
 import jax
 from jax import numpy as jnp
 
-import parax
-from parax.model.bert_model import FlaxBertLayer, BertConfig
+import alpa
+from alpa.model.bert_model import FlaxBertLayer, BertConfig
 
 
 def inspect_params(optimizer):
@@ -23,7 +23,7 @@ def test_mlp():
             x = nn.Dense(features=hidden_size, dtype=jnp.float16)(x)
             return x
 
-    @parax.parallelize
+    @alpa.parallelize
     def train_step(optimizer, batch, apply_fn):
         def loss_func(params):
             out = apply_fn(params, batch["x"])
@@ -63,7 +63,7 @@ def test_bert_layer():
     params = model.init(rngkey, hidden_states, attention_mask)
     optimizer = optim.GradientDescent(1e-2).create(params)
 
-    @parax.parallelize
+    @alpa.parallelize
     def train_step(optimizer, batch):
         def loss_func(params):
             rngs = {"dropout": batch["rng"]}

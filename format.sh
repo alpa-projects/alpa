@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-yapf -ir parax/ tests/
+yapf -ir alpa/ tests/

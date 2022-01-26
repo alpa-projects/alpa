@@ -3,7 +3,7 @@
 import os
 import unittest
 
-from parax.util import OrderedSet
+from alpa.util import OrderedSet
 
 
 class OrderedSetTest(unittest.TestCase):

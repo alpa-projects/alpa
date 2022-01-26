@@ -7,11 +7,11 @@ from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
 from jax.lax import add_p, div_p
 import numpy as np
 
-from parax.pipeline_parallel.computation import JaxPipelineComputation
-from parax.pipeline_parallel.primitive_def import (pipeline_p,
+from alpa.pipeline_parallel.computation import JaxPipelineComputation
+from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
-from parax.pipeline_parallel.schedules import gen_dependency_with_stages
-from parax.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
+from alpa.pipeline_parallel.schedules import gen_dependency_with_stages
+from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
                         get_var_mapping)
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
     if split_eqn is None:
         logger.warning(
             "Missing barrier between compute and apply. Assume there is no "
-            "apply gradient step. Hint: replace jax.grad by parax.grad.")
+            "apply gradient step. Hint: replace jax.grad by alpa.grad.")
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], [split_eqn],
@@ -43,7 +43,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
     apply_grad = sliced_jaxprs[2]
     if len(apply_grad.eqns) == 0:
         logger.warning(
-            "the apply gradient part is empty. Hint: apply() after parax.grad")
+            "the apply gradient part is empty. Hint: apply() after alpa.grad")
     return compute_grad, apply_grad, split_eqn
 
 

@@ -5,8 +5,8 @@ import time
 import numpy as np
 import ray
 
-from parax import DeviceCluster, global_config
-from parax.util import write_tsv, to_str_round, GB
+from alpa import DeviceCluster, global_config
+from alpa.util import write_tsv, to_str_round, GB
 from benchmark_2d_one_case import benchmark_one_case
 from paper_manual_gpt_suite import gpt_specs
 from paper_manual_moe_suite import moe_specs
@@ -73,13 +73,13 @@ wresnet_intra_only = [
 
 suites = [
     # GPT
-    ("gpt", "parax.intra_only", gpt_intra_only, benchmark_one_case_gpt),
+    ("gpt", "alpa.intra_only", gpt_intra_only, benchmark_one_case_gpt),
 
     # MoE
-    ("moe", "parax.intra_only", moe_intra_only, benchmark_one_case_moe),
+    ("moe", "alpa.intra_only", moe_intra_only, benchmark_one_case_moe),
 
     # Wide-ResNet
-    ("wresnet", "parax.intra_only", wresnet_intra_only, benchmark_one_case_wresnet),
+    ("wresnet", "alpa.intra_only", wresnet_intra_only, benchmark_one_case_wresnet),
 ]
 
 

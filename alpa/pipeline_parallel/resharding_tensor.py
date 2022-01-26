@@ -7,7 +7,7 @@ import numpy as np
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Replicated, ShardingSpec
 
-from parax.device_mesh import VirtualPhysicalMesh
+from alpa.device_mesh import VirtualPhysicalMesh
 
 
 def unflatten_tile_index(index, shape):

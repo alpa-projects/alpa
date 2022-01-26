@@ -9,7 +9,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from parax import parallelize, set_parallelize_options, testing
+from alpa import parallelize, set_parallelize_options, testing
 
 from test_auto_sharding_mlp import assert_close
 

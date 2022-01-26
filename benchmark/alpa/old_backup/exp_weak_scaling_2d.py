@@ -4,8 +4,8 @@ import time
 import jax
 import ray
 
-from parax import DeviceCluster, global_config
-from parax.util import write_tsv, to_str_round
+from alpa import DeviceCluster, global_config
+from alpa.util import write_tsv, to_str_round
 from benchmark_gpt_bert import benchmark_gpt_bert_internal
 from benchmark_wide_resnet import benchmark_wide_resnet_internal
 from benchmark_moe import benchmark_moe_internal
@@ -133,15 +133,15 @@ moe_zero_2 = [
 ]
 
 suites = [
-    ("GPT", "parax.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
-    ("GPT", "parax.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
-    ("GPT", "parax.zero_2", gpt_zero_2, benchmark_gpt_internal),
-    ("W-ResNet", "parax.auto_sharding", w_resnet_auto_sharding, benchmark_wide_resnet_internal),
-    ("W-ResNet", "parax.data_parallel", w_resnet_data_parallel, benchmark_wide_resnet_internal),
-    ("W-ResNet", "parax.zero_2", w_resnet_zero_2, benchmark_wide_resnet_internal),
-    ("MoE", "parax.auto_sharding", moe_auto_sharding, benchmark_moe_internal),
-    ("MoE", "parax.data_parallel", moe_data_parallel, benchmark_moe_internal),
-    ("MoE", "parax.zero_2", moe_zero_2, benchmark_moe_internal),
+    ("GPT", "alpa.auto_sharding", gpt_auto_sharding, benchmark_gpt_internal),
+    ("GPT", "alpa.data_parallel", gpt_data_parallel, benchmark_gpt_internal),
+    ("GPT", "alpa.zero_2", gpt_zero_2, benchmark_gpt_internal),
+    ("W-ResNet", "alpa.auto_sharding", w_resnet_auto_sharding, benchmark_wide_resnet_internal),
+    ("W-ResNet", "alpa.data_parallel", w_resnet_data_parallel, benchmark_wide_resnet_internal),
+    ("W-ResNet", "alpa.zero_2", w_resnet_zero_2, benchmark_wide_resnet_internal),
+    ("MoE", "alpa.auto_sharding", moe_auto_sharding, benchmark_moe_internal),
+    ("MoE", "alpa.data_parallel", moe_data_parallel, benchmark_moe_internal),
+    ("MoE", "alpa.zero_2", moe_zero_2, benchmark_moe_internal),
 ]
 
 

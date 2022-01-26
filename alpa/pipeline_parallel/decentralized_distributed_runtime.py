@@ -11,20 +11,20 @@ import jax.numpy as jnp
 import numpy as np
 import ray.exceptions
 
-from parax.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
-from parax.global_env import global_config
-from parax.mesh_executable import (AllocZeroBufferWorkerExecutable,
+from alpa.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
+from alpa.global_env import global_config
+from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                    MemzeroWorkerExecutable,
                                    PartialGradAccMeshWorkerExecutable,
                                    get_grad_sync_channel_ids_with_hint,
                                    next_mesh_executable_uuid, get_uuid_np_array,
                                    next_remote_buffer_uuid, RemoteBufferRef)
-from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from parax.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask
-from parax.pipeline_parallel.schedules import cached_property, PipelineSchedule
-from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
-from parax.timer import timers
-from parax.util import DisjointDict, OrderedSet, get_shard_shape
+from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
+from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask
+from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
+from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.timer import timers
+from alpa.util import DisjointDict, OrderedSet, get_shard_shape
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

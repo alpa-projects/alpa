@@ -5,7 +5,7 @@ from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import JaxprEqn, Var, CallPrimitive, DropVar
 from jax.interpreters import xla
-from parax.util import OrderedSet
+from alpa.util import OrderedSet
 
 
 def call_to_xla_computation(eqn: JaxprEqn):

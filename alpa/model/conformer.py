@@ -17,11 +17,11 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 
-from parax.model.model_util import (FlaxBaseModelOutput,
+from alpa.model.model_util import (FlaxBaseModelOutput,
                                     FlaxBaseModelOutputWithPooling,
                                     FlaxBertForPreTrainingOutput,
                                     FlaxMaskedLMOutput)
-from parax import mark_pipeline
+from alpa import mark_pipeline
 
 
 class TrainState(train_state.TrainState):

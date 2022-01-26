@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 import ray
-from parax.collective import types
+from alpa.collective import types
 
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
@@ -13,7 +13,7 @@ _GLOO_AVAILABLE = True
 logger = logging.getLogger(__name__)
 
 try:
-    from parax.collective.collective_group.nccl_collective_group import (
+    from alpa.collective.collective_group.nccl_collective_group import (
         NCCLGroup)
 except ImportError:
     _NCCL_AVAILABLE = False
@@ -22,7 +22,7 @@ except ImportError:
                    "https://docs.cupy.dev/en/stable/install.html.")
 
 try:
-    from parax.collective.collective_group.gloo_collective_group import (
+    from alpa.collective.collective_group.gloo_collective_group import (
         GLOOGroup)
 except ImportError:
     _GLOO_AVAILABLE = False
@@ -196,7 +196,7 @@ def create_collective_group(actors,
         raise RuntimeError("Ranks cannot be greater than world_size.")
 
     # avoid a circular dependency
-    from parax.collective.util import Info
+    from alpa.collective.util import Info
     # store the information into a NamedActor that can be accessed later.
     name = "info_" + group_name
     actors_id = [a._ray_actor_id for a in actors]

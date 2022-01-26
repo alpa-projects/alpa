@@ -6,7 +6,7 @@ from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from parax.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
+from alpa.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
 
 xc.register_custom_call_target(b'xla_pipeline_marker',
                                xla_pipeline_marker(),

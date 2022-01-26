@@ -10,15 +10,15 @@ import numpy as np
 from ray.exceptions import RayActorError
 import tqdm
 
-from parax.device_mesh import DeviceCluster, VirtualPhysicalMesh
-from parax.global_env import global_config
-from parax.pipeline_parallel.computation import (
+from alpa.device_mesh import DeviceCluster, VirtualPhysicalMesh
+from alpa.global_env import global_config
+from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
-from parax.pipeline_parallel.layer_stats import eqn_flops
-from parax.pipeline_parallel.stage_profiling import (generate_stage_info,
+from alpa.pipeline_parallel.layer_stats import eqn_flops
+from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                      compile_all, profile_all)
-from parax.timer import timers
-from parax.util import OrderedSet
+from alpa.timer import timers
+from alpa.util import OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

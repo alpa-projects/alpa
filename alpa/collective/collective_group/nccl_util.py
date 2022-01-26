@@ -12,7 +12,7 @@ try:
 except ImportError:
     raise ImportError("NCCL requires Cupy being available!")
 
-from parax.collective.types import ReduceOp, torch_available
+from alpa.collective.types import ReduceOp, torch_available
 
 NCCL_REDUCE_OP_MAP = {
     ReduceOp.SUM: nccl.NCCL_SUM,

@@ -6,14 +6,14 @@ import numpy as np
 import ray
 from jax.interpreters import pxla
 
-import parax.collective as col
-from parax.device_mesh import (DistributedArray, RemoteBufferRef,
+import alpa.collective as col
+from alpa.device_mesh import (DistributedArray, RemoteBufferRef,
                                ReshardingAllGatherSpec, ReshardingRecvSpec,
                                ReshardingTileSpec)
-from parax.global_env import global_config
-from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
-from parax.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_tile_index
-from parax.util import OrderedSet
+from alpa.global_env import global_config
+from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_tile_index
+from alpa.util import OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

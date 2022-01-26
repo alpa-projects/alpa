@@ -3,8 +3,8 @@ import ray
 import argparse
 
 import jax
-from parax import DeviceCluster, ProfilingResultDatabase
-from parax.util import run_cmd
+from alpa import DeviceCluster, ProfilingResultDatabase
+from alpa.util import run_cmd
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -27,6 +27,6 @@ if __name__ == "__main__":
     cluster = DeviceCluster()
     # Must use an absolute efs filename because ray actors are on distributed workers.
     prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range,
-        cache_filename="/home/ubuntu/efs/parax/benchmark/parax/tmp/hlo_op_cost_dict.pkl")
+        cache_filename="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl")
     prof_database.save(args.filename)
     print(f"Save profiling database to {args.filename}")

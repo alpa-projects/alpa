@@ -3,7 +3,7 @@ from datetime import datetime
 
 from util import run_cmd
 
-from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite, gpt_specs
+from benchmark.alpa.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite, gpt_specs
 
 _ = None
 

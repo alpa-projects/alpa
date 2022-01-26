@@ -319,8 +319,8 @@ def test_reshard_multi_allgather():
     build_options.device_assignment = device_assignment
 
     backend = xla_bridge.get_backend("gpu")
-    import parax
-    with parax.XlaPassContext({
+    import alpa
+    with alpa.XlaPassContext({
         "build_option::bypass_device_assignment_check": True,
     }):
         compiled_computation = backend.compile(c, compile_options)
@@ -380,8 +380,8 @@ def test_reshard_all_to_all():
     build_options.device_assignment = device_assignment
 
     backend = xla_bridge.get_backend("gpu")
-    import parax
-    with parax.XlaPassContext({
+    import alpa
+    with alpa.XlaPassContext({
         "build_option::bypass_device_assignment_check": True,
     }):
         compiled_computation = backend.compile(c, compile_options)
@@ -435,8 +435,8 @@ def test_reshard_change_mesh_shape():
     build_options.device_assignment = device_assignment
 
     backend = xla_bridge.get_backend("gpu")
-    import parax
-    with parax.XlaPassContext({
+    import alpa
+    with alpa.XlaPassContext({
         "build_option::bypass_device_assignment_check": True,
     }):
         compiled_computation = backend.compile(c, compile_options)
@@ -446,7 +446,7 @@ def test_reshard_change_mesh_shape():
 
 
 def test_skip_hlo_passes():
-    from parax import XlaPassContext
+    from alpa import XlaPassContext
 
     c = xla_client.XlaBuilder("shard")
 

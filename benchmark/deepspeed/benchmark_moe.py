@@ -7,7 +7,7 @@ import os
 import random
 
 from util import run_cmd
-from benchmark.parax.paper_manual_moe_suite import test_moe_suite, paper_moe_suite
+from benchmark.alpa.paper_manual_moe_suite import test_moe_suite, paper_moe_suite
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, S_ = expert_group_size, E = expert_number,
@@ -52,7 +52,7 @@ def benchmark_all(args):
     config_file = "ds_zero_stage_2_moe_config.json"
 
     for case in benchmark_suites[args.suite][num_gpus]:
-        print(">>>>>> Parax benchmark: Working on case {}...".format(str(case)), flush=True)
+        print(">>>>>> Alpa benchmark: Working on case {}...".format(str(case)), flush=True)
         batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_expert, _, \
         dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
         num_micro_batches, force_dp, checkpoint_activations, _, _, ep_size = case
@@ -144,7 +144,7 @@ def benchmark_all(args):
                       f"--master_port {random.randint(30000, 40000)} "
                       f"--num_gpus {args.nproc_per_node} "
                       f"pretrain_gpt2_moe.py {gpt_options}")
-        print(">>>>>> Parax benchmark: sleep for 30 seconds before starting the next case.", flush=True)
+        print(">>>>>> Alpa benchmark: sleep for 30 seconds before starting the next case.", flush=True)
         time.sleep(30)
 
 

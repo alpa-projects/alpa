@@ -19,13 +19,13 @@ from jax.interpreters.xla import XlaExecutable
 from jax.lib import xla_client, xla_bridge, xla_extension
 import jax.numpy as jnp
 
-from parax.measure_record import StrategyConfig
-from parax.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
+from alpa.measure_record import StrategyConfig
+from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
                                                 make_replicated_spec,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
-from parax.timer import timers
-from parax.util import (compile_allocate_zero_buffers,
+from alpa.timer import timers
+from alpa.util import (compile_allocate_zero_buffers,
                         compile_memset_zero_buffers, get_shard_shape,
                         profile_xla_executable)
 

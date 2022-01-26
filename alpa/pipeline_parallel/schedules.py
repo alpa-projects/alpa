@@ -5,8 +5,8 @@ from typing import List, Tuple
 
 import numpy as np
 
-from parax.pipeline_parallel.computation import PipelineComputation
-from parax.util import cached_property, OrderedSet
+from alpa.pipeline_parallel.computation import PipelineComputation
+from alpa.util import cached_property, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -12,16 +12,16 @@ import numpy as np
 import optax
 import ray
 
-from parax.api import parallelize, grad
-from parax.device_mesh import DeviceCluster
-from parax.global_env import set_parallelize_options, global_config
-from parax.model.bert_model import BertConfig, FlaxBertLayer
-from parax.model.model_util import TrainState
-from parax.pipeline_parallel.layer_construction import (
+from alpa.api import parallelize, grad
+from alpa.device_mesh import DeviceCluster
+from alpa.global_env import set_parallelize_options, global_config
+from alpa.model.bert_model import BertConfig, FlaxBertLayer
+from alpa.model.model_util import TrainState
+from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction, automatic_remat,
     manual_remat)
-from parax.pipeline_parallel.primitive_def import mark_pipeline
-from parax.util import get_ray_namespace_str
+from alpa.pipeline_parallel.primitive_def import mark_pipeline
+from alpa.util import get_ray_namespace_str
 
 # Store last compiled executables for unit tests.
 last_compiled_executable = None

@@ -6,10 +6,10 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-import parax
-from parax import parallelize, global_config, set_parallelize_options, testing
-from parax.model.wide_resnet import get_wide_resnet, TrainState
-from parax.util import (map_to_shape, count_communication_primitives,
+import alpa
+from alpa import parallelize, global_config, set_parallelize_options, testing
+from alpa.model.wide_resnet import get_wide_resnet, TrainState
+from alpa.util import (map_to_shape, count_communication_primitives,
                         print_used_time, compute_param_number, GB)
 
 _ = None
@@ -130,7 +130,7 @@ def get_train_step(learning_rate_fn, use_grad_acc):
             # dynamic loss takes care of averaging gradients across replicas
         else:
             if use_grad_acc:
-                get_grad_fn = parax.grad
+                get_grad_fn = alpa.grad
             else:
                 get_grad_fn = jax.grad
 

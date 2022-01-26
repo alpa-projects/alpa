@@ -8,12 +8,12 @@ from typing import List, Any
 from jax.core import Var
 import ray
 
-from parax.util import OrderedSet
-from parax.device_mesh import PhysicalDeviceMesh
-from parax.pipeline_parallel.cross_mesh_resharding import (
+from alpa.util import OrderedSet
+from alpa.device_mesh import PhysicalDeviceMesh
+from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, CollectiveGroup, SymbolicReshardingTask)
-from parax.pipeline_parallel.computation import XlaShardedPipelineComputation
-from parax.global_env import global_config
+from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

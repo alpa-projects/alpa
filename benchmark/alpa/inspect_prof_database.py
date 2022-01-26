@@ -1,8 +1,8 @@
 """Inspect and edit a profiling database."""
 import argparse
 
-from parax import DeviceCluster, ProfilingResultDatabase
-from parax.util import run_cmd
+from alpa import DeviceCluster, ProfilingResultDatabase
+from alpa.util import run_cmd
 
 
 if __name__ == "__main__":

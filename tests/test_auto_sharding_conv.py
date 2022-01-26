@@ -10,8 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
-from parax.util import map_to_shape, count_communication_primitives
+from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
+from alpa.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
 

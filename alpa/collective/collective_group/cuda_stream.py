@@ -2,8 +2,8 @@ import logging
 import threading
 
 import cupy
-from parax.collective.collective_group import nccl_util
-from parax.collective.const import ENV
+from alpa.collective.collective_group import nccl_util
+from alpa.collective.const import ENV
 
 NCCL_STREAM_POOL_SIZE = 32
 MAX_GPU_PER_ACTOR = 16

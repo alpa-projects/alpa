@@ -9,8 +9,8 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
 from jax.lib import xla_client as xc
 from jax.lib.xla_bridge import get_backend as default_get_backend
 
-from parax.global_env import global_config
-from parax.pipeline_parallel.primitive_def import xla_identity
+from alpa.global_env import global_config
+from alpa.pipeline_parallel.primitive_def import xla_identity
 
 ########################################
 ##### Monkey patch the Jax backend
@@ -20,7 +20,7 @@ override_backend = None
 
 
 def override_get_backend(*args, **kwargs):
-    """Override the `get_backend` in JAX to use PJRT backend managed by Parax."""
+    """Override the `get_backend` in JAX to use PJRT backend managed by Alpa."""
     global override_backend
     if override_backend is not None:
         return override_backend

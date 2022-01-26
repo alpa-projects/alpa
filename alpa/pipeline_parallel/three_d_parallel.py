@@ -5,26 +5,26 @@ import threading
 from jax import linear_util as lu
 from jax.core import gensym
 
-from parax.device_mesh import VirtualPhysicalMesh
-from parax.global_env import global_config
-from parax.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
-from parax.pipeline_parallel.local_pipeline_parallel import LocalRuntime
-from parax.pipeline_parallel.schedules import (GpipeSchedule,
+from alpa.device_mesh import VirtualPhysicalMesh
+from alpa.global_env import global_config
+from alpa.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
+from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
+from alpa.pipeline_parallel.schedules import (GpipeSchedule,
                                                gen_dependency_with_stages,
                                                PipeDreamFlush)
-from parax.pipeline_parallel.computation import (
+from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_arguments, get_donatable_intermediate,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from parax.pipeline_parallel.apply_grad import (
+from alpa.pipeline_parallel.apply_grad import (
     compute_grad_to_accumulate_grad, process_apply_gradient,
     split_compute_grad_and_apply_grad)
-from parax.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
-from parax.pipeline_parallel.stage_profiling import CompileWorkerPool
-from parax.util import trace_jaxpr_with_micro_batch, OrderedSet
+from alpa.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
+from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
+from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

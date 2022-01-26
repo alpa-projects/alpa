@@ -16,13 +16,13 @@ from jax import lax
 import jax.numpy as jnp
 from jax.nn import one_hot
 
-from parax import mark_pipeline
-from parax.model.bert_model import (FlaxBaseModelOutput,
+from alpa import mark_pipeline
+from alpa.model.bert_model import (FlaxBaseModelOutput,
                                     FlaxBaseModelOutputWithPooling,
                                     FlaxBertAttention, FlaxBertEmbeddings,
                                     FlaxBertIntermediate, FlaxBertLayer,
                                     FlaxBertOutput, FlaxMaskedLMOutput)
-from parax.model.model_util import TrainState
+from alpa.model.model_util import TrainState
 
 
 class MoEConfig:

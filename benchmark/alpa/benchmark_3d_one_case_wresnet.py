@@ -9,13 +9,13 @@ import numpy as np
 import optax
 import ray
 
-import parax
-from parax import (parallelize, global_config, set_parallelize_options, testing,
+import alpa
+from alpa import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, automatic_layer_construction)
-from parax.model.wide_resnet import get_wide_resnet, TrainState
-from parax.pipeline_parallel.stage_construction import get_last_dp_result
-from parax.timer import timers
-from parax.util import map_to_shape, print_used_time, compute_param_number, GB, to_str_round
+from alpa.model.wide_resnet import get_wide_resnet, TrainState
+from alpa.pipeline_parallel.stage_construction import get_last_dp_result
+from alpa.timer import timers
+from alpa.util import map_to_shape, print_used_time, compute_param_number, GB, to_str_round
 
 # B = batch_size, I = image_size,
 # L = num_layers, C = num_base_channels, W = width_factor, 
@@ -67,7 +67,7 @@ paper_auto_wresnet_suite = {  # key = number of gpus, value = a list of cases
 ],
 }
 
-resnet_layer_to_parax_layer = {50: 16, 101: 33}
+resnet_layer_to_alpa_layer = {50: 16, 101: 33}
 
 
 as_option = global_config.default_autosharding_option
@@ -135,7 +135,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
     def train_step(state, batch):
 
         @partial(automatic_layer_construction,
-                 layer_num=resnet_layer_to_parax_layer[num_layers],
+                 layer_num=resnet_layer_to_alpa_layer[num_layers],
                  remat_layer=use_remat)
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
@@ -168,7 +168,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
             # dynamic loss takes care of averaging gradients across replicas
         else:
             if use_grad_acc:
-                get_grad_fn = parax.grad
+                get_grad_fn = alpa.grad
             else:
                 get_grad_fn = jax.grad
 

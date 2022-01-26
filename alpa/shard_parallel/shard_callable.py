@@ -13,15 +13,15 @@ from jax.lax import add_p, div_p
 from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
-from parax.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
-from parax.global_env import global_config
-from parax.measure_record import SearchTask, load_best_record, StrategyConfig
-from parax.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
-from parax.shard_parallel.auto_sharding import (compile_with_search,
+from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
+from alpa.global_env import global_config
+from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
+from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
+from alpa.shard_parallel.auto_sharding import (compile_with_search,
                                                 compile_with_given_strategy,
                                                 HloProtoStatus)
-from parax.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
-from parax.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
+from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
+from alpa.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 
 
 def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
@@ -352,7 +352,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         ].
     """
     # pylint: disable=import-outside-toplevel
-    from parax.pipeline_parallel.primitive_def import pipeline_p
+    from alpa.pipeline_parallel.primitive_def import pipeline_p
 
     global_invars = OrderedSet(raw_jaxpr.jaxpr.invars)
     gensym_func = gensym([raw_jaxpr.jaxpr])

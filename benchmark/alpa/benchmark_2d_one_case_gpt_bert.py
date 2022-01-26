@@ -5,11 +5,11 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-import parax
-from parax import parallelize, global_config, set_parallelize_options, testing
-from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
-from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.util import map_to_shape, count_communication_primitives, print_used_time, GB
+import alpa
+from alpa import parallelize, global_config, set_parallelize_options, testing
+from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
+from alpa.model.gpt_model import FlaxGPTForLMModule
+from alpa.util import map_to_shape, count_communication_primitives, print_used_time, GB
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_3d_one_case_gpt_bert import create_train_state_aval
@@ -80,7 +80,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     # Parallel configs
     if num_micro_batches > 1:
-        grad_func = parax.grad
+        grad_func = alpa.grad
     else:
         num_micro_batches = None
         grad_func = jax.grad

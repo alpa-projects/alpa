@@ -5,15 +5,15 @@ import time
 import ray
 import cupy
 
-from parax.collective.const import ENV
-from parax.collective.collective_group import nccl_util
-from parax.collective.collective_group.base_collective_group import BaseGroup
-from parax.collective.const import get_store_name
-from parax.collective.types import (AllReduceOptions, BarrierOptions, Backend,
+from alpa.collective.const import ENV
+from alpa.collective.collective_group import nccl_util
+from alpa.collective.collective_group.base_collective_group import BaseGroup
+from alpa.collective.const import get_store_name
+from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
                                     ReduceOptions, BroadcastOptions,
                                     AllGatherOptions, ReduceScatterOptions,
                                     SendOptions, RecvOptions)
-from parax.collective.collective_group.cuda_stream import get_stream_pool
+from alpa.collective.collective_group.cuda_stream import get_stream_pool
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +494,7 @@ class NCCLGroup(BaseGroup):
         else:
             raise RuntimeError(
                 "Send and recv happens on the same process! "
-                "parax.collective does not support this case as of now. "
+                "alpa.collective does not support this case as of now. "
                 "Alternatively, consider doing GPU to GPU memcpy?")
         group_key = self._generate_group_key(comm_key)
         if my_p2p_rank == 0:
@@ -571,7 +571,7 @@ class NCCLGroup(BaseGroup):
         group_uid = nccl_util.get_nccl_unique_id()
         store_name = get_store_name(key)
         # Avoid a potential circular dependency in ray/actor.py
-        from parax.collective.util import NCCLUniqueIDStore
+        from alpa.collective.util import NCCLUniqueIDStore
         store = NCCLUniqueIDStore.options(
             name=store_name, lifetime="detached").remote(store_name)
         ray.get([store.set_id.remote(group_uid)])
@@ -821,7 +821,7 @@ def _get_comm_key_send_recv(my_rank, my_gpu_idx, peer_rank, peer_gpu_idx):
         higher_key = str(my_rank) + "_" + str(my_gpu_idx)
     else:
         raise RuntimeError(
-            "Send and recv happens on the same process. parax.collective "
+            "Send and recv happens on the same process. alpa.collective "
             "does not support this case as of now. Alternatively, consider "
             "doing GPU to GPU memcpy?")
     comm_key = lower_key + ":" + higher_key

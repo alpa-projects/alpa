@@ -9,13 +9,13 @@ from ray import ray_constants
 import pygloo
 import numpy
 
-from parax.collective.collective_group import gloo_util
-from parax.collective.collective_group.base_collective_group import BaseGroup
-from parax.collective.types import (AllReduceOptions, BarrierOptions, Backend,
+from alpa.collective.collective_group import gloo_util
+from alpa.collective.collective_group.base_collective_group import BaseGroup
+from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
                                     ReduceOptions, BroadcastOptions,
                                     AllGatherOptions, ReduceScatterOptions,
                                     SendOptions, RecvOptions)
-from parax.collective.const import get_store_name
+from alpa.collective.const import get_store_name
 
 logger = logging.getLogger(__name__)
 

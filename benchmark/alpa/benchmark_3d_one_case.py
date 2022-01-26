@@ -5,8 +5,8 @@ import pickle
 import jax
 import ray
 
-from parax import global_config
-from parax.util import run_cmd, get_ray_namespace_str, disable_tqdm_globally
+from alpa import global_config
+from alpa.util import run_cmd, get_ray_namespace_str, disable_tqdm_globally
 
 from benchmark_3d_one_case_gpt_bert import benchmark_gpt_bert_internal
 from benchmark_3d_one_case_moe import benchmark_moe_internal

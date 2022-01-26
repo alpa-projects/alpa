@@ -5,16 +5,16 @@ import numpy as np
 import optax
 import ray
 
-import parax
-from parax import (parallelize, global_config, set_parallelize_options,
+import alpa
+from alpa import (parallelize, global_config, set_parallelize_options,
                    DeviceCluster, mark_pipeline, manual_layer_construction,
                    automatic_layer_construction, automatic_remat)
-from parax.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
-from parax.model.model_util import TrainState
-from parax.model.gpt_model import FlaxGPTForLMModule
-from parax.pipeline_parallel.stage_construction import get_last_dp_result
-from parax.timer import timers
-from parax.util import print_used_time, to_str_round, get_ray_namespace_str, GB
+from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
+from alpa.model.model_util import TrainState
+from alpa.model.gpt_model import FlaxGPTForLMModule
+from alpa.pipeline_parallel.stage_construction import get_last_dp_result
+from alpa.timer import timers
+from alpa.util import print_used_time, to_str_round, get_ray_namespace_str, GB
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 
@@ -166,7 +166,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             auto_layer = True
             fine_grained_remat = num_layers > pipeline_mp_size
 
-    grad_func = parax.grad
+    grad_func = alpa.grad
 
     if force_batch_dim_mapping:
         as_option.force_batch_dim_to_mesh_dim = 0

@@ -28,11 +28,8 @@ This repo depends on our private fork of jax and tensorflow.
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install cmake numpy scipy flax numba pybind11 cupy-cuda111
-    
-    # Install the latest Ray, replace `LINK_TO_WHEEL` with links provided:
-    # https://docs.ray.io/en/latest/installation.html#daily-releases-nightlies
-    pip3 install -U ray[default]@LINK_TO_WHEEL.whl
+    pip3 install cmake numpy scipy flax numba pybind11 ray[default]
+    pip3 install cupy-cuda111   # use your corresponding CUDA version
     ```
   - ILP Solver:
     ```bash
@@ -55,7 +52,7 @@ This repo depends on our private fork of jax and tensorflow.
   pip3 install -e .
   ```
 
-- Step 5. Install Parax
+- Step 5. Install Alpa
   ```bash
   cd alpa
   pip3 install -e .
@@ -77,7 +74,7 @@ python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
 Organization
 ============
 - `examples`: public examples
-- `alpa`: the python interface of the library
+- `alpa`: the python source code of the library
 - `playground`: private experimental scripts
 - `tests`: unit tests
 

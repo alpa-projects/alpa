@@ -87,7 +87,7 @@ test_moe_suite = {
 paper_moe_suite = {
 1: [
     # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Stage), _
-    #1 GPUs, deepspeed max bs = 8, parax = 16
+    #1 GPUs, deepspeed max bs = 8, alpa = 16
     (8,     *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    1,  True,   *fixed_params,     1),
     (32,    *moe_specs["380M"],  8 * 1024 // 2,   1,    1,    1,    1,   1,    4,  True,   *fixed_params,     1),
     (128,    *moe_specs["380M"], 8 * 1024 // 2,   1,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
@@ -95,7 +95,7 @@ paper_moe_suite = {
     (1024,    *moe_specs["380M"], 1024 * 2,   1,    1,    1,    1,   1,    128,  True,   *fixed_params,     1),
 
     # ==================
-    # Parax suites
+    # Alpa suites
     # ==================
     (1024,    *moe_specs["380M"], 1024 * 2,   1,    1,    1,    1,   1,    64,  True,   *fixed_params,     1),
 ],
@@ -135,30 +135,30 @@ paper_moe_suite = {
     (1024,     *moe_specs["690M"],  8 * 1024 // 2,   1,    2,    1,    1,   1,    128,  True,   *fixed_params,     1),
 
     # ==================
-    # Parax suites
+    # Alpa suites
     # ==================
-    # parax-only,
+    # alpa-only,
     (1024,     *moe_specs["380M"],  1024 * 2,   2,    1,    1,    1,   1,    32,  True,   *fixed_params,     1),
     (1024,     *moe_specs["380M"],  1024 * 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
 
-    # parax-only, DP = 1, MP = 2
+    # alpa-only, DP = 1, MP = 2
     (1024,     *moe_specs["380M"],  1024 * 2,   1,    2,    1,    1,   1,    64,  False,   *fixed_params,     2),
     (1024,     *moe_specs["380M"],  1024 * 2,   1,    2,    1,    1,   1,    16,  False,   *fixed_params,     2),
 
-    # parax-only, PP = 2
+    # alpa-only, PP = 2
     (1024,     *moe_specs["380M"],  1024 * 2,   1,    1,    1,    1,   2,    64,  True,   *fixed_params,     2),
 
     # ================================
     # 690M model
-    # parax-only, DP = 2
+    # alpa-only, DP = 2
     (1024,     *moe_specs["690M"],  1024 * 2,   2,    1,    1,    1,   1,    16,  True,   *fixed_params,     1),
 
-    # parax-only, DP = 1, MP = 2
+    # alpa-only, DP = 1, MP = 2
     (1024,     *moe_specs["690M"],  1024 * 2,   1,    2,    1,    1,   1,    64,  False,   *fixed_params,     2),
     (1024,     *moe_specs["690M"],  1024 * 2,   1,    2,    1,    1,   1,    32,  False,   *fixed_params,     2),
     (1024,     *moe_specs["690M"],  1024 * 2,   1,    2,    1,    1,   1,    32,  False,   *fixed_params,     2),
 
-    # parax-only, PP = 2
+    # alpa-only, PP = 2
     (1024,     *moe_specs["690M"],  1024 * 2,   1,    1,    1,    1,   2,    64,  True,   *fixed_params,     2),
 ],
 
@@ -222,7 +222,7 @@ paper_moe_suite = {
 
 
     # ==================
-    # Parax suites
+    # Alpa suites
     # ==================
     # 690M model
     # DP = 4
@@ -327,7 +327,7 @@ paper_moe_suite = {
     (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   4,    2,    1,    1,   1,    32,  True,   *fixed_params,     4),
 
     # ==================
-    # Parax suites
+    # Alpa suites
     # ==================
     # 1.3B model
     # DP = 8
@@ -456,7 +456,7 @@ paper_moe_suite = {
 
 
     # ==================
-    # Parax suites
+    # Alpa suites
     # ==================
 
 ],
@@ -524,7 +524,7 @@ paper_moe_suite = {
 
 
     # ==================
-    # Parax suites
+    # Alpa suites
     # ==================
     # 4.5B+ model
     (1024,     *moe_specs["10B"],  1024 * 2,   8,    1,    1,    8,   4,    32,  False,   *fixed_params,     1),

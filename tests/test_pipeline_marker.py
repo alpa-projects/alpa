@@ -4,8 +4,8 @@ import numpy as np
 import jax
 from jax.lib import xla_client as xc, xla_bridge as xb
 
-from parax.pipeline_parallel.primitive_def import mark_pipeline, mark_pipeline_xla
-from parax.testing import assert_allclose
+from alpa.pipeline_parallel.primitive_def import mark_pipeline, mark_pipeline_xla
+from alpa.testing import assert_allclose
 
 ops = xc.ops
 

@@ -5,12 +5,12 @@ import logging
 from jax.core import Literal
 import jax.numpy as jnp
 
-from parax.device_mesh import DistributedArray, ReplicatedDistributedArray
-from parax.mesh_executable import AllocZeroBufferDriverExecutable
-from parax.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from parax.pipeline_parallel.cross_mesh_resharding import EagerReshardingTask
-from parax.global_env import global_config
-from parax.timer import timers
+from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray
+from alpa.mesh_executable import AllocZeroBufferDriverExecutable
+from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
+from alpa.pipeline_parallel.cross_mesh_resharding import EagerReshardingTask
+from alpa.global_env import global_config
+from alpa.timer import timers
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

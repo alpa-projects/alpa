@@ -11,10 +11,10 @@ from flax import linen as nn
 from flax import optim
 import ray
 
-from parax import (parallelize, set_parallelize_options, testing, global_config, DeviceCluster,
+from alpa import (parallelize, set_parallelize_options, testing, global_config, DeviceCluster,
                    PhysicalDeviceMesh)
-from parax.testing import assert_only_has_allreduce
-from parax.util import write_tsv, list_gpu_info, benchmark_func
+from alpa.testing import assert_only_has_allreduce
+from alpa.util import write_tsv, list_gpu_info, benchmark_func
 
 GB = 1024 ** 3
 

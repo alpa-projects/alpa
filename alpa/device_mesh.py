@@ -22,15 +22,15 @@ from jax.interpreters.pxla import (ShardingSpec, _as_slice_indices,
 from jax.lib import xla_client
 import jax.numpy as jnp
 
-from parax import mesh_profiling
-import parax.collective as col
-from parax.collective.collective_group import nccl_util
-from parax.global_env import global_config
-from parax.mesh_executable import RemoteBufferRef, MeshDriverExecutable
-from parax.monkey_patch import set_override_backend
-from parax.shard_parallel.auto_sharding import LogicalDeviceMesh
-from parax.timer import timers
-from parax.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
+from alpa import mesh_profiling
+import alpa.collective as col
+from alpa.collective.collective_group import nccl_util
+from alpa.global_env import global_config
+from alpa.mesh_executable import RemoteBufferRef, MeshDriverExecutable
+from alpa.monkey_patch import set_override_backend
+from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
+from alpa.timer import timers
+from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
                         cupy_to_jax_tensor, jax_tensor_set,
                         xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                         xla_buffer_to_cupy, cupy_to_xla_buffer,
@@ -253,7 +253,7 @@ class MeshHostWorker:
             self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
-            # See:https://github.com/parax-project/parax/issues/145
+            # See:https://github.com/alpa-project/alpa/issues/145
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
@@ -264,7 +264,7 @@ class MeshHostWorker:
                 ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
 
             # The following in-place write will cause a D2D copy kernel
-            # See: https://github.com/parax-project/parax/issues/144
+            # See: https://github.com/alpa-project/alpa/issues/144
             # It is unavoidable, but it is better than:
             # new_buffer = dynamic_update_slice(src_buf, update, start_indices)
             # which is not in-place and will cause extra allocation-related kernels.

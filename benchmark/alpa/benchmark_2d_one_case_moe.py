@@ -4,11 +4,11 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 
-import parax
-from parax import global_config, set_parallelize_options, testing
-from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.model.model_util import optax_adafactor
-from parax.util import count_communication_primitives, print_used_time, compute_param_number, GB
+import alpa
+from alpa import global_config, set_parallelize_options, testing
+from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
+from alpa.model.model_util import optax_adafactor
+from alpa.util import count_communication_primitives, print_used_time, compute_param_number, GB
 
 from benchmark.util import compute_moe_parameter_count
 from benchmark_2d_one_case_gpt_bert import get_train_step
@@ -56,7 +56,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
 
     # Parallel configs
     if num_micro_batches > 1:
-        grad_func = parax.grad
+        grad_func = alpa.grad
     else:
         num_micro_batches = None
         grad_func = jax.grad

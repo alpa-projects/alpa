@@ -1,6 +1,6 @@
 import unittest
 
-from parax.testing import PipelineBasicTest
+from alpa.testing import PipelineBasicTest
 
 
 class AutoStageClusteringTest(PipelineBasicTest):

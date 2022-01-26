@@ -11,11 +11,11 @@ import numpy as np
 import ray
 import optax
 
-import parax
-from parax import (parallelize, global_config, set_parallelize_options, testing,
+import alpa
+from alpa import (parallelize, global_config, set_parallelize_options, testing,
                    DeviceCluster, PhysicalDeviceMesh, automatic_layer_construction)
-from parax.model.conformer import ConformerForASRModule, ConformerConfig, TrainState
-from parax.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
+from alpa.model.conformer import ConformerForASRModule, ConformerConfig, TrainState
+from alpa.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
                         count_communication_primitives, print_used_time,
                         compute_param_number)
 
@@ -68,7 +68,7 @@ def get_train_step(use_grad_acc):
             # dynamic loss takes care of averaging gradients across replicas
         else:
             if use_grad_acc:
-                get_grad_fn = parax.grad
+                get_grad_fn = alpa.grad
             else:
                 get_grad_fn = jax.grad
 

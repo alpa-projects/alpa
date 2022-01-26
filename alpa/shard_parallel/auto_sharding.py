@@ -14,10 +14,10 @@ from jax.interpreters import xla, pxla
 from jaxlib import xla_extension
 from jaxlib.xla_client import OpSharding
 
-from parax.global_env import global_config, AutoShardingOption
-from parax.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
+from alpa.global_env import global_config, AutoShardingOption
+from alpa.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
                                   save_to_file, SearchTask)
-from parax.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
+from alpa.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -167,7 +167,7 @@ def compile_with_search(backend: xla_extension.Client,
       record_file: Only used when doing logical mesh shape search.
         If is not None, dump measurement records into this file.
     """
-    from parax import testing
+    from alpa import testing
 
     # Set compile options
     if memory_budget_per_device is None:
@@ -313,7 +313,7 @@ def compile_with_search(backend: xla_extension.Client,
             hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
             hooked_proto = get_hooked_sharding_protos()
     else:  # Search for the best logical mesh
-        from parax.mesh_executable import NormalMeshDriverExecutable
+        from alpa.mesh_executable import NormalMeshDriverExecutable
         assert not multiple_stages
         best_logical_mesh = best_compiled = best_solution_vector = best_objective = None
         best_time_cost = float("inf")

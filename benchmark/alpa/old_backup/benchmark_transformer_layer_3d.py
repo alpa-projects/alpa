@@ -6,12 +6,12 @@ import numpy as np
 import optax
 import ray
 
-import parax
-from parax import (parallelize, global_config, set_parallelize_options, DeviceCluster,
+import alpa
+from alpa import (parallelize, global_config, set_parallelize_options, DeviceCluster,
                    mark_pipeline, manual_layer_construction)
-from parax.model.bert_model import BertConfig, FlaxBertLayerCollection
-from parax.model.model_util import TrainState
-from parax.util import write_tsv, list_gpu_info, print_used_time, get_ray_namespace_str
+from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
+from alpa.model.model_util import TrainState
+from alpa.util import write_tsv, list_gpu_info, print_used_time, get_ray_namespace_str
 
 MB = 1024 ** 2
 GB = 1024 ** 3
@@ -111,7 +111,7 @@ def benchmark_transformer_one_case(benchmark_case):
     if args.skip_apply_grad and num_micro_batches == 1:
         grad_func = jax.grad
     else:
-        grad_func = parax.grad
+        grad_func = alpa.grad
 
     # Mesh configs
     # 3D parallel always run atop a Ray cluster.

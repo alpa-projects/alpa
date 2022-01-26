@@ -12,13 +12,13 @@ from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from parax.global_env import global_config
-from parax.pipeline_parallel.local_pipeline_parallel import (
+from alpa.global_env import global_config
+from alpa.pipeline_parallel.local_pipeline_parallel import (
     local_pipeline_parallel_callable)
-from parax.pipeline_parallel.primitive_def import mark_gradient
-from parax.pipeline_parallel.three_d_parallel import three_d_parallel_callable
-from parax.shard_parallel.shard_callable import shard_parallel_callable
-from parax.util import (auto_donate_argnums, auto_static_argnums,
+from alpa.pipeline_parallel.primitive_def import mark_gradient
+from alpa.pipeline_parallel.three_d_parallel import three_d_parallel_callable
+from alpa.shard_parallel.shard_callable import shard_parallel_callable
+from alpa.util import (auto_donate_argnums, auto_static_argnums,
                         abstractify_with_aval)
 
 # pylint: disable=redefined-builtin
@@ -35,13 +35,13 @@ def parallelize(fun: Callable = None,
     Args:
         fun: The function to be parallelized.
         donate_argnums: The same as the donate_argnums argument of jax.jit.
-          If it is "auto", parax uses heuristic rules to infer this.
+          If it is "auto", alpa uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
-          If it is "auto", parax uses heuristic rules to infer this.
+          If it is "auto", alpa uses heuristic rules to infer this.
         batch_argnums: The indices of arguments that are the data batch.
           This information is used to split the original data batch into micro batches
           to perform gradient accumulation or pipeline parallelism.
-          Parax assumes the first dimension of the tensor is the batch dimension.
+          Alpa assumes the first dimension of the tensor is the batch dimension.
     """
 
     def decorate_fun(fun):

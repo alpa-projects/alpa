@@ -12,12 +12,12 @@ from jax.interpreters.partial_eval import remat_call_p
 import numba
 import numpy as np
 
-from parax.pipeline_parallel.layer_stats import (global_invar_size, is_nontrivial, eqn_flops,
+from alpa.pipeline_parallel.layer_stats import (global_invar_size, is_nontrivial, eqn_flops,
                                                  heavy_count,
                                                  log_layer_slicing_stats)
-from parax.pipeline_parallel.primitive_def import (pipeline_p,
+from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                    mark_pipeline_jaxpreqn)
-from parax.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
+from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
                         get_var_mapping)
 
 logger = logging.getLogger(__name__)

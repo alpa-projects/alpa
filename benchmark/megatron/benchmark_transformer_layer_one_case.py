@@ -8,7 +8,7 @@ from functools import partial
 
 import numpy as np
 
-from benchmark.parax.benchmark_gpt_bert import compute_tflops
+from benchmark.alpa.benchmark_gpt_bert import compute_tflops
 from megatron.model.transformer import ParallelTransformer, ParallelMLP
 from megatron.model.utils import init_method_normal, scaled_init_method_normal
 from megatron.model import DistributedDataParallel as LocalDDP

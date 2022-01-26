@@ -3,7 +3,7 @@ import time
 
 import jax
 
-from parax.testing import PipelineBasicTest
+from alpa.testing import PipelineBasicTest
 
 
 class AccumulateGradTest(PipelineBasicTest):

@@ -3,16 +3,16 @@ import jax
 from jax._src.api import make_jaxpr
 from jax.core import gensym
 import jax.numpy as jnp
-from parax.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
-from parax.pipeline_parallel.apply_grad import compute_grad_to_accumulate_grad
+from alpa.mesh_executable import NormalMeshDriverExecutable, ProtoAndSharding
+from alpa.pipeline_parallel.apply_grad import compute_grad_to_accumulate_grad
 import ray
 
-from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
-from parax.model.bert_model import BertConfig, FlaxBertLayer
-from parax.pipeline_parallel.stage_profiling import (compile_all,
+from alpa import DeviceCluster, manual_layer_slicing, mark_pipeline
+from alpa.model.bert_model import BertConfig, FlaxBertLayer
+from alpa.pipeline_parallel.stage_profiling import (compile_all,
                                                      generate_stage_info,
                                                      split_global_use_and_donate)
-from parax.pipeline_parallel.three_d_parallel import (
+from alpa.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)
 

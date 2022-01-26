@@ -26,9 +26,9 @@ echo 'export DEEPSPEED_PATH=~/efs/DeepSpeed' >> ~/.bashrc   # use your own path
 source ~/.bashrc
 
 # Replace source files (use your own path)
-cp parax/benchmark/deepspeed/patch/training.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/training.py
-cp parax/benchmark/deepspeed/patch/gpt2_model.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/model/gpt2_model.py
-cp parax/benchmark/deepspeed/patch/transformer.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/model/transformer.py
+cp alpa/benchmark/deepspeed/patch/training.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/training.py
+cp alpa/benchmark/deepspeed/patch/gpt2_model.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/model/gpt2_model.py
+cp alpa/benchmark/deepspeed/patch/transformer.py DeepSpeed/DeepSpeedExamples/Megatron-LM-v1.1.5-ZeRO3/megatron/model/transformer.py
 ```
 
 3. Download dataset
@@ -36,7 +36,7 @@ cp parax/benchmark/deepspeed/patch/transformer.py DeepSpeed/DeepSpeedExamples/Me
 wget deepspeed_dataset.zip  # ask Lianmin to get the file
 tar xzf deepspeed_dataset.zip
 cd deepspeed_dataset/
-ln -s $(pwd) ~/efs/parax/benchmark/deepspeed/data   # use your own path
+ln -s $(pwd) ~/efs/alpa/benchmark/deepspeed/data   # use your own path
 ```
 
 ## Run

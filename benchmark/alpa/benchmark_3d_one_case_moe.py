@@ -5,13 +5,13 @@ import numpy as np
 import optax
 import ray
 
-import parax
-from parax import global_config, set_parallelize_options, DeviceCluster
-from parax.model.model_util import optax_adafactor
-from parax.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
-from parax.pipeline_parallel.stage_construction import get_last_dp_result
-from parax.timer import timers
-from parax.util import print_used_time, to_str_round, GB
+import alpa
+from alpa import global_config, set_parallelize_options, DeviceCluster
+from alpa.model.model_util import optax_adafactor
+from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
+from alpa.pipeline_parallel.stage_construction import get_last_dp_result
+from alpa.timer import timers
+from alpa.util import print_used_time, to_str_round, GB
 
 from benchmark_3d_one_case_gpt_bert import get_train_step
 from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
@@ -72,7 +72,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
             fine_grained_remat = False
             auto_layer = True
 
-    grad_func = parax.grad
+    grad_func = alpa.grad
 
     if force_batch_dim_mapping:
         as_option.force_batch_dim_to_mesh_dim = 0

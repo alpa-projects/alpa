@@ -6,7 +6,7 @@ from typing import Tuple
 
 import numpy as np
 
-from parax.util import to_int_tuple
+from alpa.util import to_int_tuple
 
 RECORD_VERSION = "v0.1"
 

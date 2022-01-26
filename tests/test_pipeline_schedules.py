@@ -1,6 +1,6 @@
 import unittest
 
-from parax.pipeline_parallel.schedules import (gen_linear_pipeline_dependency,
+from alpa.pipeline_parallel.schedules import (gen_linear_pipeline_dependency,
                                                GpipeSchedule, PipeDreamFlush)
 
 

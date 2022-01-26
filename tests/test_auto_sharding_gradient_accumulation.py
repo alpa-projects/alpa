@@ -11,10 +11,10 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from parax import (parallelize, set_parallelize_options, grad, testing,
-                   global_config, PhysicalDeviceMesh, DeviceCluster)
-from parax.util import count_communication_primitives
-from parax.testing import assert_allclose
+from alpa import (parallelize, set_parallelize_options, grad, testing,
+                  global_config, PhysicalDeviceMesh, DeviceCluster)
+from alpa.util import count_communication_primitives
+from alpa.testing import assert_allclose
 
 as_option = global_config.default_autosharding_option
 

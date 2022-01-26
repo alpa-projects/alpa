@@ -9,7 +9,7 @@ from jax.interpreters.pxla import (ShardingSpec, Chunked, NoSharding, Replicated
 import numpy as np
 from jax.lib import xla_client, xla_bridge
 import jax.numpy as jnp
-from parax.util import jax_buffer_set, jax_buffer_set_v2
+from alpa.util import jax_buffer_set, jax_buffer_set_v2
 
 
 offset = [0, 4]

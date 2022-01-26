@@ -2,7 +2,7 @@ import numpy as np
 import ray
 from jax.lib import xla_client
 
-from parax import DeviceCluster, XlaPassContext, parallelize, global_config
+from alpa import DeviceCluster, XlaPassContext, parallelize, global_config
 
 ops = xla_client.ops
 

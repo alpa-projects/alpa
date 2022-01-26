@@ -6,10 +6,10 @@ import jax.numpy as jnp
 import optax
 import ray
 
-import parax
-from parax import parallelize, set_parallelize_options, PhysicalDeviceMesh
-from parax.model.bert_model import BertConfig, FlaxBertLayer, TrainState
-from parax.testing import assert_allclose
+import alpa
+from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh
+from alpa.model.bert_model import BertConfig, FlaxBertLayer, TrainState
+from alpa.testing import assert_allclose
 
 
 def create_train_state(rngkey, model, batch_args):
@@ -52,7 +52,7 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
                 loss = jnp.mean((out - batch["y"])**2)
                 return loss
 
-            grads = parax.grad(loss_func)(state.params)
+            grads = alpa.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
             return new_state, grads
 

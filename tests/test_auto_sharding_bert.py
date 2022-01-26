@@ -7,10 +7,10 @@ import jax.numpy as jnp
 import numpy as np
 from flax import optim, linen as nn
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
-from parax.model.bert_model import (BertConfig, FlaxBertLayerCollection,
-                                    FlaxBertForMaskedLMModule)
-from parax.util import count_communication_primitives
+from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
+from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
+                                   FlaxBertForMaskedLMModule)
+from alpa.util import count_communication_primitives
 from test_auto_sharding_mlp import (
     assert_all_replicated, assert_close, assert_column_partitioned,
     assert_data_parallel_cost, assert_fully_sharded, assert_less_equal,

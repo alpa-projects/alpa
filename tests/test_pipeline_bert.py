@@ -8,12 +8,12 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from parax import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_layer_construction)
-from parax.testing import BertLayerModel, assert_allclose
-from parax.model.model_util import TrainState
-from parax.model.bert_model import BertConfig
-from parax.util import get_ray_namespace_str
+from alpa import (parallelize, set_parallelize_options, mark_pipeline,
+                  DeviceCluster, manual_layer_construction)
+from alpa.testing import BertLayerModel, assert_allclose
+from alpa.model.model_util import TrainState
+from alpa.model.bert_model import BertConfig
+from alpa.util import get_ray_namespace_str
 
 
 class PipelineBERTTest(unittest.TestCase):
@@ -23,7 +23,7 @@ class PipelineBERTTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
 
         ray.init(address="auto",
-                 namespace=get_ray_namespace_str(prefix="parax-unittest"))
+                 namespace=get_ray_namespace_str(prefix="alpa-unittest"))
         device_cluster = DeviceCluster()
         self.devices = device_cluster.get_virtual_physical_mesh()
 

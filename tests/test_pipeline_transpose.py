@@ -4,8 +4,8 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 
-import parax
-from parax.testing import assert_allclose
+import alpa
+from alpa.testing import assert_allclose
 
 
 class PipelineTransposeTest(unittest.TestCase):
@@ -13,7 +13,7 @@ class PipelineTransposeTest(unittest.TestCase):
     def test_transpose(self):
 
         def f(x):
-            x, = parax.mark_pipeline(x, mark_type="start", name="1")
+            x, = alpa.mark_pipeline(x, mark_type="start", name="1")
             x = jnp.transpose(x, axes=(1, 0))
             return x
 

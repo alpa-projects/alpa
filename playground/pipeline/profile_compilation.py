@@ -6,13 +6,13 @@ from jax._src.api import make_jaxpr
 import jax.numpy as jnp
 import ray
 
-from parax import DeviceCluster, manual_layer_slicing, mark_pipeline
-from parax.device_mesh import VirtualPhysicalMesh
-from parax.model.bert_model import BertConfig, FlaxBertLayer
-from parax.pipeline_parallel.three_d_parallel import (
+from alpa import DeviceCluster, manual_layer_slicing, mark_pipeline
+from alpa.device_mesh import VirtualPhysicalMesh
+from alpa.model.bert_model import BertConfig, FlaxBertLayer
+from alpa.pipeline_parallel.three_d_parallel import (
     split_compute_grad_and_apply_grad, slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)
-from parax.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes, get_compute_cost, get_stage_and_mesh_assignments
+from alpa.pipeline_parallel.stage_construction import get_submesh_choices, dp, get_sliced_virtual_submeshes, get_compute_cost, get_stage_and_mesh_assignments
 
 ray.init(address="auto")
 jax.config.update('jax_platform_name', 'cpu')

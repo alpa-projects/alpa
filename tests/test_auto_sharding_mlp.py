@@ -12,9 +12,9 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from parax import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
-from parax.global_env import global_config
-from parax.util import map_to_shape, count_communication_primitives
+from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
+from alpa.global_env import global_config
+from alpa.util import map_to_shape, count_communication_primitives
 
 as_option = global_config.default_autosharding_option
 

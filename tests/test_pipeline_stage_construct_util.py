@@ -5,24 +5,25 @@ import jax
 from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
-from parax.model.bert_model import BertConfig
-from parax.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad, process_apply_gradient,
-    split_compute_grad_and_apply_grad)
-from parax.pipeline_parallel.computation import (
+from alpa.model.bert_model import BertConfig
+from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
+                                               process_apply_gradient,
+                                               split_compute_grad_and_apply_grad
+                                              )
+from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
 import ray
 
-from parax import DeviceCluster
-from parax.pipeline_parallel.stage_profiling import (
+from alpa import DeviceCluster
+from alpa.pipeline_parallel.stage_profiling import (
     ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info,
     compile_all, profile_all, compute_intermediate_size,
     compute_apply_grad_invar_size)
-from parax.util import get_ray_namespace_str, OrderedSet
-from parax.testing import (BertLayerModel, create_train_state,
-                           get_bert_layer_train_step)
+from alpa.util import get_ray_namespace_str, OrderedSet
+from alpa.testing import (BertLayerModel, create_train_state,
+                          get_bert_layer_train_step)
 
 
 def _aval_key(a):
@@ -45,7 +46,7 @@ class StageConstructUtilTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
 
         ray.init(address="auto",
-                 namespace=get_ray_namespace_str(prefix="parax-unittest"))
+                 namespace=get_ray_namespace_str(prefix="alpa-unittest"))
         device_cluster = DeviceCluster()
         self.devices = device_cluster.get_virtual_physical_mesh()
 

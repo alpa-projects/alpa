@@ -7,11 +7,11 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from parax import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_layer_construction)
-from parax.model.model_util import TrainState
-from parax.testing import assert_allclose
-from parax.util import get_ray_namespace_str
+from alpa import (parallelize, set_parallelize_options, mark_pipeline,
+                  DeviceCluster, manual_layer_construction)
+from alpa.model.model_util import TrainState
+from alpa.testing import assert_allclose
+from alpa.util import get_ray_namespace_str
 
 
 class PipelineTiedEmbeddingTest(unittest.TestCase):
@@ -21,7 +21,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         assert len(jax.local_devices()) >= 4
 
         ray.init(address="auto",
-                 namespace=get_ray_namespace_str(prefix="parax-unittest"))
+                 namespace=get_ray_namespace_str(prefix="alpa-unittest"))
         device_cluster = DeviceCluster()
         self.devices = device_cluster.get_virtual_physical_mesh()
 

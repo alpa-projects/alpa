@@ -8,7 +8,7 @@ from flax import optim
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 
-from parax import parallelize, mark_pipeline
+from alpa import parallelize, mark_pipeline
 
 MB = 1024 ** 2
 num_gpus = 2

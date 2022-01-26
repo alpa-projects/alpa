@@ -1,6 +1,6 @@
-Parax
+Alpa
 =======
-Parax automatically parallelizes your python numerical computing code and neural networks
+Alpa automatically parallelizes your python numerical computing code and neural networks
 with a simple decorator.
 
 
@@ -19,20 +19,17 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 1. Clone repos
   ```bash
-  git clone git@github.com:parax-project/parax.git
-  git clone git@github.com:parax-project/jax-parax.git
-  git clone git@github.com:parax-project/tensorflow-parax.git
+  git clone git@github.com:alpa-projects/alpa.git
+  git clone git@github.com:alpa-projects/jax-alpa.git
+  git clone git@github.com:alpa-projects/tensorflow-alpa.git
   ```
 
 - Step 2. Install dependencies
   - CUDA Toolkit: cuda and cudnn
   - Python packages:
     ```bash
-    pip3 install cmake numpy scipy flax numba pybind11 cupy-cuda111
-    
-    # Install the latest Ray, replace `LINK_TO_WHEEL` with links provided:
-    # https://docs.ray.io/en/latest/installation.html#daily-releases-nightlies
-    pip3 install -U ray[default]@LINK_TO_WHEEL.whl
+    pip3 install cmake numpy scipy flax numba pybind11 ray[default]
+    pip3 install cupy-cuda111   # use your corresponding CUDA version
     ```
   - ILP Solver:
     ```bash
@@ -42,8 +39,8 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 3. Build and install jaxlib
   ```bash
-  cd jax-parax
-  export TF_PATH=~/tensorflow-parax  # update this with your path
+  cd jax-alpa
+  export TF_PATH=~/tensorflow-alpa  # update this with your path
   python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
   cd dist
   pip3 install -e .
@@ -51,19 +48,19 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 4. Install jax
   ```bash
-  cd jax-parax
+  cd jax-alpa
   pip3 install -e .
   ```
 
-- Step 5. Install Parax
+- Step 5. Install Alpa
   ```bash
-  cd parax
+  cd alpa
   pip3 install -e .
   ```
 
-- Step 6. Build XLA pipeline marker custom call (See [here](parax/pipeline_parallel/xla_custom_call_marker/README.md))
+- Step 6. Build XLA pipeline marker custom call (See [here](alpa/pipeline_parallel/xla_custom_call_marker/README.md))
   ```bash
-  cd parax/pipeline_parallel/xla_custom_call_marker
+  cd alpa/pipeline_parallel/xla_custom_call_marker
   bash build.sh
   ```
 
@@ -77,7 +74,7 @@ python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
 Organization
 ============
 - `examples`: public examples
-- `parax`: the python interface of the library
+- `alpa`: the python source code of the library
 - `playground`: private experimental scripts
 - `tests`: unit tests
 
@@ -94,9 +91,9 @@ Use yapf to automatically format the code:
 ./format.sh
 ```
 
-Then use prospector to run linting for the folder ``parax/``:
+Then use prospector to run linting for the folder ``alpa/``:
 ```bash
-prospector parax/
+prospector alpa/
 ```
 
 Style guidelines:

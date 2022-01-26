@@ -3,7 +3,7 @@ from datetime import datetime
 
 from util import run_cmd
 
-from benchmark.parax.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite, gpt_specs
+from benchmark.alpa.paper_manual_gpt_suite import paper_gpt_suite, test_gpt_suite, gpt_specs
 
 _ = None
 
@@ -80,11 +80,11 @@ default_benchmark_suite = {
     (32,  *gpt_specs["1.3B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
     (40,  *gpt_specs["1.3B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
 
-    (4,   *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  1,  _,   True, _, _),
-    (8,   *gpt_specs["2.7B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
-    (16,  *gpt_specs["2.7B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
-    (16,  *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
-    (24,  *gpt_specs["2.7B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
+    (4,   *gpt_specs["2.6B"], 4,   2,   _,   _,   1,  1,  _,   True, _, _),
+    (8,   *gpt_specs["2.6B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["2.6B"], 2,   4,   _,   _,   1,  1,  _,   True, _, _),
+    (16,  *gpt_specs["2.6B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
+    (24,  *gpt_specs["2.6B"], 1,   8,   _,   _,   1,  1,  _,   True, _, _),
 
     # with acc
     (504, *gpt_specs["1.3B"], 4,   2,   _,   _,   1,  21, _,   True, _, _),

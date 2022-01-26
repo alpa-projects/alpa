@@ -48,7 +48,7 @@ paper_auto_gpt_suite = {
 8: (get_auto_test_case("2.7B", [64, 128, 256], [8]) +
     get_auto_test_case("2.7B", [64, 128], [16])),
 16: get_auto_test_case("6.7B", [32, 64, 128, 256], [8]),
-32: get_auto_test_case("15B", [64, 128, 256, 512], [8]),
+32: get_auto_test_case("15B", [64, 128, 256, 512], [16]),
 64: get_auto_test_case("39B", [128, 256, 512, 1024], [8]),
 }
 

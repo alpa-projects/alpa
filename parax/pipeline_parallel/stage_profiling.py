@@ -2,7 +2,6 @@
 from collections import namedtuple
 import gc
 import logging
-import time
 from typing import Dict, Sequence
 from abc import ABC, abstractmethod
 
@@ -95,7 +94,6 @@ class BaseWorkerPoolWrapper(ABC):
                 w.__ray_terminate__.remote()
         gc.collect()
         self.is_shutdown = True
-        time.sleep(10)
 
     def __del__(self):
         if not self.is_shutdown:
@@ -224,13 +222,12 @@ class CompileWorker:
 class CompileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of CompileWorker for distributed compilation."""
 
-    def __init__(self, num_cpus, num_gpus, cpu_per_worker=1, debug_mode=False):
+    def __init__(self, num_cpus, num_gpus, debug_mode=False):
         super().__init__()
         gpu_per_cpu = 1
         while gpu_per_cpu * num_cpus > num_gpus:
             gpu_per_cpu /= 2
-        worker_cls = ray.remote(num_cpus=cpu_per_worker,
-                                num_gpus=gpu_per_cpu)(CompileWorker)
+        worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
         self.actors = [worker_cls.remote() for _ in range(num_cpus)]
         self.pool = ActorPool(self.actors)
         self.local_worker = CompileWorker() if debug_mode else None
@@ -343,7 +340,6 @@ class ProfileWorker:
     def restart(self, forced):
         """Restart the physical mesh."""
         self.mesh.shutdown(forced=forced)
-        time.sleep(3)
         self.mesh = self.virtual_mesh.get_physical_mesh()
 
 
@@ -446,7 +442,7 @@ def compile_all(stages):
     num_gpus = int(ray.available_resources()["GPU"])
     default_autosharding_option = global_config.default_autosharding_option
 
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus, int(min(max(ray.available_resources()["CPU"] // num_cpus // 2, 1), 10)))
+    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
     for stage_id, (_, stage_config, auto_sharding_config,
                    _) in enumerate(stages):
         logical_mesh, autosharding_option_dict = auto_sharding_config

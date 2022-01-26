@@ -8,7 +8,7 @@ gpt_specs = {
 "350M": (1024,  1024,  24,    16,   51200, ),
 "760M": (1024,  1536,  24,    16,   51200, ),
 "1.3B": (1024,  2048,  24,    32,   51200, ),
-"2.7B": (1024,  2560,  32,    32,   51200, ),
+"2.6B": (1024,  2560,  32,    32,   51200, ),
 "6.7B": (1024,  4096,  32,    32,   51200, ),
 "15B":  (1024,  5120,  48,    40,   51200, ),
 "39B":  (1024,  8192,  48,    64,   51200, ),
@@ -45,8 +45,8 @@ paper_auto_gpt_suite = {
     get_auto_test_case("760M", [32, 64], [12])),
 4: (get_auto_test_case("1.3B", [32, 64, 128], [6]) +
     get_auto_test_case("1.3B", [32, 64], [12])),
-8: (get_auto_test_case("2.7B", [64, 128, 256], [8]) +
-    get_auto_test_case("2.7B", [64, 128], [16])),
+8: (get_auto_test_case("2.6B", [64, 128, 256], [8]) +
+    get_auto_test_case("2.6B", [64, 128], [16])),
 16: get_auto_test_case("6.7B", [32, 64, 128, 256], [8]),
 32: get_auto_test_case("15B", [64, 128, 256, 512], [16]),
 64: get_auto_test_case("39B", [128, 256, 512, 1024], [8]),
@@ -61,7 +61,7 @@ test_auto_gpt_suite = {
     "sub_logical_mesh_shapes": [(2, 1)] * 2,
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2,
 }),
-8: get_auto_test_case("2.7B", [128], [8]),
+8: get_auto_test_case("2.6B", [128], [8]),
 16: get_auto_test_case("6.7B", [256], [8]),
 64: get_auto_test_case("39B", [256], [8], "manual_gpipe", {
     "forward_stage_layer_ids": [[i] for i in range(8)],

@@ -31,7 +31,7 @@ gpt_intra_only = [
     (1024, *gpt_specs["350M"], 1,   1,   _,   _,   1,  64,  True,  True,  True,  _, _),
     (1024, *gpt_specs["760M"], 2,   1,   _,   _,   1,  64,  True,  True,  True,  _, _),
     (1024, *gpt_specs["1.3B"], 4,   1,   _,   _,   1,  64,  True,  True,  True,  _, _),
-    (1024, *gpt_specs["2.7B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _, _),
+    (1024, *gpt_specs["2.6B"], 4,   2,   _,   _,   1,  32,  True,  True,  True,  _, _),
     (1024, *gpt_specs["6.7B"], 2,   8,   _,   _,   1,  64,  True,  True,  True,  _, _),
     (64,   *gpt_specs["15B"],  4,   8,   _,   _,   1,  8,   True,  True,  True,  _, _), # all_reduce_threshold = 1<<20
     (128,  *gpt_specs["15B"],  4,   8,   _,   _,   1,  16,  True,  True,  True,  _, _),

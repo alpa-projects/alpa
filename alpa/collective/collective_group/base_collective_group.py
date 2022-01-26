@@ -3,8 +3,8 @@ from abc import ABCMeta
 from abc import abstractmethod
 
 from alpa.collective.types import (AllReduceOptions, BarrierOptions,
-                                    ReduceOptions, AllGatherOptions,
-                                    BroadcastOptions, ReduceScatterOptions)
+                                   ReduceOptions, AllGatherOptions,
+                                   BroadcastOptions, ReduceScatterOptions)
 
 
 class BaseGroup(metaclass=ABCMeta):

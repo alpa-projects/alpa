@@ -16,7 +16,7 @@ from jaxlib.xla_client import OpSharding
 
 from alpa.global_env import global_config, AutoShardingOption
 from alpa.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
-                                  save_to_file, SearchTask)
+                                 save_to_file, SearchTask)
 from alpa.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
 
 logger = logging.getLogger(__name__)

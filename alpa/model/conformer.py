@@ -18,9 +18,9 @@ from jax import lax
 import jax.numpy as jnp
 
 from alpa.model.model_util import (FlaxBaseModelOutput,
-                                    FlaxBaseModelOutputWithPooling,
-                                    FlaxBertForPreTrainingOutput,
-                                    FlaxMaskedLMOutput)
+                                   FlaxBaseModelOutputWithPooling,
+                                   FlaxBertForPreTrainingOutput,
+                                   FlaxMaskedLMOutput)
 from alpa import mark_pipeline
 
 

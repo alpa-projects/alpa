@@ -6,9 +6,10 @@ from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
 from alpa.model.bert_model import BertConfig
-from alpa.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad, process_apply_gradient,
-    split_compute_grad_and_apply_grad)
+from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
+                                               process_apply_gradient,
+                                               split_compute_grad_and_apply_grad
+                                              )
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
@@ -22,7 +23,7 @@ from alpa.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size)
 from alpa.util import get_ray_namespace_str, OrderedSet
 from alpa.testing import (BertLayerModel, create_train_state,
-                           get_bert_layer_train_step)
+                          get_bert_layer_train_step)
 
 
 def _aval_key(a):

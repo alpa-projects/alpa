@@ -16,7 +16,7 @@ from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
 from alpa.pipeline_parallel.layer_stats import eqn_flops
 from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
-                                                     compile_all, profile_all)
+                                                    compile_all, profile_all)
 from alpa.timer import timers
 from alpa.util import OrderedSet
 

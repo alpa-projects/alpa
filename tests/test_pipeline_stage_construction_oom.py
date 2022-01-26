@@ -8,7 +8,7 @@ from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig
 from alpa.testing import (get_bert_layer_train_step, BertLayerModel,
-                           PipelineBasicTest, create_dummy_train_state)
+                          PipelineBasicTest, create_dummy_train_state)
 
 
 class AutoStageClusteringOOMTest(PipelineBasicTest):

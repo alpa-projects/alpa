@@ -12,9 +12,9 @@ import numpy
 from alpa.collective.collective_group import gloo_util
 from alpa.collective.collective_group.base_collective_group import BaseGroup
 from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
-                                    ReduceOptions, BroadcastOptions,
-                                    AllGatherOptions, ReduceScatterOptions,
-                                    SendOptions, RecvOptions)
+                                   ReduceOptions, BroadcastOptions,
+                                   AllGatherOptions, ReduceScatterOptions,
+                                   SendOptions, RecvOptions)
 from alpa.collective.const import get_store_name
 
 logger = logging.getLogger(__name__)

@@ -9,10 +9,10 @@ import numpy as np
 
 from alpa.pipeline_parallel.computation import JaxPipelineComputation
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
-                                                   mark_pipeline_jaxpreqn)
+                                                  mark_pipeline_jaxpreqn)
 from alpa.pipeline_parallel.schedules import gen_dependency_with_stages
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                        get_var_mapping)
+                       get_var_mapping)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -141,5 +141,6 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
 
 def global_invar_size(invars: Set[Var], eqn: JaxprEqn):
     input_vars = set([v for v in eqn.invars if isinstance(v, Var)])
-    size = sum([(var.aval.size * var.aval.dtype.itemsize) for var in invars.intersection(input_vars)])
+    size = sum([(var.aval.size * var.aval.dtype.itemsize)
+                for var in invars.intersection(input_vars)])
     return size

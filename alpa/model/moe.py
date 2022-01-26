@@ -18,10 +18,10 @@ from jax.nn import one_hot
 
 from alpa import mark_pipeline
 from alpa.model.bert_model import (FlaxBaseModelOutput,
-                                    FlaxBaseModelOutputWithPooling,
-                                    FlaxBertAttention, FlaxBertEmbeddings,
-                                    FlaxBertIntermediate, FlaxBertLayer,
-                                    FlaxBertOutput, FlaxMaskedLMOutput)
+                                   FlaxBaseModelOutputWithPooling,
+                                   FlaxBertAttention, FlaxBertEmbeddings,
+                                   FlaxBertIntermediate, FlaxBertLayer,
+                                   FlaxBertOutput, FlaxMaskedLMOutput)
 from alpa.model.model_util import TrainState
 
 

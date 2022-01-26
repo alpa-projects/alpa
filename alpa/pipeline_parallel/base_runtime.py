@@ -10,8 +10,10 @@ import ray
 
 from alpa.util import OrderedSet
 from alpa.device_mesh import PhysicalDeviceMesh
-from alpa.pipeline_parallel.cross_mesh_resharding import (
-    CrossMeshCommunicator, CollectiveGroup, SymbolicReshardingTask)
+from alpa.pipeline_parallel.cross_mesh_resharding import (CrossMeshCommunicator,
+                                                          CollectiveGroup,
+                                                          SymbolicReshardingTask
+                                                         )
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.global_env import global_config
 
@@ -124,7 +126,8 @@ class BaseDistributedRuntime(BaseRuntime):
         start_time = time.time()
         self._compile_resharding_tasks()
         end_time = time.time()
-        logger.info(f"Compile resharding tasks takes {end_time - start_time}....")
+        logger.info(
+            f"Compile resharding tasks takes {end_time - start_time}....")
 
     def run(self, *args, **kwargs):
         """The runtime invocation interface."""
@@ -208,7 +211,8 @@ class BaseDistributedRuntime(BaseRuntime):
                 self._collective_groups[i][j] = cg
                 self._collective_groups[j][i] = cg
         end_time = time.time()
-        logger.info(f"Initialize collective group takes {end_time - start_time}...")
+        logger.info(
+            f"Initialize collective group takes {end_time - start_time}...")
 
     def _compile_resharding_tasks(self):
         """Create and compile all resharding (send/recv/allgather) tasks."""

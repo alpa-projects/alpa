@@ -12,17 +12,17 @@ from jax.interpreters.partial_eval import remat_call_p
 import numba
 import numpy as np
 
-from alpa.pipeline_parallel.layer_stats import (global_invar_size, is_nontrivial, eqn_flops,
-                                                 heavy_count,
-                                                 log_layer_slicing_stats)
+from alpa.pipeline_parallel.layer_stats import (global_invar_size,
+                                                is_nontrivial, eqn_flops,
+                                                heavy_count,
+                                                log_layer_slicing_stats)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
-                                                   mark_pipeline_jaxpreqn)
+                                                  mark_pipeline_jaxpreqn)
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                        get_var_mapping)
+                       get_var_mapping)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
 
 LAYER_HEAVY_OP_LOWER_BOUND = 3
 DEFAULT_EPS = 0.6
@@ -246,25 +246,27 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
                           dtype=np.int32)
     input_sizes = jaxpr_eqns_input_sizes(jaxpr)
     if cost_criteria == "flops":
-        compute_costs = np.array(
-            [eqn_flops(eqn) if nt else 0 for nt, eqn in zip(nontrivial, jaxpr.eqns)],
-            dtype=np.float64)
+        compute_costs = np.array([
+            eqn_flops(eqn) if nt else 0
+            for nt, eqn in zip(nontrivial, jaxpr.eqns)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "count":
-        compute_costs = np.array(
-            [heavy_count(eqn) if nt else 0 for nt, eqn in zip(nontrivial, jaxpr.eqns)],
-            dtype=np.float64)
+        compute_costs = np.array([
+            heavy_count(eqn) if nt else 0
+            for nt, eqn in zip(nontrivial, jaxpr.eqns)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "input_memory":
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
-        compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns], dtype=np.float64)
+        compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns],
+                                 dtype=np.float64)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
     return nontrivial, input_sizes, compute_costs
 
 
-def cluster_jaxpr_by_cost(jaxpr: Jaxpr,
-                          layer_num: int,
-                          eps: float,
-                          costs,
+def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                           cost_criteria):
     """Clusters the jaxpr by cost."""
     layer_num = int(layer_num)

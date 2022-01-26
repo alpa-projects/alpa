@@ -21,13 +21,13 @@ import jax.numpy as jnp
 
 from alpa.measure_record import StrategyConfig
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
-                                                make_replicated_spec,
-                                                compile_with_given_strategy,
-                                                HloProtoStatus)
+                                               make_replicated_spec,
+                                               compile_with_given_strategy,
+                                               HloProtoStatus)
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
-                        compile_memset_zero_buffers, get_shard_shape,
-                        profile_xla_executable)
+                       compile_memset_zero_buffers, get_shard_shape,
+                       profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

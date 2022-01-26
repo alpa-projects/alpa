@@ -18,8 +18,8 @@ from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                                compile_with_given_strategy,
-                                                HloProtoStatus)
+                                               compile_with_given_strategy,
+                                               HloProtoStatus)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 

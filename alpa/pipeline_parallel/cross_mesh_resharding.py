@@ -8,8 +8,8 @@ from jax.interpreters import pxla
 
 import alpa.collective as col
 from alpa.device_mesh import (DistributedArray, RemoteBufferRef,
-                               ReshardingAllGatherSpec, ReshardingRecvSpec,
-                               ReshardingTileSpec)
+                              ReshardingAllGatherSpec, ReshardingRecvSpec,
+                              ReshardingTileSpec)
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_tile_index
@@ -298,18 +298,18 @@ class SymbolicReshardingTask(ReshardingTask):
         group_name = self.collective_group.group_name
         for param in communicator_params:
             task_dones = []
-            src_rank ,src_gpu_idx, dst_rank, dst_gpu_idx = param
+            src_rank, src_gpu_idx, dst_rank, dst_gpu_idx = param
             src_worker = self.collective_group.mesh_workers[src_rank]
             dst_worker = self.collective_group.mesh_workers[dst_rank]
             nccl_uid = ray.get(src_worker.generate_nccl_uid.remote(group_name))
             task_dones.append(
-                src_worker.init_p2p_communicator.remote(group_name, src_rank, src_gpu_idx,
-                                                        dst_rank, dst_gpu_idx, nccl_uid)
-            )
+                src_worker.init_p2p_communicator.remote(group_name, src_rank,
+                                                        src_gpu_idx, dst_rank,
+                                                        dst_gpu_idx, nccl_uid))
             task_dones.append(
-                dst_worker.init_p2p_communicator.remote(group_name, dst_rank, dst_gpu_idx,
-                                                        src_rank, src_gpu_idx, nccl_uid)
-            )
+                dst_worker.init_p2p_communicator.remote(group_name, dst_rank,
+                                                        dst_gpu_idx, src_rank,
+                                                        src_gpu_idx, nccl_uid))
             ray.get(task_dones)
 
     def _compile_send_recv_tasks(self):
@@ -496,7 +496,9 @@ class CollectiveGroup:
                 self.device_str_to_host_id_map[device_str] = i
                 self.device_str_to_device_id_map[device_str] = j
 
-        self.worker_to_rank_map = {worker: r for r, worker in enumerate(self.mesh_workers)}
+        self.worker_to_rank_map = {
+            worker: r for r, worker in enumerate(self.mesh_workers)
+        }
 
     def instantiate(self):
         """Instantiate the collective group in Ray lazily."""
@@ -512,12 +514,14 @@ class CollectiveGroup:
         """Instantiate the collective group eagerly (but not communicators)."""
         world_size = len(self.mesh_workers)
         task_dones = []
-        logger.debug("Trying to create ray.collective groups among participants.")
+        logger.debug(
+            "Trying to create ray.collective groups among participants.")
         for rank, worker in enumerate(self.mesh_workers):
             task_dones.append(
-                worker.init_collective_group.remote(world_size, rank, "nccl", self.group_name))
+                worker.init_collective_group.remote(world_size, rank, "nccl",
+                                                    self.group_name))
         ray.get(task_dones)
-        logger.debug(f"The group {self.group_name} has been created." )
+        logger.debug(f"The group {self.group_name} has been created.")
 
     def destroy(self):
         """Destroy the NCCL collective group at exit."""

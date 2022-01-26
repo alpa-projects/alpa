@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
-                               VirtualPhysicalMesh, _shard_device_array)
+                              VirtualPhysicalMesh, _shard_device_array)
 from alpa.global_env import global_config
 from alpa.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
 from alpa.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
@@ -29,11 +29,11 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
 from alpa.pipeline_parallel.resharding_tensor import VDA
 from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                                compile_with_given_strategy,
-                                                HloProtoStatus,
-                                                hlo_sharding_to_sharding_spec)
+                                               compile_with_given_strategy,
+                                               HloProtoStatus,
+                                               hlo_sharding_to_sharding_spec)
 from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_computation,
-                        OrderedSet)
+                       OrderedSet)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

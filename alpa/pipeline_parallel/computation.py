@@ -20,17 +20,17 @@ from alpa.device_mesh import PhysicalDeviceMesh
 from alpa.measure_record import StrategyConfig
 from alpa.mesh_executable import PartialGradAccMeshDriverExecutable
 from alpa.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
-                                                   pipeline_p,
-                                                   mark_pipeline_jaxpreqn)
+                                                  pipeline_p,
+                                                  mark_pipeline_jaxpreqn)
 from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                                compile_with_given_strategy,
-                                                get_input_output_sharding_specs,
-                                                hlo_sharding_to_sharding_spec,
-                                                HloProtoStatus)
+                                               compile_with_given_strategy,
+                                               get_input_output_sharding_specs,
+                                               hlo_sharding_to_sharding_spec,
+                                               HloProtoStatus)
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
-                        jaxpr_to_hlo_computation, setup_computation_alias,
-                        log_jaxpr, compile_dummy_zero_constant, get_var_mapping)
+                       jaxpr_to_hlo_computation, setup_computation_alias,
+                       log_jaxpr, compile_dummy_zero_constant, get_var_mapping)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore

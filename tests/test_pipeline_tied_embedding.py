@@ -8,7 +8,7 @@ import optax
 import ray
 
 from alpa import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_layer_construction)
+                  DeviceCluster, manual_layer_construction)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str

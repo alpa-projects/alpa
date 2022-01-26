@@ -9,7 +9,7 @@ import optax
 import ray
 
 from alpa import (parallelize, set_parallelize_options, mark_pipeline,
-                   DeviceCluster, manual_layer_construction)
+                  DeviceCluster, manual_layer_construction)
 from alpa.testing import BertLayerModel, assert_allclose
 from alpa.model.model_util import TrainState
 from alpa.model.bert_model import BertConfig

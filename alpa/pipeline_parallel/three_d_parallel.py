@@ -10,8 +10,8 @@ from alpa.global_env import global_config
 from alpa.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                               gen_dependency_with_stages,
-                                               PipeDreamFlush)
+                                              gen_dependency_with_stages,
+                                              PipeDreamFlush)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
@@ -19,9 +19,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad, process_apply_gradient,
-    split_compute_grad_and_apply_grad)
+from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
+                                               process_apply_gradient,
+                                               split_compute_grad_and_apply_grad
+                                              )
 from alpa.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet

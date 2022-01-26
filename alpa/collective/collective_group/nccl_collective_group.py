@@ -10,9 +10,9 @@ from alpa.collective.collective_group import nccl_util
 from alpa.collective.collective_group.base_collective_group import BaseGroup
 from alpa.collective.const import get_store_name
 from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
-                                    ReduceOptions, BroadcastOptions,
-                                    AllGatherOptions, ReduceScatterOptions,
-                                    SendOptions, RecvOptions)
+                                   ReduceOptions, BroadcastOptions,
+                                   AllGatherOptions, ReduceScatterOptions,
+                                   SendOptions, RecvOptions)
 from alpa.collective.collective_group.cuda_stream import get_stream_pool
 
 logger = logging.getLogger(__name__)
@@ -453,8 +453,12 @@ class NCCLGroup(BaseGroup):
                     events[i].record(cupy.cuda.get_current_stream())
                     streams[i].wait_event(events[i])
 
-    def _get_nccl_p2p_communicator(self, comm_key, my_gpu_idx, peer_rank,
-                                   peer_gpu_idx, nccl_uid=None):
+    def _get_nccl_p2p_communicator(self,
+                                   comm_key,
+                                   my_gpu_idx,
+                                   peer_rank,
+                                   peer_gpu_idx,
+                                   nccl_uid=None):
         """Create or retrieve an NCCL communicator for p2p tasks.
 
         Note(Hao): this function is not thread-safe now.
@@ -629,7 +633,7 @@ class NCCLGroup(BaseGroup):
                                 my_gpu_idx: int,
                                 peer_rank: int,
                                 peer_gpu_idx: int,
-                                nccl_uid: str=None):
+                                nccl_uid: str = None):
         """A public method to create p2p communicators
 
         Args:

@@ -19,7 +19,7 @@ from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.pipeline_parallel.three_d_parallel import three_d_parallel_callable
 from alpa.shard_parallel.shard_callable import shard_parallel_callable
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
-                        abstractify_with_aval)
+                       abstractify_with_aval)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore

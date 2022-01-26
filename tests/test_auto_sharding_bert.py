@@ -9,7 +9,7 @@ from flax import optim, linen as nn
 
 from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
-                                    FlaxBertForMaskedLMModule)
+                                   FlaxBertForMaskedLMModule)
 from alpa.util import count_communication_primitives
 from test_auto_sharding_mlp import (
     assert_all_replicated, assert_close, assert_column_partitioned,

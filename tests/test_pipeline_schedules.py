@@ -1,7 +1,7 @@
 import unittest
 
 from alpa.pipeline_parallel.schedules import (gen_linear_pipeline_dependency,
-                                               GpipeSchedule, PipeDreamFlush)
+                                              GpipeSchedule, PipeDreamFlush)
 
 
 class PipelineScheduleTest(unittest.TestCase):

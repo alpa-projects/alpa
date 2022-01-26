@@ -31,11 +31,11 @@ from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
-                        cupy_to_jax_tensor, jax_tensor_set,
-                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
-                        xla_buffer_to_cupy, cupy_to_xla_buffer,
-                        is_continuous_subset, infer_offset_and_n_elements,
-                        jax_tensor_index, OrderedSet)
+                       cupy_to_jax_tensor, jax_tensor_set,
+                       xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
+                       xla_buffer_to_cupy, cupy_to_xla_buffer,
+                       is_continuous_subset, infer_offset_and_n_elements,
+                       jax_tensor_index, OrderedSet)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -273,8 +273,8 @@ class MeshHostWorker:
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
 
-    def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx,
-                              peer_rank, peer_gpu_idx, nccl_uid):
+    def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx, peer_rank,
+                              peer_gpu_idx, nccl_uid):
         """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
         assert col.get_rank(group_name) == my_rank

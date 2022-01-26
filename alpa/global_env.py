@@ -81,7 +81,7 @@ class GlobalConfig:
         self.pipeline_runtime_mode = "paper"  # or "production"
         self.use_hlo_cost_model = False
         self.profiling_database_filename = None
-        self.with_physical_mesh = True
+        self.debug_with_local_runtime = False
         self.profile_timeout = 500
         self.profile_maximum_retry = 2
         self.fix_physical_mesh_shape = None

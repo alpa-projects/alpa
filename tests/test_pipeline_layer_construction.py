@@ -4,24 +4,24 @@ import jax
 from alpa.testing import PipelineBasicTest
 
 
-class AutoSlicingTest(PipelineBasicTest):
+class LayerConstructionTest(PipelineBasicTest):
 
-    def test_mlp_auto_layer_slicing(self):
+    def test_mlp_layer_construction(self):
         self.run_mlp(manual_pipeline_layer=False)
 
-    def test_2_layer_bert_auto_layer_slicing(self):
+    def test_2_layer_bert_layer_construction(self):
         self.run_n_layer_bert(n_layers=2, manual_pipeline_layer=False)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
-    def test_8_layer_bert_auto_layer_slicing(self):
+    def test_8_layer_bert_layer_construction(self):
         self.run_n_layer_bert(n_layers=8, manual_pipeline_layer=False)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoSlicingTest('test_mlp_auto_layer_slicing'))
-    suite.addTest(AutoSlicingTest('test_2_layer_bert_auto_layer_slicing'))
-    suite.addTest(AutoSlicingTest('test_8_layer_bert_auto_layer_slicing'))
+    suite.addTest(LayerConstructionTest('test_mlp_layer_construction'))
+    suite.addTest(LayerConstructionTest('test_2_layer_bert_layer_construction'))
+    suite.addTest(LayerConstructionTest('test_8_layer_bert_layer_construction'))
     return suite
 
 

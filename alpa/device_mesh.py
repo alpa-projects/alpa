@@ -253,7 +253,7 @@ class MeshHostWorker:
             self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
-            # See:https://github.com/alpa-project/alpa/issues/145
+            # See:https://github.com/alpa-projects/alpa/issues/145
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
@@ -264,7 +264,7 @@ class MeshHostWorker:
                 ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
 
             # The following in-place write will cause a D2D copy kernel
-            # See: https://github.com/alpa-project/alpa/issues/144
+            # See: https://github.com/alpa-projects/alpa/issues/144
             # It is unavoidable, but it is better than:
             # new_buffer = dynamic_update_slice(src_buf, update, start_indices)
             # which is not in-place and will cause extra allocation-related kernels.

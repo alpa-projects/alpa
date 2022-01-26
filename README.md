@@ -19,9 +19,9 @@ This repo depends on our private fork of jax and tensorflow.
 
 - Step 1. Clone repos
   ```bash
-  git clone git@github.com:alpa-project/alpa.git
-  git clone git@github.com:alpa-project/jax-alpa.git
-  git clone git@github.com:alpa-project/tensorflow-alpa.git
+  git clone git@github.com:alpa-projects/alpa.git
+  git clone git@github.com:alpa-projects/jax-alpa.git
+  git clone git@github.com:alpa-projects/tensorflow-alpa.git
   ```
 
 - Step 2. Install dependencies

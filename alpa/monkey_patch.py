@@ -1,4 +1,5 @@
 """Monkey patch other python libraries."""
+from functools import partial
 
 import flax
 from flax.linen.module import compact, wrap_method_once
@@ -8,6 +9,7 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   wrap_name)
 from jax.lib import xla_client as xc
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
+import numpy as np
 
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.primitive_def import xla_identity
@@ -79,6 +81,34 @@ def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
 
 
 jax.xla._remat_using_while = _remat_using_identity
+
+
+# Use a special rule for argmin/argmax that does not require variadic reduce.
+def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
+    axis, = axes
+    idxs = lax.tie_in(a, lax.broadcasted_iota(index_dtype, a.shape, axis))
+    maxval = np.array(lax.dtypes.iinfo(index_dtype).max, dtype=index_dtype)
+    maxval = lax.broadcast(lax.tie_in(a, maxval), a.shape)
+    maxvals = lax.expand_dims(op(a, (axis,)), (axis,))
+    mask_idxs = lax.select(lax.eq(a, maxvals) | lax.ne(a, a), idxs, maxval)
+    return lax._reduce_min(mask_idxs, (axis,))
+
+
+jax.xla.register_translation(lax.argmin_p,
+                             jax.xla.lower_fun(partial(
+                                 _argminmax_gpu_translation_rule,
+                                 lax._reduce_min),
+                                               multiple_results=False,
+                                               new_style=True),
+                             platform="gpu")
+
+jax.xla.register_translation(lax.argmax_p,
+                             jax.xla.lower_fun(partial(
+                                 _argminmax_gpu_translation_rule,
+                                 lax._reduce_max),
+                                               multiple_results=False,
+                                               new_style=True),
+                             platform="gpu")
 
 ########################################
 ##### Monkey patch Flax

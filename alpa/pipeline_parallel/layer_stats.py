@@ -22,7 +22,7 @@ def call_to_xla_computation(eqn: JaxprEqn):
 
     def aval(v):
         if type(v) is Literal:
-            return abstractify(v.val)
+            return xla.abstractify(v.val)
         else:
             return v.aval
 
@@ -36,8 +36,8 @@ def call_to_xla_computation(eqn: JaxprEqn):
     axis_env = xla.AxisEnv(1, (), ())
     ctx = xla.TranslationContext(c, backend.platform, axis_env, name_stack)
     rule = xla._translations[eqn.primitive]
-    ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars), *in_nodes,
-               **eqn.params)
+    ans = rule(ctx, list(map(aval, eqn.invars)), list(map(aval, eqn.outvars)),
+               *in_nodes, **eqn.params)
     c.clear_op_metadata()
 
     try:

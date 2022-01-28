@@ -27,22 +27,22 @@ from alpa.util import map_to_shape, print_used_time, compute_param_number, GB, t
 paper_auto_wresnet_suite = {  # key = number of gpus, value = a list of cases
 1: [
     # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (2048, 224, 50,  160,  2,  "fp32", 32, False, False, True,  "single_node_model_parallel"),
+    (1536, 224, 50,  160,  2,  "fp32", 24, False, False, True,  "single_node_model_parallel"),
 ],
 
 2: [
     # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (1536, 224, 50,  224,  2, "fp32",  32, False, True,  True,  "single_node_model_parallel"),
+    (1536, 224, 50,  224,  2, "fp32",  24, False, True,  True,  "single_node_model_parallel"),
 ],
 
 4 : [
     # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-   (1536,  224, 50,  320,  2, "fp32",  32, False, True,  True,  "single_node_model_parallel"),
+   (1536,  224, 50,  320,  2, "fp32",  24, False, True,  True,  "single_node_model_parallel"),
 ],
 
 8: [
     # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (1536, 224, 50,  448,  2, "fp32",  32, False, True,  True,  "single_node_model_parallel"),
+    (1536, 224, 50,  448,  2, "fp32",  24, False, True,  True,  "single_node_model_parallel"),
 ],
 
 16: [

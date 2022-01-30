@@ -77,6 +77,5 @@ result_auto_gpt_suite = {
     "sub_physical_mesh_shapes": [(1, 4)] * 8,
     "sub_logical_mesh_shapes": [(4, 1), (4, 1), (4, 1), (4, 1), (1, 4), (4, 1), (1, 4), (1, 4)],
     "submesh_autosharding_option_dicts": [{}, {}, {}, {}, {'force_batch_dim_to_mesh_dim': 0}, {},
-{'force_batch_dim_to_mesh_dim': 0}, {'force_batch_dim_to_mesh_dim': 0}],
-}),
+    {'force_batch_dim_to_mesh_dim': 0}, {'force_batch_dim_to_mesh_dim': 0}]}),
 }

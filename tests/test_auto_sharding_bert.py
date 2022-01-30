@@ -295,10 +295,19 @@ class AutoShardingAttentionTest(unittest.TestCase):
         optimizer, hlo_ir, objective = self.run_bert_layers(
             batch_size, seq_len, num_layers, hidden_size, num_heads,
             deterministic, use_remat, device_mesh)
-
         assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, 0)
 
-        # model parallel
+        # model parallel (case 1)
+        device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
+        optimizer, hlo_ir, objective = self.run_bert_layers(
+            batch_size, seq_len, num_layers, hidden_size, num_heads,
+            deterministic, use_remat, device_mesh)
+        expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
+            batch_size * seq_len * hidden_size * 4, 1)
+        assert_close(objective, expected)
+
+        # model parallel (case 2)
+        batch_size = 1
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
         optimizer, hlo_ir, objective = self.run_bert_layers(
             batch_size, seq_len, num_layers, hidden_size, num_heads,

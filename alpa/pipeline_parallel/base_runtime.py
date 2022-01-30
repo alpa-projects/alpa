@@ -18,7 +18,7 @@ from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.global_env import global_config
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 class BaseRuntime(metaclass=ABCMeta):

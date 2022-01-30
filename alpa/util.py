@@ -609,7 +609,7 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     """Print jaxpr int a temporary file for debugging purposes."""
     path = "/tmp/" + filename
     with open(path, "w") as f:
-        f.write(repr(jaxpr))
+        f.write(str(jaxpr))
 
 
 ########################################

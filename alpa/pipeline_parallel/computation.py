@@ -375,8 +375,6 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
     result_computations = []
     current_computation = None
 
-    log_jaxpr(closed_jaxpr, "new_jaxpr")
-
     for eqn in closed_jaxpr.jaxpr.eqns:
         if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "start":
             assert current_computation is None, (

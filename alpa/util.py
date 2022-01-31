@@ -35,7 +35,6 @@ import tqdm
 
 from alpa.global_env import global_config
 
-
 ########################################
 ##### Alpa API Utilities
 ########################################

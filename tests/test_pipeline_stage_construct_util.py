@@ -25,6 +25,7 @@ from alpa.testing import (BertLayerModel, create_train_state,
                           get_bert_layer_train_step)
 from alpa.util import get_ray_namespace_str, OrderedSet
 
+
 def _aval_key(a):
     return (a.shape, repr(a.dtype))
 

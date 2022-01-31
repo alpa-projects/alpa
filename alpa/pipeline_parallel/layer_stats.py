@@ -18,6 +18,7 @@ def call_to_xla_computation(eqn: JaxprEqn):
     backend = xb.get_backend("gpu")
 
     c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
+
     def aval(v):
         if type(v) is Literal:
             return xla.abstractify(v.val)

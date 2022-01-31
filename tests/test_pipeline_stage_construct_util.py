@@ -5,6 +5,9 @@ import jax
 from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
+import ray
+
+from alpa import DeviceCluster
 from alpa.model.bert_model import BertConfig
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
@@ -14,16 +17,13 @@ from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
-import ray
-
-from alpa import DeviceCluster
 from alpa.pipeline_parallel.stage_profiling import (
     ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info,
     compile_all, profile_all, compute_intermediate_size,
     compute_apply_grad_invar_size)
-from alpa.util import get_ray_namespace_str, OrderedSet
 from alpa.testing import (BertLayerModel, create_train_state,
                           get_bert_layer_train_step)
+from alpa.util import get_ray_namespace_str, OrderedSet
 
 
 def _aval_key(a):

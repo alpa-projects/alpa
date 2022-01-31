@@ -6,6 +6,7 @@ import jax
 from jax import linear_util as lu
 from jax._src import api
 from jax._src.util import safe_map, HashableFunction
+from jax._src.traceback_util import api_boundary
 from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
@@ -48,6 +49,7 @@ def parallelize(fun: Callable = None,
     def decorate_fun(fun):
 
         @wraps(fun)
+        @api_boundary
         def ret_func(*args, **kwargs):
             return_value_mode = kwargs.pop("__return_value_mode", "normal")
             assert not kwargs, "kwargs is not supported"

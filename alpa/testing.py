@@ -258,14 +258,20 @@ class PipelineBasicTest(unittest.TestCase):
                          hidden_size=512,
                          num_heads=512 // 64,
                          submesh_shapes=None,
-                         do_numerical_test=True):
-        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
+                         do_numerical_test=True,
+                         overwrite_global_config_dict=None,
+                         virtual_mesh=None):
+        if virtual_mesh is None:
+            virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
                                 sub_physical_mesh_shapes=submesh_shapes)
+
+        if overwrite_global_config_dict:
+            global_config.update_with_dict(overwrite_global_config_dict)
 
         # Init model and optimizer
         rngkey = jax.random.PRNGKey(0)

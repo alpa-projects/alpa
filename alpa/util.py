@@ -35,10 +35,6 @@ import tqdm
 
 from alpa.global_env import global_config
 
-# Note: use Python jit instead of CPP jit,
-# because CPP jit has bugs on _DeviceArray.
-FLAGS.experimental_cpp_jit = False
-
 ########################################
 ##### Alpa API Utilities
 ########################################
@@ -609,7 +605,7 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     """Print jaxpr int a temporary file for debugging purposes."""
     path = "/tmp/" + filename
     with open(path, "w") as f:
-        f.write(repr(jaxpr))
+        f.write(str(jaxpr))
 
 
 ########################################

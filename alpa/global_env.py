@@ -73,7 +73,7 @@ class GlobalConfig:
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
-        self.submesh_autosharding_options = None
+        self.submesh_autosharding_option_dicts = None
         self.submesh_choices_mode = "power_of_two"
         self.logical_mesh_search_space = "default"
         self.auto_stage_construction_imbalance_tolerance = np.inf
@@ -123,7 +123,7 @@ class GlobalConfig:
     def update_with_dict(self, value_dict):
         """Update the config with values from a dictionary."""
         for k, v in value_dict.items():
-            assert hasattr(self, k)
+            assert hasattr(self, k), k
             setattr(self, k, v)
 
 

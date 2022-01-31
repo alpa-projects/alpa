@@ -18,7 +18,6 @@ def call_to_xla_computation(eqn: JaxprEqn):
     backend = xb.get_backend("gpu")
 
     c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
-    name_stack = xla.extend_name_stack(prim.name)
 
     def aval(v):
         if type(v) is Literal:
@@ -34,7 +33,7 @@ def call_to_xla_computation(eqn: JaxprEqn):
         c, list(map(lambda x: x.aval, eqn.invars)),
         len(eqn.invars) > 100)
     axis_env = xla.AxisEnv(1, (), ())
-    ctx = xla.TranslationContext(c, backend.platform, axis_env, name_stack)
+    ctx = xla.TranslationContext(c, backend.platform, axis_env, prim.name)
     rule = xla._translations[eqn.primitive]
     ans = rule(ctx, list(map(aval, eqn.invars)), list(map(aval, eqn.outvars)),
                *in_nodes, **eqn.params)

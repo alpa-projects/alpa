@@ -64,6 +64,10 @@ test_moe_suite = {
 ],
 
 16: [
+     # verify cost model vs. profiling
+     (1024, *moe_specs["10B"], 2048, 2,  8, 2, 8, 1, 32, True,  True, True, _, _),
+     (1024, *moe_specs["10B"], 2048, 16, 1, 2, 8, 1, 32, False, True, True, _, _),
+     (1024, *moe_specs["10B"], 2048, 1, 16, 2, 8, 1, 32, True,  True, True, _, _),
 ],
 
 32: [

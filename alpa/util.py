@@ -35,9 +35,6 @@ import tqdm
 
 from alpa.global_env import global_config
 
-# Note: use Python jit instead of CPP jit,
-# because CPP jit has bugs on _DeviceArray.
-FLAGS.experimental_cpp_jit = False
 
 ########################################
 ##### Alpa API Utilities

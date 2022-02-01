@@ -118,8 +118,8 @@ class DeviceMeshTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(DeviceMeshTest("test_add_one"))
-    suite.addTest(DeviceMeshTest("test_mlp"))
+    # suite.addTest(DeviceMeshTest("test_add_one"))
+    # suite.addTest(DeviceMeshTest("test_mlp"))
     suite.addTest(DeviceMeshTest("test_distributed_array"))
 
     return suite

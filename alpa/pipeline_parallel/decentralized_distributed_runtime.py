@@ -192,6 +192,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.donate_invars = []
         self.input_indices = []
         self.mesh_arg_indices = []
+        self.batch_arg_on_mesh = {}
 
         self.output_local_uuid_list = {}
         self.mesh_output_indices = []
@@ -745,6 +746,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         split_args = []
         for arg_idx, arg in enumerate(args):
             if self.is_batch[arg_idx]:
+                # TODO(yonghao): dispatch and split on worker.
                 for split in jnp.split(arg, self.num_batch, axis=batch_dim):
                     split_args.append(split)
             else:

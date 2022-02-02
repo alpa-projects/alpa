@@ -96,6 +96,9 @@ def abstractify_with_aval(x):
         return xla.abstractify(x)
 
 
+def tree_to_nparray(tree):
+    return tree_map(lambda x: np.asarray(x), tree)
+
 ########################################
 ##### Data Structure Utilities
 ########################################

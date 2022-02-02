@@ -5,6 +5,7 @@ from typing import Any, Callable, Optional, Tuple, Optional, Union
 
 import flax
 from flax.training import train_state
+import numpy as np
 import jax
 import jax.numpy as jnp
 import jaxlib.xla_extension as jax_xla
@@ -355,7 +356,7 @@ class TrainState(train_state.TrainState):
             master_copy = None
 
         return cls(
-            step=0,
+            step=np.array(0, dtype=np.int32),
             apply_fn=apply_fn,
             params=params,
             master_copy=master_copy,
@@ -384,7 +385,7 @@ class TrainState(train_state.TrainState):
             master_copy = None
 
         return cls(
-            step=0,
+            step=np.array(0, dtype=np.int32),
             apply_fn=apply_fn,
             params=params,
             master_copy=master_copy,

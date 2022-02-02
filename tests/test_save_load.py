@@ -6,6 +6,7 @@ import ray
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pickle
 import flax
 
 from alpa.util import get_ray_namespace_str, tree_to_nparray
@@ -58,10 +59,11 @@ class SaveLoadTest(unittest.TestCase):
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
         outfile = TemporaryFile()
-        jnp.save(outfile, tree_to_nparray(
-            flax.serialization.to_state_dict(parallel_state)))
+        parallel_state_dict = flax.serialization.to_state_dict(parallel_state)
+        pickle.dump(tree_to_nparray(parallel_state_dict), outfile)
         outfile.seek(0)
-        loaded_state = flax.serialization.from_state_dict(state, jnp.load(outfile))
+        loaded_state_dict = pickle.load(outfile)
+        loaded_state = flax.serialization.from_state_dict(state, loaded_state_dict)
         outfile.close()
 
         assert_allclose(loaded_state.params, serial_state.params, 1e-3, 1e-3)

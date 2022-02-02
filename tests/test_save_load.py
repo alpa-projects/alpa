@@ -60,23 +60,29 @@ class SaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
+        # Save model to a temporary file
         outfile = TemporaryFile()
         parallel_state_dict = flax.serialization.to_state_dict(parallel_state)
         pickle.dump(tree_to_nparray(parallel_state_dict), outfile)
 
+        # Load model from the temporary file
         outfile.seek(0)
         loaded_state_dict = pickle.load(outfile)
         loaded_state = flax.serialization.from_state_dict(
             state, loaded_state_dict)
         outfile.close()
 
+        # Compare the loaded state with the original state
         assert_allclose(loaded_state.params, serial_state.params, 1e-3, 1e-3)
         assert_allclose(loaded_state.params, parallel_state.params, 1e-3, 1e-3)
 
+        # Take a step with the loaded state on both serial and parallel version
         serial_state = serial_train_step(serial_state, batch)
         parallel_state = parallel_train_step(parallel_state, batch)
         serial_loaded_state = serial_train_step(loaded_state, batch)
         parallel_loaded_state = parallel_train_step(loaded_state, batch)
+
+        # All the states should be the same
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
         assert_allclose(serial_state.params, serial_loaded_state.params, 1e-3,
                         1e-3)

@@ -5,6 +5,7 @@ from alpa.testing import PipelineBasicTest
 
 
 class ScatterGatherTest(PipelineBasicTest):
+
     def test_2_layer_bert(self):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh([0], 4)
 

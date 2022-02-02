@@ -12,10 +12,12 @@ import flax
 from alpa.util import get_ray_namespace_str, tree_to_nparray
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
-from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step, assert_allclose)
+from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step,
+                          assert_allclose)
 
 
 class SaveLoadTest(unittest.TestCase):
+
     def setUp(self):
         ray.init(address="auto",
                  namespace=get_ray_namespace_str(
@@ -64,7 +66,8 @@ class SaveLoadTest(unittest.TestCase):
 
         outfile.seek(0)
         loaded_state_dict = pickle.load(outfile)
-        loaded_state = flax.serialization.from_state_dict(state, loaded_state_dict)
+        loaded_state = flax.serialization.from_state_dict(
+            state, loaded_state_dict)
         outfile.close()
 
         assert_allclose(loaded_state.params, serial_state.params, 1e-3, 1e-3)
@@ -75,8 +78,10 @@ class SaveLoadTest(unittest.TestCase):
         serial_loaded_state = serial_train_step(loaded_state, batch)
         parallel_loaded_state = parallel_train_step(loaded_state, batch)
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
-        assert_allclose(serial_state.params, serial_loaded_state.params, 1e-3, 1e-3)
-        assert_allclose(serial_state.params, parallel_loaded_state.params, 1e-3, 1e-3)
+        assert_allclose(serial_state.params, serial_loaded_state.params, 1e-3,
+                        1e-3)
+        assert_allclose(serial_state.params, parallel_loaded_state.params, 1e-3,
+                        1e-3)
 
         executable.shutdown()
 

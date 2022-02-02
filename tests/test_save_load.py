@@ -13,7 +13,8 @@ from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step, assert_allclose)
 
-class SaveLoadTest:
+
+class SaveLoadTest(unittest.TestCase):
     def setUp(self):
         ray.init(address="auto",
                  namespace=get_ray_namespace_str(

@@ -750,13 +750,11 @@ class PhysicalDeviceMesh:
         """shard arguments into buffers, then split the arg."""
         indices = pxla.spec_to_indices(arg.shape, sharding_spec)
         buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
-        microbatch_uuids = np.full((self.num_devices, num_microbatch),
-                                   np.inf,
-                                   dtype=np.int64)
+        microbatch_uuids = np.full((self.num_devices, num_microbatch), np.inf,
+                                   np.int64)
         # split on devices
         host_num_devices = self.num_devices_per_host
         for host_id, worker in enumerate(self.workers):
-            worker: MeshHostWorker
             start_idx = host_id * host_num_devices
             end_idx = (host_id + 1) * host_num_devices
             buf_uuids = [ref.uuid for ref in buf_refs[start_idx:end_idx]]
@@ -768,6 +766,9 @@ class PhysicalDeviceMesh:
                                        batch_dim)
             split_uuids = split_uuids.reshape(host_num_devices, num_microbatch)
             microbatch_uuids[start_idx:end_idx, :] = split_uuids
+            worker.delete_buffers.remote(buf_uuids)
+        for buf_ref in buf_refs:
+            buf_ref.set_deleted_on_workers()
         microbatch_arys = []
         microbatch_indices = pxla.spec_to_indices(microbatch_aval.shape,
                                                   sharding_spec)

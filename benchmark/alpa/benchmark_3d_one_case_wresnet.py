@@ -230,7 +230,13 @@ def benchmark_wresnet_internal(benchmark_case, niter,
                             num_micro_batches=num_micro_batches,
                             pipeline_stage_mode=pipeline_stage_mode,
                             logical_mesh_search_space=logical_mesh_search_space)
-    global_config.auto_stage_construction_imbalance_tolerance = 0.25
+    #global_config.forward_stage_layer_ids = [list(range(0, 16))]
+    #global_config.sub_physical_mesh_shapes = [(2, 8)]
+    #global_config.sub_logical_mesh_shapes = [(2, 8)]
+    #global_config.submesh_autosharding_option_dicts = [{}]
+    #global_config.pipeline_distributed_compile = False
+    #global_config.auto_stage_construction_imbalance_tolerance = 0.25
+    #use_remat = True
 
     # Prepare input batch
     num_classes = 1024

@@ -251,6 +251,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         latencies = [-1]
     else:
         for i in range(niter):
+            print(f"Iteration {i}")
             state, metrics = train_step(state, batch)
 
         latencies = executable.get_execution_time_costs(warmup=warmup)

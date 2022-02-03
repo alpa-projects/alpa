@@ -383,19 +383,19 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     return solution, solution_info
 
 
-def search_layer_num(jaxpr, eps, layer_eps=0):
+def search_layer_num(jaxpr, eps, layer_eps=0, cost_criteria=DEFAULT_COST_CRITERIA):
     """TODO(zhuohan): docstring."""
     non_trivial, input_sizes, compute_costs = get_layer_construction_costs(
         jaxpr)
     layer_num = 2
     r = int(non_trivial.sum() / 3) + 1
     _, solution_info = cluster_jaxpr_by_cost(
-        jaxpr, layer_num, eps, (non_trivial, input_sizes, compute_costs))
+        jaxpr, layer_num, eps, (non_trivial, input_sizes, compute_costs), cost_criteria=cost_criteria)
     l_val = solution_info["total_cost"]
     while r - layer_num > 1:
         mid = int((layer_num + r) / 2)
         _, solution_info = cluster_jaxpr_by_cost(
-            jaxpr, mid, eps, (non_trivial, input_sizes, compute_costs))
+            jaxpr, mid, eps, (non_trivial, input_sizes, compute_costs), cost_criteria=cost_criteria)
         mid_val = solution_info["total_cost"]
         if mid_val > l_val * (1 + layer_eps):
             r = mid

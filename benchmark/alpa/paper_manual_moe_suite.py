@@ -12,15 +12,18 @@ _ = None
 
 fast_test_moe_suite = {  # key = number of gpus, value = a list of cases
 1: [
-    #B, S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
-    (8, 1024, 1024, 8,  32,    25600, 8,  1024, 1,   1,   _, _,  1,   1,  True,  True,  True,  _, _),
+    #B,  S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
+    (8,  1024, 1024, 8,  32,    25600, 8,  1024, 1,   1,   _, _,  1,   1,  True,  True,  True,  _, _),
 ],
 
 8: [
-    #B, S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
-    (8, 1024, 1024, 4,  32,    25600, 16, 1024, 8,   1,   _, _,  1,   1,  False, True,  True,  _, _),
-],
+    #B,  S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
 
+    # DEBUG: #all-to-all should be the same for the following mixed logical mesh shape cases
+    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 8,   1,   _, _,  1,   1,  False, False, True,  _, _),
+    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 4,   2,   _, _,  1,   1,  False, False, True,  _, _),
+    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 2,   4,   _, _,  1,   1,  False, False, True,  _, _),
+],
 }
 
 moe_specs = {
@@ -64,6 +67,10 @@ test_moe_suite = {
 ],
 
 16: [
+     # verify cost model vs. profiling
+     (1024, *moe_specs["10B"], 2048, 2,  8, 2, 8, 1, 32, True,  True, True, _, _),
+     (1024, *moe_specs["10B"], 2048, 16, 1, 2, 8, 1, 32, False, True, True, _, _),
+     (1024, *moe_specs["10B"], 2048, 1, 16, 2, 8, 1, 32, True,  True, True, _, _),
 ],
 
 32: [

@@ -134,6 +134,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         latencies = [-1]
     else:
         for i in range(niter):
+            print(f"Iteration {i}")
             state = train_step(state, batch, rngkey)
 
         latencies = executable.get_execution_time_costs(warmup=warmup)

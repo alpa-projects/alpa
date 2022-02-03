@@ -8,8 +8,9 @@ from jax import random
 import optax
 import ray
 
+import alpa
 from alpa import (parallelize, set_parallelize_options, mark_pipeline,
-                  DeviceCluster, manual_layer_construction)
+                  DeviceCluster, manual_layer_construction, automatic_layer_construction)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str
@@ -51,13 +52,19 @@ dim = 1024
 
 # Generate random ground truth W and b
 k1, k2 = random.split(rngkey)
-W = random.normal(k1, (1, dim))
-b = random.normal(k2, (1, dim))
+W = random.normal(k1, (dim, dim))
+b = random.normal(k2, (dim,))
+
+# Create the predict function from a set of parameters
+def make_predict(W,b):
+  def predict(x):
+    return jnp.dot(W,x)+b
+  return predict
 
 # Generate samples with additional noise
 ksample, knoise = random.split(k1)
 x = random.normal(ksample, (batch_size, dim))
-y = jax.vmap(jnp.dot(W,x) + b + 0.1*random.normal(knoise,(batch_size, dim))
+y = jax.vmap(make_predict(W, b))(x) + 0.1*random.normal(knoise,(batch_size, dim))
 
 
 ### Initialize training parameters. 
@@ -75,38 +82,43 @@ opt_state = tx.init(params)
 # Layer boundaries will be set up at the input and outputs of the loss function.
 # The gradients of each parameter are taken for each of the parameters and returned. 
 @parallelize
-def parallel_train_step(state, batch):
-    @automatic_layer_construction
+def parallel_train_step(params, batch):
+    # @automatic_layer_construction
     def loss_func(params, x, y):
-        out = state.apply_fn(params, x)
+        out = model.apply(params, x)
         loss = jnp.mean((out - y)**2)
         return loss
 
-    grads = alpa.grad(loss_func)(state.params, batch["x"], batch["y"])
-    new_state = state.apply_gradients(grads=grads)
-    return new_state
+    loss_func = automatic_layer_construction(loss_func, layer_num="auto", cost_criteria = "flops")
+    grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
+    # updates, opt_state = tx.update(grads, opt_state)
+    # params = optax.apply_updates(params, updates)
+    return grads
 
-def train_step(state, batch):
+def train_step(params, batch):
     def loss_func(params, x, y):
-        out = state.apply_fn(params, x)
+        out = model.apply(params, x)
         loss = jnp.mean((out - y)**2)
         return loss
 
-    grads = alpa.grad(loss_func)(state.params, batch["x"], batch["y"])
-    new_state = state.apply_gradients(grads=grads)
-    return new_state
+    grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
+    return grads
 
 # Now, we run one step of training. For simplicity, we only run one batch of data during training. 
 # To check that the parallelize function returns the same result as the non-parallelized version, 
 # we run one step of training normally and one step of training with the train_step parallelized. 
 batch = {"x": x, "y": y}
-num_epochs = 10
-for i in range(num_epochs):
-    new_state = train_step(state, batch)
-    new_state_with_pipeline = parallel_train_step(state, batch)
+gradients = train_step(params, batch)
+gradients_with_pipeline = parallel_train_step(params, batch)
 
 # We check that the gradients are the same. 
 assert_allclose(gradients, gradients_with_pipeline)
 
 # Shutting down the the pipelined executable. 
-pipelined_train_step.get_executable(state, batch).shutdown()
+parallel_train_step.get_executable(opt_state, batch).shutdown()
+
+# Notes:
+# Only have one tx and one opt_state, should I duplicate it for the purpose of running a for loop?
+# In layer_construction.py, I changed search_layer_num to take in cost_criteria
+# Also @automatic_layer_construction takes default arguments? If so, then layer_num is None, which later errors out
+# @parallelize kills ray workers for some reason

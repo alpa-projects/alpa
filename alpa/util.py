@@ -820,6 +820,11 @@ def cupy_to_jax_tensor(tensors):
     return from_dlpack(tensors.toDlpack())
 
 
+# Note: use Python jit instead of CPP jit,
+# because CPP jit has bugs on _DeviceArray.
+FLAGS.experimental_cpp_jit = False
+
+
 # Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
 @partial(jax.jit, donate_argnums=0, static_argnums=2)
 def jax_tensor_set(src_buf, update, start_indices):

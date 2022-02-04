@@ -568,16 +568,7 @@ def automatic_layer_construction(*args, **kwargs):
     Returns:
         A new function rematerializes each layer of the input function.
     """
-    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
-        return layer_level_jaxpr_transformation(args,
-                                                (),
-                                                remat=False,
-                                                layer_construction=True,
-                                                auto_layer_boundary=True,
-                                                layer_num=None,
-                                                eps=DEFAULT_EPS,
-                                                cost_criteria=DEFAULT_COST_CRITERIA,
-                                                layer_eps=0.0)
+
     valid_kwargs = [
         "static_argnums",
         "remat_layer",
@@ -593,12 +584,23 @@ def automatic_layer_construction(*args, **kwargs):
         f"the arguments in the list {valid_kwargs}, for example "
         "'@automatic_layer_construction(layer_num=4)'."
     )
-    assert len(args) == 0 and len(kwargs) > 0, error_string
-    for key in kwargs:
-        assert key in valid_kwargs, error_string
 
-    def wrap(fn):
-        return layer_level_jaxpr_transformation(fn,
+    # If the decorator has no extra args or kwargs (is just @automatic_layer_construction)
+    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
+        return layer_level_jaxpr_transformation(args[0],
+                                                (),
+                                                remat=False,
+                                                layer_construction=True,
+                                                auto_layer_boundary=True,
+                                                layer_num=None,
+                                                eps=DEFAULT_EPS,
+                                                cost_criteria=DEFAULT_COST_CRITERIA,
+                                                layer_eps=0.0)
+    # If the decorator is used as a function with kwargs (e.g. automatic_layer_construction(fn, layer_num=4))
+    elif len(args) == 1 and len(kwargs) != 0 and callable(args[0]):
+        for key in kwargs:
+            assert key in valid_kwargs, error_string
+        return layer_level_jaxpr_transformation(args[0],
                                                 kwargs.get("static_argnums") or (),
                                                 remat=kwargs.get("remat_layer") or False,
                                                 layer_construction=True,
@@ -607,4 +609,20 @@ def automatic_layer_construction(*args, **kwargs):
                                                 eps=kwargs.get("eps") or DEFAULT_EPS,
                                                 cost_criteria=kwargs.get("cost_criteria") or DEFAULT_COST_CRITERIA,
                                                 layer_eps=kwargs.get("layer_eps") or 0.0)
-    return wrap
+    # If the decorator has kwargs (e.g. @automatic_layer_construction(layer_nums=4))
+    else:
+        assert len(args) == 0 and len(kwargs) > 0, error_string
+        for key in kwargs:
+            assert key in valid_kwargs, error_string
+
+        def wrap(fn):
+            return layer_level_jaxpr_transformation(fn,
+                                                    kwargs.get("static_argnums") or (),
+                                                    remat=kwargs.get("remat_layer") or False,
+                                                    layer_construction=True,
+                                                    auto_layer_boundary=True,
+                                                    layer_num=kwargs.get("layer_num") or None,
+                                                    eps=kwargs.get("eps") or DEFAULT_EPS,
+                                                    cost_criteria=kwargs.get("cost_criteria") or DEFAULT_COST_CRITERIA,
+                                                    layer_eps=kwargs.get("layer_eps") or 0.0)
+        return wrap

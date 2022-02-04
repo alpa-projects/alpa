@@ -192,6 +192,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.donate_invars = []
         self.input_indices = []
         self.mesh_arg_indices = []
+        self.batch_arg_on_mesh = []
 
         self.output_local_uuid_list = {}
         self.mesh_output_indices = []
@@ -564,14 +565,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         global_invar_indices = {}
         invar_counter = 0
         mesh_arg_lists = [None for _ in range(num_mesh)]
+        self.batch_arg_on_mesh = [None] * len(self.global_invars)
+        batch_arg_indices = {v: idx for idx, v in enumerate(self.global_invars)}
 
         # expand barch args
-        for invar in self.global_invars:
+        for arg_idx, invar in enumerate(self.global_invars):
             if invar in not_batch_invars:
                 key = invar, 0
                 global_invar_indices[key] = invar_counter
                 invar_counter += 1
                 continue
+            self.batch_arg_on_mesh[arg_idx] = []
             for batch_idx in range(self.num_batch):
                 key = invar, batch_idx
                 global_invar_indices[key] = invar_counter
@@ -580,6 +584,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = {}
+            mesh_batch_vars = OrderedSet()
             for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
                 stage = self.stages[stage_idx]
                 for spec, invar in zip(stage.input_sharding_specs,
@@ -591,8 +596,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                             continue
                         for batch_idx in range(self.num_batch):
                             mesh_arg_set.add((invar, batch_idx))
+                        mesh_batch_vars.add(invar)
             mesh_arg_list = list(mesh_arg_set)
             mesh_arg_lists[mesh_idx] = mesh_arg_list
+            for invar in mesh_batch_vars:
+                self.batch_arg_on_mesh[batch_arg_indices[invar]].append(
+                    (mesh_idx, var_to_spec[invar]))
 
             self.donate_invars.append(
                 [key[0] in donated_invar_set for key in mesh_arg_list])
@@ -743,10 +752,24 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _exec_split_args(self, args, batch_dim=0):
         split_args = []
+        num_batch = self.num_batch
         for arg_idx, arg in enumerate(args):
             if self.is_batch[arg_idx]:
-                for split in jnp.split(arg, self.num_batch, axis=batch_dim):
-                    split_args.append(split)
+                # dispatch and split on worker.
+                replicas = [None] * num_batch
+                for mesh_and_shard in self.batch_arg_on_mesh[arg_idx]:
+                    mesh_idx, sharding_spec = mesh_and_shard
+                    mesh = self.physical_meshes[mesh_idx]
+                    splits = mesh.shard_batch_arg(
+                        arg, sharding_spec, num_batch, batch_dim,
+                        self.global_invars[arg_idx].aval)
+                    for batch_idx, split in enumerate(splits):
+                        if replicas[batch_idx] is not None:
+                            replicas[batch_idx].add_replica(mesh, split)
+                        else:
+                            replicas[batch_idx] = ReplicatedDistributedArray(
+                                [mesh], [split])
+                split_args.extend(replicas)
             else:
                 split_args.append(arg)
         return split_args

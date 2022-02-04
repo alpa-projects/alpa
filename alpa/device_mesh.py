@@ -26,7 +26,9 @@ from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
 from alpa.global_env import global_config
-from alpa.mesh_executable import RemoteBufferRef, MeshDriverExecutable
+from alpa.mesh_executable import (RemoteBufferRef, MeshDriverExecutable,
+                                  create_remote_buffer_refs,
+                                  next_remote_buffer_uuid)
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
@@ -106,8 +108,35 @@ class MeshHostWorker:
                             device_id: int,
                             shape: Sequence[int],
                             dtype=np.float32):
-        self.buffers[uuid] = device_put(jnp.full(
-            shape, 1e-8, dtype), self.local_devices[device_id]).device_buffer
+        self.buffers[uuid] = (self.backend.buffer_from_pyval(
+            np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
+        # device_put(jnp.full(
+        # shape, 1e-8, dtype), self.local_devices[device_id]).device_buffer
+
+    def shard_and_put_non_zero_buffer(self, uuids, shape, dtype, indices):
+        array = jnp.full(shape, 1e-8, dtype)
+        start_indices, limit_indices, removed_dims = map(
+            tuple, unzip3(_as_slice_indices(array, idx) for idx in indices))
+
+        shards = array._multi_slice(start_indices, limit_indices, removed_dims)
+        num_devices = len(self.local_devices)
+        for device_id in range(num_devices):
+            data = shards[num_devices * self.host_id + device_id]
+            self.put_buffer(uuids[device_id], device_id, data)
+
+    def split_on_dim(self, uuids, out_uuids, num_microbatch, batch_dim):
+        """split a local buffer on given dimension."""
+        assert len(out_uuids) == len(uuids) * num_microbatch
+        cnt = 0
+        # FIXME(yonghao): the following fails for np.int64.
+        for uuid in uuids:
+            assert uuid in self.buffers
+            ary = self.buffers[uuid]
+            ary = xla_buffer_to_jax_tensor(ary)
+            split_buffers = jnp.split(ary, num_microbatch, batch_dim)
+            for buffer in split_buffers:
+                self.buffers[out_uuids[cnt]] = jax_tensor_to_xla_buffer(buffer)
+                cnt += 1
 
     def get_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
@@ -716,6 +745,47 @@ class PhysicalDeviceMesh:
         ray.get(tasks)
 
     ##### Executable Related Functions #####
+    def shard_batch_arg(self, arg, sharding_spec, num_microbatch, batch_dim,
+                        microbatch_aval):
+        """shard arguments into buffers, then split the arg."""
+        indices = pxla.spec_to_indices(arg.shape, sharding_spec)
+        buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
+        microbatch_uuids = np.full((self.num_devices, num_microbatch), np.inf,
+                                   np.int64)
+        # split on devices
+        host_num_devices = self.num_devices_per_host
+        for host_id, worker in enumerate(self.workers):
+            start_idx = host_id * host_num_devices
+            end_idx = (host_id + 1) * host_num_devices
+            buf_uuids = [ref.uuid for ref in buf_refs[start_idx:end_idx]]
+            split_uuids = next_remote_buffer_uuid(host_num_devices *
+                                                  num_microbatch)
+            if isinstance(split_uuids, int):
+                split_uuids = np.array([split_uuids])
+            worker.split_on_dim.remote(buf_uuids, split_uuids, num_microbatch,
+                                       batch_dim)
+            split_uuids = split_uuids.reshape(host_num_devices, num_microbatch)
+            microbatch_uuids[start_idx:end_idx, :] = split_uuids
+            worker.delete_buffers.remote(buf_uuids)
+        for buf_ref in buf_refs:
+            buf_ref.set_deleted_on_workers()
+        microbatch_arys = []
+        microbatch_indices = pxla.spec_to_indices(microbatch_aval.shape,
+                                                  sharding_spec)
+        # build distributed array
+        for batch_idx in range(num_microbatch):
+            refs = []
+            for device_abs_idx in range(self.num_devices):
+                host_id, device_id = divmod(device_abs_idx, host_num_devices)
+                refs.append(
+                    RemoteBufferRef(self, host_id, device_id,
+                                    microbatch_uuids[device_abs_idx,
+                                                     batch_idx]))
+            microbatch_arys.append(
+                DistributedArray(self, microbatch_aval, sharding_spec, refs,
+                                 microbatch_indices))
+        return microbatch_arys
+
     def shard_args(self, arg_indices: Sequence[Sequence[Index]],
                    donated_invars: Sequence[bool], args):
         """Shard the high-level arguments into low-level buffers."""
@@ -730,15 +800,6 @@ class PhysicalDeviceMesh:
                     assert replica.indices == indices
                     input_bufs.append(replica.remote_buffers)
                 else:  # Slow path
-                    # FIXME(yonghao): by get memory allocated there is an implicit sync between driver
-                    # and worker devices. If not so, the total memory allocated drastically increases.
-                    expected = (np.prod(arg.shape) *
-                                np.dtype(arg.dtype).itemsize if hasattr(
-                                    arg, "shape") else 1)
-                    before_memory_usage = ray.get(
-                        self.workers[0].get_memory_allocated.remote())
-                    before_memory_peak = ray.get(
-                        self.workers[0].get_max_memory_allocated.remote())
                     if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
                         arg = xla.canonicalize_dtype(arg)
                     buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
@@ -747,14 +808,6 @@ class PhysicalDeviceMesh:
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
                         arg.delete()
-                    after_memory_usage = ray.get(
-                        self.workers[0].get_memory_allocated.remote())
-                    after_memory_peak = ray.get(
-                        self.workers[0].get_max_memory_allocated.remote())
-                    actual = after_memory_usage - before_memory_usage
-                    # print("Arg expected: {}, actual: {}, before usage: {}, after usage: {}".format(
-                    #     expected, actual, before_memory_usage/1024**3, after_memory_usage/1024**3
-                    # ))
 
             return input_bufs
         else:
@@ -1269,11 +1322,25 @@ def _device_mesh_put(device_mesh, shards):
             if global_config.use_dummy_value_for_benchmarking:
                 device_mesh.workers[host_id].put_non_zero_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt].shape, shards[pt].dtype)
+                # # If we remove this sync, some XLA issue will cause memory leak.
+                # device_mesh.workers[host_id].sync.remote()
             else:
                 device_mesh.workers[host_id].put_buffer.remote(
                     buf_ref.uuid, device_id, shards[pt])
             buf_refs.append(buf_ref)
             pt += 1
+    return buf_refs
+
+
+def _device_mesh_put_dummy(array, device_mesh, indices):
+    buf_refs = create_remote_buffer_refs(device_mesh)
+    buf_uuids = [buf.uuid for buf in buf_refs]
+    devices_per_host = device_mesh.num_devices_per_host
+    for host_id in range(device_mesh.num_hosts):
+        assert global_config.use_dummy_value_for_benchmarking
+        device_mesh.workers[host_id].shard_and_put_non_zero_buffer.remote(
+            buf_uuids[host_id * devices_per_host:(host_id + 1) *
+                      devices_per_host], array.shape, array.dtype, indices)
     return buf_refs
 
 
@@ -1303,14 +1370,7 @@ def _shard_abstract_array(x, device_mesh, indices):
 def _shard_device_array(array, device_mesh, indices):
     # Create shards according to indices for a DeviceArray
     if global_config.use_dummy_value_for_benchmarking:
-        start_indices, limit_indices, removed_dims = map(
-            tuple, unzip3(_as_slice_indices(array, idx) for idx in indices))
-
-        def slice_func():
-            return array._multi_slice(start_indices, limit_indices,
-                                      removed_dims)
-
-        shards = eval_shape(slice_func)
+        return _device_mesh_put_dummy(array, device_mesh, indices)
     else:
         start_indices, limit_indices, removed_dims = map(
             tuple, unzip3(_as_slice_indices(array, idx) for idx in indices))

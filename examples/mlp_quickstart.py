@@ -90,6 +90,7 @@ opt_state = tx.init(params)
 # Layer boundaries will be set up at the input and outputs of the loss function.
 # The gradients of each parameter are taken for each of the parameters and returned. 
 
+@parallelize(batch_argnums=(2,))
 def parallel_train_step(opt_state, params, batch):
     @automatic_layer_construction(layer_num=4)
     def loss_func(params, x, y):
@@ -101,8 +102,6 @@ def parallel_train_step(opt_state, params, batch):
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
     return opt_state, params
-
-parallel_train_step = parallelize(parallel_train_step, batch_argnums=(2,))
 
 def train_step(opt_state, params, batch):
     def loss_func(params, x, y):

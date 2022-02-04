@@ -546,45 +546,6 @@ def manual_layer_construction(fn: Callable,
                                             auto_layer_boundary=False,
                                             lift_markers=lift_markers)
 
-
-# def automatic_layer_construction(fn: Callable,
-#                                  static_argnums=(),
-#                                  remat_layer=False,
-#                                  layer_num: int = None,
-#                                  eps: float = DEFAULT_EPS,
-#                                  cost_criteria: str = DEFAULT_COST_CRITERIA,
-#                                  layer_eps: float = 0.0):
-#     """Automatically cluster the equations in a jaxpr into layers.
-
-#     Automatically cluster the equations in a jaxpr into layers and add pipeline
-#     markers at layer boundaries.
-
-#     Args:
-#         fn: the input function.
-#         static_argnums: An optional int or collection of ints that specify
-#           which positional arguments to treat as static (compile-time constant).
-#           Same as in jax.
-#         remat_layer: Whether to rematerialize each layer at layer boundaries.
-#         layer_num: the number of layers to rematerialize. If set to "auto", the
-#           number of layers will be automatically determined by a binary search.
-#           The binary search might not work for complex input functions.
-#         eps: the tolerance of inbalance of the costs of different layers.
-#         cost_criteria: the cost criteria to use for deciding the layers
-#         layer_eps: a parameter for layer_num binary search.
-
-#     Returns:
-#         A new function rematerializes each layer of the input function.
-#     """
-#     return layer_level_jaxpr_transformation(fn,
-#                                             static_argnums,
-#                                             remat=remat_layer,
-#                                             layer_construction=True,
-#                                             auto_layer_boundary=True,
-#                                             layer_num=layer_num,
-#                                             eps=eps,
-#                                             cost_criteria=cost_criteria,
-#                                             layer_eps=layer_eps)
-
 def automatic_layer_construction(*args, **kwargs):
     """Automatically cluster the equations in a jaxpr into layers.
 

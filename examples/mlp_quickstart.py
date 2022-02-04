@@ -89,7 +89,7 @@ opt_state = tx.init(params)
 # We define a mean squared error loss function, and manually set it as its individual pipeline step.
 # Layer boundaries will be set up at the input and outputs of the loss function.
 # The gradients of each parameter are taken for each of the parameters and returned. 
-@parallelize
+
 def parallel_train_step(opt_state, params, batch):
     @automatic_layer_construction(layer_num=4)
     def loss_func(params, x, y):
@@ -101,6 +101,8 @@ def parallel_train_step(opt_state, params, batch):
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
     return opt_state, params
+
+parallel_train_step = parallelize(parallel_train_step, batch_argnums=(2,))
 
 def train_step(opt_state, params, batch):
     def loss_func(params, x, y):
@@ -122,18 +124,15 @@ state_with_pipeline, params_with_pipeline = parallel_train_step(opt_state, param
 
 # We check that the gradients are the same. 
 assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
-# print("DEBUG: params: ", params)
-# print("DEBUG: params_pipeline: ", params_with_pipeline)
 
 # Continue training for 10 epochs
-# How to bring back distributed array?
-# num_epochs = 10
-# for _ in range(num_epochs):
-#     state_orig, params_orig  = train_step(state_orig, params_orig, batch)
-#     state_with_pipeline, params_with_pipeline = parallel_train_step(state_with_pipeline, params_with_pipeline, batch)
+num_epochs = 2
+for _ in range(num_epochs):
+    state_orig, params_orig  = train_step(state_orig, params_orig, batch)
+    state_with_pipeline, params_with_pipeline = parallel_train_step(state_with_pipeline, params_with_pipeline, batch)
 
-# # We check that the gradients are the same. 
-# assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
+# We check that the gradients are the same. 
+assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
 
 # Shutting down the the pipelined executable. 
 parallel_train_step.get_executable(opt_state, params, batch).shutdown()

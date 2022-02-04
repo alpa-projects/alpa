@@ -21,13 +21,15 @@ from alpa.util import get_ray_namespace_str
 # We initialize ray and a device cluster to run the model on. In addition, 
 # we also initialize a RNG key that will be used later for initializing parameters.
 ray.init(address="auto", namespace=get_ray_namespace_str(prefix="alpa-unittest"))
+jax.config.update('jax_platform_name', 'cpu')
 device_cluster = DeviceCluster()
 devices = device_cluster.get_virtual_physical_mesh()
 rngkey = jax.random.PRNGKey(0)
 
 ### Set global environment variables
 # Here, we're setting the devices used to be the device cluster we defined earlier.
-set_parallelize_options(devices=devices, strategy="3d_parallel")
+# set_parallelize_options(devices=devices, strategy="3d_parallel")
+set_parallelize_options(devices=devices, strategy="3d_parallel", pipeline_stage_mode="auto_gpipe")
 
 ### Building our model
 # The model will be a two layer MLP model with a ReLU non-linearity. The input an output
@@ -40,7 +42,12 @@ class OurModel(nn.Module):
     def __call__(self, x):
         x = nn.Dense(features=self.hidden_dim)(x)
         x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
         x = nn.Dense(features=self.output_dim)(x)
+        x = nn.relu(x)
         return x
         
 
@@ -72,6 +79,7 @@ y = jax.vmap(make_predict(W, b))(x) + 0.1*random.normal(knoise,(batch_size, dim)
 # We use Flax for training, where the parameters of a model are stored seperately from the model.
 model = OurModel(hidden_dim=dim, output_dim=dim)
 params = model.init(rngkey, x)
+
 # Next, we instantiate our SGD optimizer, and initialize the optimizer state. This state
 # will be updated later on in the training loop.
 tx = optax.sgd(learning_rate=1e-2)
@@ -82,43 +90,50 @@ opt_state = tx.init(params)
 # Layer boundaries will be set up at the input and outputs of the loss function.
 # The gradients of each parameter are taken for each of the parameters and returned. 
 @parallelize
-def parallel_train_step(params, batch):
-    # @automatic_layer_construction
-    def loss_func(params, x, y):
-        out = model.apply(params, x)
-        loss = jnp.mean((out - y)**2)
-        return loss
-
-    loss_func = automatic_layer_construction(loss_func, layer_num="auto", cost_criteria = "flops")
-    grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
-    # updates, opt_state = tx.update(grads, opt_state)
-    # params = optax.apply_updates(params, updates)
-    return grads
-
-def train_step(params, batch):
+def parallel_train_step(opt_state, params, batch):
+    @automatic_layer_construction(layer_num=4)
     def loss_func(params, x, y):
         out = model.apply(params, x)
         loss = jnp.mean((out - y)**2)
         return loss
 
     grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
-    return grads
+    updates, opt_state = tx.update(grads, opt_state)
+    params = optax.apply_updates(params, updates)
+    return opt_state, params
+
+def train_step(opt_state, params, batch):
+    def loss_func(params, x, y):
+        out = model.apply(params, x)
+        loss = jnp.mean((out - y)**2)
+        return loss
+
+    grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
+    updates, opt_state = tx.update(grads, opt_state)
+    params = optax.apply_updates(params, updates)
+    return opt_state, params
 
 # Now, we run one step of training. For simplicity, we only run one batch of data during training. 
 # To check that the parallelize function returns the same result as the non-parallelized version, 
 # we run one step of training normally and one step of training with the train_step parallelized. 
 batch = {"x": x, "y": y}
-gradients = train_step(params, batch)
-gradients_with_pipeline = parallel_train_step(params, batch)
+state_orig, params_orig = train_step(opt_state, params, batch)
+state_with_pipeline, params_with_pipeline = parallel_train_step(opt_state, params, batch)
 
 # We check that the gradients are the same. 
-assert_allclose(gradients, gradients_with_pipeline)
+assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
+# print("DEBUG: params: ", params)
+# print("DEBUG: params_pipeline: ", params_with_pipeline)
+
+# Continue training for 10 epochs
+# How to bring back distributed array?
+# num_epochs = 10
+# for _ in range(num_epochs):
+#     state_orig, params_orig  = train_step(state_orig, params_orig, batch)
+#     state_with_pipeline, params_with_pipeline = parallel_train_step(state_with_pipeline, params_with_pipeline, batch)
+
+# # We check that the gradients are the same. 
+# assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
 
 # Shutting down the the pipelined executable. 
-parallel_train_step.get_executable(opt_state, batch).shutdown()
-
-# Notes:
-# Only have one tx and one opt_state, should I duplicate it for the purpose of running a for loop?
-# In layer_construction.py, I changed search_layer_num to take in cost_criteria
-# Also @automatic_layer_construction takes default arguments? If so, then layer_num is None, which later errors out
-# @parallelize kills ray workers for some reason
+parallel_train_step.get_executable(opt_state, params, batch).shutdown()

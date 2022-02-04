@@ -547,13 +547,45 @@ def manual_layer_construction(fn: Callable,
                                             lift_markers=lift_markers)
 
 
-def automatic_layer_construction(fn: Callable,
-                                 static_argnums=(),
-                                 remat_layer=False,
-                                 layer_num: int = None,
-                                 eps: float = DEFAULT_EPS,
-                                 cost_criteria: str = DEFAULT_COST_CRITERIA,
-                                 layer_eps: float = 0.0):
+# def automatic_layer_construction(fn: Callable,
+#                                  static_argnums=(),
+#                                  remat_layer=False,
+#                                  layer_num: int = None,
+#                                  eps: float = DEFAULT_EPS,
+#                                  cost_criteria: str = DEFAULT_COST_CRITERIA,
+#                                  layer_eps: float = 0.0):
+#     """Automatically cluster the equations in a jaxpr into layers.
+
+#     Automatically cluster the equations in a jaxpr into layers and add pipeline
+#     markers at layer boundaries.
+
+#     Args:
+#         fn: the input function.
+#         static_argnums: An optional int or collection of ints that specify
+#           which positional arguments to treat as static (compile-time constant).
+#           Same as in jax.
+#         remat_layer: Whether to rematerialize each layer at layer boundaries.
+#         layer_num: the number of layers to rematerialize. If set to "auto", the
+#           number of layers will be automatically determined by a binary search.
+#           The binary search might not work for complex input functions.
+#         eps: the tolerance of inbalance of the costs of different layers.
+#         cost_criteria: the cost criteria to use for deciding the layers
+#         layer_eps: a parameter for layer_num binary search.
+
+#     Returns:
+#         A new function rematerializes each layer of the input function.
+#     """
+#     return layer_level_jaxpr_transformation(fn,
+#                                             static_argnums,
+#                                             remat=remat_layer,
+#                                             layer_construction=True,
+#                                             auto_layer_boundary=True,
+#                                             layer_num=layer_num,
+#                                             eps=eps,
+#                                             cost_criteria=cost_criteria,
+#                                             layer_eps=layer_eps)
+
+def automatic_layer_construction(*args, **kwargs):
     """Automatically cluster the equations in a jaxpr into layers.
 
     Automatically cluster the equations in a jaxpr into layers and add pipeline
@@ -575,12 +607,43 @@ def automatic_layer_construction(fn: Callable,
     Returns:
         A new function rematerializes each layer of the input function.
     """
-    return layer_level_jaxpr_transformation(fn,
-                                            static_argnums,
-                                            remat=remat_layer,
-                                            layer_construction=True,
-                                            auto_layer_boundary=True,
-                                            layer_num=layer_num,
-                                            eps=eps,
-                                            cost_criteria=cost_criteria,
-                                            layer_eps=layer_eps)
+    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
+        return layer_level_jaxpr_transformation(args,
+                                                (),
+                                                remat=False,
+                                                layer_construction=True,
+                                                auto_layer_boundary=True,
+                                                layer_num=None,
+                                                eps=DEFAULT_EPS,
+                                                cost_criteria=DEFAULT_COST_CRITERIA,
+                                                layer_eps=0.0)
+    valid_kwargs = [
+        "static_argnums",
+        "remat_layer",
+        "layer_num",
+        "eps",
+        "cost_criteria",
+        "layer_eps"
+    ]
+    error_string = (
+        "The @automatic_layer_construction must be applied either "
+        "with no arguments and no parentheses, for example "
+        "'@automatic_layer_construction', or it must be applied using some of "
+        f"the arguments in the list {valid_kwargs}, for example "
+        "'@automatic_layer_construction(layer_num=4)'."
+    )
+    assert len(args) == 0 and len(kwargs) > 0, error_string
+    for key in kwargs:
+        assert key in valid_kwargs, error_string
+
+    def wrap(fn):
+        return layer_level_jaxpr_transformation(fn,
+                                                kwargs.get("static_argnums") or (),
+                                                remat=kwargs.get("remat_layer") or False,
+                                                layer_construction=True,
+                                                auto_layer_boundary=True,
+                                                layer_num=kwargs.get("layer_num") or None,
+                                                eps=kwargs.get("eps") or DEFAULT_EPS,
+                                                cost_criteria=kwargs.get("cost_criteria") or DEFAULT_COST_CRITERIA,
+                                                layer_eps=kwargs.get("layer_eps") or 0.0)
+    return wrap

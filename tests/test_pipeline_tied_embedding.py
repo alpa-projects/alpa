@@ -8,7 +8,7 @@ import optax
 import ray
 
 from alpa import (parallelize, set_parallelize_options, mark_pipeline,
-                  DeviceCluster, manual_layer_construction)
+                  DeviceCluster, manual_layer_construction, grad)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str
@@ -62,8 +62,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                 return loss
 
             loss_func = manual_layer_construction(loss_func)
-            grad = jax.grad(loss_func)(state.params, x, y)
-            return grad
+            grads = grad(loss_func)(state.params, x, y)
+            return state.apply_gradients(grads=grads)
 
         x = jnp.ones((batch_size, seq_len), jnp.int32)
         y = jnp.ones((batch_size, seq_len), jnp.int32)
@@ -89,7 +89,6 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
     def test_tied_embedding_local_pipeline_parallel(self):
         self.train_tied_embedding(self.devices, "local_pipeline_parallel")
 
-    @unittest.skip("This test is failing because it's not using apply grad")
     def test_tied_embedding_3d_parallel(self):
         self.train_tied_embedding(self.devices, "3d_parallel")
 

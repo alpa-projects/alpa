@@ -38,6 +38,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
         closed_jaxpr.eqns[:split_idx], [split_eqn],
         closed_jaxpr.eqns[split_idx + 1:]
     ]
+    sliced_eqns = rewrite_cross_layer_accumulation
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
     compute_grad = sliced_jaxprs[0]
     apply_grad = sliced_jaxprs[2]

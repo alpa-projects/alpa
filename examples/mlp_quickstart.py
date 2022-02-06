@@ -124,7 +124,7 @@ state_with_pipeline, params_with_pipeline = parallel_train_step(opt_state, param
 assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
 
 # Continue training for 10 epochs
-num_epochs = 2
+num_epochs = 10
 for _ in range(num_epochs):
     state_orig, params_orig  = train_step(state_orig, params_orig, batch)
     state_with_pipeline, params_with_pipeline = parallel_train_step(state_with_pipeline, params_with_pipeline, batch)

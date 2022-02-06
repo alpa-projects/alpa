@@ -1,19 +1,22 @@
 import unittest
 import os
 
+import flax
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
 from jax import random
 import optax
 import ray
+import pickle
+from tempfile import TemporaryFile
 
 import alpa
 from alpa import (parallelize, set_parallelize_options, mark_pipeline,
                   DeviceCluster, automatic_layer_construction)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
-from alpa.util import get_ray_namespace_str
+from alpa.util import get_ray_namespace_str, tree_to_nparray
 
 ### For this quickstart tutorial, we'll be running linear regression on a 4-layer MLP. 
 
@@ -124,13 +127,77 @@ state_with_pipeline, params_with_pipeline = parallel_train_step(opt_state, param
 assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
 
 # Continue training for 10 epochs
-num_epochs = 2
+num_epochs = 10
 for _ in range(num_epochs):
     state_orig, params_orig  = train_step(state_orig, params_orig, batch)
     state_with_pipeline, params_with_pipeline = parallel_train_step(state_with_pipeline, params_with_pipeline, batch)
 
 # We check that the parameters are the same. 
 assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
+
+# Save initial model, original model, and the parallel model to a temporary file
+outfile = TemporaryFile()
+state_dict = flax.serialization.to_state_dict(opt_state)
+pickle.dump(tree_to_nparray(state_dict), outfile)
+outfile_param = TemporaryFile()
+pickle.dump(params, outfile_param)
+
+outfile_orig = TemporaryFile()
+state_dict_orig = flax.serialization.to_state_dict(state_orig)
+pickle.dump(tree_to_nparray(state_dict_orig), outfile_orig)
+outfile_param_orig = TemporaryFile()
+pickle.dump(params_orig, outfile_param_orig)
+
+outfile_with_pipeline = TemporaryFile()
+state_dict_with_pipeline = flax.serialization.to_state_dict(state_with_pipeline)
+pickle.dump(tree_to_nparray(state_dict_with_pipeline), outfile_with_pipeline)
+outfile_param_with_pipeline = TemporaryFile()
+pickle.dump(params_with_pipeline, outfile_param_with_pipeline)
+
+# Load models from the temporary file
+outfile.seek(0)
+loaded_state_dict = pickle.load(outfile)
+loaded_state = flax.serialization.from_state_dict(
+    opt_state, loaded_state_dict)
+outfile.close()
+outfile_param.seek(0)
+loaded_param = pickle.load(outfile_param)
+outfile_param.close()
+
+outfile_orig.seek(0)
+loaded_state_dict_orig = pickle.load(outfile_orig)
+loaded_state_orig = flax.serialization.from_state_dict(
+    state_orig, loaded_state_dict_orig)
+outfile_orig.close()
+outfile_param_orig.seek(0)
+loaded_param_orig = pickle.load(outfile_param_orig)
+outfile_param_orig.close()
+
+outfile_with_pipeline.seek(0)
+loaded_state_dict_with_pipeline = pickle.load(outfile_with_pipeline)
+loaded_state_with_pipeline = flax.serialization.from_state_dict(
+    state_with_pipeline, loaded_state_dict_with_pipeline)
+outfile_with_pipeline.close()
+outfile_param_with_pipeline.seek(0)
+loaded_param_with_pipeline = pickle.load(outfile_param_with_pipeline)
+outfile_param_with_pipeline.close()
+
+# Evaluate all three loaded models
+def loss_func(params, x, y):
+    out = model.apply(params, x)
+    loss = jnp.mean((out - y)**2)
+    return loss
+
+loss = loss_func(loaded_param, batch["x"], batch["y"])
+loss_orig = loss_func(loaded_param_orig, batch["x"], batch["y"])
+loss_with_pipeline = loss_func(loaded_param_with_pipeline, batch["x"], batch["y"])
+
+print(f"Initial Loss: {loss}")
+print(f"Single-device Loss: {loss_orig}")
+print(f"Parallelized Loss: {loss_with_pipeline}")
+
+assert_allclose(loss_orig, loss_with_pipeline, 1e-3, 1e-3)
+assert loss > loss_with_pipeline, "Error: Trained loss is more than initial loss."
 
 # Shutting down the the pipelined executable. 
 parallel_train_step.get_executable(opt_state, params, batch).shutdown()

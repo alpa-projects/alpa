@@ -140,19 +140,22 @@ outfile = TemporaryFile()
 state_dict = flax.serialization.to_state_dict(opt_state)
 pickle.dump(tree_to_nparray(state_dict), outfile)
 outfile_param = TemporaryFile()
-pickle.dump(params, outfile_param)
+param_dict = flax.serialization.to_state_dict(params)
+pickle.dump(param_dict, outfile_param)
 
 outfile_orig = TemporaryFile()
 state_dict_orig = flax.serialization.to_state_dict(state_orig)
 pickle.dump(tree_to_nparray(state_dict_orig), outfile_orig)
 outfile_param_orig = TemporaryFile()
-pickle.dump(params_orig, outfile_param_orig)
+param_dict_orig = flax.serialization.to_state_dict(params_orig)
+pickle.dump(param_dict_orig, outfile_param_orig)
 
 outfile_with_pipeline = TemporaryFile()
 state_dict_with_pipeline = flax.serialization.to_state_dict(state_with_pipeline)
 pickle.dump(tree_to_nparray(state_dict_with_pipeline), outfile_with_pipeline)
 outfile_param_with_pipeline = TemporaryFile()
-pickle.dump(params_with_pipeline, outfile_param_with_pipeline)
+param_dict_with_pipeline = flax.serialization.to_state_dict(params_with_pipeline)
+pickle.dump(tree_to_nparray(param_dict_with_pipeline), outfile_param_with_pipeline)
 
 # Load models from the temporary file
 outfile.seek(0)
@@ -160,8 +163,11 @@ loaded_state_dict = pickle.load(outfile)
 loaded_state = flax.serialization.from_state_dict(
     opt_state, loaded_state_dict)
 outfile.close()
+
 outfile_param.seek(0)
-loaded_param = pickle.load(outfile_param)
+loaded_param_dict = pickle.load(outfile_param)
+loaded_param = flax.serialization.from_state_dict(
+    params, loaded_param_dict)
 outfile_param.close()
 
 outfile_orig.seek(0)
@@ -169,8 +175,11 @@ loaded_state_dict_orig = pickle.load(outfile_orig)
 loaded_state_orig = flax.serialization.from_state_dict(
     state_orig, loaded_state_dict_orig)
 outfile_orig.close()
+
 outfile_param_orig.seek(0)
-loaded_param_orig = pickle.load(outfile_param_orig)
+loaded_param_dict_orig = pickle.load(outfile_param_orig)
+loaded_param_orig = flax.serialization.from_state_dict(
+    params_orig, loaded_param_dict_orig)
 outfile_param_orig.close()
 
 outfile_with_pipeline.seek(0)
@@ -178,8 +187,11 @@ loaded_state_dict_with_pipeline = pickle.load(outfile_with_pipeline)
 loaded_state_with_pipeline = flax.serialization.from_state_dict(
     state_with_pipeline, loaded_state_dict_with_pipeline)
 outfile_with_pipeline.close()
+
 outfile_param_with_pipeline.seek(0)
-loaded_param_with_pipeline = pickle.load(outfile_param_with_pipeline)
+loaded_param_dict_with_pipeline = pickle.load(outfile_param_with_pipeline)
+loaded_param_with_pipeline = flax.serialization.from_state_dict(
+    params_with_pipeline, loaded_param_dict_with_pipeline)
 outfile_param_with_pipeline.close()
 
 # Evaluate all three loaded models

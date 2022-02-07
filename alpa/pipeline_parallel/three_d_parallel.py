@@ -52,7 +52,7 @@ def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Split the jaxpr into compute_grad and apply_grad
     gensym_func = gensym([closed_jaxpr.jaxpr])
     compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
-        split_compute_grad_and_apply_grad(closed_jaxpr))
+        split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
     have_apply_grad = barrier is not None
 
     if have_apply_grad:

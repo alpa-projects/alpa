@@ -1,8 +1,12 @@
 # Alpa Documentation
 
+## Dependency
+```
+pip3 install sphinx sphinx-rtd-theme sphinx-gallery
+```
+
 ## Build
 ```
-pip3 install sphinx sphinx-rtd-theme
 make html
 ```
 

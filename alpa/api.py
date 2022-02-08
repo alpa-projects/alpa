@@ -27,13 +27,16 @@ from alpa.util import (auto_donate_argnums, auto_static_argnums,
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(*args, **kwargs):
+def parallelize(fun=None,
+                *,
+                donate_argnums="auto",
+                static_argnums="auto",
+                batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
     Args:
         fun: The function to be parallelized.
-    Kwargs:
         donate_argnums: The same as the donate_argnums argument of jax.jit.
           If it is "auto", alpa uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
@@ -140,41 +143,11 @@ def parallelize(*args, **kwargs):
         ret_func.get_executable = _get_executable
         return ret_func
 
-    valid_kwargs = ["donate_argnums", "static_argnums", "batch_argnums"]
-    error_string = ("The @parallelize must be applied either "
-                    "with no arguments and no parentheses, for example "
-                    "'@parallelize', or it must be applied using some of "
-                    f"the arguments in the list {valid_kwargs}, for example "
-                    "'@parallelize(batch_argnums = (2,))'.")
+    if fun is None:
+        return decorate_fun
 
-    donate_argnums = kwargs.get("donate_argnums") or "auto"
-    static_argnums = kwargs.get("static_argnums") or "auto"
-    batch_argnums = kwargs.get("batch_argnums") or (1,)
-
-    if len(args) == 0:
-        # If parallelize() is called with no arguments
-        if len(kwargs) == 0:
-            return decorate_fun
-        # Otherwise, the decorator has extra args and kwargs (e.g. @parallelize(batch_argnums = (2,)))
-        else:
-            for key in kwargs:
-                assert key in valid_kwargs, error_string
-
-            def wrap(fn):
-                api._check_callable(fn)
-                return decorate_fun(fn)
-
-            return wrap
-    # If the decorator has no extra args or kwargs (is just @parallelize), or
-    # If the decorator is used as a function with kwargs (e.g. parallelize(fn, batch_argnums=(2,))):
-    elif len(args) == 1:
-        if len(kwargs) != 0:
-            for key in kwargs:
-                assert key in valid_kwargs, error_string
-        api._check_callable(args[0])
-        return decorate_fun(args[0])
-    else:
-        raise AssertionError(error_string)
+    api._check_callable(fun)
+    return decorate_fun(fun)
 
 
 @lu.cache

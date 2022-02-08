@@ -3,6 +3,7 @@ from functools import partial, wraps
 import logging
 from typing import Callable, Union
 
+from jax._src.api import _check_callable
 from jax._src.tree_util import tree_unflatten
 from jax import tree_flatten
 from jax._src.api import make_jaxpr
@@ -465,15 +466,17 @@ def layer_level_jaxpr_transformation(fn: Callable,
     return wrapped
 
 
-def manual_remat(*args, **kwargs):
+def manual_remat(fun: Callable = None,
+                 *,
+                 static_argnums=(),
+                 lift_markers=False):
     """Rematerialize an input function with manually selected layer boundaries.
 
     Rematerialize each layer of an input function with manually selected layer
     boundaries indicated by pipeline markers.
 
     Args:
-        fn: the input function to rematerialize.
-    Kwargs:
+        fun: the input function to rematerialize.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
@@ -484,52 +487,35 @@ def manual_remat(*args, **kwargs):
         A new function rematerializes each layer of the input function.
     """
 
-    valid_kwargs = ["static_argnums", "lift_markers"]
-    error_string = ("The @manual_remat must be applied either "
-                    "with no arguments and no parentheses, for example "
-                    "'@manual_remat', or it must be applied using some of "
-                    f"the arguments in the list {valid_kwargs}, for example "
-                    "'@manual_remat(lift_markers=True)'.")
+    def decorate_fun(fun):
+        return layer_level_jaxpr_transformation(fun,
+                                                static_argnums,
+                                                remat=True,
+                                                layer_construction=False,
+                                                auto_layer_boundary=False,
+                                                lift_markers=lift_markers)
 
-    if len(kwargs) > 0:
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
-    # If the decorator has no extra args or kwargs (is just @manual_remat)\
-    # If the decorator is used as a function with kwargs (e.g. manual_remat(fn, lift_markers=True))
-    if len(args) == 1 and callable(args[0]):
-        return layer_level_jaxpr_transformation(
-            args[0],
-            kwargs.get("static_argnums") or (),
-            remat=True,
-            layer_construction=False,
-            auto_layer_boundary=False,
-            lift_markers=kwargs.get("lift_markers") or False)
-    # If the decorator has kwargs (e.g. @manual_remat(lift_markers=True))
+    if fun is None:
+        return decorate_fun
     else:
-        assert len(args) == 0 and len(kwargs) > 0, error_string
-
-        def wrap(fn):
-            return layer_level_jaxpr_transformation(
-                fn,
-                kwargs.get("static_argnums") or (),
-                remat=True,
-                layer_construction=False,
-                auto_layer_boundary=False,
-                lift_markers=kwargs.get("lift_markers") or False)
-
-        return wrap
+        _check_callable(fun)
+        return decorate_fun(fun)
 
 
-def automatic_remat(*args, **kwargs):
+def automatic_remat(fun: Callable = None,
+                    *,
+                    static_argnums=(),
+                    layer_num: Union[int, str] = None,
+                    eps: float = DEFAULT_EPS,
+                    cost_criteria: str = DEFAULT_COST_CRITERIA,
+                    layer_eps: float = 0.0):
     """Rematerialize an input function with automatic boundaries.
 
     Rematerialize each layer of an input function with automatically decided
     layer boundaries.
 
     Args:
-        fn: The input function to rematerialize.
-    Kwargs:
+        fun: The input function to rematerialize.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
@@ -544,120 +530,70 @@ def automatic_remat(*args, **kwargs):
         A new function rematerializes each layer of the input function.
     """
 
-    valid_kwargs = [
-        "static_argnums", "remat_layer", "eps", "cost_criteria", "layer_eps"
-    ]
-    error_string = ("The @automatic_remat must be applied either "
-                    "with no arguments and no parentheses, for example "
-                    "'@automatic_remat', or it must be applied using some of "
-                    f"the arguments in the list {valid_kwargs}, for example "
-                    "'@automatic_remat(layer_eps=0.0)'.")
+    def decorate_fun(fun):
+        layer_level_jaxpr_transformation(fun,
+                                         static_argnums,
+                                         remat=True,
+                                         layer_construction=False,
+                                         auto_layer_boundary=True,
+                                         layer_num=layer_num,
+                                         eps=eps,
+                                         cost_criteria=cost_criteria,
+                                         layer_eps=layer_eps)
 
-    if len(kwargs) > 0:
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
-    # If the decorator has no extra args or kwargs (is just @automatic_remat), or
-    # If the decorator is used as a function with kwargs (e.g. automatic_remat(fn, layer_eps=0.0))
-    if len(args) == 1 and callable(args[0]):
-        return layer_level_jaxpr_transformation(
-            args[0],
-            kwargs.get("static_argnums") or (),
-            remat=True,
-            layer_construction=False,
-            auto_layer_boundary=True,
-            layer_num=kwargs.get("layer_num") or None,
-            eps=kwargs.get("eps") or DEFAULT_EPS,
-            cost_criteria=kwargs.get("cost_criteria") or DEFAULT_COST_CRITERIA,
-            layer_eps=kwargs.get("layer_eps") or 0.0)
-    # If the decorator has kwargs (e.g. @automatic_remat(layer_eps=0.0))
+    if fun is None:
+        return decorate_fun
     else:
-        assert len(args) == 0 and len(kwargs) > 0, error_string
-
-        def wrap(fn):
-            return layer_level_jaxpr_transformation(
-                fn,
-                kwargs.get("static_argnums") or (),
-                remat=True,
-                layer_construction=False,
-                auto_layer_boundary=True,
-                layer_num=kwargs.get("layer_num") or None,
-                eps=kwargs.get("eps") or DEFAULT_EPS,
-                cost_criteria=kwargs.get("cost_criteria") or
-                DEFAULT_COST_CRITERIA,
-                layer_eps=kwargs.get("layer_eps") or 0.0)
-
-        return wrap
+        _check_callable(fun)
+        return decorate_fun(fun)
 
 
-def manual_layer_construction(*args, **kwargs):
+def manual_layer_construction(fun: Callable,
+                              static_argnums=(),
+                              remat_layer=False,
+                              lift_markers=False):
     """Setup manually selected layer boundaries.
-
     Add input variables of each layer to its start pipeline marker and output
     variables of each layer to its end pipeline marker.
-
     Args:
-        fn: the input function.
-    Kwargs:
+        fun: the input function.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
         remat_layer: Whether to rematerialize each layer at layer boundaries.
         lift_markers: Move the first pipeline marker as the first jaxpr eqn and
           move the last pipeline marker as the last jaxpr eqn.
-
     Returns:
         A new function with correctly setup pipeline markers.
     """
 
-    valid_kwargs = ["static_argnums", "remat_layer", "lift_markers"]
-    error_string = (
-        "The @manual_layer_construction must be applied either "
-        "with no arguments and no parentheses, for example "
-        "'@manual_layer_construction', or it must be applied using some of "
-        f"the arguments in the list {valid_kwargs}, for example "
-        "'@manual_layer_construction(remat_layer=True)'.")
+    def decorate_fun(fun):
+        return layer_level_jaxpr_transformation(fun,
+                                                static_argnums,
+                                                remat=remat_layer,
+                                                layer_construction=True,
+                                                auto_layer_boundary=False,
+                                                lift_markers=lift_markers)
 
-    if len(kwargs) > 0:
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
-    # If the decorator has no extra args or kwargs (is just @manual_layer_construction), or
-    # if the decorator is used as a function with kwargs (e.g. manual_layer_construction(fn, remat_layer=True))
-    if len(args) == 1 and callable(args[0]):
-        return layer_level_jaxpr_transformation(
-            args[0],
-            kwargs.get("static_argnums") or (),
-            remat=kwargs.get("remat_layer") or False,
-            layer_construction=True,
-            auto_layer_boundary=False,
-            lift_markers=kwargs.get("lift_markers") or False)
-
-    # If the decorator has kwargs (e.g. @manual_layer_construction(remat_layer=True))
+    if fun is None:
+        return decorate_fun
     else:
-        assert len(args) == 0 and len(kwargs) > 0, error_string
-
-        def wrap(fn):
-            return layer_level_jaxpr_transformation(
-                fn,
-                kwargs.get("static_argnums") or (),
-                remat=kwargs.get("remat_layer") or False,
-                layer_construction=True,
-                auto_layer_boundary=False,
-                lift_markers=kwargs.get("lift_markers") or False)
-
-        return wrap
+        _check_callable(fun)
+        return decorate_fun(fun)
 
 
-def automatic_layer_construction(*args, **kwargs):
+def automatic_layer_construction(fun: Callable,
+                                 static_argnums=(),
+                                 remat_layer=False,
+                                 layer_num: int = None,
+                                 eps: float = DEFAULT_EPS,
+                                 cost_criteria: str = DEFAULT_COST_CRITERIA,
+                                 layer_eps: float = 0.0):
     """Automatically cluster the equations in a jaxpr into layers.
-
     Automatically cluster the equations in a jaxpr into layers and add pipeline
     markers at layer boundaries.
-
     Args:
-        fn: the input function.
-    Kwargs:
+        fun: the input function.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
@@ -668,55 +604,23 @@ def automatic_layer_construction(*args, **kwargs):
         eps: the tolerance of inbalance of the costs of different layers.
         cost_criteria: the cost criteria to use for deciding the layers
         layer_eps: a parameter for layer_num binary search.
-
     Returns:
         A new function rematerializes each layer of the input function.
     """
 
-    valid_kwargs = [
-        "static_argnums", "remat_layer", "layer_num", "eps", "cost_criteria",
-        "layer_eps"
-    ]
-    error_string = (
-        "The @automatic_layer_construction must be applied either "
-        "with no arguments and no parentheses, for example "
-        "'@automatic_layer_construction', or it must be applied using some of "
-        f"the arguments in the list {valid_kwargs}, for example "
-        "'@automatic_layer_construction(layer_num=4)'.")
+    def decorate_fun(fun):
+        return layer_level_jaxpr_transformation(fun,
+                                                static_argnums,
+                                                remat=remat_layer,
+                                                layer_construction=True,
+                                                auto_layer_boundary=True,
+                                                layer_num=layer_num,
+                                                eps=eps,
+                                                cost_criteria=cost_criteria,
+                                                layer_eps=layer_eps)
 
-    if len(kwargs) > 0:
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
-    # If the decorator has no extra args or kwargs (is just @automatic_layer_construction), or
-    # If the decorator is used as a function with kwargs (e.g. automatic_layer_construction(fn, layer_num=4))
-    if len(args) == 1 and callable(args[0]):
-        return layer_level_jaxpr_transformation(
-            args[0],
-            kwargs.get("static_argnums") or (),
-            remat=kwargs.get("remat_layer") or False,
-            layer_construction=True,
-            auto_layer_boundary=True,
-            layer_num=kwargs.get("layer_num") or None,
-            eps=kwargs.get("eps") or DEFAULT_EPS,
-            cost_criteria=kwargs.get("cost_criteria") or DEFAULT_COST_CRITERIA,
-            layer_eps=kwargs.get("layer_eps") or 0.0)
-
-    # If the decorator has kwargs (e.g. @automatic_layer_construction(layer_nums=4))
+    if fun is None:
+        return decorate_fun
     else:
-        assert len(args) == 0 and len(kwargs) > 0, error_string
-
-        def wrap(fn):
-            return layer_level_jaxpr_transformation(
-                fn,
-                kwargs.get("static_argnums") or (),
-                remat=kwargs.get("remat_layer") or False,
-                layer_construction=True,
-                auto_layer_boundary=True,
-                layer_num=kwargs.get("layer_num") or None,
-                eps=kwargs.get("eps") or DEFAULT_EPS,
-                cost_criteria=kwargs.get("cost_criteria") or
-                DEFAULT_COST_CRITERIA,
-                layer_eps=kwargs.get("layer_eps") or 0.0)
-
-        return wrap
+        _check_callable(fun)
+        return decorate_fun(fun)

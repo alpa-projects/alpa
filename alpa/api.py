@@ -4,7 +4,7 @@ from typing import Callable, Optional, Sequence, Union
 
 import jax
 from jax import linear_util as lu
-from jax._src.api import _check_callable
+from jax._src import api
 from jax._src.util import safe_map, HashableFunction
 from jax._src.traceback_util import api_boundary
 from jax.api_util import (argnums_partial, donation_vector,
@@ -144,7 +144,7 @@ def parallelize(fun=None, *, donate_argnums="auto", static_argnums="auto",
     if fun is None:
         return decorate_fun
 
-    _check_callable(fun)
+    api._check_callable(fun)
     return decorate_fun(fun)
 
 @lu.cache

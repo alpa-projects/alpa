@@ -26,7 +26,7 @@ APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
 # increases memory cost: if c=a+b is delayed, but layer_a and layer_b are merged
 # to the same stage, so delaying the computation decreases no communication.
 def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
-                              global_invars):
+                              closed_jaxpr):
     """
     If a parameter is used in multiple stages, its gradient is compute in
     multiple stages and then add together. We accumulate the result on each
@@ -34,6 +34,7 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
     """
     unmarked_vars = set()
     layer_invars = set()
+    global_invars = closed_jaxpr.jaxpr.invars
     for eqn in compute_eqns:
         if eqn.primitive is pipeline_p:
             if eqn.params['mark_type'] == "end":
@@ -108,10 +109,19 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
             for var in eqn.outvars
         ]
         new_apply_eqns.append(
-            new_jaxpr_eqn(invars, outvars, eqn.primitive,
-                          eqn.params, eqn.source_info))
+            new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
+                          eqn.source_info))
     new_apply_eqns += apply_eqns
-    return new_compute_eqns, [new_barrier], new_apply_eqns
+    new_global_outvars = list(closed_jaxpr.jaxpr.outvars)
+    for idx in range(len(new_global_outvars)):
+        var = new_global_outvars[idx]
+        if var in rewrite_invars:
+            new_global_outvars[idx] = barrier_map[var]
+    closed_jaxpr = clone_jaxpr(closed_jaxpr,
+                               eqns=new_compute_eqns + [new_barrier] +
+                               new_apply_eqns,
+                               outvars=new_global_outvars)
+    return closed_jaxpr, [new_compute_eqns, [new_barrier], new_apply_eqns]
 
 
 def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
@@ -130,14 +140,15 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
         closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]
     ]
-    sliced_eqns = _rewrite_cross_layer_grad(*sliced_eqns, gensym_fn, closed_jaxpr.jaxpr.invars)
+    closed_jaxpr, sliced_eqns = _rewrite_cross_layer_grad(
+        *sliced_eqns, gensym_fn, closed_jaxpr)
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
-    compute_grad = sliced_jaxprs[0]
-    apply_grad = sliced_jaxprs[2]
+    compute_grad, _, apply_grad = sliced_jaxprs
+    split_eqn = sliced_eqns[1][0]
     if len(apply_grad.eqns) == 0:
         logger.warning(
             "the apply gradient part is empty. Hint: apply() after alpa.grad")
-    return compute_grad, apply_grad, split_eqn
+    return closed_jaxpr, compute_grad, apply_grad, split_eqn
 
 
 def compute_grad_to_accumulate_grad(

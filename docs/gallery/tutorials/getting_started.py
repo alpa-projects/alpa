@@ -17,7 +17,7 @@ In this tutorial, we show the usage of Alpa with a MLP example.
 """
 
 ################################################################################
-# Import libraries
+# Import Libraries
 # --------------------
 # We first import the required libraries.
 # Flax and optax are libraries on top of jax for training neural networks.
@@ -34,7 +34,7 @@ import optax
 
 
 ################################################################################
-# Train a MLP on a single device
+# Train a MLP on a Single Device
 # ------------------------------
 # To begin with, we implement the model and training loop on a single device. We will
 # parallelize it later. We train a MLP to learn the function y = Wx + b.
@@ -97,7 +97,8 @@ expected_state = train_step(state, batch)
 # such as ``pmap``, ``pjit``, and ``xmap``. However, these transformations are not
 # fully automatic, because they require users to manually specify the parallelization
 # strategies such as parallelization axes and device mapping schemes. You also need to
-# manually call communication primitives such as ``lax.pmean`` and ``lax.all_gather``.
+# manually call communication primitives such as ``lax.pmean`` and ``lax.all_gather``,
+# which is nontrivial if you want to do advanced model parallelization.
 # Unlike these transformations, ``@alpa.parallelize` can do all things automatically for
 # you. You only need to write the code as if you are writing for a single device.
 
@@ -113,8 +114,9 @@ assert_allclose(expected_state.params, actual_state.params)
 # Speed Comparision 
 # -----------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
-# the memory usage per GPU. We benchmark the execution speed of ``@jax.jit`` and
-# ``@alpa.parallelize`` on a 8-GPU machine.
+# the memory usage per GPU, so we can train large models faster.
+# We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
+# on a 8-GPU machine.
 
 from alpa.util import benchmark_func
 

@@ -34,7 +34,6 @@ def parallelize(fun=None, *, donate_argnums="auto", static_argnums="auto",
 
     Args:
         fun: The function to be parallelized.
-    Kwargs:
         donate_argnums: The same as the donate_argnums argument of jax.jit.
           If it is "auto", alpa uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.

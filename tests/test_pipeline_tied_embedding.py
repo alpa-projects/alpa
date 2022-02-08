@@ -80,9 +80,9 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
 
         # Run and check results
         pipelined_train_step = parallelize(donate_argnums=())(train_step)
-        gradients = train_step(state, x, y)
-        gradients_with_pipeline = pipelined_train_step(state, x, y)
-        assert_allclose(gradients, gradients_with_pipeline)
+        expected_new_state = train_step(state, x, y)
+        actual_new_state = pipelined_train_step(state, x, y)
+        assert_allclose(actual_new_state.params, expected_new_state.params)
 
         pipelined_train_step.get_executable(state, x, y).shutdown()
 

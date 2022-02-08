@@ -140,18 +140,12 @@ def parallelize(*args, **kwargs):
         ret_func.get_executable = _get_executable
         return ret_func
 
-    valid_kwargs = [
-        "donate_argnums",
-        "static_argnums",
-        "batch_argnums"
-    ]
-    error_string = (
-        "The @parallelize must be applied either "
-        "with no arguments and no parentheses, for example "
-        "'@parallelize', or it must be applied using some of "
-        f"the arguments in the list {valid_kwargs}, for example "
-        "'@parallelize(batch_argnums = (2,))'."
-    )
+    valid_kwargs = ["donate_argnums", "static_argnums", "batch_argnums"]
+    error_string = ("The @parallelize must be applied either "
+                    "with no arguments and no parentheses, for example "
+                    "'@parallelize', or it must be applied using some of "
+                    f"the arguments in the list {valid_kwargs}, for example "
+                    "'@parallelize(batch_argnums = (2,))'.")
 
     donate_argnums = kwargs.get("donate_argnums") or "auto"
     static_argnums = kwargs.get("static_argnums") or "auto"
@@ -165,9 +159,11 @@ def parallelize(*args, **kwargs):
         else:
             for key in kwargs:
                 assert key in valid_kwargs, error_string
+
             def wrap(fn):
                 api._check_callable(fn)
                 return decorate_fun(fn)
+
             return wrap
     # If the decorator has no extra args or kwargs (is just @parallelize), or
     # If the decorator is used as a function with kwargs (e.g. parallelize(fn, batch_argnums=(2,))):
@@ -179,9 +175,6 @@ def parallelize(*args, **kwargs):
         return decorate_fun(args[0])
     else:
         raise AssertionError(error_string)
-
-
-
 
 
 @lu.cache

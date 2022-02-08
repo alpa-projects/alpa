@@ -94,7 +94,10 @@ class RemoteBufferRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
-def create_remote_buffer_refs(device_mesh, host_indices=None, device_indices=None, dtype=jnp.float32):
+def create_remote_buffer_refs(device_mesh,
+                              host_indices=None,
+                              device_indices=None,
+                              dtype=jnp.float32):
     if host_indices is None:
         host_indices = range(device_mesh.num_hosts)
     if device_indices is None:
@@ -102,8 +105,10 @@ def create_remote_buffer_refs(device_mesh, host_indices=None, device_indices=Non
     refs = []
     for host_id in host_indices:
         for device_id in device_indices:
-            refs.append(RemoteBufferRef(device_mesh, host_id, device_id, dtype=dtype))
+            refs.append(
+                RemoteBufferRef(device_mesh, host_id, device_id, dtype=dtype))
     return refs
+
 
 class MeshDriverExecutable:
     """The base class of the driver part of a mesh executable."""

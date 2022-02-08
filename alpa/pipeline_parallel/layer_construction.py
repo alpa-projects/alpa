@@ -464,6 +464,7 @@ def manual_remat(*args, **kwargs):
 
     Args:
         fn: the input function to rematerialize.
+    Kwargs:
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
@@ -520,6 +521,7 @@ def automatic_remat(*args, **kwargs):
 
     Args:
         fn: The input function to rematerialize.
+    Kwargs:
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
@@ -589,6 +591,7 @@ def manual_layer_construction(*args, **kwargs):
 
     Args:
         fn: the input function.
+    Kwargs:
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.
@@ -647,6 +650,7 @@ def automatic_layer_construction(*args, **kwargs):
 
     Args:
         fn: the input function.
+    Kwargs:
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.

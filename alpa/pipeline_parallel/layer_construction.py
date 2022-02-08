@@ -466,7 +466,10 @@ def layer_level_jaxpr_transformation(fn: Callable,
     return wrapped
 
 
-def manual_remat(fun: Callable = None, *, static_argnums=(), lift_markers=False):
+def manual_remat(fun: Callable = None,
+                 *,
+                 static_argnums=(),
+                 lift_markers=False):
     """Rematerialize an input function with manually selected layer boundaries.
 
     Rematerialize each layer of an input function with manually selected layer
@@ -483,6 +486,7 @@ def manual_remat(fun: Callable = None, *, static_argnums=(), lift_markers=False)
     Returns:
         A new function rematerializes each layer of the input function.
     """
+
     def decorate_fun(fun):
         return layer_level_jaxpr_transformation(fun,
                                                 static_argnums,
@@ -490,6 +494,7 @@ def manual_remat(fun: Callable = None, *, static_argnums=(), lift_markers=False)
                                                 layer_construction=False,
                                                 auto_layer_boundary=False,
                                                 lift_markers=lift_markers)
+
     if fun is None:
         return decorate_fun
     else:
@@ -524,6 +529,7 @@ def automatic_remat(fun: Callable = None,
     Returns:
         A new function rematerializes each layer of the input function.
     """
+
     def decorate_fun(fun):
         layer_level_jaxpr_transformation(fun,
                                          static_argnums,
@@ -534,6 +540,7 @@ def automatic_remat(fun: Callable = None,
                                          eps=eps,
                                          cost_criteria=cost_criteria,
                                          layer_eps=layer_eps)
+
     if fun is None:
         return decorate_fun
     else:
@@ -559,6 +566,7 @@ def manual_layer_construction(fun: Callable,
     Returns:
         A new function with correctly setup pipeline markers.
     """
+
     def decorate_fun(fun):
         return layer_level_jaxpr_transformation(fun,
                                                 static_argnums,
@@ -566,6 +574,7 @@ def manual_layer_construction(fun: Callable,
                                                 layer_construction=True,
                                                 auto_layer_boundary=False,
                                                 lift_markers=lift_markers)
+
     if fun is None:
         return decorate_fun
     else:
@@ -598,6 +607,7 @@ def automatic_layer_construction(fun: Callable,
     Returns:
         A new function rematerializes each layer of the input function.
     """
+
     def decorate_fun(fun):
         return layer_level_jaxpr_transformation(fun,
                                                 static_argnums,
@@ -608,6 +618,7 @@ def automatic_layer_construction(fun: Callable,
                                                 eps=eps,
                                                 cost_criteria=cost_criteria,
                                                 layer_eps=layer_eps)
+
     if fun is None:
         return decorate_fun
     else:

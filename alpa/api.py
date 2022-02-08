@@ -27,7 +27,10 @@ from alpa.util import (auto_donate_argnums, auto_static_argnums,
 unsafe_map, map = map, safe_map  # type: ignore
 
 
-def parallelize(fun=None, *, donate_argnums="auto", static_argnums="auto",
+def parallelize(fun=None,
+                *,
+                donate_argnums="auto",
+                static_argnums="auto",
                 batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
@@ -145,6 +148,7 @@ def parallelize(fun=None, *, donate_argnums="auto", static_argnums="auto",
 
     api._check_callable(fun)
     return decorate_fun(fun)
+
 
 @lu.cache
 def parallelize_callable(

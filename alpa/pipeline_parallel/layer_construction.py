@@ -486,18 +486,13 @@ def manual_remat(*args, **kwargs):
         "'@manual_remat(lift_markers=True)'."
     )
 
-    # If the decorator has no extra args or kwargs (is just @manual_remat)
-    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
-        return layer_level_jaxpr_transformation(args[0],
-                                                (),
-                                                remat=True,
-                                                layer_construction=False,
-                                                auto_layer_boundary=False,
-                                                lift_markers=False)
-    # If the decorator is used as a function with kwargs (e.g. manual_remat(fn, lift_markers=True))
-    elif len(args) == 1 and len(kwargs) != 0 and callable(args[0]):
+    if len(kwargs) > 0:
         for key in kwargs:
             assert key in valid_kwargs, error_string
+
+    # If the decorator has no extra args or kwargs (is just @manual_remat)\
+    # If the decorator is used as a function with kwargs (e.g. manual_remat(fn, lift_markers=True))
+    if len(args) == 1 and callable(args[0]):
         return layer_level_jaxpr_transformation(args[0],
                                                 kwargs.get("static_argnums") or (),
                                                 remat=True,
@@ -507,9 +502,6 @@ def manual_remat(*args, **kwargs):
     # If the decorator has kwargs (e.g. @manual_remat(lift_markers=True))
     else:
         assert len(args) == 0 and len(kwargs) > 0, error_string
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
         def wrap(fn):
             return layer_level_jaxpr_transformation(fn,
                                                     kwargs.get("static_argnums") or (),
@@ -557,21 +549,13 @@ def automatic_remat(*args, **kwargs):
         "'@automatic_remat(layer_eps=0.0)'."
     )
 
-    # If the decorator has no extra args or kwargs (is just @automatic_remat)
-    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
-        return layer_level_jaxpr_transformation(args[0],
-                                                (),
-                                                remat=True,
-                                                layer_construction=False,
-                                                auto_layer_boundary=True,
-                                                layer_num=None,
-                                                eps=DEFAULT_EPS,
-                                                cost_criteria=DEFAULT_COST_CRITERIA,
-                                                layer_eps=0.0)
-    # If the decorator is used as a function with kwargs (e.g. automatic_remat(fn, layer_eps=0.0))
-    elif len(args) == 1 and len(kwargs) != 0 and callable(args[0]):
+    if len(kwargs) > 0:
         for key in kwargs:
             assert key in valid_kwargs, error_string
+
+    # If the decorator has no extra args or kwargs (is just @automatic_remat), or
+    # If the decorator is used as a function with kwargs (e.g. automatic_remat(fn, layer_eps=0.0))
+    if len(args) == 1 and callable(args[0]):
         return layer_level_jaxpr_transformation(args[0],
                                                 kwargs.get("static_argnums") or (),
                                                 remat=True,
@@ -584,9 +568,6 @@ def automatic_remat(*args, **kwargs):
     # If the decorator has kwargs (e.g. @automatic_remat(layer_eps=0.0))
     else:
         assert len(args) == 0 and len(kwargs) > 0, error_string
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
         def wrap(fn):
             return layer_level_jaxpr_transformation(fn,
                                                     kwargs.get("static_argnums") or (),
@@ -632,30 +613,23 @@ def manual_layer_construction(*args, **kwargs):
         "'@manual_layer_construction(remat_layer=True)'."
     )
 
-    # If the decorator has no extra args or kwargs (is just @manual_layer_construction)
-    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
-        return layer_level_jaxpr_transformation(args[0],
-                                                (),
-                                                remat=False,
-                                                layer_construction=True,
-                                                auto_layer_boundary=False,
-                                                lift_markers=False)
-    # If the decorator is used as a function with kwargs (e.g. manual_layer_construction(fn, remat_layer=True))
-    elif len(args) == 1 and len(kwargs) != 0 and callable(args[0]):
+    if len(kwargs) > 0:
         for key in kwargs:
             assert key in valid_kwargs, error_string
+
+    # If the decorator has no extra args or kwargs (is just @manual_layer_construction), or
+    # if the decorator is used as a function with kwargs (e.g. manual_layer_construction(fn, remat_layer=True))
+    if len(args) == 1 and callable(args[0]):
         return layer_level_jaxpr_transformation(args[0],
                                                 kwargs.get("static_argnums") or (),
                                                 remat=kwargs.get("remat_layer") or False,
                                                 layer_construction=True,
                                                 auto_layer_boundary=False,
                                                 lift_markers=kwargs.get("lift_markers") or False)
+
     # If the decorator has kwargs (e.g. @manual_layer_construction(remat_layer=True))
     else:
         assert len(args) == 0 and len(kwargs) > 0, error_string
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
         def wrap(fn):
             return layer_level_jaxpr_transformation(fn,
                                                     kwargs.get("static_argnums") or (),
@@ -704,21 +678,13 @@ def automatic_layer_construction(*args, **kwargs):
         "'@automatic_layer_construction(layer_num=4)'."
     )
 
-    # If the decorator has no extra args or kwargs (is just @automatic_layer_construction)
-    if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
-        return layer_level_jaxpr_transformation(args[0],
-                                                (),
-                                                remat=False,
-                                                layer_construction=True,
-                                                auto_layer_boundary=True,
-                                                layer_num=None,
-                                                eps=DEFAULT_EPS,
-                                                cost_criteria=DEFAULT_COST_CRITERIA,
-                                                layer_eps=0.0)
-    # If the decorator is used as a function with kwargs (e.g. automatic_layer_construction(fn, layer_num=4))
-    elif len(args) == 1 and len(kwargs) != 0 and callable(args[0]):
+    if len(kwargs) > 0:
         for key in kwargs:
             assert key in valid_kwargs, error_string
+
+    # If the decorator has no extra args or kwargs (is just @automatic_layer_construction), or
+    # If the decorator is used as a function with kwargs (e.g. automatic_layer_construction(fn, layer_num=4))
+    if len(args) == 1 and callable(args[0]):
         return layer_level_jaxpr_transformation(args[0],
                                                 kwargs.get("static_argnums") or (),
                                                 remat=kwargs.get("remat_layer") or False,
@@ -728,12 +694,10 @@ def automatic_layer_construction(*args, **kwargs):
                                                 eps=kwargs.get("eps") or DEFAULT_EPS,
                                                 cost_criteria=kwargs.get("cost_criteria") or DEFAULT_COST_CRITERIA,
                                                 layer_eps=kwargs.get("layer_eps") or 0.0)
+                                            
     # If the decorator has kwargs (e.g. @automatic_layer_construction(layer_nums=4))
     else:
         assert len(args) == 0 and len(kwargs) > 0, error_string
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-
         def wrap(fn):
             return layer_level_jaxpr_transformation(fn,
                                                     kwargs.get("static_argnums") or (),

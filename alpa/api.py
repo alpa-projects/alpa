@@ -152,40 +152,33 @@ def parallelize(*args, **kwargs):
         "'@parallelize(batch_argnums = (2,))'."
     )
 
-    # If parallelize() is called with no arugments
-    if len(args) == 0 and len(kwargs) == 0:
-        donate_argnums = "auto",
-        static_argnums = "auto",
-        batch_argnums = (1,)
-        return decorate_fun
-    # If the decorator has no extra args or kwargs (is just @parallelize)
-    elif len(args) == 1 and len(kwargs) == 0:
-        donate_argnums = "auto",
-        static_argnums = "auto",
-        batch_argnums = (1,)
+    donate_argnums = kwargs.get("donate_argnums") or "auto"
+    static_argnums = kwargs.get("static_argnums") or "auto"
+    batch_argnums = kwargs.get("batch_argnums") or (1,)
+
+    if len(args) == 0:
+        # If parallelize() is called with no arguments
+        if len(kwargs) == 0:
+            return decorate_fun
+        # Otherwise, the decorator has extra args and kwargs (e.g. @parallelize(batch_argnums = (2,)))
+        else:
+            for key in kwargs:
+                assert key in valid_kwargs, error_string
+            def wrap(fn):
+                api._check_callable(fn)
+                return decorate_fun(fn)
+            return wrap
+    # If the decorator has no extra args or kwargs (is just @parallelize), or
+    # If the decorator is used as a function with kwargs (e.g. parallelize(fn, batch_argnums=(2,))):
+    elif len(args) == 1:
+        if len(kwargs) != 0:
+            for key in kwargs:
+                assert key in valid_kwargs, error_string
         api._check_callable(args[0])
         return decorate_fun(args[0])
-    # If the decorator is used as a function with kwargs (e.g. parallelize(fn, batch_argnums=(2,)))
-    elif len(args) == 1 and len(kwargs) != 0:
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-        donate_argnums = kwargs.get("donate_argnums") or "auto"
-        static_argnums = kwargs.get("static_argnums") or "auto"
-        batch_argnums = kwargs.get("batch_argnums") or (1,)
-        api._check_callable(args[0])
-        return decorate_fun(args[0])
-    # Otherwise, the decorator has extra args and kwargs (e.g. @parallelize(batch_argnums = (2,)))
     else:
-        assert len(args) == 0 and len(kwargs) > 0, error_string
-        for key in kwargs:
-            assert key in valid_kwargs, error_string
-        donate_argnums = kwargs.get("donate_argnums") or "auto"
-        static_argnums = kwargs.get("static_argnums") or "auto"
-        batch_argnums = kwargs.get("batch_argnums") or (1,)
-        def wrap(fn):
-            api._check_callable(fn)
-            return decorate_fun(fn)
-        return wrap
+        raise AssertionError(error_string)
+
 
 
 

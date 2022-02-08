@@ -91,12 +91,13 @@ opt_state = tx.init(params)
 
 @parallelize(batch_argnums=(2,))
 def parallel_train_step(opt_state, params, batch):
-    @automatic_layer_construction(layer_num=4)
+    # @automatic_layer_construction(layer_num=4)
     def loss_func(params, x, y):
         out = model.apply(params, x)
         loss = jnp.mean((out - y)**2)
         return loss
 
+    loss_func = automatic_layer_construction(loss_func, layer_num=4)
     grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)

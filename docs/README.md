@@ -1,6 +1,6 @@
 # Alpa Documentation
 
-## Build docs
+## Build the documentation website
 
 ### Dependency
 ```
@@ -19,12 +19,12 @@ python3 -m http.server --d _build/html
 ```
 
 ### Publish
-```
+```bash
 export ALPA_SITE_PATH=~/efs/alpa-projects.github.io   # update this with your path
 cp -r _build/html/* $ALPA_SITE_PATH
 ```
 
-Commit the change and push to the master branch of alpa-projects.github.io.
+Then, commit the change and push to the master branch of alpa-projects.github.io.
 
 
 ## Add new documentations

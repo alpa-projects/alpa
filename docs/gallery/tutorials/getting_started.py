@@ -13,7 +13,7 @@ Alpa provides a simple API ``@parallelize`` and automatically generates the best
 plan by solving optimization problems. Therefore, you can efficiently scale your jax
 computation to a distributed cluster, without any expertise in distributed computing. 
 
-In this tutorial, we show the usage of Alpa with a MLP example.
+In this tutorial, we show the usage of Alpa with an MLP example.
 """
 
 ################################################################################
@@ -21,6 +21,8 @@ In this tutorial, we show the usage of Alpa with a MLP example.
 # --------------------
 # We first import the required libraries.
 # Flax and optax are libraries on top of jax for training neural networks.
+# Although we use these libraries in this example, Alpa works at jax level and
+# does not depend on these specific libraries.
 
 import alpa
 from alpa.testing import assert_allclose
@@ -34,24 +36,26 @@ import optax
 
 
 ################################################################################
-# Train a MLP on a Single Device
-# ------------------------------
+# Train an MLP on a Single Device
+# -------------------------------
 # To begin with, we implement the model and training loop on a single device. We will
-# parallelize it later. We train a MLP to learn the function y = Wx + b.
+# parallelize it later. We train an MLP to learn the function y = Wx + b.
 
 class MLPModel(nn.Module):
     hidden_dim: int
     output_dim: int
+    num_layers: int
 
     @nn.compact
     def __call__(self, x):
-        for i in range(8):
+        for i in range(self.num_layers):
             x = nn.Dense(features=self.hidden_dim)(x)
             x = nn.relu(x)
         return x
 
 dim = 4096
 batch_size = 4096
+num_layers = 8
 
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
@@ -65,7 +69,7 @@ x = random.normal(ksample, (batch_size, dim))
 y = (x @ W + b) + 0.1 * random.normal(knoise,(batch_size, dim))
 
 # Initialize a train state, which includes the model paramter and optimizer state.
-model = MLPModel(hidden_dim=dim, output_dim=dim)
+model = MLPModel(hidden_dim=dim, output_dim=dim, num_layers=num_layers)
 params = model.init(rngkey, x)
 tx = optax.sgd(learning_rate=1e-2)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
@@ -109,6 +113,10 @@ actual_state = parallel_train_step(state, batch)
 
 # Test correctness
 assert_allclose(expected_state.params, actual_state.params)
+
+# The types of parameters in actual_state become `ShardedDeviceArray`,
+# which means the parameters are now stored distributedly on multiple devices.
+print(type(actual_state.params["params"]["Dense_0"]["kernel"]))
 
 ################################################################################
 # Speed Comparision 

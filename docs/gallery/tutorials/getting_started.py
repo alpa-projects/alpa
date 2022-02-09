@@ -11,7 +11,7 @@ including data parallelism, operator parallelism, and pipeline parallelism.
 
 Alpa provides a simple API ``@parallelize`` and automatically generates the best execution
 plan by solving optimization problems. Therefore, you can efficiently scale your jax
-computation to a distributed cluster, without any expertise in distributed computing. 
+computation on a distributed cluster, without any expertise in distributed computing. 
 
 In this tutorial, we show the usage of Alpa with an MLP example.
 """
@@ -145,6 +145,9 @@ costs = benchmark_func(serial_execution, sync_func, warmup=5, number=10, repeat=
 print(f"Serial execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 # Benchmark parallel execution
+# We shard arguments in advance for the benchmarking purpose.
+state, batch = parallel_train_step.preshard_dynamic_args(state, batch) 
+
 def parallel_execution():
     global state
     state = parallel_train_step(state, batch)
@@ -154,14 +157,14 @@ costs = benchmark_func(parallel_execution, sync_func, warmup=5, number=10, repea
 print(f"Parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 ################################################################################
-# Memory Consumption Comparision
-# ------------------------------
-# We can also compare the memory consumption per GPU.
+# Memory Usage Comparision
+# ------------------------
+# We can also compare the memory usage per GPU.
 
 GB = 1024 ** 3
 
 executable = jit_train_step.lower(state, batch).compile().runtime_executable()
-print(f"Serial execution. Per GPU Memory Consumption: {executable.total_allocation_size() / GB:.2f} GB")
+print(f"Serial execution per GPU memory usage: {executable.total_allocation_size() / GB:.2f} GB")
 
 executable = parallel_train_step.get_executable(state, batch)
-print(f"Parallel execution. Per GPU Memory Consumption: {executable.get_total_allocation_size() / GB:.2f} GB")
+print(f"Parallel execution per GPU memory usage: {executable.get_total_allocation_size() / GB:.2f} GB")

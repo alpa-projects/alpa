@@ -39,23 +39,25 @@ import optax
 # Train an MLP on a Single Device
 # -------------------------------
 # To begin with, we implement the model and training loop on a single device. We will
-# parallelize it later. We train an MLP to learn the function y = Wx + b.
+# parallelize it later. We train an MLP to learn a function y = Wx + b.
 
 class MLPModel(nn.Module):
     hidden_dim: int
-    output_dim: int
     num_layers: int
 
     @nn.compact
     def __call__(self, x):
         for i in range(self.num_layers):
-            x = nn.Dense(features=self.hidden_dim)(x)
+            if i % 2 == 0:
+                x = nn.Dense(features=self.hidden_dim * 4)(x)
+            else:
+                x = nn.Dense(features=self.hidden_dim)(x)
             x = nn.relu(x)
         return x
 
-dim = 4096
-batch_size = 4096
-num_layers = 8
+dim = 2048
+batch_size = 2048
+num_layers = 10
 
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
@@ -66,12 +68,12 @@ b = random.normal(k2, (dim,))
 # Generate the training data
 ksample, knoise = random.split(k1)
 x = random.normal(ksample, (batch_size, dim))
-y = (x @ W + b) + 0.1 * random.normal(knoise,(batch_size, dim))
+y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
 
 # Initialize a train state, which includes the model paramter and optimizer state.
-model = MLPModel(hidden_dim=dim, output_dim=dim, num_layers=num_layers)
+model = MLPModel(hidden_dim=dim, num_layers=num_layers)
 params = model.init(rngkey, x)
-tx = optax.sgd(learning_rate=1e-2)
+tx = optax.adam(learning_rate=1e-3)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 # Define training step
@@ -103,7 +105,7 @@ expected_state = train_step(state, batch)
 # strategies such as parallelization axes and device mapping schemes. You also need to
 # manually call communication primitives such as ``lax.pmean`` and ``lax.all_gather``,
 # which is nontrivial if you want to do advanced model parallelization.
-# Unlike these transformations, ``@alpa.parallelize` can do all things automatically for
+# Unlike these transformations, ``@alpa.parallelize`` can do all things automatically for
 # you. You only need to write the code as if you are writing for a single device.
 
 # Transform the function and run it
@@ -112,15 +114,15 @@ parallel_train_step = alpa.parallelize(train_step)
 actual_state = parallel_train_step(state, batch)
 
 # Test correctness
-assert_allclose(expected_state.params, actual_state.params)
+assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 
 # The types of parameters in actual_state become `ShardedDeviceArray`,
 # which means the parameters are now stored distributedly on multiple devices.
 print(type(actual_state.params["params"]["Dense_0"]["kernel"]))
 
 ################################################################################
-# Speed Comparision 
-# -----------------
+# Execution Speed Comparision 
+# ---------------------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
 # the memory usage per GPU, so we can train large models faster.
 # We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
@@ -140,7 +142,7 @@ def serial_execution():
 
 costs = benchmark_func(serial_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
 
-print(f"Serial execution. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
+print(f"Serial execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 # Benchmark parallel execution
 def parallel_execution():
@@ -149,4 +151,17 @@ def parallel_execution():
 
 costs = benchmark_func(parallel_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
 
-print(f"Parallel execution. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
+print(f"Parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
+
+################################################################################
+# Memory Consumption Comparision
+# ------------------------------
+# We can also compare the memory consumption per GPU.
+
+GB = 1024 ** 3
+
+executable = jit_train_step.lower(state, batch).compile().runtime_executable()
+print(f"Serial execution. Per GPU Memory Consumption: {executable.total_allocation_size() / GB:.2f} GB")
+
+executable = parallel_train_step.get_executable(state, batch)
+print(f"Parallel execution. Per GPU Memory Consumption: {executable.get_total_allocation_size() / GB:.2f} GB")

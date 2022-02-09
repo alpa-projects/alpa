@@ -7,10 +7,11 @@ from flax import linen as nn
 from flax import optim
 import jax
 import jax.numpy as jnp
+from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa import DeviceCluster, parallelize, set_parallelize_options, testing
+from alpa import DeviceCluster, parallelize, set_parallelize_options, testing, DistributedArray
 from alpa.testing import assert_allclose
 
 
@@ -115,12 +116,37 @@ class DeviceMeshTest(unittest.TestCase):
         remote_a = physical_mesh.shard_args([indices], (False,), (array,))
         physical_mesh.shutdown()
 
+    def test_preshard_args(self):
+        # Single host
+        set_parallelize_options(devices=None)
+
+        @parallelize
+        def add_one(x):
+            x = x + 1
+            return x
+
+        a = jnp.ones((32, 32))
+        a, = add_one.preshard_dynamic_args(a)
+        assert isinstance(a, pxla.ShardedDeviceArray)
+
+        # Multi host
+        device_cluster = DeviceCluster()
+        physical_mesh = device_cluster.get_physical_mesh()
+        set_parallelize_options(devices=physical_mesh)
+
+        a = jnp.ones((64, 64))
+        a, = add_one.preshard_dynamic_args(a)
+        assert isinstance(a, DistributedArray)
+
+        physical_mesh.shutdown()
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(DeviceMeshTest("test_add_one"))
     suite.addTest(DeviceMeshTest("test_mlp"))
     suite.addTest(DeviceMeshTest("test_distributed_array"))
+    suite.addTest(DeviceMeshTest("test_preshard_args"))
 
     return suite
 

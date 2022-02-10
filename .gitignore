@@ -9,6 +9,10 @@ dist
 # Vim
 *.swp
 
+# Website build
+docs/_build
+docs/tutorials
+
 # Analysis temp files
 *.nvprof
 *.prof

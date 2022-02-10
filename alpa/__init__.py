@@ -11,7 +11,7 @@ from . import util
 
 # Shortcut
 from alpa.api import clear_callable_cache, grad, parallelize
-from alpa.device_mesh import DeviceCluster, PhysicalDeviceMesh
+from alpa.device_mesh import DeviceCluster, PhysicalDeviceMesh, DistributedArray
 from alpa.global_env import global_config, set_parallelize_options
 from alpa.mesh_profiling import ProfilingResultDatabase
 from alpa.pipeline_parallel.primitive_def import (mark_pipeline,

@@ -83,9 +83,7 @@ def train_step(state, batch):
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 
-    # Note that we have to replace `jax.grad` with `alpa.grad` if we want
-    # to use gradient accumulation and pipeline parallelism.
-    grads = alpa.grad(loss_func)(state.params)
+    grads = jax.grad(loss_func)(state.params)
     new_state = state.apply_gradients(grads=grads)
     return new_state
 

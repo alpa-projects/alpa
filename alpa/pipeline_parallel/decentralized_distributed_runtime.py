@@ -810,6 +810,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
             #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
 
+        # Sync before the execution to avoid exploding the ray task limits.
+        self.sync()
+
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             for i, worker in enumerate(physical_mesh.workers):

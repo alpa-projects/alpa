@@ -548,7 +548,7 @@ def automatic_remat(fun: Callable = None,
         return decorate_fun(fun)
 
 
-def manual_layer_construction(fun: Callable,
+def manual_layer_construction(fun: Callable=None,
                               static_argnums=(),
                               remat_layer=False,
                               lift_markers=False):
@@ -582,7 +582,7 @@ def manual_layer_construction(fun: Callable,
         return decorate_fun(fun)
 
 
-def automatic_layer_construction(fun: Callable,
+def automatic_layer_construction(fun: Callable=None,
                                  static_argnums=(),
                                  remat_layer=False,
                                  layer_num: int = None,

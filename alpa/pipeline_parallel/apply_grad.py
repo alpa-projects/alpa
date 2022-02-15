@@ -22,14 +22,14 @@ unsafe_map, map = map, safe_map  # type: ignore
 APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
 
 
-# TODO(yonghao): in some cases, delaying the cross layer grad accumulate
+# TODO(yonghao): in some cases, delaying the cross layer grad accmulation
 # increases memory cost: if c=a+b is delayed, but layer_a and layer_b are merged
 # to the same stage, so delaying the computation decreases no communication.
 def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
                               closed_jaxpr):
     """
-    If a parameter is used in multiple stages, its gradient is compute in
-    multiple stages and then add together. We accumulate the result on each
+    If a parameter is used in multiple stages, its gradient is computed in
+    multiple stages and then added together. We accumulate the results on each
     stage, and add them together exactly at the start of apply grad period.
     """
     unmarked_vars = set()

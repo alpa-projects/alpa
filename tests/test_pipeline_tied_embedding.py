@@ -28,7 +28,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
     def tearDown(self):
         ray.shutdown()
 
-    def train_tied_embedding(self, devices, strategy, num_micro_batches=1):
+    def train_tied_embedding(self, devices, strategy, num_micro_batches):
         vocab_size = 1024
         hidden_size = 16
         batch_size = 8

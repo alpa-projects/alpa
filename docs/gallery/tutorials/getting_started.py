@@ -119,7 +119,7 @@ assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 print(type(actual_state.params["params"]["Dense_0"]["kernel"]))
 
 ################################################################################
-# Execution Speed Comparision 
+# Execution Speed Comparison
 # ---------------------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
 # the memory usage per GPU, so we can train large models faster.

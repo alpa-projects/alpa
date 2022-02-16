@@ -29,6 +29,8 @@ To install alpa from source, we need to build these forks.
 
     pip3 install cmake numpy scipy flax numba pybind11 ray[default]
     pip3 install cupy-cuda111   # use your corresponding CUDA version
+    # In case NCCL is not automatically installed during cupy installation, please install it manually
+    python -m cupyx.tools.install_library --library nccl --cuda 11.1  # use your own CUDA version
 
   - ILP Solver:
 

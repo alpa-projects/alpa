@@ -35,13 +35,11 @@ class DeviceMeshTest(unittest.TestCase):
 
         @parallelize
         def add_one(x):
-            x = x + 1
-            return x
+            return x + 1
 
         @parallelize
         def multiply_two(x):
-            x = x * 2
-            return x
+            return x * 2
 
         # Run computation
         a = jnp.ones((512, 512))
@@ -122,8 +120,7 @@ class DeviceMeshTest(unittest.TestCase):
 
         @parallelize
         def add_one(x):
-            x = x + 1
-            return x
+            return x + 1
 
         a = jnp.ones((32, 32))
         a, = add_one.preshard_dynamic_args(a)
@@ -140,6 +137,21 @@ class DeviceMeshTest(unittest.TestCase):
 
         physical_mesh.shutdown()
 
+    def test_fast_call(self):
+        # Single host
+        set_parallelize_options(devices=None)
+
+        @parallelize
+        def add_one(x, y):
+            return x + y
+
+        a = jnp.ones((32, 32))
+        b = jnp.ones((32, 32))
+        executable = add_one.get_executable(a, b)
+        c = executable(a, b)
+
+        assert isinstance(c, pxla.ShardedDeviceArray)
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -147,6 +159,7 @@ def suite():
     suite.addTest(DeviceMeshTest("test_mlp"))
     suite.addTest(DeviceMeshTest("test_distributed_array"))
     suite.addTest(DeviceMeshTest("test_preshard_args"))
+    suite.addTest(DeviceMeshTest("test_fast_call"))
 
     return suite
 

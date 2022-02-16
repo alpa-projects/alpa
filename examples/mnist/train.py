@@ -75,8 +75,6 @@ def update_model(state, grads):
 
 import alpa
 
-#@jax.jit
-
 @alpa.parallelize
 def train_step(state, images, labels):
   """Computes gradients, loss and accuracy for a single batch."""
@@ -98,16 +96,12 @@ def train_epoch(state, train_ds, batch_size, rng):
   train_ds_size = len(train_ds['image'])
   steps_per_epoch = train_ds_size // batch_size
 
-  perms = np.random.permutation(len(train_ds['image']))
-  perms = perms[:steps_per_epoch * batch_size]  # skip incomplete batch
-  perms = perms.reshape((steps_per_epoch, batch_size))
-
   epoch_loss = []
   epoch_accuracy = []
 
-  for perm in perms:
-    batch_images = train_ds['image'][perm, ...]
-    batch_labels = train_ds['label'][perm, ...]
+  for i in range(steps_per_epoch):
+    batch_images = train_ds['image'][i*batch_size:(i+1)*batch_size]
+    batch_labels = train_ds['label'][i*batch_size:(i+1)*batch_size]
     state, loss, accuracy = train_step(state, batch_images, batch_labels)
     epoch_loss.append(loss)
     epoch_accuracy.append(accuracy)

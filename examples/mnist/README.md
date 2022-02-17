@@ -1,4 +1,7 @@
-adopted from https://github.com/google/flax/tree/main/examples/mnist
+Adopted from https://github.com/google/flax/tree/main/examples/mnist with the following modifications to better demonstrate the training speeedup on this small network.
+- Use a large batch size
+- Use numpy array for data loading instead of jax numpy array
+- Remove random permutation
 
 ## MNIST classification
 

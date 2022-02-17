@@ -5,6 +5,7 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
+from collections.abc import Iterable
 import logging
 import os
 from typing import Callable, Sequence, Union, Optional
@@ -96,18 +97,22 @@ class RemoteBufferRef:
 def create_remote_buffer_refs(device_mesh,
                               host_indices=None,
                               device_indices=None):
-    """Create remote buffer references for an distribued array ona device mesh."""
+    """Create remote buffer references for an distribued array on a device mesh."""
     if host_indices is None:
         host_indices = range(device_mesh.num_hosts)
     if device_indices is None:
         device_indices = range(device_mesh.num_devices_per_host)
-    uuids = next_remote_buffer_uuid(len(host_indices) * len(device_indices))
+    size = len(host_indices) * len(device_indices)
+    uuids = next_remote_buffer_uuid(size)
+    if size == 1:
+        uuids = (uuids,)
     uuid_iter = iter(uuids)
     refs = []
     for host_id in host_indices:
         for device_id in device_indices:
             refs.append(
-                RemoteBufferRef(device_mesh, host_id, device_id, next(uuid_iter)))
+                RemoteBufferRef(device_mesh, host_id, device_id,
+                                next(uuid_iter)))
     return refs, uuids
 
 
@@ -270,12 +275,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
+                        physical_mesh, host_id, device_id,
                         output_uuids[i][host_id][device_id])
 
-            ## Mark donated input buffers as already deleted on workers.
+            # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
                 if is_donated:
                     for buf in bufs:
@@ -653,9 +656,7 @@ class GradAccMeshDriverExecutable:
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
+                        physical_mesh, host_id, device_id,
                         output_uuids[i][host_id][device_id])
 
             # Mark donated input buffers as already deleted on workers.
@@ -1012,9 +1013,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
+                        physical_mesh, host_id, device_id,
                         output_uuids[i][host_id][device_id])
         else:
             timers(self.timer_name).start(self.sync_func)

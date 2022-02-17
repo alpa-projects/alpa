@@ -845,8 +845,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         physical_mesh,
                         host_id,
                         device_id,
-                        output_uuid_transposed[i][host_id][device_id],
-                        dtype=dtype)
+                        output_uuid_transposed[i][host_id][device_id])
         return self.outs_handler(output_bufs)
 
     def _setup_outs_handler(self):

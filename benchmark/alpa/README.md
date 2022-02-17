@@ -19,3 +19,15 @@ python3 benchmark_2d.py --suite gpt.fast_test
 ```
 python3 gen_prof_database.py
 ```
+
+
+## Santity Checks
+
+```
+python3 benchmark_3d.py --suite gpt.test
+```
+
+Expected output on AWS p3.16
+```
+
+```

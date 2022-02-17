@@ -105,9 +105,8 @@ def parallelize(fun=None,
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
-                f, in_tree, out_tree_hashable,
-                static_argnums, donated_invars, batch_invars,
-                devices, global_config.strategy,
+                f, in_tree, out_tree_hashable, static_argnums, donated_invars,
+                batch_invars, devices, global_config.strategy,
                 global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
@@ -174,7 +173,8 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       static_argnums, donated_invars, batch_invars, devices,
+                                       static_argnums, donated_invars,
+                                       batch_invars, devices,
                                        memory_budget_per_device, *avals)
     elif strategy == "3d_parallel":
         return three_d_parallel_callable(fun, in_tree, out_tree_thunk,

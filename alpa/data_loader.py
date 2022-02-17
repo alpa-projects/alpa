@@ -7,6 +7,7 @@ import numpy as np
 
 from alpa.device_mesh import DistributedArray, _shard_array
 
+
 class DataLoader:
 
     def __init__(self,
@@ -26,10 +27,22 @@ class DataLoader:
         self.prefetch_size = prefetch_size
 
         # Cache meta info
-        self.avals = [ShapedArray((self.batch_size,) + a.shape[1:], a.dtype) for a in self.arrays]
-        self.indices = [tuple(spec.indices(aval.shape)) for spec, aval in zip(self.sharding_specs, self.avals)]
-        self.indices_shape = [(len(index), len(index[0])) for index in self.indices]
-        self.indices_flatten = [tuple(x.__reduce__()[1] for x in np.ravel(index)) for index in self.indices]
+        self.avals = [
+            ShapedArray((self.batch_size,) + a.shape[1:], a.dtype)
+            for a in self.arrays
+        ]
+        self.indices = [
+            tuple(spec.indices(aval.shape))
+            for spec, aval in zip(self.sharding_specs, self.avals)
+        ]
+        self.indices_shape = [
+            (len(index), len(index[0])) for index in self.indices
+        ]
+        self.indices_flatten = [
+            tuple(x.__reduce__()[1]
+                  for x in np.ravel(index))
+            for index in self.indices
+        ]
 
         # Iterator status
         self.pt = 0
@@ -49,7 +62,7 @@ class DataLoader:
     def shard_to_physical_mesh(self, batch, aval, sharding_spec, indices):
         buffers = _shard_array(batch, self.physical_mesh, indices)
         return DistributedArray(self.physical_mesh, aval, sharding_spec,
-                buffers, indices)
+                                buffers, indices)
 
     def enqueue(self, num_batches):
         batch_size = self.batch_size
@@ -63,8 +76,10 @@ class DataLoader:
                     else:
                         batch = a[self.pt:self.pt + batch_size]
 
-                    iter_ret.append(self.shard_func(batch, self.avals[j],
-                                                    self.sharding_specs[j], self.indices[j]))
+                    iter_ret.append(
+                        self.shard_func(batch, self.avals[j],
+                                        self.sharding_specs[j],
+                                        self.indices[j]))
 
                 self.queue.append(iter_ret)
 
@@ -87,4 +102,3 @@ class DataLoader:
                     yield self.queue.popleft()
                 else:
                     break
-

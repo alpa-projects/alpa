@@ -4,6 +4,7 @@ import os
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
+from jax._src.lib import xla_bridge as xb
 
 
 class AutoShardingOption:
@@ -59,12 +60,16 @@ class GlobalConfig:
         self.num_micro_batches = None  # If is not None, gradient accumulation will
         # be enable.
         self.default_autosharding_option = AutoShardingOption()
+
+        ########## Options of device mesh ##########
         self.xla_client_mem_fraction = 0.9
+        self.delete_remote_buffers_threshold = 500
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_search_logical_mesh_shape = False
         self.shard_parallel_mesh_shape_search_mode = "cost_model"
         self.shard_parallel_mesh_shape_search_log_file = None
+        self.shard_parallel_sync_for_timer = False
 
         ########## Options of pipeline_parallel ##########
         self.pipeline_stage_mode = "uniform_layer_gpipe"
@@ -216,10 +221,10 @@ def set_parallelize_options(
     global_config.profiling_database_filename = profiling_database_filename
 
 
-is_worker = os.environ.get("PARAX_IS_WORKER", "False") == "True"
+is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"
 
-# Don't let the compilation on the driver node use GPUs.
-# TODO(lmzheng): enable auto-tuning for compilation on workers.
+# Let the compilation on the driver node not use GPUs.
+# TODO(lmzheng): enable this
 os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
                                          "") + " --xla_gpu_autotune_level=0"
 

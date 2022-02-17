@@ -1,86 +1,25 @@
 Alpa
 =======
-Alpa automatically parallelizes your python numerical computing code and neural networks
-with a simple decorator.
+[**Documentation**](https://alpa-projects.github.io) |
+[**Slack**](https://join.slack.com/t/alpa-project/shared_invite/zt-13rl45uci-UI~eULQHBHGav4JrwF7dHw)
 
-
-Requirements
-============
-
-```
-CuDNN >= 8.1
-CUDA >= 11.1
-python >= 3.7
-```
-
-Install
-=======
-This repo depends on our private fork of jax and tensorflow.
-
-- Step 1. Clone repos
-  ```bash
-  git clone git@github.com:alpa-projects/alpa.git
-  git clone git@github.com:alpa-projects/jax-alpa.git
-  git clone git@github.com:alpa-projects/tensorflow-alpa.git
-  ```
-
-- Step 2. Install dependencies
-  - CUDA Toolkit: cuda and cudnn
-  - Python packages:
-    ```bash
-    pip3 install cmake numpy scipy flax numba pybind11 ray[default]
-    pip3 install cupy-cuda111   # use your corresponding CUDA version
-    
-    # In case NCCL is not automatically installed during cupy installation, please install it manually
-    python -m cupyx.tools.install_library --library nccl --cuda 11.1  # use your own CUDA version
-    ```
-  - ILP Solver:
-    ```bash
-    sudo apt install coinor-cbc glpk-utils
-    pip3 install pulp
-    ```
-
-- Step 3. Build and install jaxlib
-  ```bash
-  cd jax-alpa
-  export TF_PATH=~/tensorflow-alpa  # update this with your path
-  python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
-  cd dist
-  pip3 install -e .
-  ```
-
-- Step 4. Install jax
-  ```bash
-  cd jax-alpa
-  pip3 install -e .
-  ```
-
-- Step 5. Install Alpa
-  ```bash
-  cd alpa
-  pip3 install -e .
-  ```
-
-- Step 6. Build XLA pipeline marker custom call (See [here](alpa/pipeline_parallel/xla_custom_call_marker/README.md))
-  ```bash
-  cd alpa/pipeline_parallel/xla_custom_call_marker
-  bash build.sh
-  ```
-
-Note:
-All installations are in development mode, so you can modify python code and it will take effect immediately.
-To modify c++ code in tensorflow, you only need to run the command below in Step 3 to recompile jaxlib.
-```
-python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
-```
+Alpa automatically parallelizes tensor computational graphs and runs them on a distributed cluster. 
 
 Organization
 ============
-- `examples`: public examples
-- `alpa`: the python source code of the library
-- `playground`: private experimental scripts
-- `tests`: unit tests
+- This Repo
+  - `alpa`: the python source code of Alpa
+  - `benchmark`: benchmark scripts
+  - `docs`: documentation and tutorials
+  - `examples`: public examples
+  - `playground`: private experimental scripts
+  - `tests`: unit tests
 
+- [tensorflow-alpa](https://github.com/alpa-projects/tensorflow-alpa). The tensorflow fork for Alpa.
+  The c++ source code of Alpa mainly resides in `tensorflow/compiler/xla/service/spmd`.
+
+- [jax-alpa](https://github.com/alpa-projects/jax-alpa). The jax fork for Alpa.
+  We do not change any functionatiy, but modify the building scritps to make building with tensorflow-alpa easier.
 
 Formatting & Linting
 ============

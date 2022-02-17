@@ -222,7 +222,7 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 2
+        global_config.num_micro_batches = 4
         serial_train_step = get_mlp_train_step(False, None, None)
         parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer,
                                                  test_remat)
@@ -290,7 +290,7 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        global_config.num_micro_batches = 2
+        global_config.num_micro_batches = 4
         serial_train_step = get_bert_layer_train_step(False, None, None,
                                                       n_layers)
         parallel_train_step = get_bert_layer_train_step(True,

@@ -1,18 +1,25 @@
 Alpa
 =======
-[**Documentation**](https://alpa-projects.github.io/install/from_source.html) |
+[**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://join.slack.com/t/alpa-project/shared_invite/zt-13rl45uci-UI~eULQHBHGav4JrwF7dHw)
 
-Alpa automatically parallelizes your python numerical computing code and neural networks
-with a simple decorator.
+Alpa automatically parallelizes tensor computational graphs and runs them on a distributed cluster. 
 
 Organization
 ============
-- `examples`: public examples
-- `alpa`: the python source code of the library
-- `playground`: private experimental scripts
-- `tests`: unit tests
+- This Repo
+  - `alpa`: the python source code of Alpa
+  - `benchmark`: benchmark scripts
+  - `docs`: documentation and tutorials
+  - `examples`: public examples
+  - `playground`: private experimental scripts
+  - `tests`: unit tests
 
+- [tensorflow-alpa](https://github.com/alpa-projects/tensorflow-alpa). The tensorflow fork for Alpa.
+  The c++ source code of Alpa mainly resides under `tensorflow/compiler/xla/service/spmd`.
+
+- [jax-alpa](https://github.com/alpa-projects/jax-alpa). The jax fork for Alpa.
+  We do not change any functionatiy, but modify the building scritps to make building with tensorflow-alpa easier.
 
 Formatting & Linting
 ============

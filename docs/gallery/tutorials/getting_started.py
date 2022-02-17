@@ -120,7 +120,7 @@ print(type(actual_state.params["params"]["Dense_0"]["kernel"]))
 
 ################################################################################
 # Execution Speed Comparison
-# ---------------------------
+# --------------------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
 # the memory usage per GPU, so we can train large models faster.
 # We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
@@ -155,8 +155,8 @@ costs = benchmark_func(parallel_execution, sync_func, warmup=5, number=10, repea
 print(f"Parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 ################################################################################
-# Memory Usage Comparision
-# ------------------------
+# Memory Usage Comparison
+# -----------------------
 # We can also compare the memory usage per GPU.
 
 GB = 1024 ** 3

@@ -842,9 +842,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         self.mesh_index_to_outvar_indices_mapping[mesh_idx]
                         [i]].aval.dtype
                     output_bufs[mesh_idx][i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
+                        physical_mesh, host_id, device_id,
                         output_uuid_transposed[i][host_id][device_id])
         return self.outs_handler(output_bufs)
 

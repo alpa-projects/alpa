@@ -231,8 +231,10 @@ class MeshHostWorker:
                                   n_elements=n_elements)
         else:
             # slower path, because of indexing.
-            logger.debug("Send goes along the slowest path. "
-                         "If this is for transformers, please check the resharding specs.")
+            logger.debug(
+                "Send goes along the slowest path. "
+                "If this is for transformers, please check the resharding specs."
+            )
             start_indices = tuple(o.start for o in offset)
             slice_sizes = tuple(o.stop - o.start for o in offset)
             src_buffer = jax_tensor_index(
@@ -282,8 +284,10 @@ class MeshHostWorker:
         else:
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/alpa-projects/alpa/issues/145
-            logger.debug("Recv goes along the slowest path. "
-                         "If this is for transformers, please check the resharding specs.")
+            logger.debug(
+                "Recv goes along the slowest path. "
+                "If this is for transformers, please check the resharding specs."
+            )
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
                 self.local_devices[device_id])
@@ -486,7 +490,7 @@ class PhysicalDeviceMesh:
         self.host_info = host_info
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
-        self.use_ray = use_ray # TODO: infer use_ray by checking ip addresses.
+        self.use_ray = use_ray  # TODO: infer use_ray by checking ip addresses.
         self.workers = None
         self.launched = False
 
@@ -568,7 +572,8 @@ class PhysicalDeviceMesh:
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
             if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
-               env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]
+                env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
+                    "XLA_PYTHON_CLIENT_ALLOCATOR"]
 
             # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]

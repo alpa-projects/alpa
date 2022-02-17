@@ -16,7 +16,7 @@ Organization
   - `tests`: unit tests
 
 - [tensorflow-alpa](https://github.com/alpa-projects/tensorflow-alpa). The tensorflow fork for Alpa.
-  The c++ source code of Alpa mainly resides under `tensorflow/compiler/xla/service/spmd`.
+  The c++ source code of Alpa mainly resides in `tensorflow/compiler/xla/service/spmd`.
 
 - [jax-alpa](https://github.com/alpa-projects/jax-alpa). The jax fork for Alpa.
   We do not change any functionatiy, but modify the building scritps to make building with tensorflow-alpa easier.

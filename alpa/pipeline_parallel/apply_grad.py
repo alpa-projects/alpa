@@ -22,9 +22,12 @@ unsafe_map, map = map, safe_map  # type: ignore
 APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
 
 
-# TODO(yonghao): in some cases, delaying the cross layer grad accmulation
-# increases memory cost: if c=a+b is delayed, but layer_a and layer_b are merged
-# to the same stage, so delaying the computation decreases no communication.
+# TODO(yonghao): delaying the cross layer grad accmulation increases memory
+# cost, but may not decrease communication: if c=a+b is delayed, both a and
+# b are accumulated, so the memory cost is more than when only accumulate c.
+# If layer that outputs a(called layer_a, and the same applys for b) is
+# merged with layer_b to the same stage, they do not need any communication,
+# so the communication does not benefit from the rewrite.
 def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
                               closed_jaxpr):
     """

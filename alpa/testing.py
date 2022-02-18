@@ -12,7 +12,7 @@ import numpy as np
 import optax
 import ray
 
-from alpa.api import parallelize, grad
+from alpa.api import parallelize, grad, value_and_grad
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
@@ -125,7 +125,7 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
                                         layer_num=layer_num)
 
 
-def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):
+def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat, value=False):
 
     def train_step(state, batch):
 
@@ -139,11 +139,19 @@ def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat):
         if use_parallel:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          test_remat, 2)
-            grads = grad(loss_func)(state.params)
+            if value:
+                val, grads = value_and_grad(loss_func)(state.params)
+            else:
+                val, grads = 0, grad(loss_func)(state.params)
         else:
-            grads = jax.grad(loss_func)(state.params)
+            if value:
+                val, grads = jax.value_and_grad(loss_func)(state.params)
+            else:
+                val, grads = 0, jax.grad(loss_func)(state.params)
 
         new_state = state.apply_gradients(grads=grads)
+        if value:
+            return new_state, val
         return new_state
 
     if use_parallel:
@@ -156,7 +164,8 @@ def get_bert_layer_train_step(use_parallel,
                               manual_pipeline_layer,
                               test_remat,
                               num_layers,
-                              decorate=None):
+                              decorate=None,
+                              value=False):
     if decorate is None:
         decorate = use_parallel
 
@@ -172,11 +181,19 @@ def get_bert_layer_train_step(use_parallel,
         if decorate:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          test_remat, num_layers)
-            grads = grad(loss_func)(state.params)
+            if value:
+                val, grads = value_and_grad(loss_func)(state.params)
+            else:
+                val, grads = grad(loss_func)(state.params), 0
         else:
-            grads = jax.grad(loss_func)(state.params)
+            if value:
+                val, grads = jax.value_and_grad(loss_func)(state.params)
+            else:
+                val, grads = jax.grad(loss_func)(state.params), 0
 
         new_state = state.apply_gradients(grads=grads)
+        if value:
+            return val, new_state
         return new_state
 
     if use_parallel:
@@ -201,7 +218,8 @@ class PipelineBasicTest(unittest.TestCase):
                 manual_pipeline_layer=True,
                 test_remat=False,
                 pipeline_stage_mode="uniform_layer_gpipe",
-                do_numerical_test=True):
+                do_numerical_test=True,
+                return_value=False):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="3d_parallel",
@@ -223,10 +241,10 @@ class PipelineBasicTest(unittest.TestCase):
 
         # Compile
         global_config.num_micro_batches = 2
-        serial_train_step = get_mlp_train_step(False, None, None)
+        serial_train_step = get_mlp_train_step(False, None, None, value=return_value)
         parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer,
-                                                 test_remat)
-        executable = parallel_train_step.get_executable(state, batch)
+                                                 test_remat, value=return_value)
+        # executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
         if do_numerical_test:
@@ -235,16 +253,28 @@ class PipelineBasicTest(unittest.TestCase):
             for i in range(3):
                 if i > 0:
                     state = expected_new_state
-                expected_new_state = serial_train_step(state, batch)
+                if return_value:
+                    expected_new_state, expected_val = serial_train_step(state, batch)
+                else: 
+                    expected_new_state, expected_val = serial_train_step(state, batch), 0
+                    
                 if i > 0:
                     state = actual_new_state
-                actual_new_state = parallel_train_step(state, batch)
-                assert_allclose(expected_new_state.params,
-                                actual_new_state.params, 1e-3, 1e-3)
+                if return_value:
+                    actual_new_state, actual_val = parallel_train_step(state, batch)
+                else: 
+                    actual_new_state, actual_val = parallel_train_step(state, batch), 0
+                
 
-        hlo_text = executable.get_hlo_text()
-        executable.shutdown()
-        return hlo_text
+                # assert_allclose(expected_new_state.params,
+                #                 actual_new_state.params, 1e-3, 1e-3)
+                if return_value:
+                    assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
+
+        # hlo_text = executable.get_hlo_text()
+        # executable.shutdown()
+        # return hlo_text
+
 
     def run_n_layer_bert(self,
                          n_layers,
@@ -260,7 +290,8 @@ class PipelineBasicTest(unittest.TestCase):
                          submesh_shapes=None,
                          do_numerical_test=True,
                          overwrite_global_config_dict=None,
-                         virtual_mesh=None):
+                         virtual_mesh=None,
+                         return_value=False):
         if virtual_mesh is None:
             virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
@@ -292,10 +323,10 @@ class PipelineBasicTest(unittest.TestCase):
         # Compile
         global_config.num_micro_batches = 2
         serial_train_step = get_bert_layer_train_step(False, None, None,
-                                                      n_layers)
+                                                      n_layers, value=return_value)
         parallel_train_step = get_bert_layer_train_step(True,
                                                         manual_pipeline_layer,
-                                                        test_remat, n_layers)
+                                                        test_remat, n_layers, value=return_value)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -305,12 +336,22 @@ class PipelineBasicTest(unittest.TestCase):
             for i in range(1):
                 if i > 0:
                     state = expected_new_state
-                expected_new_state = serial_train_step(state, batch)
+                if return_value:
+                    expected_new_state, expected_val = serial_train_step(state, batch)
+                else:
+                    expected_new_state, expected_val = 0, serial_train_step(state, batch)
+
                 if i > 0:
                     state = actual_new_state
-                actual_new_state = parallel_train_step(state, batch)
-                assert_allclose(expected_new_state.params,
-                                actual_new_state.params, 1e-3, 1.5e-3)
+                if return_value:
+                    actual_new_state, actual_val = parallel_train_step(state, batch)
+                else:
+                    actual_new_state, actual_val = parallel_train_step(state, batch)
+
+                # assert_allclose(expected_new_state.params,
+                #                 actual_new_state.params, 1e-3, 1.5e-3)
+                if return_value:
+                    assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()

@@ -1122,6 +1122,9 @@ class ReplicatedDistributedArray:
     def __array__(self, dtype=None, context=None):
         return np.asarray(self._value, dtype=dtype)
 
+    def __str__(self):
+        return str(self._value)
+
 
 core.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')
 xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter('aval')

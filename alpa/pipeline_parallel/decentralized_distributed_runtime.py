@@ -190,6 +190,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         # states
         self.donate_invars = []
+        self.delete_after_shard = []
         self.input_indices = []
         self.mesh_arg_indices = []
         self.batch_arg_on_mesh = []
@@ -562,7 +563,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if donate and invar in global_invar_set:
                     donated_invar_set.add(invar)
         num_mesh = len(self.physical_meshes)
-        global_invar_indices = {}
+        global_indices = {}
         invar_counter = 0
         mesh_arg_lists = [None for _ in range(num_mesh)]
         self.batch_arg_on_mesh = [None] * len(self.global_invars)
@@ -572,15 +573,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for arg_idx, invar in enumerate(self.global_invars):
             if invar in not_batch_invars:
                 key = invar, 0
-                global_invar_indices[key] = invar_counter
+                global_indices[key] = invar_counter
                 invar_counter += 1
                 continue
             self.batch_arg_on_mesh[arg_idx] = []
             for batch_idx in range(self.num_batch):
                 key = invar, batch_idx
-                global_invar_indices[key] = invar_counter
+                global_indices[key] = invar_counter
                 invar_counter += 1
         # dispatch args to each mesh
+        arg_last_use = [-1] * invar_counter
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = {}
@@ -609,8 +611,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 pxla.spec_to_indices(key[0].aval.shape, var_to_spec[key[0]])
                 for key in mesh_arg_list
             ])
-            self.mesh_arg_indices.append(
-                [global_invar_indices[key] for key in mesh_arg_list])
+            mesh_global_indices = [global_indices[key] for key in mesh_arg_list]
+            for global_idx in mesh_global_indices:
+                arg_last_use[global_idx] = mesh_idx
+            self.mesh_arg_indices.append(mesh_global_indices)
+        for mesh_idx in range(num_mesh):
+            self.delete_after_shard.append([
+                arg_last_use[idx] == mesh_idx and donate
+                for idx, donate in zip(self.mesh_arg_indices[mesh_idx],
+                                       self.donate_invars[mesh_idx])
+            ])
         # get local uuids for each input:
         input_local_uuid_list = {}
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -795,7 +805,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
             input_bufs[mesh_idx] = physical_mesh.shard_args(
-                self.input_indices[mesh_idx], self.donate_invars[mesh_idx],
+                self.input_indices[mesh_idx], self.delete_after_shard[mesh_idx],
                 mesh_args)
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host

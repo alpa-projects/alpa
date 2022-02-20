@@ -71,7 +71,8 @@ To install alpa from source, we need to build these forks.
     cd alpa/pipeline_parallel/xla_custom_call_marker
     bash build.sh
 
-Note:
+.. note::
+
   All installations are in development mode, so you can modify python code and it will take effect immediately.
   To modify c++ code in tensorflow, you only need to run the command below from step 3 to recompile jaxlib::
 

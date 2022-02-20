@@ -78,9 +78,7 @@ params = model.init(rngkey, x)
 tx = optax.adam(learning_rate=1e-3)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
-################################################################################
 # Define the training function and execute one step
-
 def train_step(state, batch):
     def loss_func(params):
         out = model.apply(params, batch["x"])
@@ -113,7 +111,6 @@ expected_state = train_step(state, batch)
 # writing for a single device.
 
 
-################################################################################
 # Define the training step. The body of this function is the same as the
 # ``train_step`` above. The only difference is to decorate it with
 # ``@alpa.paralellize``.
@@ -134,11 +131,11 @@ actual_state = alpa_train_step(state, batch)
 assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 
 ################################################################################
-# After decorated by ``@parallelize``, the function can still take numpy arrays or
-# jax arrays as input. The function will first distribute the input arrays
-# into correct devices according to the parallelization strategy and then
-# execute the function distributedly. The returned result arrays
-# are also stored distributedly.
+# After being decorated by ``@parallelize``, the function can still take numpy
+# arrays or jax arrays as inputs. The function will first distribute the input
+# arrays into correct devices according to the parallelization strategy and then
+# execute the function distributedly. The returned result arrays are also
+# stored distributedly.
 
 print("Input parameter type:", type(state.params["params"]["Dense_0"]["kernel"]))
 print("Output parameter type:", type(actual_state.params["params"]["Dense_0"]["kernel"]))

@@ -261,6 +261,7 @@ class PipelineBasicTest(unittest.TestCase):
                          do_numerical_test=True,
                          overwrite_global_config_dict=None,
                          virtual_mesh=None):
+        num_micro_batch = 2
         if virtual_mesh is None:
             virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
@@ -290,7 +291,7 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        global_config.num_micro_batches = 4
+        global_config.num_micro_batches = num_micro_batch
         serial_train_step = get_bert_layer_train_step(False, None, None,
                                                       n_layers)
         parallel_train_step = get_bert_layer_train_step(True,

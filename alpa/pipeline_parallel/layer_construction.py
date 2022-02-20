@@ -1,7 +1,7 @@
 """Cluster small ops into layers and rematerialize at layer boundary."""
 from functools import partial, wraps
 import logging
-from typing import Callable, Union
+from typing import Callable, Union, Sequence
 
 from jax._src.api import _check_callable
 from jax._src.tree_util import tree_unflatten
@@ -73,8 +73,8 @@ def lift_pipeline_marker(jaxpr: ClosedJaxpr):
 
 def transform_pipeline_forward(fn: Callable,
                                transform_fn,
-                               static_argnums=(),
-                               lift_markers=False):
+                               static_argnums: Sequence[int] = (),
+                               lift_markers: bool = False):
     """TODO(zhuohan):docstring."""
 
     def get_sliced(*args):
@@ -89,7 +89,7 @@ def transform_pipeline_forward(fn: Callable,
     @wraps(fn)
     def wrapped(*args):
         origin_jaxpr, sliced_eqns, out_shape_tree = get_sliced(*args)
-        log_layer_slicing_stats(origin_jaxpr, sliced_eqns)
+        #log_layer_slicing_stats(origin_jaxpr, sliced_eqns)
         new_jaxpr = transform_fn(origin_jaxpr, sliced_eqns)
         flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
@@ -118,7 +118,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                         var_layer_dict[var] != i):
                     layer_pipeline_invars[i].add(var)
                     if var_layer_dict[var] == -1:
-                        continue # TODO(yonghao): remove below
+                        continue  # TODO(yonghao): remove below
                         var_layer_dict[var] = i
                     layer_pipeline_outvars[var_layer_dict[var]].add(var)
             for var in eqn.outvars:
@@ -416,7 +416,7 @@ def search_layer_num(jaxpr,
 
 
 def layer_level_jaxpr_transformation(fn: Callable,
-                                     static_argnums=(),
+                                     static_argnums: Sequence[int] = (),
                                      remat: bool = False,
                                      layer_construction: bool = False,
                                      auto_layer_boundary: bool = False,
@@ -449,7 +449,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
             if lift_markers:
                 jaxpr = lift_pipeline_marker(jaxpr)
             sliced_eqns = slice_eqns_by_pipeline_marks(jaxpr)
-        log_layer_slicing_stats(jaxpr, sliced_eqns)
+        #log_layer_slicing_stats(jaxpr, sliced_eqns)
         if remat:
             jaxpr = remat_jaxpr(jaxpr,
                                 sliced_eqns,
@@ -469,8 +469,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
 
 def manual_remat(fun: Callable = None,
                  *,
-                 static_argnums=(),
-                 lift_markers=False):
+                 static_argnums: Sequence[int] = (),
+                 lift_markers: bool = False):
     """Rematerialize an input function with manually selected layer boundaries.
 
     Rematerialize each layer of an input function with manually selected layer
@@ -505,7 +505,7 @@ def manual_remat(fun: Callable = None,
 
 def automatic_remat(fun: Callable = None,
                     *,
-                    static_argnums=(),
+                    static_argnums: Sequence[int] = (),
                     layer_num: Union[int, str] = None,
                     eps: float = DEFAULT_EPS,
                     cost_criteria: str = DEFAULT_COST_CRITERIA,
@@ -549,10 +549,10 @@ def automatic_remat(fun: Callable = None,
         return decorate_fun(fun)
 
 
-def manual_layer_construction(fun: Callable,
-                              static_argnums=(),
-                              remat_layer=False,
-                              lift_markers=False):
+def manual_layer_construction(fun: Callable = None,
+                              static_argnums: Sequence[int] = (),
+                              remat_layer: bool = False,
+                              lift_markers: bool = False):
     """Setup manually selected layer boundaries.
     Add input variables of each layer to its start pipeline marker and output
     variables of each layer to its end pipeline marker.
@@ -583,9 +583,9 @@ def manual_layer_construction(fun: Callable,
         return decorate_fun(fun)
 
 
-def automatic_layer_construction(fun: Callable,
-                                 static_argnums=(),
-                                 remat_layer=False,
+def automatic_layer_construction(fun: Callable = None,
+                                 static_argnums: Sequence[int] = (),
+                                 remat_layer: bool = False,
                                  layer_num: int = None,
                                  eps: float = DEFAULT_EPS,
                                  cost_criteria: str = DEFAULT_COST_CRITERIA,

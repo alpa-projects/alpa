@@ -1,10 +1,10 @@
-Installing Alpa
-===============
+Install Alpa
+============
 
 Requirements
 ------------
-- CuDNN >= 8.1
 - CUDA >= 11.1
+- CuDNN >= 8.1
 - python >= 3.7
 
 Install from Source
@@ -27,7 +27,7 @@ To install alpa from source, we need to build these forks.
 
   .. code:: bash
 
-    pip3 install cmake numpy scipy flax numba pybind11 ray[default]
+    pip3 install cmake tqdm numpy scipy numba pybind11 ray[default] flax
     pip3 install cupy-cuda111   # use your own CUDA version
 
     # In case NCCL is not automatically installed during cupy installation, please install it manually
@@ -68,7 +68,7 @@ To install alpa from source, we need to build these forks.
 
   .. code:: bash
   
-    cd alpa/pipeline_parallel/xla_custom_call_marker
+    cd alpa/alpa/pipeline_parallel/xla_custom_call_marker
     bash build.sh
 
 .. note::
@@ -77,4 +77,14 @@ To install alpa from source, we need to build these forks.
   To modify c++ code in tensorflow, you only need to run the command below from step 3 to recompile jaxlib::
 
     python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
+
+Check Installation
+------------------
+You can check the installation by running the following test script.
+
+.. code:: bash
+
+  cd alpa
+  ray start --head
+  python3 tests/test_install.py
 

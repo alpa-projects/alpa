@@ -1,6 +1,7 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
+from itertools import chain
 import logging
 from operator import attrgetter
 import os
@@ -9,7 +10,7 @@ from typing import Any, List, Union, Sequence, Tuple, Optional
 
 import cupy
 from cupy.cuda import nccl
-from jax import core, xla, eval_shape, device_put
+from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
@@ -27,17 +28,16 @@ import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
 from alpa.global_env import global_config
 from alpa.mesh_executable import (RemoteBufferRef, MeshDriverExecutable,
-                                  create_remote_buffer_refs,
-                                  next_remote_buffer_uuid)
+                                  create_remote_buffer_refs)
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
-from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
-                       cupy_to_jax_tensor, jax_tensor_set,
-                       xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
-                       xla_buffer_to_cupy, cupy_to_xla_buffer,
-                       is_continuous_subset, infer_offset_and_n_elements,
-                       jax_tensor_index)
+from alpa.util import (benchmark_func, get_microbatch_sharding_spec,
+                       list_gpu_info, jax_tensor_to_cupy, cupy_to_jax_tensor,
+                       jax_tensor_set, xla_buffer_to_jax_tensor,
+                       jax_tensor_to_xla_buffer, xla_buffer_to_cupy,
+                       cupy_to_xla_buffer, is_continuous_subset,
+                       infer_offset_and_n_elements, jax_tensor_index)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -111,29 +111,18 @@ class MeshHostWorker:
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
             np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
 
-    def shard_and_put_non_zero_buffer(self, uuids, shape, dtype, indices):
-        assert len(uuids) == len(indices) == len(self.local_devices)
+    def shard_and_put_non_zero_buffer(self, uuids, shape, dtype, indices,
+                                      batching):
+        assert len(uuids) == len(indices) == len(self.local_devices) * batching
         for i in range(len(self.local_devices)):
-            shard_shape = []
-            for j, s in enumerate(indices[i]):
-                filled_slice = s.indices(shape[j])
-                dim_size = len(range(*filled_slice))
-                shard_shape.append(dim_size)
-            self.put_non_zero_buffer(uuids[i], i, shard_shape, dtype)
-
-    def split_on_dim(self, uuids, out_uuids, num_microbatch, batch_dim):
-        """split a local buffer on given dimension."""
-        assert len(out_uuids) == len(uuids) * num_microbatch
-        cnt = 0
-        # FIXME(yonghao): the following fails for np.int64.
-        for uuid in uuids:
-            assert uuid in self.buffers
-            ary = self.buffers[uuid]
-            ary = xla_buffer_to_jax_tensor(ary)
-            split_buffers = jnp.split(ary, num_microbatch, batch_dim)
-            for buffer in split_buffers:
-                self.buffers[out_uuids[cnt]] = jax_tensor_to_xla_buffer(buffer)
-                cnt += 1
+            for b in range(batching):
+                shard_shape = []
+                idx = i * batching + b
+                for j, s in enumerate(indices[idx]):
+                    filled_slice = s.indices(shape[j])
+                    dim_size = len(range(*filled_slice))
+                    shard_shape.append(dim_size)
+                self.put_non_zero_buffer(uuids[idx], i, shard_shape, dtype)
 
     def get_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
@@ -785,38 +774,19 @@ class PhysicalDeviceMesh:
     def shard_batch_arg(self, arg, sharding_spec, num_microbatch, batch_dim,
                         microbatch_aval):
         """shard arguments into buffers, then split the arg."""
-        indices = pxla.spec_to_indices(arg.shape, sharding_spec)
-        buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
-        microbatch_uuids = np.full((self.num_devices, num_microbatch), np.inf,
-                                   np.int64)
-        # split on devices
-        host_num_devices = self.num_devices_per_host
-        for host_id, worker in enumerate(self.workers):
-            start_idx = host_id * host_num_devices
-            end_idx = (host_id + 1) * host_num_devices
-            buf_uuids = [ref.uuid for ref in buf_refs[start_idx:end_idx]]
-            split_uuids = next_remote_buffer_uuid(host_num_devices *
-                                                  num_microbatch)
-            if isinstance(split_uuids, int):
-                split_uuids = np.array([split_uuids])
-            worker.split_on_dim.remote(buf_uuids, split_uuids, num_microbatch,
-                                       batch_dim)
-            split_uuids = split_uuids.reshape(host_num_devices, num_microbatch)
-            microbatch_uuids[start_idx:end_idx, :] = split_uuids
-            worker.delete_buffers.remote(buf_uuids)
-        for buf_ref in buf_refs:
-            buf_ref.set_deleted_on_workers()
-        microbatch_arys = []
+        new_spec = get_microbatch_sharding_spec(sharding_spec, batch_dim,
+                                                num_microbatch)
+        indices = pxla.spec_to_indices(arg.shape, new_spec)
+        buf_refs = shard_arg_handlers[type(arg)](arg, self, indices,
+                                                 num_microbatch)
 
+        microbatch_arys = []
         # build distributed array
         for batch_idx in range(num_microbatch):
-            refs = []
-            for device_abs_idx in range(self.num_devices):
-                host_id, device_id = divmod(device_abs_idx, host_num_devices)
-                refs.append(
-                    RemoteBufferRef(self, host_id, device_id,
-                                    microbatch_uuids[device_abs_idx,
-                                                     batch_idx]))
+            refs = [
+                buf_refs[device_idx * num_microbatch + batch_idx]
+                for device_idx in range(self.num_devices)
+            ]
             microbatch_arys.append(
                 DistributedArray(self, microbatch_aval, sharding_spec, refs))
         return microbatch_arys
@@ -1379,59 +1349,58 @@ class DeviceCluster:
 ########################################
 # Register ShardArg Handler
 ########################################
-def _device_mesh_put(device_mesh, shards):
-    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh)
+def _device_mesh_put(device_mesh, shards, batching):
+    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, batching)
     device_ids = np.arange(device_mesh.num_devices_per_host)
-    devices_per_host = device_mesh.num_devices_per_host
+    device_ids = list(chain(*[[x] * batching for x in device_ids]))
+    step = device_mesh.num_devices_per_host * batching
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].put_buffers.remote(
-            buf_uuids[host_id * devices_per_host:(host_id + 1) *
-                      devices_per_host], device_ids,
-            shards[host_id * devices_per_host:(host_id + 1) * devices_per_host])
+            buf_uuids[host_id * step:(host_id + 1) * step], device_ids,
+            shards[host_id * step:(host_id + 1) * step])
     return buf_refs
 
 
-def _device_mesh_put_dummy(array, device_mesh, indices):
-    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh)
-    devices_per_host = device_mesh.num_devices_per_host
+def _device_mesh_put_dummy(array, device_mesh, indices, batching):
+    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, batching)
+    step = device_mesh.num_devices_per_host * batching
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].shard_and_put_non_zero_buffer.remote(
-            buf_uuids[host_id * devices_per_host:(host_id + 1) *
-                      devices_per_host], array.shape, array.dtype,
-            indices[host_id * devices_per_host:(host_id + 1) *
-                    devices_per_host])
+            buf_uuids[host_id * step:(host_id + 1) * step], array.shape,
+            array.dtype, indices[host_id * step:(host_id + 1) * step], batching)
     return buf_refs
 
 
-def _shard_array(array, device_mesh, indices):
+def _shard_array(array, device_mesh, indices, batching=1):
     if global_config.use_dummy_value_for_benchmarking:
-        return _device_mesh_put_dummy(array, device_mesh, indices)
+        return _device_mesh_put_dummy(array, device_mesh, indices, batching)
     else:
         # Create shards according to indices for a numpy array
-        return _device_mesh_put(device_mesh, [array[i] for i in indices])
+        return _device_mesh_put(device_mesh, [array[i] for i in indices],
+                                batching)
 
 
-def _shard_abstract_array(array, device_mesh, indices):
+def _shard_abstract_array(array, device_mesh, indices, batching=1):
     assert global_config.use_dummy_value_for_benchmarking is True
-    return _device_mesh_put_dummy(array, device_mesh, indices)
+    return _device_mesh_put_dummy(array, device_mesh, indices, batching)
 
 
-def _shard_device_array(array, device_mesh, indices):
+def _shard_device_array(array, device_mesh, indices, batching=1):
     if global_config.use_dummy_value_for_benchmarking:
-        return _device_mesh_put_dummy(array, device_mesh, indices)
+        return _device_mesh_put_dummy(array, device_mesh, indices, batching)
     else:
         # Create shards according to indices for a DeviceArray
         start_indices, limit_indices, removed_dims = map(
             tuple, unzip3(_as_slice_indices(array, idx) for idx in indices))
         shards = array._multi_slice(start_indices, limit_indices, removed_dims)
 
-    return _device_mesh_put(device_mesh, shards)
+    return _device_mesh_put(device_mesh, shards, batching)
 
 
-def _shard_distributed_array(array, device_mesh, indices):
+def _shard_distributed_array(array, device_mesh, indices, batching=1):
     # Slow path: gather values to host and reshard
     return shard_arg_handlers[type(array._value)](array._value, device_mesh,
-                                                  indices)
+                                                  indices, batching)
 
 
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh

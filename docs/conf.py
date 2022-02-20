@@ -12,7 +12,6 @@
 
 import os
 import sys
-from sphinx_gallery.sorting import FileNameSortKey
 
 # -- Project information -----------------------------------------------------
 
@@ -45,6 +44,35 @@ templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 
+# Explicitly define the order within a subsection.
+# The listed files are sorted according to the list.
+# The unlisted files are sorted by filenames.
+# The unlisted files always appear after listed files.
+within_subsection_order = {
+    "tutorials": [
+        "getting_started.py",
+        "alpa_vs_pmap.py",
+    ],
+}
+
+class WithinSubsectionOrder:
+    def __init__(self, src_dir):
+        self.src_dir = src_dir.split("/")[-1]
+
+    def __call__(self, filename):
+        # If the order is provided, use the provided order
+        if (
+            self.src_dir in within_subsection_order
+            and filename in within_subsection_order[self.src_dir]
+        ):
+            index = within_subsection_order[self.src_dir].index(filename)
+            assert index < 1e10
+            return "\0%010d" % index
+
+        # Otherwise, sort by filename
+        return filename
+
+
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
@@ -61,7 +89,7 @@ html_static_path = ['_static']
 sphinx_gallery_conf = {
     'examples_dirs': ['gallery/tutorials'],
     'gallery_dirs': ['tutorials'],
-    'within_subsection_order': FileNameSortKey,
+    'within_subsection_order': WithinSubsectionOrder,
     'backreferences_dir': 'gen_modules/backreferences',
     "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", ".py"),
 }

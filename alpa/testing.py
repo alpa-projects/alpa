@@ -125,7 +125,7 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
                                         layer_num=layer_num)
 
 
-def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat, value=False):
+def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat, return_value=False):
 
     def train_step(state, batch):
 
@@ -139,19 +139,19 @@ def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat, value=Fa
         if use_parallel:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          test_remat, 2)
-            if value:
+            if return_value:
                 val, grads = value_and_grad(loss_func)(state.params)
             else:
                 val, grads = 0, grad(loss_func)(state.params)
         else:
-            if value:
+            if return_value:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
                 val, grads = 0, jax.grad(loss_func)(state.params)
 
         new_state = state.apply_gradients(grads=grads)
-        if value:
-            return new_state, val
+        if return_value:
+            return val, new_state
         return new_state
 
     if use_parallel:
@@ -165,7 +165,7 @@ def get_bert_layer_train_step(use_parallel,
                               test_remat,
                               num_layers,
                               decorate=None,
-                              value=False):
+                              return_value=False):
     if decorate is None:
         decorate = use_parallel
 
@@ -181,18 +181,18 @@ def get_bert_layer_train_step(use_parallel,
         if decorate:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          test_remat, num_layers)
-            if value:
+            if return_value:
                 val, grads = value_and_grad(loss_func)(state.params)
             else:
                 val, grads = grad(loss_func)(state.params), 0
         else:
-            if value:
+            if return_value:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
                 val, grads = jax.grad(loss_func)(state.params), 0
 
         new_state = state.apply_gradients(grads=grads)
-        if value:
+        if return_value:
             return val, new_state
         return new_state
 
@@ -241,10 +241,10 @@ class PipelineBasicTest(unittest.TestCase):
 
         # Compile
         global_config.num_micro_batches = 2
-        serial_train_step = get_mlp_train_step(False, None, None, value=return_value)
+        serial_train_step = get_mlp_train_step(False, None, None, return_value=return_value)
         parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer,
-                                                 test_remat, value=return_value)
-        # executable = parallel_train_step.get_executable(state, batch)
+                                                 test_remat, return_value=return_value)
+        executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
         if do_numerical_test:
@@ -266,14 +266,14 @@ class PipelineBasicTest(unittest.TestCase):
                     actual_new_state, actual_val = parallel_train_step(state, batch), 0
                 
 
-                # assert_allclose(expected_new_state.params,
-                #                 actual_new_state.params, 1e-3, 1e-3)
+                assert_allclose(expected_new_state.params,
+                                actual_new_state.params, 1e-3, 1e-3)
                 if return_value:
                     assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
-        # hlo_text = executable.get_hlo_text()
-        # executable.shutdown()
-        # return hlo_text
+        hlo_text = executable.get_hlo_text()
+        executable.shutdown()
+        return hlo_text
 
 
     def run_n_layer_bert(self,
@@ -323,11 +323,11 @@ class PipelineBasicTest(unittest.TestCase):
         # Compile
         global_config.num_micro_batches = 2
         serial_train_step = get_bert_layer_train_step(False, None, None,
-                                                      n_layers, value=return_value)
+                                                      n_layers, return_value=return_value)
         parallel_train_step = get_bert_layer_train_step(True,
                                                         manual_pipeline_layer,
-                                                        test_remat, n_layers, value=return_value)
-        executable = parallel_train_step.get_executable(state, batch)
+                                                        test_remat, n_layers, return_value=return_value)
+        # executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
         if do_numerical_test:
@@ -339,20 +339,20 @@ class PipelineBasicTest(unittest.TestCase):
                 if return_value:
                     expected_new_state, expected_val = serial_train_step(state, batch)
                 else:
-                    expected_new_state, expected_val = 0, serial_train_step(state, batch)
+                    expected_new_state, expected_val = serial_train_step(state, batch), 0
 
                 if i > 0:
                     state = actual_new_state
                 if return_value:
                     actual_new_state, actual_val = parallel_train_step(state, batch)
                 else:
-                    actual_new_state, actual_val = parallel_train_step(state, batch)
+                    actual_new_state, actual_val = parallel_train_step(state, batch), 0
 
-                # assert_allclose(expected_new_state.params,
-                #                 actual_new_state.params, 1e-3, 1.5e-3)
+                assert_allclose(expected_new_state.params,
+                                actual_new_state.params, 1e-3, 1.5e-3)
                 if return_value:
                     assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
-        hlo_text = executable.get_hlo_text()
-        executable.shutdown()
-        return hlo_text
+        # hlo_text = executable.get_hlo_text()
+        # executable.shutdown()
+        # return hlo_text

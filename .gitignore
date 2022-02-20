@@ -6,21 +6,20 @@ dist
 *.egg-info
 .cache
 
+# NFS temp files
+.nfs*
+
 # Vim
 *.swp
 
-# Website build
-docs/_build
-docs/tutorials
+# pycharm
+.idea
 
 # Analysis temp files
 *.nvprof
 *.prof
 *.tsv
 *.hlo
-
-# pycharm
-.idea
 
 # Profiling result cache
 *.prof.pkl
@@ -39,5 +38,6 @@ benchmark/deepspeed/data
 benchmark/alpa/tmp
 *.log
 
-# NFS temp files
-.nfs*
+# Documentation website build
+docs/_build
+docs/tutorials

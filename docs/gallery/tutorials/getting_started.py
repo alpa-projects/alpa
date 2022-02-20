@@ -81,7 +81,7 @@ state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 # Define the training function and execute one step
 def train_step(state, batch):
     def loss_func(params):
-        out = model.apply(params, batch["x"])
+        out = state.apply_fn(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 

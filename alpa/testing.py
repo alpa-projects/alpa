@@ -151,7 +151,7 @@ def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat, return_v
 
         new_state = state.apply_gradients(grads=grads)
         if return_value:
-            return val, new_state
+            return new_state, val
         return new_state
 
     if use_parallel:
@@ -184,16 +184,16 @@ def get_bert_layer_train_step(use_parallel,
             if return_value:
                 val, grads = value_and_grad(loss_func)(state.params)
             else:
-                val, grads = grad(loss_func)(state.params), 0
+                val, grads = 0, grad(loss_func)(state.params)
         else:
             if return_value:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = jax.grad(loss_func)(state.params), 0
+                val, grads = 0, jax.grad(loss_func)(state.params)
 
         new_state = state.apply_gradients(grads=grads)
         if return_value:
-            return val, new_state
+            return new_state, val
         return new_state
 
     if use_parallel:
@@ -327,7 +327,7 @@ class PipelineBasicTest(unittest.TestCase):
         parallel_train_step = get_bert_layer_train_step(True,
                                                         manual_pipeline_layer,
                                                         test_remat, n_layers, return_value=return_value)
-        # executable = parallel_train_step.get_executable(state, batch)
+        executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
         if do_numerical_test:
@@ -340,19 +340,18 @@ class PipelineBasicTest(unittest.TestCase):
                     expected_new_state, expected_val = serial_train_step(state, batch)
                 else:
                     expected_new_state, expected_val = serial_train_step(state, batch), 0
-
                 if i > 0:
                     state = actual_new_state
                 if return_value:
                     actual_new_state, actual_val = parallel_train_step(state, batch)
                 else:
                     actual_new_state, actual_val = parallel_train_step(state, batch), 0
-
-                assert_allclose(expected_new_state.params,
-                                actual_new_state.params, 1e-3, 1.5e-3)
                 if return_value:
                     assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
+                assert_allclose(expected_new_state.params,
+                                actual_new_state.params, 1e-3, 1.5e-3)
 
-        # hlo_text = executable.get_hlo_text()
-        # executable.shutdown()
-        # return hlo_text
+        hlo_text = executable.get_hlo_text()
+        executable.shutdown()
+        return hlo_text
+

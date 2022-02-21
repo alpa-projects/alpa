@@ -5,9 +5,10 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
+from collections.abc import Iterable
 import logging
 import os
-from typing import Sequence, Union
+from typing import Callable, Sequence, Union, Optional
 
 import numpy as np
 import ray
@@ -18,7 +19,9 @@ from jax.interpreters import pxla
 from jax.interpreters.xla import XlaExecutable
 from jax.lib import xla_client, xla_bridge, xla_extension
 import jax.numpy as jnp
+from jax.tree_util import tree_flatten, tree_unflatten
 
+from alpa.global_env import global_config
 from alpa.measure_record import StrategyConfig
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
                                                make_replicated_spec,
@@ -62,13 +65,11 @@ class RemoteBufferRef:
                  device_mesh,
                  host_id: int,
                  device_id: int,
-                 uuid: int = None,
-                 dtype: jnp.dtype = jnp.float32):
+                 uuid: int = None):
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
         self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
-        self.dtype = dtype
         self.is_deleted_on_workers = False
         logger.debug(
             "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
@@ -79,15 +80,14 @@ class RemoteBufferRef:
         Set the buffer as deleted on workers.
 
         For some buffers (e.g., donated buffers), if we know the workers has
-        already deleted them, then we do not need to do the RPC call "delete_remote_buffers"
+        already deleted them, then we do not need to do the remote call "delete_remote_buffers"
         again.
         """
         self.is_deleted_on_workers = True
 
     def __repr__(self):
         return (f"RemoteBufferRef(uuid = {self.uuid}, "
-                f"loc = ({self.host_id}, {self.device_id})), "
-                f"dtype=({self.dtype})")
+                f"loc = ({self.host_id}, {self.device_id}))")
 
     def __del__(self):
         if not self.is_deleted_on_workers:
@@ -96,18 +96,24 @@ class RemoteBufferRef:
 
 def create_remote_buffer_refs(device_mesh,
                               host_indices=None,
-                              device_indices=None,
-                              dtype=jnp.float32):
+                              device_indices=None):
+    """Create remote buffer references for an distribued array on a device mesh."""
     if host_indices is None:
         host_indices = range(device_mesh.num_hosts)
     if device_indices is None:
         device_indices = range(device_mesh.num_devices_per_host)
+    size = len(host_indices) * len(device_indices)
+    uuids = next_remote_buffer_uuid(size)
+    if size == 1:
+        uuids = (uuids,)
+    uuid_iter = iter(uuids)
     refs = []
     for host_id in host_indices:
         for device_id in device_indices:
             refs.append(
-                RemoteBufferRef(device_mesh, host_id, device_id, dtype=dtype))
-    return refs
+                RemoteBufferRef(device_mesh, host_id, device_id,
+                                next(uuid_iter)))
+    return refs, uuids
 
 
 class MeshDriverExecutable:
@@ -161,11 +167,15 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                  avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
-                 flop_count: int = None):
+                 static_argnums: Optional[Sequence[int]] = None,
+                 out_tree_thunk: Optional[Callable] = None,
+                 flop_count: Optional[int] = None):
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
         self.donated_invars = donated_invars
+        self.static_argnums = static_argnums
+        self.out_tree_thunk = out_tree_thunk
         self.flop_count = flop_count
 
         # Read sharding specs
@@ -193,7 +203,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        self.sync_func = get_sync_func_driver(physical_mesh)
+
+        if global_config.shard_parallel_sync_for_timer:
+            self.sync_func = get_sync_func_driver(physical_mesh)
+        else:
+            self.sync_func = None
 
     def set_executable(self, physical_mesh, compiled, strategy_config):
         """Put the executable on workers."""
@@ -205,6 +219,17 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                                         strategy_config)
         else:
             self.compiled = compiled
+
+    def __call__(self, *args):
+        if self.static_argnums:
+            dyn_args = [
+                args[i] for i in range(len(args)) if i not in static_argnums
+            ]
+        else:
+            dyn_args = args
+        args_flat, in_tree = tree_flatten(dyn_args)
+        out = self.launch_on_driver(*args_flat)
+        return tree_unflatten(self.out_tree_thunk(), out)
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
@@ -223,7 +248,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         input_bufs = physical_mesh.shard_args(self.input_indices,
                                               self.donated_invars, args)
         if physical_mesh.is_distributed:
-            # Shape: (num_hosts, num_args, num_devices_per_host)
+            ## Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
                 len(args), num_hosts, num_devices_per_host).transpose([1, 0,
                                                                        2]))
@@ -250,11 +275,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
-                        output_uuids[i][host_id][device_id],
-                        dtype=self.out_avals[i].dtype)
+                        physical_mesh, host_id, device_id,
+                        output_uuids[i][host_id][device_id])
 
             # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
@@ -634,11 +656,8 @@ class GradAccMeshDriverExecutable:
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
-                        output_uuids[i][host_id][device_id],
-                        dtype=self.out_avals[i].dtype)
+                        physical_mesh, host_id, device_id,
+                        output_uuids[i][host_id][device_id])
 
             # Mark donated input buffers as already deleted on workers.
             for bufs, is_donated in zip(input_bufs, self.donated_invars):
@@ -994,11 +1013,8 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
                     output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
-                        output_uuids[i][host_id][device_id],
-                        dtype=self.out_avals[i].dtype)
+                        physical_mesh, host_id, device_id,
+                        output_uuids[i][host_id][device_id])
         else:
             timers(self.timer_name).start(self.sync_func)
             output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(

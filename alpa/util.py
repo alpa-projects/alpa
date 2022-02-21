@@ -33,7 +33,7 @@ import numpy as np
 import ray
 import tqdm
 
-from alpa.global_env import global_config
+from alpa.global_env import global_config, is_worker
 
 ########################################
 ##### Alpa API Utilities
@@ -72,7 +72,7 @@ def auto_static_argnums(args: Sequence[Any]):
                 return True
         return False
 
-    return [i for i in range(len(args)) if is_static_arg(args[i])]
+    return tuple(i for i in range(len(args)) if is_static_arg(args[i]))
 
 
 def auto_donate_argnums(args: Sequence[Any]):
@@ -84,7 +84,7 @@ def auto_donate_argnums(args: Sequence[Any]):
             return True
         return False
 
-    return [i for i in range(len(args)) if should_donate(args[i])]
+    return tuple(i for i in range(len(args)) if should_donate(args[i]))
 
 
 def abstractify_with_aval(x):
@@ -822,7 +822,8 @@ def cupy_to_jax_tensor(tensors):
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
-FLAGS.experimental_cpp_jit = False
+if is_worker:
+    FLAGS.experimental_cpp_jit = False
 
 
 # Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices

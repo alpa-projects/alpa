@@ -29,17 +29,17 @@ unsafe_map, map = map, safe_map  # type: ignore
 
 def parallelize(fun=None,
                 *,
-                donate_argnums="auto",
                 static_argnums="auto",
+                donate_argnums="auto",
                 batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
     Args:
         fun: The function to be parallelized.
-        donate_argnums: The same as the donate_argnums argument of jax.jit.
-          If it is "auto", alpa uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
+          If it is "auto", alpa uses heuristic rules to infer this.
+        donate_argnums: The same as the donate_argnums argument of jax.jit.
           If it is "auto", alpa uses heuristic rules to infer this.
         batch_argnums: The indices of arguments that are the data batch.
           This information is used to split the original data batch into micro batches
@@ -105,8 +105,8 @@ def parallelize(fun=None,
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
-                f, in_tree, out_tree_hashable, donated_invars, batch_invars,
-                devices, global_config.strategy,
+                f, in_tree, out_tree_hashable, static_argnums, donated_invars,
+                batch_invars, devices, global_config.strategy,
                 global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
@@ -155,6 +155,7 @@ def parallelize_callable(
     fun: lu.WrappedFun,
     in_tree: PyTreeDef,
     out_tree_thunk: Callable[[], PyTreeDef],
+    static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
     devices,
@@ -172,7 +173,8 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       donated_invars, batch_invars, devices,
+                                       static_argnums, donated_invars,
+                                       batch_invars, devices,
                                        memory_budget_per_device, *avals)
     elif strategy == "3d_parallel":
         return three_d_parallel_callable(fun, in_tree, out_tree_thunk,

@@ -22,7 +22,112 @@ unsafe_map, map = map, safe_map  # type: ignore
 APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
 
 
-def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
+# TODO(yonghao): delaying the cross layer grad accmulation increases memory
+# cost, but may not decrease communication: if c=a+b is delayed, both a and
+# b are accumulated, so the memory cost is more than when only accumulate c.
+# If layer that outputs a(called layer_a, and the same applys for b) is
+# merged with layer_b to the same stage, they do not need any communication,
+# so the communication does not benefit from the rewrite.
+def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
+                              closed_jaxpr):
+    """
+    If a parameter is used in multiple stages, its gradient is computed in
+    multiple stages and then added together. We accumulate the results on each
+    stage, and add them together exactly at the start of apply grad period.
+    """
+    unmarked_vars = set()
+    layer_invars = set()
+    global_invars = closed_jaxpr.jaxpr.invars
+    for eqn in compute_eqns:
+        if eqn.primitive is pipeline_p:
+            if eqn.params['mark_type'] == "end":
+                unmarked_vars.update(
+                    [v for v in eqn.outvars if not isinstance(v, DropVar)])
+            elif eqn.params['mark_type'] == "start":
+                layer_invars.update(
+                    [v for v in eqn.invars if isinstance(v, Var)])
+    cross_layer_grad_eqns = []
+    new_compute_eqns = []
+    # Those eqn directly use output of pipeline end is delayed to apply grad.
+    defined_vars = set(global_invars)
+    for eqn in compute_eqns:
+        if eqn.primitive is pipeline_p:
+            new_compute_eqns.append(eqn)
+            continue
+        invars = [v for v in eqn.invars if isinstance(v, Var)]
+        if not unmarked_vars.intersection(invars):
+            new_compute_eqns.append(eqn)
+            continue
+        assert unmarked_vars.issuperset(invars), f"'{eqn}' is not fully marked."
+        outvars = [v for v in eqn.outvars if not isinstance(v, DropVar)]
+        assert not layer_invars.intersection(
+            outvars), f"'{eqn}' cannot be delayed."
+        cross_layer_grad_eqns.append(eqn)
+        unmarked_vars.update(outvars)
+        defined_vars.update(outvars)
+    # Rewrite barrier and cross_layer_grad eqns.
+    barrier_map = {}
+    for invar, outvar in zip(barrier.invars, barrier.outvars):
+        if isinstance(invar, Var) and not isinstance(outvar, DropVar):
+            barrier_map[invar] = outvar
+    new_cross_barrier_vars = OrderedSet()
+    cross_barrier_outvars = OrderedSet()
+    for eqn in cross_layer_grad_eqns:
+        for invar in eqn.invars:
+            if (isinstance(invar, Var) and invar not in barrier_map and
+                    invar not in defined_vars):
+                new_cross_barrier_vars.add(invar)
+                barrier_map[invar] = gensym_fn(invar.aval)
+        cross_barrier_outvars.update([
+            var for var in eqn.outvars
+            if not isinstance(var, DropVar) and var in barrier_map
+        ])
+    # rewrite the barrier
+    new_barrier_invars = []
+    new_barrier_outvars = []
+    for idx, var in enumerate(barrier.invars + list(new_cross_barrier_vars)):
+        # remove vars now defined after barrier.
+        if isinstance(var, Var) and var in cross_barrier_outvars:
+            continue
+        new_barrier_invars.append(var)
+        # add vars now used after barrier.
+        new_barrier_outvars.append(barrier.outvars[idx] if idx < len(
+            barrier.invars) else barrier_map[var])
+    new_barrier = new_jaxpr_eqn(new_barrier_invars, new_barrier_outvars,
+                                barrier.primitive, barrier.params,
+                                barrier.source_info)
+    # rewrite cross layer grad eqns and insert them to the top of apply eqns.
+    new_apply_eqns = []
+    rewrite_invars = set(new_barrier_invars)
+    rewrite_invars.update(barrier.invars)
+    for eqn in cross_layer_grad_eqns:
+        invars = [
+            barrier_map[var]
+            if isinstance(var, Var) and var in rewrite_invars else var
+            for var in eqn.invars
+        ]
+        outvars = [
+            barrier_map[var]
+            if not isinstance(var, DropVar) and var in rewrite_invars else var
+            for var in eqn.outvars
+        ]
+        new_apply_eqns.append(
+            new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
+                          eqn.source_info))
+    new_apply_eqns += apply_eqns
+    new_global_outvars = list(closed_jaxpr.jaxpr.outvars)
+    for idx in range(len(new_global_outvars)):
+        var = new_global_outvars[idx]
+        if var in rewrite_invars:
+            new_global_outvars[idx] = barrier_map[var]
+    closed_jaxpr = clone_jaxpr(closed_jaxpr,
+                               eqns=new_compute_eqns + [new_barrier] +
+                               new_apply_eqns,
+                               outvars=new_global_outvars)
+    return closed_jaxpr, [new_compute_eqns, [new_barrier], new_apply_eqns]
+
+
+def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     """Split the train_step jaxpr into two parts: compute_grad and apply_grad."""
     split_eqn = None
     for idx, eqn in enumerate(closed_jaxpr.eqns):
@@ -35,16 +140,18 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr):
             "apply gradient step. Hint: replace jax.grad by alpa.grad.")
         return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
     sliced_eqns = [
-        closed_jaxpr.eqns[:split_idx], [split_eqn],
+        closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]
     ]
+    closed_jaxpr, sliced_eqns = _rewrite_cross_layer_grad(
+        *sliced_eqns, gensym_fn, closed_jaxpr)
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
-    compute_grad = sliced_jaxprs[0]
-    apply_grad = sliced_jaxprs[2]
+    compute_grad, _, apply_grad = sliced_jaxprs
+    split_eqn = sliced_eqns[1][0]
     if len(apply_grad.eqns) == 0:
         logger.warning(
             "the apply gradient part is empty. Hint: apply() after alpa.grad")
-    return compute_grad, apply_grad, split_eqn
+    return closed_jaxpr, compute_grad, apply_grad, split_eqn
 
 
 def compute_grad_to_accumulate_grad(
@@ -248,12 +355,6 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
         used.update(stage.invars)
 
     donated_invars = list(donated_invars)
-    for idx, invar in enumerate(global_invars):
-        if invar in used_simultaneously and donated_invars[idx]:
-            if len(invar.aval.shape) != 0:
-                logger.warning(
-                    f"Cannot donate {invar} (shape: {invar.aval.shape})")
-            donated_invars[idx] = False
 
     return (sliced_apply_grad, n_stages, dependency, apply_grad_placement,
             global_outvars, donated_invars)

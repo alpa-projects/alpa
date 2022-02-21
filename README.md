@@ -1,7 +1,7 @@
 Alpa
 =======
 [**Documentation**](https://alpa-projects.github.io) |
-[**Slack**](https://join.slack.com/t/alpa-project/shared_invite/zt-13rl45uci-UI~eULQHBHGav4JrwF7dHw)
+[**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
 Alpa automatically parallelizes tensor computational graphs and runs them on a distributed cluster. 
 
@@ -19,7 +19,7 @@ Organization
   The c++ source code of Alpa mainly resides in `tensorflow/compiler/xla/service/spmd`.
 
 - [jax-alpa](https://github.com/alpa-projects/jax-alpa). The jax fork for Alpa.
-  We do not change any functionatiy, but modify the building scritps to make building with tensorflow-alpa easier.
+  We do not change any functionatiy, but modify the building scripts to make building with tensorflow-alpa easier.
 
 Formatting & Linting
 ============

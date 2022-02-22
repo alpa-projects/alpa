@@ -140,13 +140,13 @@ class ManualIntraMLPModel(nn.Module):
 
 
 # Initialize a train state, which includes the model paramter and optimizer state.
-manual_intra_model = ManualIntraMLPModel(hidden_dim=dim)
-manual_intra_state = TrainState.create(apply_fn=manual_intra_model.apply, params=params, tx=tx)
+manual_inter_model = ManualIntraMLPModel(hidden_dim=dim)
+manual_inter_state = TrainState.create(apply_fn=manual_inter_model.apply, params=params, tx=tx)
 
 
 # Define training step
 @alpa.parallelize
-def manual_intra_train_step(state, batch):
+def manual_inter_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
     def loss_func(params):
@@ -163,5 +163,43 @@ def manual_intra_train_step(state, batch):
     return new_state
 
 
-updated_actual_state = manual_intra_train_step(manual_intra_state, batch)
-assert_allclose(expected_state.params, updated_actual_state.params, atol=5e-3)
+manual_inter_actual_state = manual_inter_train_step(manual_inter_state, batch)
+assert_allclose(expected_state.params, manual_inter_actual_state.params, atol=5e-3)
+
+manual_inter_train_step.get_executable(manual_inter_state, batch).shutdown()
+
+################################################################################
+# Automatic Inter-Operator Parallelism with Alpa
+# ------------------------------------------
+# To manually assign stages for inter-operator parallelism, we can use the
+# ``alpa.mark_pipeline`` function to mark the start and end of each pipeline stage,
+# and use the ``@alpa.manual_layer_construction`` decorator to indicate that we
+# are manually assigning stages.
+device_cluster = alpa.DeviceCluster()
+devices = device_cluster.get_virtual_physical_mesh()
+alpa.set_parallelize_options(
+    devices=devices, strategy="3d_parallel", pipeline_stage_mode="auto_gpipe",
+    num_micro_batches=num_micro_batches)
+
+
+# Initialize a train state, which includes the model paramter and optimizer state.
+
+
+# Define training step
+@alpa.parallelize
+def auto_inter_train_step(state, batch):
+    @alpa.automatic_layer_construction(layer_num=2)
+    def loss_func(params):
+        out = state.apply_fn(params, batch["x"])
+        loss = jnp.mean((out - batch["y"])**2)
+        return loss
+
+    grads = alpa.grad(loss_func)(state.params)
+    new_state = state.apply_gradients(grads=grads)
+    return new_state
+
+
+auto_inter_actual_state = auto_inter_train_step(state, batch)
+assert_allclose(expected_state.params, auto_inter_actual_state.params, atol=5e-3)
+
+auto_inter_train_step.get_executable(state, batch).shutdown()

@@ -119,20 +119,19 @@ class ManualIntraMLPModel(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        for i in range(self.num_layers):
-            x = nn.Dense(features=self.hidden_dim * 4)(x)
-            x = nn.relu(x)
-            x = nn.Dense(features=self.hidden_dim)(x)
-            x = nn.relu(x)
-            # Mark the end of the 0th pipeline stage and the start of the 1st
-            # pipeline stage. the start marker of the 0th stage and the end
-            # marker of the 1st stage are marked in the train_step below.
-            alpa.mark_pipeline(name='0', mark_type='end')
-            alpa.mark_pipeline(name='1', mark_type='start')
-            x = nn.Dense(features=self.hidden_dim * 4)(x)
-            x = nn.relu(x)
-            x = nn.Dense(features=self.hidden_dim)(x)
-            x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim * 4)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
+        # Mark the end of the 0th pipeline stage and the start of the 1st
+        # pipeline stage. the start marker of the 0th stage and the end
+        # marker of the 1st stage are marked in the train_step below.
+        alpa.mark_pipeline(name='0', mark_type='end')
+        alpa.mark_pipeline(name='1', mark_type='start')
+        x = nn.Dense(features=self.hidden_dim * 4)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
         return x
 
 

@@ -36,6 +36,7 @@ def benchmark_one_case(model, case, niter,
             jax.config.update('jax_platform_name', 'cpu')
 
         global_config.use_dummy_value_for_benchmarking = True
+        global_config.shard_parallel_sync_for_timer = True
 
         # Run benchmark
         if model in ["gpt", "bert"]:

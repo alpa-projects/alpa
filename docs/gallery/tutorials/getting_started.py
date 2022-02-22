@@ -23,8 +23,10 @@ In this tutorial, we show the usage of Alpa with an MLP example.
 # --------------------
 # We first import the required libraries.
 # Flax and optax are libraries on top of jax for training neural networks.
-# Although we use these libraries in this example, Alpa works at jax level and
-# does not depend on these specific libraries.
+# Although we use these libraries in this example, Alpa works on jax's and XLA's internal
+# intermediate representations and does not depend on any specific high-level libraries.
+
+from functools import partial
 
 import alpa
 from alpa.testing import assert_allclose
@@ -78,10 +80,10 @@ params = model.init(rngkey, x)
 tx = optax.adam(learning_rate=1e-3)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
-# Define training step
+# Define the training function and execute one step
 def train_step(state, batch):
     def loss_func(params):
-        out = model.apply(params, batch["x"])
+        out = state.apply_fn(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 
@@ -106,23 +108,46 @@ expected_state = train_step(state, batch)
 # manually call communication primitives such as ``lax.pmean`` and ``lax.all_gather``,
 # which is nontrivial if you want to do advanced model parallelization.
 # Unlike these transformations, ``@alpa.parallelize`` can do all things automatically for
-# you. You only need to write the code as if you are writing for a single device.
+# you. ``@alpa.parallelize`` finds the best parallelization strategy for the given jax
+# function and does the code tranformation. You only need to write the code as if you are
+# writing for a single device.
 
-# Transform the function and run it
-parallel_train_step = alpa.parallelize(train_step)
 
-actual_state = parallel_train_step(state, batch)
+# Define the training step. The body of this function is the same as the
+# ``train_step`` above. The only difference is to decorate it with
+# ``@alpa.paralellize``.
+
+@alpa.parallelize
+def alpa_train_step(state, batch):
+    def loss_func(params):
+        out = model.apply(params, batch["x"])
+        loss = jnp.mean((out - batch["y"])**2)
+        return loss
+
+    grads = jax.grad(loss_func)(state.params)
+    new_state = state.apply_gradients(grads=grads)
+    return new_state
 
 # Test correctness
+actual_state = alpa_train_step(state, batch)
 assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 
-# The types of parameters in actual_state become `ShardedDeviceArray`,
-# which means the parameters are now stored distributedly on multiple devices.
-print(type(actual_state.params["params"]["Dense_0"]["kernel"]))
+################################################################################
+# After being decorated by ``@parallelize``, the function can still take numpy
+# arrays or jax arrays as inputs. The function will first distribute the input
+# arrays into correct devices according to the parallelization strategy and then
+# execute the function distributedly. The returned result arrays are also
+# stored distributedly.
+
+print("Input parameter type:", type(state.params["params"]["Dense_0"]["kernel"]))
+print("Output parameter type:", type(actual_state.params["params"]["Dense_0"]["kernel"]))
+
+# Get one copy
+kernel_np = np.array(actual_state.params["params"]["Dense_0"]["kernel"])
 
 ################################################################################
 # Execution Speed Comparison
-# ---------------------------
+# --------------------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
 # the memory usage per GPU, so we can train large models faster.
 # We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
@@ -145,20 +170,20 @@ costs = benchmark_func(serial_execution, sync_func, warmup=5, number=10, repeat=
 print(f"Serial execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 # Benchmark parallel execution
-# We shard arguments in advance for the benchmarking purpose.
-state, batch = parallel_train_step.preshard_dynamic_args(state, batch)
+# We distribute arguments in advance for the benchmarking purpose
+state, batch = alpa_train_step.preshard_dynamic_args(state, batch)
 
 def parallel_execution():
     global state
-    state = parallel_train_step(state, batch)
+    state = alpa_train_step(state, batch)
 
 costs = benchmark_func(parallel_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
 
 print(f"Parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 ################################################################################
-# Memory Usage Comparision
-# ------------------------
+# Memory Usage Comparison
+# -----------------------
 # We can also compare the memory usage per GPU.
 
 GB = 1024 ** 3
@@ -166,5 +191,5 @@ GB = 1024 ** 3
 executable = jit_train_step.lower(state, batch).compile().runtime_executable()
 print(f"Serial execution per GPU memory usage: {executable.total_allocation_size() / GB:.2f} GB")
 
-executable = parallel_train_step.get_executable(state, batch)
+executable = alpa_train_step.get_executable(state, batch)
 print(f"Parallel execution per GPU memory usage: {executable.get_total_allocation_size() / GB:.2f} GB")

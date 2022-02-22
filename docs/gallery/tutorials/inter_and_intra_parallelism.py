@@ -112,6 +112,9 @@ expected_state = train_step(state, batch)
 # ``alpa.mark_pipeline`` function to mark the start and end of each pipeline stage,
 # and use the ``@alpa.manual_layer_construction`` decorator to indicate that we
 # are manually assigning stages.
+device_cluster = alpa.DeviceCluster()
+devices = device_cluster.get_virtual_physical_mesh()
+alpa.set_parallelize_options(devices=devices, strategy="3d_parallel")
 
 # Define the model
 class ManualIntraMLPModel(nn.Module):

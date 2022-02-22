@@ -145,7 +145,7 @@ manual_inter_state = TrainState.create(apply_fn=manual_inter_model.apply, params
 
 
 # Define training step
-@alpa.parallelize
+@alpa.parallelize(donate_argnums=())
 def manual_inter_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
@@ -186,7 +186,7 @@ alpa.set_parallelize_options(
 
 
 # Define training step
-@alpa.parallelize
+@alpa.parallelize(donate_argnums=())
 def auto_inter_train_step(state, batch):
     @alpa.automatic_layer_construction(layer_num=2)
     def loss_func(params):

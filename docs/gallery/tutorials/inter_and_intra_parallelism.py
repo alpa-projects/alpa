@@ -116,7 +116,6 @@ expected_state = train_step(state, batch)
 # Define the model
 class ManualIntraMLPModel(nn.Module):
     hidden_dim: int
-    num_layers: int
 
     @nn.compact
     def __call__(self, x):

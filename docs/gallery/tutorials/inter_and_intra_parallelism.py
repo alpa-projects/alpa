@@ -112,9 +112,10 @@ expected_state = train_step(state, batch)
 # ``alpa.mark_pipeline`` function to mark the start and end of each pipeline stage,
 # and use the ``@alpa.manual_layer_construction`` decorator to indicate that we
 # are manually assigning stages.
+num_micro_batches = 16
 device_cluster = alpa.DeviceCluster()
 devices = device_cluster.get_virtual_physical_mesh()
-alpa.set_parallelize_options(devices=devices, strategy="3d_parallel")
+alpa.set_parallelize_options(devices=devices, strategy="3d_parallel", num_micro_batches=num_micro_batches)
 
 # Define the model
 class ManualIntraMLPModel(nn.Module):
@@ -142,6 +143,7 @@ class ManualIntraMLPModel(nn.Module):
 manual_intra_model = ManualIntraMLPModel(hidden_dim=dim)
 manual_intra_state = TrainState.create(apply_fn=manual_intra_model.apply, params=params, tx=tx)
 
+
 # Define training step
 @alpa.parallelize
 def manual_intra_train_step(state, batch):
@@ -160,4 +162,6 @@ def manual_intra_train_step(state, batch):
     new_state = state.apply_gradients(grads=grads)
     return new_state
 
-updated_manual_state = manual_intra_train_step(manual_intra_state, batch)
+
+updated_actual_state = manual_intra_train_step(manual_intra_state, batch)
+assert_allclose(expected_state.params, updated_actual_state.params, atol=5e-3)

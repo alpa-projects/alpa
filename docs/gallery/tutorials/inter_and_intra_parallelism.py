@@ -2,27 +2,22 @@
 Distributed Training with Both Intra- and Inter-Operator Parallelism
 ====================================================================
 
-Alpa is a library that automatically parallelizes jax functions and runs them
-on a distributed cluster. Alpa analyses the jax computational graph and generates
-a distributed execution plan tailored for the computational graph and target cluster.
-Alpa is specifically designed for training large-scale neural networks.
-The generated execution plan can combine state-of-the-art distributed training techniques
-including data parallelism, operator parallelism, and pipeline parallelism.
+Alpa can automatically parallelizes jax functions with both intra-operator
+parallelism (e.g. data parallelism, tensor-model parallelism) and inter-operator
+parallelism (e.g. pipeline parallelism). The :ref:`getting started guide
+<Getting Started with Alpa>`. focuses on using Alpa for intra-operator
+parallelism.
 
-Alpa provides a simple API ``@parallelize`` and automatically generates the best execution
-plan by solving optimization problems. Therefore, you can efficiently scale your jax
-computation on a distributed cluster, without any expertise in distributed computing.
-
-In this tutorial, we show the usage of Alpa with an MLP example.
+In this tutorial, we will show how to use Alpa to parallelize an MLP model with
+both intra- and inter-operator parallelism. First we will show how to use Alpa
+to manually assign stages for inter-operator parallelism. Then we will show how
+to use Alpa to automate this process.
 """
 
 ################################################################################
-# Import Libraries
-# --------------------
+# Import Libraries and Initialize Environment
+# ----------------------------------------------
 # We first import the required libraries.
-# Flax and optax are libraries on top of jax for training neural networks.
-# Although we use these libraries in this example, Alpa works at jax level and
-# does not depend on these specific libraries.
 
 import alpa
 from alpa.testing import assert_allclose
@@ -34,30 +29,50 @@ from jax import random
 import numpy as np
 import optax
 
+################################################################################
+# Besides of alpa and jax related libraries, we also import `ray <https://docs.
+# ray.io/>`_and start (or connect to) a ray cluster. We use ray to manage the
+# devices in the distributed cluster in alpa.
+
+import ray
+
+ray.init()
+
+# Alternatively, you can use the following command to connect to an existing
+# ray cluster.
+# ray.init(address="auto")
+
+################################################################################
+# In alpa, the actual computation of a computational graph is executed on ray
+# actors. Therefore, we force the driver process to use the CPU to avoid it
+# from occupying the GPU memory.
+jax.config.update('jax_platform_name', 'cpu')
 
 ################################################################################
 # Train an MLP on a Single Device
-# -------------------------------
-# To begin with, we implement the model and training loop on a single device. We will
-# parallelize it later. We train an MLP to learn a function y = Wx + b.
+# ------------------------
+# In this tutorial, we use a toy dataset to train an MLP model.
+# Specifically, we use the model to fit the function: :math:`y = Wx + b`.
+# Note that now this model is being executed on CPU because we force the driver
+# process to use the CPU.
 
 class MLPModel(nn.Module):
     hidden_dim: int
-    num_layers: int
 
     @nn.compact
     def __call__(self, x):
-        for i in range(self.num_layers):
-            if i % 2 == 0:
-                x = nn.Dense(features=self.hidden_dim * 4)(x)
-            else:
-                x = nn.Dense(features=self.hidden_dim)(x)
-            x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim * 4)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim * 4)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
         return x
 
 dim = 2048
 batch_size = 2048
-num_layers = 10
 
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
@@ -71,7 +86,7 @@ x = random.normal(ksample, (batch_size, dim))
 y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
 
 # Initialize a train state, which includes the model paramter and optimizer state.
-model = MLPModel(hidden_dim=dim, num_layers=num_layers)
+model = MLPModel(hidden_dim=dim)
 params = model.init(rngkey, x)
 tx = optax.adam(learning_rate=1e-3)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
@@ -91,78 +106,57 @@ batch = {"x": x, "y": y}
 expected_state = train_step(state, batch)
 
 ################################################################################
-# Auto-parallelization with ``@parallelize``
+# Manual Inter-Operator Parallelism with Alpa
 # ------------------------------------------
-# Alpa provides a transformation ``@alpa.parallelize`` to parallelize a jax function.
-# ``@alpa.parallelize`` is similar to ``@jax.jit`` . ``@jax.jit`` compiles a jax
-# function for a single device, while ``@alpa.parallelize`` compiles a jax function
-# for a distributed device cluster.
-# You may know that jax has some built-in transformations for parallelization,
-# such as ``pmap``, ``pjit``, and ``xmap``. However, these transformations are not
-# fully automatic, because they require users to manually specify the parallelization
-# strategies such as parallelization axes and device mapping schemes. You also need to
-# manually call communication primitives such as ``lax.pmean`` and ``lax.all_gather``,
-# which is nontrivial if you want to do advanced model parallelization.
-# Unlike these transformations, ``@alpa.parallelize`` can do all things automatically for
-# you. You only need to write the code as if you are writing for a single device.
+# To manually assign stages for inter-operator parallelism, we can use the
+# ``alpa.mark_pipeline`` function to mark the start and end of each pipeline stage,
+# and use the ``@alpa.manual_layer_construction`` decorator to indicate that we
+# are manually assigning stages.
 
-# Transform the function and run it
-parallel_train_step = alpa.parallelize(train_step)
+# Define the model
+class ManualIntraMLPModel(nn.Module):
+    hidden_dim: int
+    num_layers: int
 
-actual_state = parallel_train_step(state, batch)
+    @nn.compact
+    def __call__(self, x):
+        for i in range(self.num_layers):
+            x = nn.Dense(features=self.hidden_dim * 4)(x)
+            x = nn.relu(x)
+            x = nn.Dense(features=self.hidden_dim)(x)
+            x = nn.relu(x)
+            # Mark the end of the 0th pipeline stage and the start of the 1st
+            # pipeline stage. the start marker of the 0th stage and the end
+            # marker of the 1st stage are marked in the train_step below.
+            alpa.mark_pipeline(name='0', mark_type='end')
+            alpa.mark_pipeline(name='1', mark_type='start')
+            x = nn.Dense(features=self.hidden_dim * 4)(x)
+            x = nn.relu(x)
+            x = nn.Dense(features=self.hidden_dim)(x)
+            x = nn.relu(x)
+        return x
 
-# Test correctness
-assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 
-# The types of parameters in actual_state become `ShardedDeviceArray`,
-# which means the parameters are now stored distributedly on multiple devices.
-print(type(actual_state.params["params"]["Dense_0"]["kernel"]))
+# Initialize a train state, which includes the model paramter and optimizer state.
+manual_intra_model = ManualIntraMLPModel(hidden_dim=dim)
+manual_intra_state = TrainState.create(apply_fn=manual_intra_model.apply, params=params, tx=tx)
 
-################################################################################
-# Execution Speed Comparison
-# ---------------------------
-# By parallelizing a jax function, we can accelerate the computation and reduce
-# the memory usage per GPU, so we can train large models faster.
-# We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
-# on a 8-GPU machine.
+# Define training step
+@alpa.parallelize
+def manual_intra_train_step(state, batch):
+    # Indicate that we are manually assigning pipeline stages.
+    @alpa.manual_layer_construction
+    def loss_func(params):
+        # Mark the start of the 0th pipeline stage.
+        alpa.mark_pipeline(name='0', mark_type='start')
+        out = state.apply_fn(params, batch["x"])
+        loss = jnp.mean((out - batch["y"])**2)
+        # Mark the end of the 1st pipeline stage.
+        alpa.mark_pipeline(name='1', mark_type='end')
+        return loss
 
-from alpa.util import benchmark_func
+    grads = alpa.grad(loss_func)(state.params)
+    new_state = state.apply_gradients(grads=grads)
+    return new_state
 
-jit_train_step = jax.jit(train_step, donate_argnums=(0,))
-
-def sync_func():
-    jax.local_devices()[0].synchronize_all_activity()
-
-# Benchmark serial execution
-def serial_execution():
-    global state
-    state = jit_train_step(state, batch)
-
-costs = benchmark_func(serial_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
-
-print(f"Serial execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
-
-# Benchmark parallel execution
-# We shard arguments in advance for the benchmarking purpose.
-state, batch = parallel_train_step.preshard_dynamic_args(state, batch)
-
-def parallel_execution():
-    global state
-    state = parallel_train_step(state, batch)
-
-costs = benchmark_func(parallel_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
-
-print(f"Parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
-
-################################################################################
-# Memory Usage Comparision
-# ------------------------
-# We can also compare the memory usage per GPU.
-
-GB = 1024 ** 3
-
-executable = jit_train_step.lower(state, batch).compile().runtime_executable()
-print(f"Serial execution per GPU memory usage: {executable.total_allocation_size() / GB:.2f} GB")
-
-executable = parallel_train_step.get_executable(state, batch)
-print(f"Parallel execution per GPU memory usage: {executable.get_total_allocation_size() / GB:.2f} GB")
+updated_manual_state = manual_intra_train_step(manual_intra_state, batch)

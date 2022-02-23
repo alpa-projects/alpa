@@ -45,9 +45,9 @@ def get_config():
   config.batch_size = 128
 
   config.num_epochs = 100.0
-  config.log_every_steps = 100
+  config.log_every_steps = 50
 
-  config.cache = False
+  config.cache = True
   config.half_precision = False
 
   # If num_train_steps==-1 then the number of training steps is calculated from

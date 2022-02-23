@@ -185,7 +185,7 @@ def create_input_iter(dataset_builder, batch_size, image_size, dtype, train,
       dataset_builder, batch_size, image_size=image_size, dtype=dtype,
       train=train, cache=cache)
   it = map(prepare_tf_data, ds)
-  it = jax_utils.prefetch_to_device(it, 2)
+  it = jax_utils.prefetch_to_device(it, 4)
   return it
 
 
@@ -343,7 +343,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
             f'train_{k}': v
             for k, v in jax.tree_map(lambda x: x.mean(), train_metrics).items()
         }
-        summary['steps_per_second'] = config.log_every_steps / (
+        summary['ips'] = config.batch_size * config.log_every_steps / (
             time.time() - train_metrics_last_t)
         writer.write_scalars(step + 1, summary)
         train_metrics = []

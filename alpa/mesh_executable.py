@@ -837,9 +837,10 @@ class GradAccMeshWorkerExecutable:
         delete_donated_buffers(buffer_dict, input_uuids)
 
         # Delete micro batch buffers
-        for i in range(len(next_batch_uuids)):
-            for j in range(len(next_batch_uuids[i])):
-                del buffer_dict[next_batch_uuids[i][j]]
+        if next_batch_uuids is not None:
+            for i in range(len(next_batch_uuids)):
+                for j in range(len(next_batch_uuids[i])):
+                    del buffer_dict[next_batch_uuids[i][j]]
 
     def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""

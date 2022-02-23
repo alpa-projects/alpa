@@ -11,11 +11,13 @@ from typing import Any, List, Union, Sequence, Tuple, Optional
 
 import cupy
 from cupy.cuda import nccl
+import jax
 from jax import core, jit, xla, device_put
 from jax._src.api import ShapeDtypeStruct
+import jax._src.lib.xla_bridge as xb
 from jax._src.numpy.lax_numpy import _multi_slice
-from jax._src.util import unzip3
 from jax._src.tree_util import tree_leaves
+from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
@@ -1280,6 +1282,26 @@ class VirtualPhysicalMesh:
         return self.get_logical_mesh((1, self.num_devices))
 
 
+def set_jax_env_on_driver():
+    """Set jax environment flags for the driver process, so the driver
+    process can release GPU memory for the worker processes."""
+
+    # Use cpu backend
+    jax.config.update('jax_platform_name', 'cpu')
+
+    # Use platform allocator in the driver process for auto-tuning
+    # the conv algorithms and gemm algorithms in cudnn and cublas.
+    old_allocator = os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", None)
+
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    backend = xb.get_backend("gpu")
+
+    if old_allocator:
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = old_allocator
+    else:
+        del os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]
+
+
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 
@@ -1302,6 +1324,8 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.num_devices.append(int(number))
+
+        set_jax_env_on_driver()
 
     @property
     def num_cpus(self):

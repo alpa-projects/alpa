@@ -95,7 +95,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineTiedEmbeddingTest("test_tied_embedding_pipeshard_parallel"))
+    suite.addTest(
+        PipelineTiedEmbeddingTest("test_tied_embedding_pipeshard_parallel"))
     return suite
 
 

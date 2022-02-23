@@ -178,8 +178,9 @@ def parallelize_callable(
                                        memory_budget_per_device, *avals)
     elif strategy == "pipeshard_parallel":
         return pipeshard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                           donated_invars, batch_invars, devices,
-                                           memory_budget_per_device, *avals)
+                                           donated_invars, batch_invars,
+                                           devices, memory_budget_per_device,
+                                           *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices, *avals)
     else:

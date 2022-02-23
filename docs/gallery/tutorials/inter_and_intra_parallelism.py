@@ -21,12 +21,12 @@ to use Alpa to automate this process.
 
 import alpa
 from alpa.testing import assert_allclose
+import copy
 from flax import linen as nn
 from flax.training.train_state import TrainState
 import jax
 import jax.numpy as jnp
 from jax import random
-import numpy as np
 import optax
 
 ################################################################################
@@ -151,10 +151,10 @@ class ManualIntraMLPModel(nn.Module):
 # Initialize the train state with the same parameters as the single-device model.
 manual_inter_model = ManualIntraMLPModel(hidden_dim=dim)
 manual_inter_state = TrainState.create(apply_fn=manual_inter_model.apply,
-                                       params=params, tx=tx)
+                                       params=copy.deepcopy(params), tx=tx)
 
 # Define the training step with manually parallelized pipeline stages.
-@alpa.parallelize(donate_argnums=())
+@alpa.parallelize
 def manual_inter_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
@@ -211,7 +211,7 @@ alpa.set_parallelize_options(
 # we reuse the same model and state as the single device case. The only
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
-@alpa.parallelize(donate_argnums=())
+@alpa.parallelize
 def auto_inter_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the

@@ -53,6 +53,7 @@ within_subsection_order = {
         "getting_started.py",
         "inter_and_intra_parallelism.py",
         "alpa_vs_pmap.py",
+        "advanced_api_usage.py",
     ],
 }
 

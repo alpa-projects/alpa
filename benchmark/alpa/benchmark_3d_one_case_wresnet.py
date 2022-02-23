@@ -226,7 +226,7 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=host_ids, num_devices_per_host=num_devices_per_host)
     set_parallelize_options(devices=virtual_mesh,
-                            strategy="3d_parallel",
+                            strategy="pipeshard_parallel",
                             num_micro_batches=num_micro_batches,
                             pipeline_stage_mode=pipeline_stage_mode,
                             logical_mesh_search_space=logical_mesh_search_space)

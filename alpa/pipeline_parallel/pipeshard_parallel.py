@@ -32,9 +32,9 @@ logger.setLevel(logging.INFO)
 
 
 @lu.cache
-def three_d_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                              donated_invars, batch_invars, devices,
-                              memory_budget_per_device, *avals):
+def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
+                                donated_invars, batch_invars, devices,
+                                memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
     if not isinstance(devices, VirtualPhysicalMesh):
         raise RuntimeError(

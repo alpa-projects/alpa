@@ -8,15 +8,15 @@ parallelism (e.g. pipeline parallelism). The :ref:`getting started guide
 <Getting Started with Alpa>`. focuses on using Alpa for intra-operator
 parallelism.
 
-In this tutorial, we will show how to use Alpa to parallelize an MLP model with
-both intra- and inter-operator parallelism. First we will show how to use Alpa
-to manually assign stages for inter-operator parallelism. Then we will show how
+In this tutorial, we show how to use Alpa to parallelize an MLP model with
+both intra- and inter-operator parallelism. First, we show how to use Alpa
+to manually assign stages for inter-operator parallelism. Then we show how
 to use Alpa to automate this process.
 """
 
 ################################################################################
 # Import Libraries and Initialize Environment
-# ----------------------------------------------
+# -------------------------------------------
 # We first import the required libraries.
 
 import alpa
@@ -30,7 +30,7 @@ import numpy as np
 import optax
 
 ################################################################################
-# Besides of alpa and jax related libraries, we also import `ray <https://docs.
+# Besides alpa and jax related libraries, we also import `ray <https://docs.
 # ray.io/>`_ and start (or connect to) a ray cluster. We use ray to manage the
 # devices in the distributed cluster in alpa.
 
@@ -121,10 +121,10 @@ num_micro_batches = 16
 device_cluster = alpa.DeviceCluster()
 devices = device_cluster.get_virtual_physical_mesh()
 
-# Set the parallel strategy to "3d_parallel" to enable both inter- and intra-
+# Set the parallel strategy to "pipeshard_parallel" to enable both inter- and intra-
 # operator parallelism.
 alpa.set_parallelize_options(
-    devices=devices, strategy="3d_parallel",
+    devices=devices, strategy="pipeshard_parallel",
     num_micro_batches=num_micro_batches)
 
 # Define the manually parallelized model with pipeline markers.
@@ -204,7 +204,7 @@ devices = device_cluster.get_virtual_physical_mesh()
 # Set pipeline stage mode to "auto_gpipe" to enable automatic inter-operator
 # parallelism with automatic stage slicing and mesh assignment.
 alpa.set_parallelize_options(
-    devices=devices, strategy="3d_parallel", pipeline_stage_mode="auto_gpipe",
+    devices=devices, strategy="pipeshard_parallel", pipeline_stage_mode="auto_gpipe",
     num_micro_batches=num_micro_batches)
 
 # Define training step with automatic inter-operator parallelism. Note that
@@ -214,7 +214,7 @@ alpa.set_parallelize_options(
 @alpa.parallelize(donate_argnums=())
 def auto_inter_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
-    # is a hyperparameter to control how many layers we will get from the
+    # is a hyperparameter to control how many layers we get from the
     # layer construction algorithm.
     @alpa.automatic_layer_construction(layer_num=2)
     def loss_func(params):
@@ -222,6 +222,8 @@ def auto_inter_train_step(state, batch):
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 
+    # Again, we use `alpa.grad` here to seperate the apply gradient stage with
+    # the forward/backward stages in the pipeline.
     grads = alpa.grad(loss_func)(state.params)
     new_state = state.apply_gradients(grads=grads)
     return new_state

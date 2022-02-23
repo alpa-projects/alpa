@@ -31,7 +31,7 @@ class SaveLoadTest(unittest.TestCase):
     def mlp_state_load(self):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 pipeline_stage_mode="uniform_layer_gpipe")
 
         # Init model and optimizer

@@ -185,7 +185,18 @@ manual_inter_train_step.get_executable(manual_inter_state, batch).shutdown()
 # ----------------------------------------------
 # Alpa also supports automatically partitioning the model into multiple
 # pipeline stages and assign each pipeline stage a device mesh such that
-# the total execution latency is minimized.
+# the total execution latency is minimized. Specifically, the automatic
+# partitioning algorithm consists of the following steps:
+#
+# 1. **Layer Construction:** In this step, the operators in the model are
+#    clustered into ``layers'' based on a graph clustering algorithm. The
+#    user needs to specify the total number of layers (i.e. clusters) as
+#    a hyperparameter.
+# 2. **Stage Construction and Mesh Slicing:** In this step, we partition
+#    the device cluster (device mesh) to multiple submeshes and assign
+#    layers to submeshes to form pipeline stages to minimize the total
+#    pipeline execution latency.
+
 
 # Create a new cluster class for automatic inter-operator parallelism.
 device_cluster = alpa.DeviceCluster()
@@ -198,12 +209,13 @@ alpa.set_parallelize_options(
 
 # Define training step with automatic inter-operator parallelism. Note that
 # we reuse the same model and state as the single device case. The only
-# modification required is the two decorators.
+# modification required is the two decorators. The stage construction and
+# mesh slicing are performed within the `parallelize` decorator.
 @alpa.parallelize(donate_argnums=())
 def auto_inter_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we will get from the
-    # layer clustering algorithm.
+    # layer construction algorithm.
     @alpa.automatic_layer_construction(layer_num=2)
     def loss_func(params):
         out = state.apply_fn(params, batch["x"])
@@ -213,7 +225,6 @@ def auto_inter_train_step(state, batch):
     grads = alpa.grad(loss_func)(state.params)
     new_state = state.apply_gradients(grads=grads)
     return new_state
-
 
 auto_inter_actual_state = auto_inter_train_step(state, batch)
 assert_allclose(expected_state.params, auto_inter_actual_state.params, atol=5e-3)

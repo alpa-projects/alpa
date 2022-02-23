@@ -52,6 +52,7 @@ within_subsection_order = {
     "tutorials": [
         "getting_started.py",
         "alpa_vs_pmap.py",
+        "inter_and_intra_parallelism.py"
     ],
 }
 
@@ -92,6 +93,7 @@ sphinx_gallery_conf = {
     'within_subsection_order': WithinSubsectionOrder,
     'backreferences_dir': 'gen_modules/backreferences',
     "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", ".py"),
+    'ignore_pattern': r'inter_and_intra_parallelism\.py',
 }
 
 # configuration for intersphinx: refer to the Python standard library.

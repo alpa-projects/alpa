@@ -18,7 +18,7 @@ from alpa.global_env import global_config
 from alpa.pipeline_parallel.local_pipeline_parallel import (
     local_pipeline_parallel_callable)
 from alpa.pipeline_parallel.primitive_def import mark_gradient
-from alpa.pipeline_parallel.three_d_parallel import three_d_parallel_callable
+from alpa.pipeline_parallel.pipeshard_parallel import pipeshard_parallel_callable
 from alpa.shard_parallel.shard_callable import shard_parallel_callable
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval)
@@ -176,10 +176,11 @@ def parallelize_callable(
                                        static_argnums, donated_invars,
                                        batch_invars, devices,
                                        memory_budget_per_device, *avals)
-    elif strategy == "3d_parallel":
-        return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
-                                         donated_invars, batch_invars, devices,
-                                         memory_budget_per_device, *avals)
+    elif strategy == "pipeshard_parallel":
+        return pipeshard_parallel_callable(fun, in_tree, out_tree_thunk,
+                                           donated_invars, batch_invars,
+                                           devices, memory_budget_per_device,
+                                           *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices, *avals)
     else:

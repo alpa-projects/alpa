@@ -550,6 +550,7 @@ def automatic_remat(fun: Callable = None,
 
 
 def manual_layer_construction(fun: Callable = None,
+                              *,
                               static_argnums: Sequence[int] = (),
                               remat_layer: bool = False,
                               lift_markers: bool = False):
@@ -584,6 +585,7 @@ def manual_layer_construction(fun: Callable = None,
 
 
 def automatic_layer_construction(fun: Callable = None,
+                                 *,
                                  static_argnums: Sequence[int] = (),
                                  remat_layer: bool = False,
                                  layer_num: int = None,

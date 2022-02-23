@@ -15,6 +15,7 @@ from jax import core, jit, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.numpy.lax_numpy import _multi_slice
 from jax._src.util import unzip3
+from jax._src.tree_util import tree_leaves
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
@@ -1030,11 +1031,12 @@ class DistributedArray:
         return str(self._value)
 
 
-def fetch(distributed_arrays: Sequence[DistributedArray]):
-    """Fetch a list of DistributedArray in a batch."""
+def fetch(distributed_arrays: Any):
+    """Fetch a pytree of DistributedArray in a batch."""
     buf_refs = []
     device_mesh = distributed_arrays[0].device_mesh
-    for array in distributed_arrays:
+
+    for array in tree_leaves(distributed_arrays):
         assert array.device_mesh == device_mesh, "Only support fetching from the same mesh."
         for index in array.one_replica_buffer_indices:
             buf_refs.append(array.remote_buffers[index])

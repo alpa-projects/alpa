@@ -22,6 +22,7 @@ import functools
 import time
 from typing import Any
 
+import alpa
 from absl import logging
 from clu import metric_writers
 from clu import periodic_actions
@@ -81,7 +82,6 @@ def compute_metrics(logits, labels):
       'loss': loss,
       'accuracy': accuracy,
   }
-  metrics = lax.pmean(metrics, axis_name='batch')
   return metrics
 
 
@@ -127,14 +127,12 @@ def train_step(state, batch, learning_rate_fn):
 
   if dynamic_scale:
     grad_fn = dynamic_scale.value_and_grad(
-        loss_fn, has_aux=True, axis_name='batch')
+        loss_fn, has_aux=True)
     dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
     # dynamic loss takes care of averaging gradients across replicas
   else:
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     aux, grads = grad_fn(state.params)
-    # Re-use same axis_name as in the call to `pmap(...train_step...)` below.
-    grads = lax.pmean(grads, axis_name='batch')
   new_model_state, logits = aux[1]
   metrics = compute_metrics(logits, batch['label'])
   metrics['learning_rate'] = lr
@@ -165,27 +163,13 @@ def eval_step(state, batch):
   return compute_metrics(logits, batch['label'])
 
 
-def prepare_tf_data(xs):
-  """Convert a input batch from tf Tensors to numpy arrays."""
-  local_device_count = jax.local_device_count()
-  def _prepare(x):
-    # Use _numpy() for zero-copy conversion between TF and NumPy.
-    x = x._numpy()  # pylint: disable=protected-access
-
-    # reshape (host_batch_size, height, width, 3) to
-    # (local_devices, device_batch_size, height, width, 3)
-    return x.reshape((local_device_count, -1) + x.shape[1:])
-
-  return jax.tree_map(_prepare, xs)
-
-
-def create_input_iter(dataset_builder, batch_size, image_size, dtype, train,
-                      cache):
+def create_input_iter(dataset_builder, batch_size, image_size, dtype,
+                      sharding_specs, train, cache):
   ds = input_pipeline.create_split(
       dataset_builder, batch_size, image_size=image_size, dtype=dtype,
       train=train, cache=cache)
-  it = map(prepare_tf_data, ds)
-  it = jax_utils.prefetch_to_device(it, 4)
+  it = map(lambda xs: jax.tree_map(lambda x: x._numpy(), xs), ds)
+  it = alpa.DataLoader(it, sharding_specs, prefetch_size=4)
   return it
 
 
@@ -277,13 +261,6 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     input_dtype = tf.float32
 
   dataset_builder = tfds.builder(config.dataset)
-  train_iter = create_input_iter(
-      dataset_builder, local_batch_size, image_size, input_dtype, train=True,
-      cache=config.cache)
-  eval_iter = create_input_iter(
-      dataset_builder, local_batch_size, image_size, input_dtype, train=False,
-      cache=config.cache)
-
   steps_per_epoch = (
       dataset_builder.info.splits['train'].num_examples // config.batch_size
   )
@@ -315,30 +292,43 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   state = restore_checkpoint(state, workdir)
   # step_offset > 0 if restarting from checkpoint
   step_offset = int(state.step)
-  state = jax_utils.replicate(state)
 
-  p_train_step = jax.pmap(
-      functools.partial(train_step, learning_rate_fn=learning_rate_fn),
-      axis_name='batch')
-  p_eval_step = jax.pmap(eval_step, axis_name='batch')
+  p_train_step = alpa.parallelize(
+      functools.partial(train_step, learning_rate_fn=learning_rate_fn))
+  p_eval_step = alpa.parallelize(eval_step)
+
+  logging.info('Initial compilation, this might take some minutes...')
+  batch = {
+    "image": jax.core.ShapedArray(
+        (config.batch_size, image_size, image_size, 3), jnp.float32),
+    "label": jax.core.ShapedArray((config.batch_size,), jnp.int32),
+  }
+  executable = p_train_step.get_executable(state, batch)
+  logging.info('Initial compilation completed.')
+
+  sharding_specs = executable.input_sharding_specs[-2:]
+
+  train_iter = create_input_iter(
+      dataset_builder, local_batch_size, image_size, input_dtype,
+      sharding_specs, train=True, cache=config.cache)
+  eval_iter = create_input_iter(
+      dataset_builder, local_batch_size, image_size, input_dtype,
+      sharding_specs, train=False, cache=config.cache)
 
   train_metrics = []
   hooks = []
   if jax.process_index() == 0:
     hooks += [periodic_actions.Profile(num_profile_steps=5, logdir=workdir)]
   train_metrics_last_t = time.time()
-  logging.info('Initial compilation, this might take some minutes...')
   for step, batch in zip(range(step_offset, num_steps), train_iter):
     state, metrics = p_train_step(state, batch)
     for h in hooks:
       h(step)
-    if step == step_offset:
-      logging.info('Initial compilation completed.')
 
     if config.get('log_every_steps'):
       train_metrics.append(metrics)
       if (step + 1) % config.log_every_steps == 0:
-        train_metrics = common_utils.get_metrics(train_metrics)
+        train_metrics = common_utils.stack_forest(train_metrics)
         summary = {
             f'train_{k}': v
             for k, v in jax.tree_map(lambda x: x.mean(), train_metrics).items()
@@ -348,6 +338,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
         writer.write_scalars(step + 1, summary)
         train_metrics = []
         train_metrics_last_t = time.time()
+
+    # Currently, evaluation and model saving are not optimized in alpa
+    # TODO: support the logic below
+    continue
 
     if (step + 1) % steps_per_epoch == 0:
       epoch = step // steps_per_epoch

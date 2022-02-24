@@ -89,13 +89,14 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
 
         pipelined_train_step.get_executable(state, batch).shutdown()
 
-    def test_tied_embedding_3d_parallel(self):
-        self.train_tied_embedding(self.devices, "3d_parallel", 2)
+    def test_tied_embedding_pipeshard_parallel(self):
+        self.train_tied_embedding(self.devices, "pipeshard_parallel", 2)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineTiedEmbeddingTest("test_tied_embedding_3d_parallel"))
+    suite.addTest(
+        PipelineTiedEmbeddingTest("test_tied_embedding_pipeshard_parallel"))
     return suite
 
 

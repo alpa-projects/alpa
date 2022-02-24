@@ -162,7 +162,7 @@ def set_parallelize_options(
     Args:
       devices: The device cluster.
       strategy: The parallelization strategy.
-        Possible choices: {"shard_parallel", "3d_parallel", "local_pipeline_parallel"}.
+        Possible choices: {"shard_parallel", "pipeshard_parallel", "local_pipeline_parallel"}.
       memory_budget_per_device: The memory budget of one
         device in bytes.
       num_micro_batches: The number of micro-batches in shard parallel with

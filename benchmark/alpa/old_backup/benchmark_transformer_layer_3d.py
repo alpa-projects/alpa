@@ -118,7 +118,7 @@ def benchmark_transformer_one_case(benchmark_case):
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     set_parallelize_options(devices=virtual_mesh,
-                            strategy="3d_parallel",
+                            strategy="pipeshard_parallel",
                             num_micro_batches=num_micro_batches,
                             sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                             sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size)

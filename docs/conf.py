@@ -51,6 +51,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 within_subsection_order = {
     "tutorials": [
         "getting_started.py",
+        "pipeshard_parallelism.py",
         "alpa_vs_pmap.py",
     ],
 }
@@ -91,7 +92,7 @@ sphinx_gallery_conf = {
     'gallery_dirs': ['tutorials'],
     'within_subsection_order': WithinSubsectionOrder,
     'backreferences_dir': 'gen_modules/backreferences',
-    "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", ".py"),
+    "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", r"(?<!pipeshard_parallelism).py"),
 }
 
 # configuration for intersphinx: refer to the Python standard library.

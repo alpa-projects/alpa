@@ -222,7 +222,7 @@ class PipelineBasicTest(unittest.TestCase):
                 return_value=False):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode)
 
         # Init model and optimizer
@@ -255,16 +255,16 @@ class PipelineBasicTest(unittest.TestCase):
                     state = expected_new_state
                 if return_value:
                     expected_new_state, expected_val = serial_train_step(state, batch)
-                else: 
+                else:
                     expected_new_state, expected_val = serial_train_step(state, batch), 0
-                    
+
                 if i > 0:
                     state = actual_new_state
                 if return_value:
                     actual_new_state, actual_val = parallel_train_step(state, batch)
-                else: 
+                else:
                     actual_new_state, actual_val = parallel_train_step(state, batch), 0
-                
+
 
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1e-3)
@@ -292,10 +292,11 @@ class PipelineBasicTest(unittest.TestCase):
                          overwrite_global_config_dict=None,
                          virtual_mesh=None,
                          return_value=False):
+        num_micro_batch = 2
         if virtual_mesh is None:
             virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
@@ -321,7 +322,7 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        global_config.num_micro_batches = 4
+        global_config.num_micro_batches = num_micro_batch
         serial_train_step = get_bert_layer_train_step(False, None, None,
                                                       n_layers, return_value=return_value)
         parallel_train_step = get_bert_layer_train_step(True,

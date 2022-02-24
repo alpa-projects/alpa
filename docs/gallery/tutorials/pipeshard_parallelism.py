@@ -5,7 +5,7 @@ Distributed Training with Both Shard and Pipeline Parallelism
 Alpa can automatically parallelizes jax functions with both shard
 parallelism, including data parallelism and operator parallelism (a.k.a.
 intra-operator parallelism), and pipeline parallelism (a.k.a. inter-operator
-parallelism). The :ref:`getting started guide <Getting Started with Alpa>`.
+parallelism). The :ref:`getting started guide <Getting Started with Alpa>`
 focuses on using Alpa for shard parallelism.
 
 In this tutorial, we show how to use Alpa to parallelize an MLP model with

@@ -28,7 +28,7 @@ make html
 ```
 
 ### Clean
-To remove all generated file:
+To remove all generated files:
 ```
 make clean
 ```

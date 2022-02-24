@@ -1,16 +1,16 @@
 """
-Distributed Training with Both Intra- and Inter-Operator Parallelism
+Distributed Training with Both Shard and Pipeline Parallelism
 ====================================================================
 
-Alpa can automatically parallelizes jax functions with both intra-operator
-parallelism (e.g. data parallelism, tensor-model parallelism) and inter-operator
-parallelism (e.g. pipeline parallelism). The :ref:`getting started guide
-<Getting Started with Alpa>`. focuses on using Alpa for intra-operator
-parallelism.
+Alpa can automatically parallelizes jax functions with both shard
+parallelism, including data parallelism and operator parallelism (a.k.a.
+intra-operator parallelism), and pipeline parallelism (a.k.a. inter-operator
+parallelism). The :ref:`getting started guide <Getting Started with Alpa>`
+focuses on using Alpa for shard parallelism.
 
 In this tutorial, we show how to use Alpa to parallelize an MLP model with
-both intra- and inter-operator parallelism. First, we show how to use Alpa
-to manually assign stages for inter-operator parallelism. Then we show how
+both shard and pipeline parallelism. First, we show how to use Alpa
+to manually assign stages for pipeline parallelism. Then we show how
 to use Alpa to automate this process.
 """
 
@@ -85,7 +85,8 @@ ksample, knoise = random.split(k1)
 x = random.normal(ksample, (batch_size, dim))
 y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
 
-# Initialize a train state, which includes the model paramter and optimizer state.
+# Initialize a train state, which includes the model paramter and optimizer
+# state.
 model = MLPModel(hidden_dim=dim)
 params = model.init(rngkey, x)
 tx = optax.adam(learning_rate=1e-3)
@@ -106,13 +107,13 @@ batch = {"x": x, "y": y}
 expected_state = train_step(state, batch)
 
 ################################################################################
-# Manual Inter-Operator Parallelism with Alpa
+# Manual Pipeline Parallelism with Alpa
 # -------------------------------------------
-# To manually assign stages for inter-operator parallelism, we can use the
-# ``alpa.mark_pipeline`` function to mark the start and end of each pipeline stage,
-# and use the ``@alpa.manual_layer_construction`` decorator to indicate that we
-# are manually assigning stages. Note that all the pipeline stages are also
-# automatically parallelized by the intra-operator parallel pass.
+# To manually assign stages for pipeline parallelism, we can use the
+# ``alpa.mark_pipeline`` function to mark the start and end of each pipeline
+# stage, and use the ``@alpa.manual_layer_construction`` decorator to indicate
+# that we are manually assigning stages. Note that each the pipeline stage is
+# also automatically parallelized by the shard parallel pass.
 
 # Set the number of microbatches for pipeline parallelism.
 num_micro_batches = 16
@@ -121,14 +122,14 @@ num_micro_batches = 16
 device_cluster = alpa.DeviceCluster()
 devices = device_cluster.get_virtual_physical_mesh()
 
-# Set the parallel strategy to "pipeshard_parallel" to enable both inter- and intra-
-# operator parallelism.
+# Set the parallel strategy to "pipeshard_parallel" to enable both pipeline and
+# shard parallelism.
 alpa.set_parallelize_options(
     devices=devices, strategy="pipeshard_parallel",
     num_micro_batches=num_micro_batches)
 
 # Define the manually parallelized model with pipeline markers.
-class ManualIntraMLPModel(nn.Module):
+class ManualPipelineMLPModel(nn.Module):
     hidden_dim: int
 
     @nn.compact
@@ -148,14 +149,15 @@ class ManualIntraMLPModel(nn.Module):
         x = nn.relu(x)
         return x
 
-# Initialize the train state with the same parameters as the single-device model.
-manual_inter_model = ManualIntraMLPModel(hidden_dim=dim)
-manual_inter_state = TrainState.create(apply_fn=manual_inter_model.apply,
+# Initialize the train state with the same parameters as the single-device
+# model.
+manual_pipeline_model = ManualPipelineMLPModel(hidden_dim=dim)
+manual_pipeline_state = TrainState.create(apply_fn=manual_pipeline_model.apply,
                                        params=copy.deepcopy(params), tx=tx)
 
 # Define the training step with manually parallelized pipeline stages.
 @alpa.parallelize
-def manual_inter_train_step(state, batch):
+def manual_pipeline_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
     def loss_func(params):
@@ -174,14 +176,17 @@ def manual_inter_train_step(state, batch):
     new_state = state.apply_gradients(grads=grads)
     return new_state
 
-manual_inter_actual_state = manual_inter_train_step(manual_inter_state, batch)
-assert_allclose(expected_state.params, manual_inter_actual_state.params, atol=5e-3)
+manual_pipeline_actual_state = manual_pipeline_train_step(manual_pipeline_state,
+                                                          batch)
+assert_allclose(expected_state.params, manual_pipeline_actual_state.params,
+                atol=5e-3)
 
 # Terminate the alpa device cluster.
-manual_inter_train_step.get_executable(manual_inter_state, batch).shutdown()
+manual_pipeline_train_step.get_executable(manual_pipeline_state,
+                                          batch).shutdown()
 
 ################################################################################
-# Automatic Inter-Operator Parallelism with Alpa
+# Automatic Pipeline Parallelism with Alpa
 # ----------------------------------------------
 # Alpa also supports automatically partitioning the model into multiple
 # pipeline stages and assign each pipeline stage a device mesh such that
@@ -198,21 +203,21 @@ manual_inter_train_step.get_executable(manual_inter_state, batch).shutdown()
 #    pipeline execution latency.
 
 
-# Create a new cluster class for automatic inter-operator parallelism.
+# Create a new cluster class for automatic pipeline parallelism.
 device_cluster = alpa.DeviceCluster()
 devices = device_cluster.get_virtual_physical_mesh()
-# Set pipeline stage mode to "auto_gpipe" to enable automatic inter-operator
+# Set pipeline stage mode to "auto_gpipe" to enable automatic
 # parallelism with automatic stage slicing and mesh assignment.
 alpa.set_parallelize_options(
-    devices=devices, strategy="pipeshard_parallel", pipeline_stage_mode="auto_gpipe",
-    num_micro_batches=num_micro_batches)
+    devices=devices, strategy="pipeshard_parallel",
+    pipeline_stage_mode="auto_gpipe", num_micro_batches=num_micro_batches)
 
-# Define training step with automatic inter-operator parallelism. Note that
+# Define training step with automatic pipeline-operator parallelism. Note that
 # we reuse the same model and state as the single device case. The only
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
 @alpa.parallelize
-def auto_inter_train_step(state, batch):
+def auto_pipeline_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the
     # layer construction algorithm.
@@ -228,7 +233,8 @@ def auto_inter_train_step(state, batch):
     new_state = state.apply_gradients(grads=grads)
     return new_state
 
-auto_inter_actual_state = auto_inter_train_step(state, batch)
-assert_allclose(expected_state.params, auto_inter_actual_state.params, atol=5e-3)
+auto_pipeline_actual_state = auto_pipeline_train_step(state, batch)
+assert_allclose(expected_state.params, auto_pipeline_actual_state.params,
+                atol=5e-3)
 
-auto_inter_train_step.get_executable(state, batch).shutdown()
+auto_pipeline_train_step.get_executable(state, batch).shutdown()

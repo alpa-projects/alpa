@@ -15,10 +15,7 @@ class StageConstructionTest(PipelineBasicTest):
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert(self):
-        self.run_n_layer_bert(n_layers=8,
-                              manual_pipeline_layer=False,
-                              pipeline_stage_mode="auto_gpipe",
-                              cache_compute_cost=None, return_value=True)
+        self.run_n_layer_bert(n_layers=8, return_value=True)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert_manual_stage_assignment(self):
@@ -31,10 +28,10 @@ class StageConstructionTest(PipelineBasicTest):
 
 def suite():
     suite = unittest.TestSuite()
-    # suite.addTest(StageConstructionTest('test_mlp'))
-    # suite.addTest(StageConstructionTest('test_2_layer_bert'))
+    suite.addTest(StageConstructionTest('test_mlp'))
+    suite.addTest(StageConstructionTest('test_2_layer_bert'))
     suite.addTest(StageConstructionTest('test_8_layer_bert'))
-    # suite.addTest(StageConstructionTest('test_8_layer_bert_manual_stage_assignment'))
+    suite.addTest(StageConstructionTest('test_8_layer_bert_manual_stage_assignment'))
     return suite
 
 

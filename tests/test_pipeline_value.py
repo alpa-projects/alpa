@@ -1,45 +1,40 @@
 import unittest
+import jax
 
 from alpa.testing import PipelineBasicTest
 
 
 class StageConstructionTest(PipelineBasicTest):
 
-    def test_mlp_stage_construction(self):
-        self.run_mlp(pipeline_stage_mode="auto_gpipe", manual_pipeline_layer=True, return_value=True)
+    def test_mlp(self):
+        self.run_mlp(return_value=True)
 
-    def test_mlp_layer_and_stage(self):
-        self.run_mlp(manual_pipeline_layer=False,
-                     pipeline_stage_mode="auto_gpipe", return_value=True)
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    def test_2_layer_bert(self):
+        self.run_n_layer_bert(n_layers=2, return_value=True)
 
-    def test_2_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(n_layers=2, pipeline_stage_mode="auto_gpipe", return_value=True)
-
-    def test_2_layer_bert_layer_and_stage(self):
-        self.run_n_layer_bert(n_layers=2,
-                              manual_pipeline_layer=False,
-                              pipeline_stage_mode="auto_gpipe", return_value=True)
-
-    def test_8_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(n_layers=8,
-                              pipeline_stage_mode="auto_gpipe",
-                              cache_compute_cost=None, return_value=True)
-
-    def test_8_layer_bert_layer_and_stage(self):
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    def test_8_layer_bert(self):
         self.run_n_layer_bert(n_layers=8,
                               manual_pipeline_layer=False,
                               pipeline_stage_mode="auto_gpipe",
                               cache_compute_cost=None, return_value=True)
+
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    def test_8_layer_bert_manual_stage_assignment(self):
+        self.run_n_layer_bert(n_layers=8,
+                              pipeline_stage_mode="manual_gpipe",
+                              forward_stage_layer_ids=[[0, 1, 2, 3],
+                                                       [4, 5, 6, 7]],
+                              submesh_shapes=[(1, 4), (1, 4)])
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(StageConstructionTest('test_mlp_stage_construction'))
-    suite.addTest(StageConstructionTest('test_mlp_layer_and_stage'))
-    suite.addTest(StageConstructionTest('test_2_layer_bert_stage_construction'))
-    suite.addTest(StageConstructionTest('test_2_layer_bert_layer_and_stage'))
-    suite.addTest(StageConstructionTest('test_8_layer_bert_stage_construction'))
-    suite.addTest(StageConstructionTest('test_8_layer_bert_layer_and_stage'))
+    # suite.addTest(StageConstructionTest('test_mlp'))
+    # suite.addTest(StageConstructionTest('test_2_layer_bert'))
+    suite.addTest(StageConstructionTest('test_8_layer_bert'))
+    # suite.addTest(StageConstructionTest('test_8_layer_bert_manual_stage_assignment'))
     return suite
 
 

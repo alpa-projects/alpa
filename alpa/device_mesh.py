@@ -1308,7 +1308,10 @@ class DeviceCluster:
     def __init__(self):
         # pylint: disable=import-outside-toplevel
         from ray.worker import _global_node as ray_global_node
-        self.head_info = ray_global_node.address_info
+        try:
+            self.head_info = ray_global_node.address_info
+        except AttributeError:
+            raise RuntimeError("Cannot access ray global node. Did you call ray.init?")
         self.head_ip = self.head_info['node_ip_address']
 
         # Gather host ids

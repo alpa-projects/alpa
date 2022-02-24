@@ -38,6 +38,7 @@ import jax.numpy as jnp
 from jax import random
 import ml_collections
 import optax
+import ray
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
@@ -164,12 +165,12 @@ def eval_step(state, batch):
 
 
 def create_input_iter(dataset_builder, batch_size, image_size, dtype,
-                      sharding_specs, train, cache):
+                      sharding_specs, physical_mesh, train, cache):
   ds = input_pipeline.create_split(
       dataset_builder, batch_size, image_size=image_size, dtype=dtype,
       train=train, cache=cache)
   it = map(lambda xs: jax.tree_map(lambda x: x._numpy(), xs), ds)
-  it = alpa.DataLoader(it, sharding_specs, prefetch_size=4)
+  it = alpa.DataLoader(it, sharding_specs, physical_mesh=physical_mesh, prefetch_size=4)
   return it
 
 
@@ -238,6 +239,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
+  ray.init(address="auto")
+  physical_mesh = alpa.DeviceCluster().get_physical_mesh()
+  alpa.set_parallelize_options(physical_mesh)
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)
@@ -310,10 +314,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
 
   train_iter = create_input_iter(
       dataset_builder, local_batch_size, image_size, input_dtype,
-      sharding_specs, train=True, cache=config.cache)
+      sharding_specs, physical_mesh, train=True, cache=config.cache)
   eval_iter = create_input_iter(
       dataset_builder, local_batch_size, image_size, input_dtype,
-      sharding_specs, train=False, cache=config.cache)
+      sharding_specs, physical_mesh, train=False, cache=config.cache)
 
   train_metrics = []
   hooks = []

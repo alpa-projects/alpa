@@ -403,7 +403,7 @@ def get_train_step(remat_layer):
 
 print(">>>>> With remat")
 state = create_train_state(rngkey, model, [x, attention_mask])
-executable = parallelize(train_step).get_executable(state, batch)
+executable = parallelize(get_train_step(True)).get_executable(state, batch)
 profile_and_pp_pipeshard_stats(executable)
 executable.shutdown()
 reset_state()

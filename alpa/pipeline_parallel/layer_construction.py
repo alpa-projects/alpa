@@ -532,15 +532,15 @@ def automatic_remat(fun: Callable = None,
     """
 
     def decorate_fun(fun):
-        layer_level_jaxpr_transformation(fun,
-                                         static_argnums,
-                                         remat=True,
-                                         layer_construction=False,
-                                         auto_layer_boundary=True,
-                                         layer_num=layer_num,
-                                         eps=eps,
-                                         cost_criteria=cost_criteria,
-                                         layer_eps=layer_eps)
+        return layer_level_jaxpr_transformation(fun,
+                                                static_argnums,
+                                                remat=True,
+                                                layer_construction=False,
+                                                auto_layer_boundary=True,
+                                                layer_num=layer_num,
+                                                eps=eps,
+                                                cost_criteria=cost_criteria,
+                                                layer_eps=layer_eps)
 
     if fun is None:
         return decorate_fun
@@ -550,6 +550,7 @@ def automatic_remat(fun: Callable = None,
 
 
 def manual_layer_construction(fun: Callable = None,
+                              *,
                               static_argnums: Sequence[int] = (),
                               remat_layer: bool = False,
                               lift_markers: bool = False):
@@ -584,6 +585,7 @@ def manual_layer_construction(fun: Callable = None,
 
 
 def automatic_layer_construction(fun: Callable = None,
+                                 *,
                                  static_argnums: Sequence[int] = (),
                                  remat_layer: bool = False,
                                  layer_num: int = None,

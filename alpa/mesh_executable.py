@@ -95,6 +95,7 @@ class RemoteBufferRef:
 
 
 def create_remote_buffer_refs(device_mesh,
+                              batching=1,
                               host_indices=None,
                               device_indices=None):
     """Create remote buffer references for an distribued array on a device mesh."""
@@ -102,7 +103,7 @@ def create_remote_buffer_refs(device_mesh,
         host_indices = range(device_mesh.num_hosts)
     if device_indices is None:
         device_indices = range(device_mesh.num_devices_per_host)
-    size = len(host_indices) * len(device_indices)
+    size = len(host_indices) * len(device_indices) * batching
     uuids = next_remote_buffer_uuid(size)
     if size == 1:
         uuids = (uuids,)
@@ -110,9 +111,10 @@ def create_remote_buffer_refs(device_mesh,
     refs = []
     for host_id in host_indices:
         for device_id in device_indices:
-            refs.append(
-                RemoteBufferRef(device_mesh, host_id, device_id,
-                                next(uuid_iter)))
+            for batch_id in range(batching):
+                refs.append(
+                    RemoteBufferRef(device_mesh, host_id, device_id,
+                                    next(uuid_iter)))
     return refs, uuids
 
 

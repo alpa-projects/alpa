@@ -27,6 +27,11 @@ export ALPA_TUTORIAL_EXEC_PATTERN=none
 make html
 ```
 
+### Clean
+To remove all generated files:
+```
+make clean
+```
 
 ### Serve
 Run an HTTP server and visit http://localhost:8000 in your browser.

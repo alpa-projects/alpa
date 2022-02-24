@@ -1,4 +1,6 @@
 """
+.. _Getting Started with Alpa:
+
 Getting Started with Alpa
 =========================
 
@@ -11,7 +13,7 @@ including data parallelism, operator parallelism, and pipeline parallelism.
 
 Alpa provides a simple API ``@parallelize`` and automatically generates the best execution
 plan by solving optimization problems. Therefore, you can efficiently scale your jax
-computation on a distributed cluster, without any expertise in distributed computing. 
+computation on a distributed cluster, without any expertise in distributed computing.
 
 In this tutorial, we show the usage of Alpa with an MLP example.
 """
@@ -169,7 +171,7 @@ print(f"Serial execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs
 
 # Benchmark parallel execution
 # We distribute arguments in advance for the benchmarking purpose
-state, batch = alpa_train_step.preshard_dynamic_args(state, batch) 
+state, batch = alpa_train_step.preshard_dynamic_args(state, batch)
 
 def parallel_execution():
     global state

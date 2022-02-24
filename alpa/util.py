@@ -509,6 +509,35 @@ def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):
     return tuple(shape)
 
 
+def get_microbatch_sharding_spec(spec: pxla.ShardingSpec, batch_dim,
+                                 num_micro_batch):
+    batch_dim_chunks = [num_micro_batch]
+    if isinstance(spec.sharding[batch_dim], pxla.Chunked):
+        batch_dim_chunks.extend(spec.sharding[batch_dim].chunks)
+    batch_dim_axis = 0
+    for sharding in spec.sharding[:batch_dim]:
+        if isinstance(sharding, pxla.Chunked):
+            batch_dim_axis += 1
+
+    new_sharding = list(spec.sharding)
+    new_sharding[batch_dim] = pxla.Chunked(batch_dim_chunks)
+
+    new_mapping = []
+    for mapping in spec.mesh_mapping:
+        if isinstance(mapping, pxla.Replicated):
+            new_mapping.append(mapping)
+            continue
+        assert isinstance(mapping, pxla.ShardedAxis)
+        new_axis = mapping.axis
+        if mapping.axis >= batch_dim_axis:
+            new_axis += 1
+        new_mapping.append(pxla.ShardedAxis(new_axis))
+    new_mapping.append(pxla.ShardedAxis(batch_dim_axis))
+
+    return pxla.ShardingSpec(sharding=tuple(new_sharding),
+                             mesh_mapping=tuple(new_mapping))
+
+
 class XlaPassContext:
     """A global context for passing arguments from python to XLA c++ passes."""
 

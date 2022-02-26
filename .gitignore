@@ -41,3 +41,6 @@ benchmark/alpa/tmp
 # Documentation website build
 docs/_build
 docs/tutorials
+
+# Example temp files
+examples/imagenet/imagenet

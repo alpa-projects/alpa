@@ -26,7 +26,7 @@ class DeviceMeshTest(unittest.TestCase):
 
     def test_add_one(self):
         # Launch a multi-host device mesh
-        device_cluster = DeviceCluster()
+        device_cluster = DeviceCluster(use_gpu_on_driver=True)
         physical_mesh = device_cluster.get_physical_mesh()
         num_devices = len(
             physical_mesh.host_ids) * physical_mesh.num_devices_per_host
@@ -53,7 +53,7 @@ class DeviceMeshTest(unittest.TestCase):
 
     def test_mlp(self):
         # Launch a multi-host device mesh
-        device_cluster = DeviceCluster()
+        device_cluster = DeviceCluster(use_gpu_on_driver=True)
         physical_mesh = device_cluster.get_physical_mesh()
         set_parallelize_options(devices=physical_mesh)
 
@@ -104,14 +104,15 @@ class DeviceMeshTest(unittest.TestCase):
         physical_mesh.shutdown()
 
     def test_distributed_array(self):
-        device_cluster = DeviceCluster()
+        device_cluster = DeviceCluster(use_gpu_on_driver=True)
         physical_mesh = device_cluster.get_physical_mesh()
         logical_mesh = physical_mesh.get_default_logical_mesh()
 
         array = jnp.ones((16, 16))
         sharding_spec = logical_mesh.make_tile_spec(array, [0, 1], [0, 1])
         indices = sharding_spec.indices(array.shape).flatten()
-        remote_a = physical_mesh.shard_args([indices], (False,), (array,))
+        remote_a = physical_mesh.shard_args_to_bufs([indices], (False,),
+                                                    (array,))
         physical_mesh.shutdown()
 
     def test_preshard_args(self):
@@ -127,7 +128,7 @@ class DeviceMeshTest(unittest.TestCase):
         assert isinstance(a, pxla.ShardedDeviceArray)
 
         # Multi host
-        device_cluster = DeviceCluster()
+        device_cluster = DeviceCluster(use_gpu_on_driver=True)
         physical_mesh = device_cluster.get_physical_mesh()
         set_parallelize_options(devices=physical_mesh)
 

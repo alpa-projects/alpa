@@ -135,6 +135,7 @@ def get_sync_func_driver(physical_mesh):
     """Get the sync function on the driver."""
 
     def sync_func_driver():
+        assert not physical_mesh.is_distributed
         physical_mesh.devices[0].synchronize_all_activity()
 
     return sync_func_driver
@@ -222,21 +223,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         else:
             self.compiled = compiled
 
-    def __call__(self, *args):
-        if self.static_argnums:
-            dyn_args = [
-                args[i] for i in range(len(args)) if i not in static_argnums
-            ]
-        else:
-            dyn_args = args
-        args_flat, in_tree = tree_flatten(dyn_args)
-        out = self.launch_on_driver(*args_flat)
-        return tree_unflatten(self.out_tree_thunk(), out)
-
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
         ret = partial(self.launch_on_driver)
-        ret.shard_args_only = partial(self.shard_args_only)
+        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
         ret.get_executable = lambda: self
         return ret
 
@@ -247,8 +237,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
-        input_bufs = physical_mesh.shard_args(self.input_indices,
-                                              self.donated_invars, args)
+        input_bufs = physical_mesh.shard_args_to_bufs(self.input_indices,
+                                                      self.donated_invars, args)
         if physical_mesh.is_distributed:
             ## Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
@@ -293,13 +283,25 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         return self.outs_handler(output_bufs)
 
-    def shard_args_only(self, *args):
+    def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
-        input_bufs = self.physical_mesh.shard_args(self.input_indices,
-                                                   self.donated_invars, args)
+        input_bufs = self.physical_mesh.shard_args_to_bufs(
+            self.input_indices, self.donated_invars, args)
         outs_handler = self.physical_mesh.get_outputs_handler(
             self.avals, self.input_sharding_specs)
         return outs_handler(input_bufs)
+
+    def __call__(self, *args):
+        """Fast call without signature matching."""
+        if self.static_argnums:
+            dyn_args = [
+                args[i] for i in range(len(args)) if i not in static_argnums
+            ]
+        else:
+            dyn_args = args
+        args_flat, in_tree = tree_flatten(dyn_args)
+        out = self.launch_on_driver(*args_flat)
+        return tree_unflatten(self.out_tree_thunk(), out)
 
     def profile_with_dummy_inputs(self, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
@@ -585,7 +587,7 @@ class GradAccMeshDriverExecutable:
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
         ret = partial(self.launch_on_driver)
-        ret.shard_args_only = partial(self.shard_args_only)
+        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
         ret.get_executable = lambda: self
         return ret
 
@@ -616,9 +618,9 @@ class GradAccMeshDriverExecutable:
             next_batches.extend(micro_batches[1:])
 
         # Shard arguments
-        input_bufs = physical_mesh.shard_args(self.global_arg_shard_indices,
-                                              self.donated_invars, args)
-        next_batch_bufs = physical_mesh.shard_args(
+        input_bufs = physical_mesh.shard_args_to_bufs(
+            self.global_arg_shard_indices, self.donated_invars, args)
+        next_batch_bufs = physical_mesh.shard_args_to_bufs(
             self.next_batch_indices, (True,) * len(self.next_batch_indices),
             next_batches)
 
@@ -707,7 +709,7 @@ class GradAccMeshDriverExecutable:
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
 
-    def shard_args_only(self, *args):
+    def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
         raise NotImplementedError
 
@@ -837,9 +839,10 @@ class GradAccMeshWorkerExecutable:
         delete_donated_buffers(buffer_dict, input_uuids)
 
         # Delete micro batch buffers
-        for i in range(len(next_batch_uuids)):
-            for j in range(len(next_batch_uuids[i])):
-                del buffer_dict[next_batch_uuids[i][j]]
+        if next_batch_uuids is not None:
+            for i in range(len(next_batch_uuids)):
+                for j in range(len(next_batch_uuids[i])):
+                    del buffer_dict[next_batch_uuids[i][j]]
 
     def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
@@ -981,7 +984,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""
         ret = partial(self.launch_on_driver)
-        ret.shard_args_only = partial(self.shard_args_only)
+        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
         ret.get_executable = lambda: self
         return ret
 
@@ -1025,7 +1028,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
 
         return self.outs_handler(output_bufs)
 
-    def shard_args_only(self, *args):
+    def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
         raise NotImplementedError
 

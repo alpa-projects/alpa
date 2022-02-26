@@ -223,8 +223,6 @@ def set_parallelize_options(
 
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"
 
-# Let the compilation on the driver node not use GPUs.
-# TODO(lmzheng): enable this
 os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
                                          "") + " --xla_gpu_autotune_level=0"
 

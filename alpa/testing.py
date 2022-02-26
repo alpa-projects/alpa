@@ -191,7 +191,6 @@ class PipelineBasicTest(unittest.TestCase):
         ray.init(address="auto",
                  namespace=get_ray_namespace_str(
                      prefix=global_config.unittest_ray_namespace_prefix))
-        jax.config.update('jax_platform_name', 'cpu')
 
     def tearDown(self):
         ray.shutdown()

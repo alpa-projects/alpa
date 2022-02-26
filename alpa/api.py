@@ -117,7 +117,7 @@ def parallelize(fun=None,
                 # In this mode, this function returns sharded arguments without executing
                 # the computation. This is used to prepare sharded arguments
                 # for benchmark purposes, so we can exclude the time for sharding arguments.
-                sharded_args = compiled_func.shard_args_only(*args_flat)
+                sharded_args = compiled_func.preshard_dynamic_args(*args_flat)
                 return tree_unflatten(in_tree, sharded_args)
             elif return_value_mode == "get_executable":
                 # Return the compiled executable

@@ -99,6 +99,8 @@ class MeshHostWorker:
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         assert uuid not in self.buffers
+        if data.dtype == np.int64:
+            data = data.astype(np.int32)
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
             data, self.local_devices[device_id]))
 
@@ -116,6 +118,8 @@ class MeshHostWorker:
                 split_datas.extend(split_buffers)
             datas = split_datas
         for uuid, device_id, data in zip(uuids, device_ids, datas):
+            if data.dtype == np.int64:
+                data = data.astype(np.int32)
             self.buffers[uuid] = (self.backend.buffer_from_pyval(
                 data, self.local_devices[device_id]))
 
@@ -485,7 +489,8 @@ class PhysicalDeviceMesh:
     """
 
     def __init__(self,
-                 devices=None,
+                 devices: Union[Sequence[Sequence[int]],
+                                Sequence["Device"]] = None,
                  host_ids: Sequence[int] = None,
                  host_info: Sequence[dict] = None,
                  head_ip: str = None,
@@ -495,7 +500,7 @@ class PhysicalDeviceMesh:
 
         if not use_ray:
             self.is_distributed = False
-            self.devices = xb.local_devices()
+            self.devices = devices or xb.local_devices()
             self.host_ids = [0]
             self.host_info = None
             self.head_ip = "127.0.0.1"
@@ -514,7 +519,6 @@ class PhysicalDeviceMesh:
             self.workers = None
             self.launched = False
 
-            self.device_strs = []
             if devices is not None:
                 if len(devices) != len(host_ids):
                     raise RuntimeError(
@@ -529,6 +533,7 @@ class PhysicalDeviceMesh:
                     for i, _ in enumerate(host_ids)
                 ]
             self.devices = devices
+            self.device_strs = []
             for i, _ in enumerate(self.host_ids):
                 ip = self.host_info[i]["NodeManagerAddress"]
                 self.device_strs.extend([
@@ -772,7 +777,8 @@ class PhysicalDeviceMesh:
     ##### Executable Related Functions #####
     def shard_batch_arg(self, arg, sharding_spec, num_microbatch, batch_dim,
                         microbatch_aval):
-        """shard arguments into buffers, then split the arg."""
+        """Shard high-level arguments as low-level buffers,
+        then reorganize them into micro batches."""
         assert self.is_distributed
         new_spec = get_microbatch_sharding_spec(sharding_spec, batch_dim,
                                                 num_microbatch)
@@ -780,23 +786,24 @@ class PhysicalDeviceMesh:
         buf_refs = shard_arg_handlers[type(arg)](arg, self, indices,
                                                  num_microbatch)
 
-        microbatch_arys = []
+        microbatch_arrays = []
         # build distributed array
         for batch_idx in range(num_microbatch):
             refs = [
                 buf_refs[device_idx * num_microbatch + batch_idx]
                 for device_idx in range(self.num_devices)
             ]
-            microbatch_arys.append(
+            microbatch_arrays.append(
                 DistributedArray(self, microbatch_aval, sharding_spec, refs))
-        return microbatch_arys
+        return microbatch_arrays
 
-    def shard_args_to_bufs(self, arg_indices: Sequence[Sequence[Index]],
+    def shard_args_to_bufs(self, sharding_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
-        """Shard the high-level arguments into low-level buffers."""
+        """Shard high-level arguments as low-level buffers."""
         if self.is_distributed:
             input_bufs = []
-            for arg, indices, donated in zip(args, arg_indices, donated_invars):
+            for arg, indices, donated in zip(args, sharding_indices,
+                                             donated_invars):
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     input_bufs.append(arg.remote_buffers)
@@ -817,25 +824,31 @@ class PhysicalDeviceMesh:
             return input_bufs
         else:
             # single host w/o Ray
-            return pxla.shard_args(self.devices, arg_indices, args)
+            return pxla.shard_args(self.devices, sharding_indices, args)
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
-                             arg_indices: Sequence[Sequence[Index]],
+                             sharding_indices: Sequence[Sequence[Index]],
                              sharding_specs: Sequence[ShardingSpec], args):
-
-        bufs = self.shard_args_to_bufs(arg_indices, (False,) * len(avals), args)
-
+        """Shard arguments (np.ndarray) as distributed arrays."""
         arrays = []
         if self.is_distributed:
             for i in range(len(avals)):
+                buffers = _shard_array(args[i], self, sharding_indices[i])
                 arrays.append(
-                    DistributedArray(self, avals[i], sharding_spec[i], bufs[i],
-                                     arg_indices[i]))
+                    DistributedArray(self, avals[i], sharding_specs[i], buffers,
+                                     sharding_indices[i]))
         else:
             for i in range(len(avals)):
+                shards = [
+                    args[i][sharding_indices[i][k]]
+                    for k in range(len(self.devices))
+                ]
+                buffers = [
+                    jax.device_put(x, d) for x, d in zip(shards, self.devices)
+                ]
                 arrays.append(
-                    pxla._ShardedDeviceArray(avals[i], sharding_spec[i],
-                                             bufs[i], arg_indices[i]))
+                    pxla._ShardedDeviceArray(avals[i], sharding_specs[i],
+                                             buffers, sharding_indices[i]))
 
         return arrays
 
@@ -1137,7 +1150,7 @@ class VirtualPhysicalMesh:
                  host_info: Sequence[dict] = None,
                  head_ip: str = None,
                  num_devices_per_host: int = 1,
-                 devices=None):
+                 devices: Sequence[Sequence[int]] = None):
         self.host_ids = host_ids
         self.host_info = host_info
         self.head_ip = head_ip
@@ -1244,7 +1257,7 @@ class VirtualPhysicalMesh:
             host_info=self.host_info,
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
-            devices=self.device_ids,
+            devices=self.devices,
             use_ray=True)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
@@ -1268,12 +1281,13 @@ class VirtualPhysicalMesh:
         return self.get_logical_mesh((1, self.num_devices))
 
 
-def set_jax_env_on_driver():
+def set_jax_env_on_driver(use_gpu_on_driver=False):
     """Set jax environment flags for the driver process, so the driver
     process can release GPU memory for the worker processes."""
 
     # Use cpu backend
-    jax.config.update('jax_platform_name', 'cpu')
+    if not use_gpu_on_driver:
+        jax.config.update('jax_platform_name', 'cpu')
 
     # Use platform allocator in the driver process for auto-tuning
     # the conv algorithms and gemm algorithms in cudnn and cublas.
@@ -1291,7 +1305,7 @@ def set_jax_env_on_driver():
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 
-    def __init__(self):
+    def __init__(self, use_gpu_on_driver=False):
         # pylint: disable=import-outside-toplevel
         from ray.worker import _global_node as ray_global_node
         try:
@@ -1315,7 +1329,7 @@ class DeviceCluster:
             assert number.is_integer()
             self.num_devices.append(int(number))
 
-        set_jax_env_on_driver()
+        set_jax_env_on_driver(use_gpu_on_driver)
 
     @property
     def num_cpus(self):

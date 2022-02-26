@@ -7,7 +7,7 @@ from jax.interpreters import pxla
 from jax._src.abstract_arrays import ShapedArray
 import numpy as np
 
-from alpa.device_mesh import DistributedArray, _shard_array
+from alpa.device_mesh import PhysicalDeviceMesh, DistributedArray, _shard_array
 
 
 class DataLoader:
@@ -15,36 +15,19 @@ class DataLoader:
     def __init__(self,
                  input_iter,
                  sharding_specs,
-                 devices=None,
                  physical_mesh=None,
                  prefetch_size=1):
         self.input_iter = input_iter
         self.sharding_specs = sharding_specs
-        self.devices = devices
-        self.physical_mesh = physical_mesh
         self.prefetch_size = prefetch_size
 
-        self.queue = collections.deque()
-
-        self.first_iter = True
-
-        if self.devices is not None:
-            self.shard_func = self.shard_to_local_devices
-        elif self.physical_mesh is not None:
-            self.shard_func = self.shard_to_physical_mesh
+        if physical_mesh is None:
+            self.physical_mesh = PhysicalDeviceMesh()
         else:
-            self.devices = jax.local_devices()
-            self.shard_func = self.shard_to_local_devices
+            self.physical_mesh = physical_mesh
 
-    def shard_to_local_devices(self, batch, aval, sharding_spec, indices):
-        shards = [batch[indices[k]] for k in range(len(self.devices))]
-        buffers = pxla.device_put(shards, self.devices)
-        return pxla._ShardedDeviceArray(aval, sharding_spec, buffers)
-
-    def shard_to_physical_mesh(self, batch, aval, sharding_spec, indices):
-        buffers = _shard_array(batch, self.physical_mesh, indices)
-        return DistributedArray(self.physical_mesh, aval, sharding_spec,
-                                buffers, indices)
+        self.queue = collections.deque()
+        self.first_iter = True
 
     def enqueue(self, num_batches):
         for batch in itertools.islice(self.input_iter, num_batches):
@@ -61,12 +44,8 @@ class DataLoader:
                     for spec, aval in zip(self.sharding_specs, self.avals)
                 ]
 
-            new_args = []
-            for j, a in enumerate(flatten_args):
-                new_args.append(
-                    self.shard_func(a, self.avals[j],
-                                    self.sharding_specs[j],
-                                    self.indices[j]))
+            new_args = self.physical_mesh.shard_args_to_arrays(
+                self.avals, self.indices, self.sharding_specs, flatten_args)
             self.queue.append(jax.tree_unflatten(tree, new_args))
 
     def __iter__(self):

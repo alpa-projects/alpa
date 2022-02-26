@@ -111,7 +111,8 @@ class DeviceMeshTest(unittest.TestCase):
         array = jnp.ones((16, 16))
         sharding_spec = logical_mesh.make_tile_spec(array, [0, 1], [0, 1])
         indices = sharding_spec.indices(array.shape).flatten()
-        remote_a = physical_mesh.shard_args([indices], (False,), (array,))
+        remote_a = physical_mesh.shard_args_to_bufs([indices], (False,),
+                                                    (array,))
         physical_mesh.shutdown()
 
     def test_preshard_args(self):

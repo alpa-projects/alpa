@@ -397,6 +397,9 @@ class MeshHostWorker:
             self.allgather(buffer_uuids, allgather_spec.device_ids,
                            allgather_spec.tensor_slices)
 
+    def destroy_collective_group(self, group_name: str = "default"):
+        col.destroy_collective_group(group_name)
+
     ##### Profiling Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
                         single_timeout: float):
@@ -463,9 +466,6 @@ class MeshHostWorker:
         del self.executables
         self.distributed_client.shutdown()
 
-    def destroy_collective_group(self, group_name: str = "default"):
-        col.destroy_collective_group(group_name)
-
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
     """Convert device id (int) to a canonical device string."""
@@ -489,26 +489,31 @@ class PhysicalDeviceMesh:
                  host_ids: Sequence[int] = None,
                  host_info: Sequence[dict] = None,
                  head_ip: str = None,
-                 num_devices_per_host: int = 1,
+                 num_devices_per_host: int = None,
                  use_ray: bool = False):
-        self.host_ids = host_ids
-        self.host_info = host_info
-        self.head_ip = head_ip
-        self.num_devices_per_host = num_devices_per_host
         self.use_ray = use_ray  # TODO: infer use_ray by checking ip addresses.
-        self.workers = None
-        self.launched = False
 
         if not use_ray:
-            self.devices = devices
+            self.is_distributed = False
+            self.devices = xb.local_devices()
             self.host_ids = [0]
             self.host_info = None
             self.head_ip = "127.0.0.1"
-            self.device_strs = [
-                device_id_to_str(self.head_ip, d.id) for d in devices
-            ]
             self.num_devices_per_host = len(self.devices)
+            self.workers = None
+            self.launched = False
+            self.device_strs = [
+                device_id_to_str(self.head_ip, d.id) for d in self.devices
+            ]
         else:
+            self.is_distributed = True
+            self.host_ids = host_ids
+            self.host_info = host_info
+            self.head_ip = head_ip
+            self.num_devices_per_host = num_devices_per_host
+            self.workers = None
+            self.launched = False
+
             self.device_strs = []
             if devices is not None:
                 if len(devices) != len(host_ids):
@@ -535,15 +540,6 @@ class PhysicalDeviceMesh:
 
             self.to_delete_remote_buffers = [[] for _ in range(self.num_hosts)]
             self.to_delete_remote_buffers_ct = 0
-
-    @property
-    def host_ips(self):
-        """Return the a list containing all host IPs."""
-        ips = [
-            self.host_info[i]["NodeManagerAddress"]
-            for i, _ in enumerate(self.host_ids)
-        ]
-        return ips
 
     def _launch_xla_servers(self):
         # Launch distributed xla runtime
@@ -600,40 +596,27 @@ class PhysicalDeviceMesh:
         return ret
 
     @property
+    def host_ips(self):
+        """Return a list containing all host IPs."""
+        ips = [
+            self.host_info[i]["NodeManagerAddress"]
+            for i, _ in enumerate(self.host_ids)
+        ]
+        return ips
+
+    @property
     def shape(self):
         return (len(self.host_ids), self.num_devices_per_host)
 
     @property
     def num_devices(self):
         """Return the total number of GPUs on this mesh."""
-        return len(self.device_ids_flat)
+        return len(self.host_ids) * self.num_devices_per_host
 
     @property
     def num_hosts(self):
         """Return the number of hosts in the mesh."""
         return len(self.host_ids)
-
-    @property
-    def device_ids(self):
-        """Return the device ids (does not distinguish host IPs)."""
-        if not self.use_ray:
-            return [self.devices]
-        else:
-            return self.devices
-
-    @property
-    def device_ids_flat(self):
-        """Return the flattened device ids (do not distinguish host IPs)."""
-        ids = [
-            id for device_ids_this_host in self.device_ids
-            for id in device_ids_this_host
-        ]
-        return ids
-
-    @property
-    def is_distributed(self):
-        """Whether this mesh should be considered as a distributed mesh."""
-        return not (self.num_hosts == 1 and not self.use_ray)
 
     ##### Mesh Related Functions #####
     def get_logical_mesh(self,
@@ -790,6 +773,7 @@ class PhysicalDeviceMesh:
     def shard_batch_arg(self, arg, sharding_spec, num_microbatch, batch_dim,
                         microbatch_aval):
         """shard arguments into buffers, then split the arg."""
+        assert self.is_distributed
         new_spec = get_microbatch_sharding_spec(sharding_spec, batch_dim,
                                                 num_microbatch)
         indices = pxla.spec_to_indices(arg.shape, new_spec)
@@ -807,8 +791,8 @@ class PhysicalDeviceMesh:
                 DistributedArray(self, microbatch_aval, sharding_spec, refs))
         return microbatch_arys
 
-    def shard_args(self, arg_indices: Sequence[Sequence[Index]],
-                   donated_invars: Sequence[bool], args):
+    def shard_args_to_bufs(self, arg_indices: Sequence[Sequence[Index]],
+                           donated_invars: Sequence[bool], args):
         """Shard the high-level arguments into low-level buffers."""
         if self.is_distributed:
             input_bufs = []
@@ -834,6 +818,26 @@ class PhysicalDeviceMesh:
         else:
             # single host w/o Ray
             return pxla.shard_args(self.devices, arg_indices, args)
+
+    def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
+                             arg_indices: Sequence[Sequence[Index]],
+                             sharding_specs: Sequence[ShardingSpec], args):
+
+        bufs = self.shard_args_to_bufs(arg_indices, (False,) * len(avals), args)
+
+        arrays = []
+        if self.is_distributed:
+            for i in range(len(avals)):
+                arrays.append(
+                    DistributedArray(self, avals[i], sharding_spec[i], bufs[i],
+                                     arg_indices[i]))
+        else:
+            for i in range(len(avals)):
+                arrays.append(
+                    pxla._ShardedDeviceArray(avals[i], sharding_spec[i],
+                                             bufs[i], arg_indices[i]))
+
+        return arrays
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
@@ -1138,6 +1142,7 @@ class VirtualPhysicalMesh:
         self.host_info = host_info
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
+        self.is_distributed = True
 
         if devices is not None:
             if len(devices) != len(host_ids):
@@ -1225,31 +1230,12 @@ class VirtualPhysicalMesh:
     @property
     def num_devices(self):
         """Return the total number of GPUs on this mesh."""
-        return len(self.device_ids_flat)
+        return len(self.host_ids) * self.num_devices_per_host
 
     @property
     def num_hosts(self):
         """Return the number of hosts in the mesh."""
         return len(self.host_ids)
-
-    @property
-    def device_ids(self):
-        """Return the device ids (does not distinguish host IPs)."""
-        return self.devices
-
-    @property
-    def device_ids_flat(self):
-        """Return the flattened device ids (do not distinguish host IPs)."""
-        ids = [
-            id for device_ids_this_host in self.device_ids
-            for id in device_ids_this_host
-        ]
-        return ids
-
-    @property
-    def is_distributed(self):
-        """Whether this mesh should be considered as a distributed mesh."""
-        return True
 
     def get_physical_mesh(self):
         """Convert to a physical mesh (which will request resources from Ray)."""
@@ -1311,7 +1297,8 @@ class DeviceCluster:
         try:
             self.head_info = ray_global_node.address_info
         except AttributeError:
-            raise RuntimeError("Cannot access ray global node. Did you call ray.init?")
+            raise RuntimeError(
+                "Cannot access ray global node. Did you call ray.init?")
         self.head_ip = self.head_info['node_ip_address']
 
         # Gather host ids

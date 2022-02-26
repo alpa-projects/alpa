@@ -368,7 +368,7 @@ class HloCostModelProfileWorker:
         _, _, _, acc_grad_indices = profile_info
         xla_computation = xla_client.XlaComputation(compiled_output.model_proto)
 
-        hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
+        hlo_proto_status = HloProtoStatus.SPMD_PARTITIONED
         try:
             compiled = compile_with_given_strategy(
                 self.backend,

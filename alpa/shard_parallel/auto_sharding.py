@@ -27,12 +27,28 @@ INFINITY_COST = 1e13
 
 
 class HloProtoStatus(enum.IntEnum):
-    """The status of a HLO protobuf."""
-
+    """The status of a HLO protobuf.
+    The compilation passes and status of the HloModule:
+    
+    UNOPTIMIZED
+       |
+       |  pre spmd partitioner passes
+       |
+       |  auto_sharding pass
+       V
+    SHARDING_ANNOTATED
+       |
+       |  spmd partitioner pass
+       V
+    SPMD_PARTITIONED
+       |
+       |  post_spmd_partitioner_passes
+       V
+    XLA_EXECUTABLES
+    """
     UNOPTIMIZED = 0  # An unoptimized HLO got from tracing the jaxpr.
     SHARDING_ANNOTATED = 1  # A HLO with sharding annotation attached.
-    FULLY_OPTIMIZED = 2  # A fully optimized HLO which is already partitioned by
-    # the SPMD partitioner.
+    SPMD_PARTITIONED = 2 # A HLO that is partitioned by SPMD partitioner
 
 
 class LogicalDeviceMesh:
@@ -178,8 +194,7 @@ def compile_with_search(backend: xla_extension.Client,
     else:
         multiple_stages = False
 
-    run_backend_codegen = not bypass_device_assignment_check and not multiple_stages
-    return_after_slice_auto_sharded_stages = bool(multiple_stages)
+    run_post_spmd_partitioner_passes = not bypass_device_assignment_check and not multiple_stages
 
     num_devices = logical_mesh_choices[0].num_devices
     build_random_seed = global_config.build_random_seed
@@ -253,11 +268,12 @@ def compile_with_search(backend: xla_extension.Client,
         with XlaPassContext({
                 # Build options
                 "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
-                "build_option::run_backend_codegen": run_backend_codegen,
-                "build_option::return_after_slice_auto_sharded_stages": return_after_slice_auto_sharded_stages,
+                "build_option::run_pre_spmd_partitioner_passes": True,
+                "build_option::run_auto_sharding": True,
+                "build_option::run_spmd_partitioner": True,
+                "build_option::run_post_spmd_partitioner_passes": run_post_spmd_partitioner_passes,
 
                 # Auto-sharding solver options
-                "auto_sharding::enable": True,
                 "auto_sharding::memory_budget_per_device": memory_budget_per_device,
                 "auto_sharding::force_all_gather_cost": not allow_all_gather,
                 "auto_sharding::all_gather_cost": INFINITY_COST,
@@ -406,29 +422,30 @@ def compile_with_given_strategy(
 
     # Skip some compilation stages to
     # 1. accelerate the compilation.
-    # 2. make sure the annotaed sharding is not modified by other passes.
+    # 2. make sure the annotated sharding is not modified by other passes.
     if hlo_proto_status == HloProtoStatus.UNOPTIMIZED:
-        run_hlo_passes = True
         run_pre_spmd_partitioner_passes = True
         run_auto_sharding = True
+        run_spmd_partitioner = True
         solution_vector = strategy_config.auto_sharding_solution_vector
     elif hlo_proto_status == HloProtoStatus.SHARDING_ANNOTATED:
-        run_hlo_passes = True
         run_pre_spmd_partitioner_passes = False
         run_auto_sharding = False
+        run_spmd_partitioner = True
         solution_vector = []
-    elif hlo_proto_status == HloProtoStatus.FULLY_OPTIMIZED:
-        run_hlo_passes = False
-        run_auto_sharding = False
+    elif hlo_proto_status == HloProtoStatus.SPMD_PARTITIONED:
         run_pre_spmd_partitioner_passes = False
+        run_auto_sharding = False
+        run_spmd_partitioner = False
         solution_vector = []
     else:
         raise ValueError(f"Invalid status: {hlo_proto_status}")
 
     if run_backend_codegen == "auto":
-        run_backend_codegen = not bypass_device_assignment_check
+        run_post_spmd_partitioner_passes = not bypass_device_assignment_check
     else:
         assert isinstance(run_backend_codegen, bool)
+        run_post_spmd_partitioner_passes = run_backend_codegen
 
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
@@ -439,12 +456,12 @@ def compile_with_given_strategy(
     with XlaPassContext({
             # Build options
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
-            "build_option::run_hlo_passes": run_hlo_passes,
             "build_option::run_pre_spmd_partitioner_passes": run_pre_spmd_partitioner_passes,
-            "build_option::run_backend_codegen": run_backend_codegen,
+            "build_option::run_auto_sharding": run_auto_sharding,
+            "build_option::run_spmd_partitioner": run_spmd_partitioner,
+            "build_option::run_post_spmd_partitioner_passes": run_post_spmd_partitioner_passes,
 
             # Auto-sharding solver options
-            "auto_sharding::enable": run_auto_sharding,
             "auto_sharding::load_solution_vector": True,
             "auto_sharding::solution_vector": to_int_tuple(solution_vector),
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,

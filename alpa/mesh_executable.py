@@ -373,7 +373,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         xla_computation = xla_client.XlaComputation(hlo_proto)
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
-        hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
+        hlo_proto_status = HloProtoStatus.SPMD_PARTITIONED
 
         self.compiled = compile_with_given_strategy(
             worker.backend,
@@ -756,7 +756,7 @@ class GradAccMeshWorkerExecutable:
                  grad_sync_channel_ids: str):
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
-        hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
+        hlo_proto_status = HloProtoStatus.SPMD_PARTITIONED
 
         self.accumulate_grad = compile_with_given_strategy(
             worker.backend,

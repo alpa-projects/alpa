@@ -511,7 +511,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx, var_at,
-                    executable_config_lists, keys, True)
+                    executable_config_lists, keys,
+                    global_config.use_memzero_for_gradient_accumulation)
 
         # 2. PartialGradAccMeshExecutable
         for stage_idx, stage in enumerate(self.stages):
@@ -1085,6 +1086,7 @@ class PipelineMeshWorkerExecutable:
         self.acc_in_uuids = [list(uuids) for uuids in list(acc_local_uuids)]
         self.acc_out_uuids = acc_out_uuids
         self.partial_grad_exec_uuids = OrderedSet()
+        self.use_memzero = False
         # Create tasks
         for task_config in executable_configs:
             self._related_exec_uuids.append(task_config.exec_uuid)
@@ -1099,6 +1101,7 @@ class PipelineMeshWorkerExecutable:
             if isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0
                 # allocate buffers
+                self.use_memzero = True
                 self.worker.put_executable(task_config.exec_uuid,
                                            AllocZeroBufferWorkerExecutable,
                                            task_config.grad_shard_shapes,
@@ -1191,10 +1194,13 @@ class PipelineMeshWorkerExecutable:
                 self.global_buffers[global_id] = buffers[local_id]
 
         # now acc_grad_buffers are those after grad acc, before apply grad
+        # with memzero, these buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
-        for in_uuids, out_uuids in zip(self.acc_in_uuids, self.acc_out_uuids):
-            for in_uuid, out_uuid in zip(in_uuids, out_uuids):
-                self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
+        if self.use_memzero:
+            for in_uuids, out_uuids in zip(self.acc_in_uuids,
+                                           self.acc_out_uuids):
+                for in_uuid, out_uuid in zip(in_uuids, out_uuids):
+                    self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # monkey patch
         self.worker.buffers = self.global_buffers
         # Clean the dict

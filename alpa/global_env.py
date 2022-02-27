@@ -98,6 +98,7 @@ class GlobalConfig:
         self.precompile_resharding_tasks = True
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
+        self.use_memzero_for_gradient_accumulation = False
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42

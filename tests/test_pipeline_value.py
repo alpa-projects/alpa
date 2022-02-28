@@ -31,7 +31,8 @@ def suite():
     suite.addTest(StageConstructionTest('test_mlp'))
     suite.addTest(StageConstructionTest('test_2_layer_bert'))
     suite.addTest(StageConstructionTest('test_8_layer_bert'))
-    suite.addTest(StageConstructionTest('test_8_layer_bert_manual_stage_assignment'))
+    suite.addTest(
+        StageConstructionTest('test_8_layer_bert_manual_stage_assignment'))
     return suite
 
 

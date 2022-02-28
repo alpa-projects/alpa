@@ -391,7 +391,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p, {
             "mark_type": "start",
-            "name": "_compute_grad"
+            "name": "_accumulate_grad"
         }, None))
     global_invar_substitute.update(zip(old_invars, new_invars))
     accumulate_grad_invars = new_invars
@@ -410,7 +410,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p, {
             "mark_type": "end",
-            "name": "_compute_grad"
+            "name": "_accumulate_grad"
         }, None))
 
     # Wrap all invars of apply_grad

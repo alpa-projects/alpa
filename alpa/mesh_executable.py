@@ -25,7 +25,7 @@ from alpa.global_env import global_config
 from alpa.measure_record import StrategyConfig
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
                                                make_replicated_spec,
-                                               compile_with_given_strategy,
+                                               run_backend_compilation,
                                                HloProtoStatus)
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
@@ -165,7 +165,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def __init__(self,
                  physical_mesh: "PhysicalDeviceMesh",
-                 compiled: Union[XlaExecutable, xla_extension.HloModule],
+                 hlo_module: xla_extension.HloModule,
                  strategy_config: StrategyConfig,
                  avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
@@ -180,14 +180,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.static_argnums = static_argnums
         self.out_tree_thunk = out_tree_thunk
         self.flop_count = flop_count
+        self.strategy_config = strategy_config
 
         # Read sharding specs
-        if isinstance(compiled, xla_extension.HloModule):
-            self.hlo_module = compiled
-        else:
-            self.hlo_module = compiled.hlo_modules()[0]
         self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
-            self.hlo_module, avals, out_avals, physical_mesh.num_devices,
+            hlo_module, avals, out_avals, physical_mesh.num_devices,
             strategy_config.logical_mesh_shape)
 
         # Cache results for input and output sharding
@@ -200,28 +197,30 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
-        self.hlo_text = self.hlo_module.to_string()
-
-        self.set_executable(physical_mesh, compiled, strategy_config)
+        self.set_executable(physical_mesh, hlo_module, strategy_config)
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-
         if global_config.shard_parallel_sync_for_timer:
             self.sync_func = get_sync_func_driver(physical_mesh)
         else:
             self.sync_func = None
 
-    def set_executable(self, physical_mesh, compiled, strategy_config):
+    def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
+        hlo_proto = hlo_module.as_serialized_hlo_module_proto()
         if physical_mesh.is_distributed:
-            hlo_proto = self.hlo_module.as_serialized_hlo_module_proto()
+            self.hlo_text = hlo_module.to_string() # SPMD_PARTITIONED
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         NormalMeshWorkerExecutable, hlo_proto,
                                         strategy_config)
         else:
-            self.compiled = compiled
+            backend = xla_bridge.get_backend("gpu")
+            computation = xla_extension.XlaComputation(hlo_proto)
+            self.compiled = run_backend_compilation(backend, computation, strategy_config,
+                                                    physical_mesh.num_devices)
+            self.hlo_text = self.compiled.hlo_modules()[0].to_string() # FULLY_OPTIMIZED
 
     def get_driver_callable(self):
         """Get a callable that runs on the driver and handles arguments/outputs conversion."""

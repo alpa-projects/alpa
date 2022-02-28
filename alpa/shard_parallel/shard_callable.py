@@ -18,9 +18,7 @@ from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluste
 from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
-from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                               compile_with_given_strategy,
-                                               HloProtoStatus)
+from alpa.shard_parallel.auto_sharding import run_auto_sharding_pass
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 
@@ -180,45 +178,33 @@ def shard_parallel_internal(
 
     # Compile a XLA executable
     if strategy_config is None:
-        compiled, strategy_config = compile_with_search(
-            backend,
+        hlo_module, strategy_config = run_auto_sharding_pass(
             built,
             avals,
             out_avals,
             donated_invars,
-            logical_mesh_choices,
-            "executable",
+            logical_mesh_choices[0],
+            "single",
             1,
             global_config.default_autosharding_option,
-            bypass_device_assignment_check=physical_mesh.is_distributed,
-            memory_budget_per_device=memory_budget_per_device,
-            logical_mesh_search_mode=logical_mesh_search_mode,
-            logical_mesh_search_physical_mesh=physical_mesh,
-            search_task=search_task,
-            record_file=record_file)
+            memory_budget_per_device=memory_budget_per_device)
     else:
-        compiled = compile_with_given_strategy(
-            backend,
-            built,
-            strategy_config,
-            physical_mesh.num_devices,
-            HloProtoStatus.UNOPTIMIZED,
-            bypass_device_assignment_check=physical_mesh.is_distributed)
+        assert NotImplementedError
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
     # Compile a mesh executable
-    compiled = NormalMeshDriverExecutable(physical_mesh,
-                                          compiled,
-                                          strategy_config,
-                                          avals,
-                                          out_avals,
-                                          donated_invars,
-                                          static_argnums=static_argnums,
-                                          out_tree_thunk=out_tree_thunk,
-                                          flop_count=flop_count)
-    return compiled.get_driver_callable()
+    executable = NormalMeshDriverExecutable(physical_mesh,
+                                            hlo_module,
+                                            strategy_config,
+                                            avals,
+                                            out_avals,
+                                            donated_invars,
+                                            static_argnums=static_argnums,
+                                            out_tree_thunk=out_tree_thunk,
+                                            flop_count=flop_count)
+    return executable.get_driver_callable()
 
 
 def shard_parallel_internal_gradient_accumulation(

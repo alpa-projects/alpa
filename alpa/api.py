@@ -206,3 +206,20 @@ def grad(*args, **kwargs):
         return mark_gradient(func(*call_args, **call_kwargs))
 
     return ret
+
+
+def value_and_grad(*args, **kwargs):
+    """The same as jax.value_and_grad, but inserts a gradient marker after the gradient computation.
+
+    This function annotates all gradient tensors. This information is used to perform
+    gradient accumulation transformation.
+    If any auxiliary tensors are returned, they are averaged over mini batches in the same
+    way as how the gradients are averaged.
+    """
+
+    def ret(*call_args, **call_kwargs):
+        func = api.value_and_grad(*args, **kwargs)
+        val, grad = func(*call_args, **call_kwargs)
+        return mark_gradient((val, grad))
+
+    return ret

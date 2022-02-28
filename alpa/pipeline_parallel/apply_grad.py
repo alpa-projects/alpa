@@ -274,7 +274,6 @@ def compute_grad_to_accumulate_grad(
             if not isinstance(outvar, DropVar) and outvar in gradients:
                 # collect gradients in this computation
                 to_acc.append(outvar)
-    last_pipe_end.params["name"] += "_grad_acc_boundary"
     new_closed_jaxpr = clone_jaxpr(compute_jaxpr, new_glob_invars,
                                    new_glob_outvars, new_eqns)
     # We do not modify donate_invars here, as it is only to append Trues

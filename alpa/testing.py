@@ -125,7 +125,10 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
                                         layer_num=layer_num)
 
 
-def get_mlp_train_step(use_parallel, manual_pipeline_layer, test_remat, return_value=False):
+def get_mlp_train_step(use_parallel,
+                       manual_pipeline_layer,
+                       test_remat,
+                       return_value=False):
 
     def train_step(state, batch):
 
@@ -241,9 +244,14 @@ class PipelineBasicTest(unittest.TestCase):
 
         # Compile
         global_config.num_micro_batches = 4
-        serial_train_step = get_mlp_train_step(False, None, None, return_value=return_value)
-        parallel_train_step = get_mlp_train_step(True, manual_pipeline_layer,
-                                                 test_remat, return_value=return_value)
+        serial_train_step = get_mlp_train_step(False,
+                                               None,
+                                               None,
+                                               return_value=return_value)
+        parallel_train_step = get_mlp_train_step(True,
+                                                 manual_pipeline_layer,
+                                                 test_remat,
+                                                 return_value=return_value)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -254,17 +262,20 @@ class PipelineBasicTest(unittest.TestCase):
                 if i > 0:
                     state = expected_new_state
                 if return_value:
-                    expected_new_state, expected_val = serial_train_step(state, batch)
+                    expected_new_state, expected_val = serial_train_step(
+                        state, batch)
                 else:
-                    expected_new_state, expected_val = serial_train_step(state, batch), 0
+                    expected_new_state, expected_val = serial_train_step(
+                        state, batch), 0
 
                 if i > 0:
                     state = actual_new_state
                 if return_value:
-                    actual_new_state, actual_val = parallel_train_step(state, batch)
+                    actual_new_state, actual_val = parallel_train_step(
+                        state, batch)
                 else:
-                    actual_new_state, actual_val = parallel_train_step(state, batch), 0
-
+                    actual_new_state, actual_val = parallel_train_step(
+                        state, batch), 0
 
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1e-3)
@@ -274,7 +285,6 @@ class PipelineBasicTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         executable.shutdown()
         return hlo_text
-
 
     def run_n_layer_bert(self,
                          n_layers,
@@ -323,11 +333,17 @@ class PipelineBasicTest(unittest.TestCase):
 
         # Compile
         global_config.num_micro_batches = num_micro_batch
-        serial_train_step = get_bert_layer_train_step(False, None, None,
-                                                      n_layers, return_value=return_value)
-        parallel_train_step = get_bert_layer_train_step(True,
-                                                        manual_pipeline_layer,
-                                                        test_remat, n_layers, return_value=return_value)
+        serial_train_step = get_bert_layer_train_step(False,
+                                                      None,
+                                                      None,
+                                                      n_layers,
+                                                      return_value=return_value)
+        parallel_train_step = get_bert_layer_train_step(
+            True,
+            manual_pipeline_layer,
+            test_remat,
+            n_layers,
+            return_value=return_value)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -338,15 +354,19 @@ class PipelineBasicTest(unittest.TestCase):
                 if i > 0:
                     state = expected_new_state
                 if return_value:
-                    expected_new_state, expected_val = serial_train_step(state, batch)
+                    expected_new_state, expected_val = serial_train_step(
+                        state, batch)
                 else:
-                    expected_new_state, expected_val = serial_train_step(state, batch), 0
+                    expected_new_state, expected_val = serial_train_step(
+                        state, batch), 0
                 if i > 0:
                     state = actual_new_state
                 if return_value:
-                    actual_new_state, actual_val = parallel_train_step(state, batch)
+                    actual_new_state, actual_val = parallel_train_step(
+                        state, batch)
                 else:
-                    actual_new_state, actual_val = parallel_train_step(state, batch), 0
+                    actual_new_state, actual_val = parallel_train_step(
+                        state, batch), 0
                 if return_value:
                     assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
                 assert_allclose(expected_new_state.params,
@@ -355,4 +375,3 @@ class PipelineBasicTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         executable.shutdown()
         return hlo_text
-

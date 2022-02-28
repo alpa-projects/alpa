@@ -9,7 +9,6 @@ class StageConstructionTest(PipelineBasicTest):
     def test_mlp(self):
         self.run_mlp(return_value=True)
 
-    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_2_layer_bert(self):
         self.run_n_layer_bert(n_layers=2, return_value=True)
 

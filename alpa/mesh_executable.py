@@ -216,7 +216,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.hlo_text = None  # will be fetched from the workers later
         else:
             backend = xb.get_backend("gpu")
-            self.compiled = run_backend_compilation(backend, hlo_module, strategy_config,
+            self.compiled = run_backend_compilation(backend, hlo_module,
+                                                    strategy_config,
                                                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
 
@@ -314,8 +315,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     return [np.inf] * len(cost_vec)
             costs = np.mean(costs, axis=0)
         else:
-            costs = profile_xla_executable(self.compiled,
-                                           xb.get_backend("gpu"),
+            costs = profile_xla_executable(self.compiled, xb.get_backend("gpu"),
                                            self.physical_mesh.devices)
         return costs
 
@@ -370,8 +370,8 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
-        self.compiled = run_backend_compilation(
-            worker.backend, hlo_proto, strategy_config, num_devices)
+        self.compiled = run_backend_compilation(worker.backend, hlo_proto,
+                                                strategy_config, num_devices)
         self.worker = worker
 
         # Set up timers
@@ -487,8 +487,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                                             physical_mesh.num_devices,
                                             logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (
-            get_input_output_sharding_specs(apply_grad,
-                                            apply_grad_in_avals, out_avals,
+            get_input_output_sharding_specs(apply_grad, apply_grad_in_avals,
+                                            out_avals,
                                             physical_mesh.num_devices,
                                             logical_mesh_shape))
         num_grads = len(grad_avals)
@@ -557,16 +557,18 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             backend = xb.get_backend("gpu")
 
             self.accumulate_grad = run_backend_compilation(
-                backend, accumulate_grad, strategy_config, physical_mesh.num_devices)
-            self.apply_grad = run_backend_compilation(
-                backend, apply_grad, strategy_config, physical_mesh.num_devices)
+                backend, accumulate_grad, strategy_config,
+                physical_mesh.num_devices)
+            self.apply_grad = run_backend_compilation(backend, apply_grad,
+                                                      strategy_config,
+                                                      physical_mesh.num_devices)
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
-                backend, physical_mesh.num_devices,
-                grad_shard_shapes, grad_shard_dtypes)
+                backend, physical_mesh.num_devices, grad_shard_shapes,
+                grad_shard_dtypes)
             self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
 
-            self.hlo_text = (self.accumulate_grad.hlo_modules()[0].to_string() + 
-                self.apply_grad.hlo_modules()[0].to_string())
+            self.hlo_text = (self.accumulate_grad.hlo_modules()[0].to_string() +
+                             self.apply_grad.hlo_modules()[0].to_string())
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
                 self.accumulate_grad.hlo_modules()[0])
             self.skip_allreduce_env_name = (
@@ -730,10 +732,12 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         if self.hlo_text is not None:
             return self.hlo_text
         assert self.physical_mesh.is_distributed
-        self.hlo_text = ray.get(self.physical_mesh.workers[0].
-                get_exec_hlo_text.remote(self.exec_uuid))
-        self.grad_sync_channel_ids = ray.get(self.physical_mesh.workers[0].
-                get_exec_grad_sync_channel_ids.remote(self.exec_uuid))
+        self.hlo_text = ray.get(
+            self.physical_mesh.workers[0].get_exec_hlo_text.remote(
+                self.exec_uuid))
+        self.grad_sync_channel_ids = ray.get(
+            self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.remote(
+                self.exec_uuid))
         return self.hlo_text
 
     def __del__(self):
@@ -756,16 +760,13 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
-        self.accumulate_grad = run_backend_compilation(
-            worker.backend,
-            accumulate_grad_proto,
-            strategy_config,
-            num_devices)
-        self.apply_grad = run_backend_compilation(
-            worker.backend,
-            apply_grad_proto,
-            strategy_config,
-            num_devices)
+        self.accumulate_grad = run_backend_compilation(worker.backend,
+                                                       accumulate_grad_proto,
+                                                       strategy_config,
+                                                       num_devices)
+        self.apply_grad = run_backend_compilation(worker.backend,
+                                                  apply_grad_proto,
+                                                  strategy_config, num_devices)
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
             worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
@@ -844,7 +845,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         raise NotImplementedError
 
     def get_hlo_text(self):
-        return (self.accumulate_grad.hlo_modules()[0].to_string() + 
+        return (self.accumulate_grad.hlo_modules()[0].to_string() +
                 self.apply_grad.hlo_modules()[0].to_string())
 
     def get_total_allocation_size(self):
@@ -864,9 +865,9 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     only computes and accumulates gradients, but does not apply it.
     """
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh", hlo_module: xe.HloModule,
-                 strategy_config: StrategyConfig, avals: Sequence[ShapedArray],
-                 out_avals: Sequence[ShapedArray],
+    def __init__(self, physical_mesh: "PhysicalDeviceMesh",
+                 hlo_module: xe.HloModule, strategy_config: StrategyConfig,
+                 avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  out_acc_grad_indices: Sequence[int]):
         self.out_acc_grad_indices = out_acc_grad_indices
@@ -889,7 +890,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             self.skip_allreduce_env_name = None
         else:
             backend = xb.get_backend("gpu")
-            self.compiled = run_backend_compilation(backend, hlo_module, strategy_config,
+            self.compiled = run_backend_compilation(backend, hlo_module,
+                                                    strategy_config,
                                                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
             self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
@@ -903,8 +905,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         assert 'skip_grad_sync' in kwargs, (
             'Partial grad acc mesh executable missing kwargs "skip_grad_sync"')
         skip_grad_sync = kwargs["skip_grad_sync"]
-        os.environ[self.skip_allreduce_env_name] = (
-            self.grad_sync_channel_ids if skip_grad_sync else "")
+        os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
+                                                    if skip_grad_sync else "")
         return super(PartialGradAccMeshDriverExecutable,
                      self).launch_on_driver(*args, **kwargs)
 
@@ -973,8 +975,8 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
                                         grad_shard_shapes, grad_shard_dtypes)
         else:
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
-                xb.get_backend("gpu"), physical_mesh.devices,
-                grad_shard_shapes, grad_shard_dtypes)
+                xb.get_backend("gpu"), physical_mesh.devices, grad_shard_shapes,
+                grad_shard_dtypes)
 
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)

@@ -90,7 +90,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 "rng": rngkey
             }, deterministic, model.apply)
 
-        return optimizer, executable.get_hlo_text(), executable.auto_sharding_objective
+        return optimizer, executable.get_hlo_text(
+        ), executable.auto_sharding_objective
 
     def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
                      num_heads, vocab_size, deterministic, device_mesh):
@@ -161,7 +162,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 "rng": rngkey
             })
 
-        return optimizer, executable.get_hlo_text(), executable.auto_sharding_objective
+        return optimizer, executable.get_hlo_text(
+        ), executable.auto_sharding_objective
 
     def test_bert_layer_data_parallel(self):
         batch_size = 64

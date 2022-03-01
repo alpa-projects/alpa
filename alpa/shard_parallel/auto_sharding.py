@@ -126,17 +126,18 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-def run_auto_sharding_pass(xla_computation: xe.XlaComputation,
-                           avals: Sequence[ShapedArray],
-                           out_avals: Sequence[ShapedArray],
-                           donated_invars: Sequence[bool],
-                           logical_mesh: LogicalDeviceMesh,
-                           return_mode: str,
-                           num_micro_batches: int,
-                           as_option: AutoShardingOption,
-                           rewrite_for_grad_acc: bool = False,
-                           rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
-                           memory_budget_per_device: Optional[float] = None):
+def run_auto_sharding_pass(
+        xla_computation: xe.XlaComputation,
+        avals: Sequence[ShapedArray],
+        out_avals: Sequence[ShapedArray],
+        donated_invars: Sequence[bool],
+        logical_mesh: LogicalDeviceMesh,
+        return_mode: str,
+        num_micro_batches: int,
+        as_option: AutoShardingOption,
+        rewrite_for_grad_acc: bool = False,
+        rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
+        memory_budget_per_device: Optional[float] = None):
     """Run the auto-sharding pass to annotate sharding specs for an XLA Computation.
 
     Args:
@@ -291,8 +292,7 @@ def run_auto_sharding_pass(xla_computation: xe.XlaComputation,
 
             # Communication combiner options
             "combiner::all_gather_threshold": all_gather_threshold,
-            "combiner::all_reduce_threshold":
-                as_option.all_reduce_threshold,
+            "combiner::all_reduce_threshold": as_option.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,
 
             # Debug options
@@ -311,8 +311,8 @@ def run_auto_sharding_pass(xla_computation: xe.XlaComputation,
 
     strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
                                      all_gather_threshold,
-                                     as_option.all_reduce_threshold,
-                                     last_s_val, last_objective)
+                                     as_option.all_reduce_threshold, last_s_val,
+                                     last_objective)
 
     if return_mode == "single":
         return compiled.hlo_modules()[0], strategy_config
@@ -324,10 +324,11 @@ def run_auto_sharding_pass(xla_computation: xe.XlaComputation,
         raise ValueError("Invalid return mode:" + return_mode)
 
 
-def run_spmd_partitioner_pass(xla_computation: xe.XlaComputation,
-                              num_devices: int,
-                              rewrite_for_grad_acc: bool = False,
-                              rewrite_grad_acc_indices: Optional[Sequence[int]] = None):
+def run_spmd_partitioner_pass(
+        xla_computation: xe.XlaComputation,
+        num_devices: int,
+        rewrite_for_grad_acc: bool = False,
+        rewrite_grad_acc_indices: Optional[Sequence[int]] = None):
     """Run SPMD partitioner pass on a sharding annotated HLO Module.
 
     Args:
@@ -368,11 +369,10 @@ def run_spmd_partitioner_pass(xla_computation: xe.XlaComputation,
     return compiled.hlo_modules()[0]
 
 
-def run_backend_compilation(
-        backend: xe.Client,
-        xla_computation: Union[xe.XlaComputation, xe.HloModule, bytes],
-        strategy_config: StrategyConfig,
-        num_devices: int):
+def run_backend_compilation(backend: xe.Client,
+                            xla_computation: Union[xe.XlaComputation,
+                                                   xe.HloModule, bytes],
+                            strategy_config: StrategyConfig, num_devices: int):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:
@@ -390,7 +390,8 @@ def run_backend_compilation(
         build_random_seed=strategy_config.build_random_seed)
 
     if isinstance(xla_computation, xe.HloModule):
-        xla_computation = xe.XlaComputation(xla_computation.as_serialized_hlo_module_proto())
+        xla_computation = xe.XlaComputation(
+            xla_computation.as_serialized_hlo_module_proto())
     elif isinstance(xla_computation, bytes):  # protobuf
         xla_computation = xe.XlaComputation(xla_computation)
     else:

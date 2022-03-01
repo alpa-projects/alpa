@@ -19,7 +19,7 @@ from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
-        run_spmd_partitioner_pass)
+                                               run_spmd_partitioner_pass)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 
@@ -267,10 +267,9 @@ def shard_parallel_internal_gradient_accumulation(
     setup_computation_alias(apply_grad, tmp_donate_invars)
 
     bypass_device_assignment_check = physical_mesh.is_distributed
-    accumulate_grad = run_spmd_partitioner_pass(
-        accumulate_grad,
-        physical_mesh.num_devices,
-        rewrite_for_grad_acc=True)
+    accumulate_grad = run_spmd_partitioner_pass(accumulate_grad,
+                                                physical_mesh.num_devices,
+                                                rewrite_for_grad_acc=True)
     apply_grad = run_spmd_partitioner_pass(apply_grad,
                                            physical_mesh.num_devices)
 

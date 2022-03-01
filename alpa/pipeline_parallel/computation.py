@@ -210,7 +210,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
                                          logical_mesh_shape, 1, 1, None)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
-        sharding_annotated_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        sharding_annotated_proto = compiled.hlo_modules(
+        )[0].as_serialized_hlo_module_proto()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
             name=name,

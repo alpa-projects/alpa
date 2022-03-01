@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from alpa import (parallelize, set_parallelize_options, grad,
-                  global_config, PhysicalDeviceMesh, DeviceCluster)
+from alpa import (parallelize, set_parallelize_options, grad, global_config,
+                  PhysicalDeviceMesh, DeviceCluster)
 from alpa.util import count_communication_primitives
 from alpa.testing import assert_allclose
 

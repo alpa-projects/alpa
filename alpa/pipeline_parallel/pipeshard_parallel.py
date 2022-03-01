@@ -232,7 +232,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     default_autosharding_option = global_config.default_autosharding_option
     for mesh_idx in range(num_meshes):
         virtual_mesh = virtual_meshes[mesh_idx]
-        logical_mesh = virtual_mesh.get_logical_mesh(logical_mesh_shapes[mesh_idx])
+        logical_mesh = virtual_mesh.get_logical_mesh(
+            logical_mesh_shapes[mesh_idx])
         logical_mesh_search_mode = "cost_model"
         autosharding_option = default_autosharding_option.deepcopy_and_update(
             autosharding_option_dicts[mesh_idx])
@@ -259,9 +260,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "num_micro_batches": num_micro_batches,
                 "memory_budget_per_device": memory_budget_per_device,
             }
-            compile_workers.submit(
-                compile_fn,
-                (mesh_idx, proto, jaxpr_args, other_kwargs))
+            compile_workers.submit(compile_fn,
+                                   (mesh_idx, proto, jaxpr_args, other_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops

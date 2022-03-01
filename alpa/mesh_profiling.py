@@ -6,12 +6,12 @@ import time
 import threading
 
 import numpy as np
-from jax.lib import xla_client, xla_bridge, xla_extension
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import ray
 
 from alpa.util import GB, print_used_time, XlaPassContext, to_str_round
 
-ops = xla_client.ops
+ops = xc.ops
 
 
 class MeshProfilingResult:
@@ -194,7 +194,7 @@ class ProfilingResultDatabase:
 
 
 def _op_parameter(builder, num, shape, dtype):
-    shape = xla_client.Shape.array_shape(dtype, shape)
+    shape = xc.Shape.array_shape(dtype, shape)
     name = ""
     replicated = []
     return ops.Parameter(builder, num,
@@ -203,16 +203,16 @@ def _op_parameter(builder, num, shape, dtype):
 
 
 def _op_all_gather(operand, replica_groups, channel_id):
-    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    replica_groups_protos = xc.make_replica_groups(replica_groups)
     ret = ops.AllGather(operand, 0, len(replica_groups[0]),
                         replica_groups_protos, channel_id, None, True)
     return ret
 
 
 def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
-    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    replica_groups_protos = xc.make_replica_groups(replica_groups)
     if reduce_op == 'add':
-        rc = xla_client.XlaBuilder("reduce_" + reduce_op)
+        rc = xc.XlaBuilder("reduce_" + reduce_op)
         x = _op_parameter(rc, 0, (), dtype)
         y = _op_parameter(rc, 1, (), dtype)
         z = ops.Add(x, y)
@@ -226,16 +226,16 @@ def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
 
 
 def _op_all_to_all(operand, replica_groups, channel_id):
-    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    replica_groups_protos = xc.make_replica_groups(replica_groups)
     ret = ops.AllToAll(operand, 0, 0, len(replica_groups[0]),
                        replica_groups_protos, channel_id, None, True)
     return ret
 
 
 def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups, channel_id):
-    replica_groups_protos = xla_client.make_replica_groups(replica_groups)
+    replica_groups_protos = xc.make_replica_groups(replica_groups)
     if reduce_op == 'add':
-        rc = xla_client.XlaBuilder("reduce_" + reduce_op)
+        rc = xc.XlaBuilder("reduce_" + reduce_op)
         x = _op_parameter(rc, 0, (), dtype)
         y = _op_parameter(rc, 1, (), dtype)
         z = ops.Add(x, y)
@@ -254,17 +254,17 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     It is a while loop that calls the operator for multiple times.
     """
 
-    in_tuple_shape = xla_client.Shape.tuple_shape(
-        [xla_client.Shape.array_shape(np.dtype(np.int32), ())] +
-        [xla_client.Shape.array_shape(dtype, shape) for shape, dtype in shapes])
+    in_tuple_shape = xc.Shape.tuple_shape(
+        [xc.Shape.array_shape(np.dtype(np.int32), ())] +
+        [xc.Shape.array_shape(dtype, shape) for shape, dtype in shapes])
 
-    sharding = xla_client.OpSharding()
+    sharding = xc.OpSharding()
     sharding.type = sharding.type.REPLICATED
     sharding.tile_assignment_dimensions.extend([1])
     sharding.tile_assignment_devices.extend([0])
 
     # body
-    body = xla_client.XlaBuilder("body")
+    body = xc.XlaBuilder("body")
     in_tuple = ops.Parameter(body, 0, in_tuple_shape)
     counter = ops.GetTupleElement(in_tuple, 0)
     counter = ops.Sub(counter, ops.Constant(body, np.int32(1)))
@@ -279,14 +279,14 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     body_computation = body.build()
 
     # condition
-    cond = xla_client.XlaBuilder("condition")
+    cond = xc.XlaBuilder("condition")
     in_tuple = ops.Parameter(cond, 0, in_tuple_shape)
     counter = ops.GetTupleElement(in_tuple, 0)
     ops.Gt(counter, ops.Constant(cond, np.int32(0)))
     cond_computation = cond.Build()
 
     # while loop
-    loop = xla_client.XlaBuilder("loop")
+    loop = xc.XlaBuilder("loop")
     counter = _op_parameter(loop, 0, (), np.dtype(np.int32))
     operands = [
         _op_parameter(loop, i + 1, shape, dtype)
@@ -298,7 +298,7 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
         loop.setup_alias((i,), i, ())
     loop_computation = loop.Build()
 
-    compile_options = xla_bridge.get_compile_options(
+    compile_options = xb.get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
@@ -340,7 +340,7 @@ def profile_one_hlo_op(backend,
         def op_func(operands):
             lhs, rhs, _ = operands
             dim_numbers = (((1,), (0,)), ((), ()))
-            dim_numbers = xla_client.make_dot_dimension_numbers(dim_numbers)
+            dim_numbers = xc.make_dot_dimension_numbers(dim_numbers)
             out = ops.DotGeneral(lhs, rhs, dim_numbers)
             operands[-1] = out
 
@@ -833,4 +833,4 @@ def estimate_hlo_module_cost(hlo_module,
             "gpu_cost_model::grad_sync_channel_ids": grad_sync_channel_ids,
             "gpu_cost_model::verbose": 0,
     }):
-        return xla_extension.estimate_hlo_module_cost(hlo_module)
+        return xe.estimate_hlo_module_cost(hlo_module)

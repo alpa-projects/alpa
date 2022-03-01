@@ -528,9 +528,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for worker in self.physical_meshes[mesh_idx].workers:
                 executable_config_lists[worker].append(
-                    PartialGradWorkerExecutableConfig(exec_uuid, hlo_proto,
-                                                      stage.strategy_config,
-                                                      stage.output_acc_grad_indices))
+                    PartialGradWorkerExecutableConfig(
+                        exec_uuid, hlo_proto, stage.strategy_config,
+                        stage.output_acc_grad_indices))
         return executable_config_lists, executable_uuids, grad_uuids
 
     def _compile_split_input_to_microbatches(self, not_batch_invars, var_at):

@@ -96,7 +96,9 @@ class AutoShardingBasicTest(unittest.TestCase):
         func(optimizer, x, y, {"dropout": rngkey})
 
         # Check sharding strategy (data-parallel)
-        hlo_ir = func.get_executable(optimizer, x, y, {"dropout": rngkey}).get_hlo_text()
+        hlo_ir = func.get_executable(optimizer, x, y, {
+            "dropout": rngkey
+        }).get_hlo_text()
         assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
 
         assert hlo_ir.count("channel_id") == 1

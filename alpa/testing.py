@@ -370,7 +370,3 @@ class PipelineBasicTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         executable.shutdown()
         return hlo_text
-
-# Store last compiled executables for unit tests.
-last_compiled_executable = None
-last_compiled_auto_sharding_objective = -1

@@ -145,7 +145,8 @@ class CompileWorker:
         self.cnt += 1
 
         # Compile with search to get sharding annotations.
-        jaxpr_args = (config.input_avals, config.output_avals, config.donate_invars)
+        jaxpr_args = (config.input_avals, config.output_avals,
+                      config.donate_invars)
         other_kwargs = {
             "logical_mesh": logical_mesh,
             "return_mode": "stage_and_hook_protos",
@@ -191,7 +192,8 @@ class CompileWorker:
             logger.warning(f"Compilation error for stage {stage_id} : {e}")
             return stage_id, None
 
-        optimized_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        optimized_proto = compiled.hlo_modules(
+        )[0].as_serialized_hlo_module_proto()
         return stage_id, CompileOutput(optimized_proto, strategy_config,
                                        input_sharding_protos,
                                        output_sharding_proto, hooked_proto,
@@ -200,7 +202,8 @@ class CompileWorker:
     def run_auto_sharding_pass(self, stage_id, proto, jaxpr_args, other_kwargs):
         """Run auto-sharding pass on a proto."""
         built = xla_client.XlaComputation(proto)
-        return stage_id, run_auto_sharding_pass(built, *jaxpr_args, **other_kwargs)
+        return stage_id, run_auto_sharding_pass(built, *jaxpr_args,
+                                                **other_kwargs)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -351,11 +354,10 @@ class HloCostModelProfileWorker:
         """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
         try:
-            compiled = run_backend_compilation(
-                self.backend,
-                compiled_output.model_proto,
-                compiled_output.strategy_config,
-                self.num_devices)
+            compiled = run_backend_compilation(self.backend,
+                                               compiled_output.model_proto,
+                                               compiled_output.strategy_config,
+                                               self.num_devices)
             # TODO:
             # 1. Bypass device assignment check
             # 2. do not run auto-tuning

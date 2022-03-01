@@ -130,7 +130,8 @@ class AutoShardingBasicTest(unittest.TestCase):
         a = jnp.ones(144)
         split(a)
 
-        assert_close(testing.get_auto_sharding_objective(split, a), 0)
+        executable = split.get_executable(a)
+        assert_close(executable.auto_sharding_objective, 0)
 
 
 def suite():

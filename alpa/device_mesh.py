@@ -190,8 +190,14 @@ class MeshHostWorker:
     def run_executable(self, uuid: int, *args, **kwargs):
         self.executables[uuid].execute_on_worker(*args, **kwargs)
 
+    def get_exec_hlo_text(self, uuid: int):
+        return self.executables[uuid].get_hlo_text()
+
     def get_exec_total_allocation_size(self, uuid: int):
         return self.executables[uuid].get_total_allocation_size()
+
+    def get_exec_grad_sync_channel_ids(self, uuid: int):
+        return self.executables[uuid].grad_sync_channel_ids
 
     ##### Cross Mesh Resharding Related Functions #####
     @staticmethod

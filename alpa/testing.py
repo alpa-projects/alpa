@@ -24,10 +24,6 @@ from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.util import get_ray_namespace_str
 
 
-def get_auto_sharding_objective(func, *args):
-    executable = func.get_executable(*args)
-    return executable.strategy_config.auto_sharding_objective
-
 def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
     """Assert the arrays in x and y are all close."""
     if isinstance(x, (dict, FrozenDictJax, FrozenDictFlax)):

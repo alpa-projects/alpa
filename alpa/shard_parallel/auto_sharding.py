@@ -370,7 +370,7 @@ def run_spmd_partitioner_pass(xla_computation: xe.XlaComputation,
 
 def run_backend_compilation(
         backend: xe.Client,
-        xla_computation: xe.XlaComputation,
+        xla_computation: Union[xe.XlaComputation, xe.HloModule, bytes],
         strategy_config: StrategyConfig,
         num_devices: int):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
@@ -388,6 +388,13 @@ def run_backend_compilation(
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=strategy_config.build_random_seed)
+
+    if isinstance(xla_computation, xe.HloModule):
+        xla_computation = xe.XlaComputation(xla_computation.as_serialized_hlo_module_proto())
+    elif isinstance(xla_computation, bytes):  # protobuf
+        xla_computation = xe.XlaComputation(xla_computation)
+    else:
+        assert isinstance(xla_computation, xe.XlaComputation)
 
     with XlaPassContext({
             # Build options

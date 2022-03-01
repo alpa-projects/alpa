@@ -900,7 +900,8 @@ class CrossMeshCommunicator:
         return dst_sharding_spec, extra_slice
 
     @staticmethod
-    def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, mesh, var):
+    def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, mesh,
+                                var_shape):
 
         def get_chunk_value(spec):
             if isinstance(spec, pxla.Chunked):
@@ -936,6 +937,7 @@ class CrossMeshCommunicator:
                     replicas //= sharding[tensor_dim].chunks[chunk_idx]
                 if replicas > 1:
                     mesh_mapping.append(pxla.Replicated(replicas))
+            return mesh_mapping
 
         local_chunks = []
         if not global_config.use_scatter_gather:
@@ -981,20 +983,19 @@ class CrossMeshCommunicator:
             dim_local_mapping = []
             for tensor_dim, dim_sharding in enumerate(sharding):
                 chunked_value = get_chunk_value(dim_sharding)
-                chunked_len = var.aval.shape[tensor_dim] // chunked_value
+                chunked_len = var_shape[tensor_dim] // chunked_value
                 new_chunk = math.gcd(replica, chunked_len)
                 if new_chunk == 1:
                     continue
-                chunk_idx = len(dim_sharding.chunks)
+                sharding[tensor_dim] = add_chunk(dim_sharding, new_chunk)
+                chunk_idx = len(sharding[tensor_dim].chunks) - 1
                 local_chunks.append(
                     (tensor_dim, mesh_dim, chunk_idx, new_chunk))
-                sharding[tensor_dim] = add_chunk(dim_sharding, new_chunk)
                 dim_local_mapping.append((tensor_dim, chunk_idx))
 
                 replica //= new_chunk
                 if replica == 1:
                     break
-            # TODO(yonghao): modify mesh mapping
             if replica != 1:
                 logger.warning(
                     f"ReshardingTask is not fully sharded, this causes redundant communication."

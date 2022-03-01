@@ -142,12 +142,12 @@ class GradAccumulationTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(
-    #    GradAccumulationTest("test_gradient_accumulation_single_host"))
+    suite.addTest(
+        GradAccumulationTest("test_gradient_accumulation_single_host"))
     suite.addTest(GradAccumulationTest("test_gradient_accumulation_multi_host"))
-    #suite.addTest(GradAccumulationTest("test_gradient_accumulation_2d_mesh"))
-    #suite.addTest(
-    #    GradAccumulationTest("test_gradient_accumulation_reduce_scatter"))
+    suite.addTest(GradAccumulationTest("test_gradient_accumulation_2d_mesh"))
+    suite.addTest(
+        GradAccumulationTest("test_gradient_accumulation_reduce_scatter"))
     return suite
 
 

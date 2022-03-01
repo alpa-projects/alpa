@@ -870,13 +870,3 @@ def get_auto_sharded_hlo_stages() -> Sequence[bytes]:
 
 def get_hooked_sharding_protos() -> bytes:
     return hooked_sharding_protos
-
-
-def compile_with_search():
-    pass
-
-def compile_with_given_strategy():
-    pass
-
-def HloProtoStatus():
-    pass

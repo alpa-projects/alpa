@@ -25,8 +25,7 @@ from alpa.global_env import global_config
 from alpa.measure_record import StrategyConfig
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
                                                make_replicated_spec,
-                                               run_backend_compilation,
-                                               HloProtoStatus)
+                                               run_backend_compilation)
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
                        compile_memset_zero_buffers, get_shard_shape,
@@ -446,7 +445,7 @@ def get_grad_sync_channel_ids_with_hint(hlo_module: xe.HloModule,
     return xe.get_grad_sync_channel_ids(hlo_module, hint)
 
 
-class GradAccMeshDriverExecutable:
+class GradAccMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a gradient accumulation mesh executable."""
 
     def __init__(self,
@@ -731,15 +730,17 @@ class GradAccMeshDriverExecutable:
         if self.hlo_text is not None:
             return self.hlo_text
         assert self.physical_mesh.is_distributed
-        self.hlo_text = ray.get(self.physical_mesh.worker[0].
+        self.hlo_text = ray.get(self.physical_mesh.workers[0].
                 get_exec_hlo_text.remote(self.exec_uuid))
+        self.grad_sync_channel_ids = ray.get(self.physical_mesh.workers[0].
+                get_exec_grad_sync_channel_ids.remote(self.exec_uuid))
         return self.hlo_text
 
     def __del__(self):
         self.physical_mesh.delete_remote_executable(self)
 
 
-class GradAccMeshWorkerExecutable:
+class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
     """The worker part of a gradient accumulation mesh executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int,
@@ -751,7 +752,7 @@ class GradAccMeshWorkerExecutable:
                  grad_shard_dtypes: Sequence[jnp.dtype],
                  strategy_config: StrategyConfig,
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
-                 num_grads: int, num_micro_batches: int)
+                 num_grads: int, num_micro_batches: int):
         num_devices = np.prod(strategy_config.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
@@ -760,7 +761,7 @@ class GradAccMeshWorkerExecutable:
             accumulate_grad_proto,
             strategy_config,
             num_devices)
-        self.apply_grad = compile_with_given_strategy(
+        self.apply_grad = run_backend_compilation(
             worker.backend,
             apply_grad_proto,
             strategy_config,
@@ -863,49 +864,47 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     only computes and accumulates gradients, but does not apply it.
     """
 
-    def __init__(self, physical_mesh: "PhysicalDeviceMesh", compiled,
+    def __init__(self, physical_mesh: "PhysicalDeviceMesh", hlo_module: xe.HloModule,
                  strategy_config: StrategyConfig, avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  out_acc_grad_indices: Sequence[int]):
-        if isinstance(compiled, xe.HloModule):
-            hlo_module = compiled
-        else:
-            hlo_module = compiled.hlo_modules()[0]
+        self.out_acc_grad_indices = out_acc_grad_indices
 
-        if physical_mesh.num_devices > 1:
-            self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
-                hlo_module, out_acc_grad_indices)
-        else:
-            self.grad_sync_channel_ids = ""
-        self.skip_allreduce_env_name = (hlo_module.name() +
-                                        "XLA_SKIP_NCCL_COLLECTIVE_IDS")
         super(PartialGradAccMeshDriverExecutable,
-              self).__init__(physical_mesh, compiled, strategy_config, avals,
+              self).__init__(physical_mesh, hlo_module, strategy_config, avals,
                              out_avals, donated_invars)
 
-    def set_executable(self, physical_mesh, compiled, strategy_config):
+    def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
-        hlo_module = self.hlo_module
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         PartialGradAccMeshWorkerExecutable,
                                         hlo_proto, strategy_config,
-                                        self.grad_sync_channel_ids)
+                                        self.out_acc_grad_indices)
+            self.hlo_text = None  # will be fetched from the workers later
+            self.grad_sync_channel_ids = None
+            self.skip_allreduce_env_name = None
         else:
-            self.compiled = compiled
-            self.grad_sync_channel_ids = self.grad_sync_channel_ids
+            backend = xb.get_backend("gpu")
+            self.compiled = run_backend_compilation(backend, hlo_module, strategy_config,
+                                                    physical_mesh.num_devices)
+            self.hlo_text = self.compiled.hlo_modules()[0].to_string()
+            self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
+                self.compiled.hlo_modules()[0], self.out_acc_grad_indices)
+            self.skip_allreduce_env_name = (
+                self.compiled.hlo_modules()[0].name() +
+                "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
         assert 'skip_grad_sync' in kwargs, (
             'Partial grad acc mesh executable missing kwargs "skip_grad_sync"')
-        skip_grad_sync = kwargs['skip_grad_sync']
-        if not self.physical_mesh.is_distributed:
-            os.environ[self.skip_allreduce_env_name] = (
-                self.grad_sync_channel_ids if skip_grad_sync else "")
+        skip_grad_sync = kwargs["skip_grad_sync"]
+        os.environ[self.skip_allreduce_env_name] = (
+            self.grad_sync_channel_ids if skip_grad_sync else "")
         return super(PartialGradAccMeshDriverExecutable,
                      self).launch_on_driver(*args, **kwargs)
 
@@ -917,10 +916,11 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 strategy_config: StrategyConfig, grad_sync_channel_ids: str):
+                 strategy_config: StrategyConfig, output_acc_grad_indices: str):
         super(PartialGradAccMeshWorkerExecutable,
               self).__init__(worker, uuid, hlo_proto, strategy_config)
-        self.grad_sync_channel_ids = grad_sync_channel_ids
+        self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
+            self.compiled.hlo_modules()[0], output_acc_grad_indices)
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 

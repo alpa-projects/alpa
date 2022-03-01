@@ -5,7 +5,7 @@ This document aims to describe the architecture of Alpa and explain several core
 This document is organized as follows: 
 
 - An overview of Alpa's architecture, including core terms and componenents introduced by Alpa;
-- Working-through example to explain the workflow of Alpa.
+- Walking-through example to explain the workflow of Alpa.
 
 
 You are recommended to read the the following materials as well:
@@ -19,21 +19,21 @@ You are recommended to read the the following materials as well:
 Overview
 --------
 
-The diagram below shows a high-level diagram of Alpa's architecture.
+The picture below shows a high-level diagram of Alpa's architecture.
 
 .. image:: alpa-arch.png
   :width: 550px
 
 
-Like many existing machine learning compilers, Alpa parallelizes the ML computation in two phases: a compilation phase, followed by a runtime phase. 
-In the compilation phase, Alpa takes a model description and a device cluster as input, and perform a few compilation passes and optimizations to generate  
-model-parallel execution plans suitable for the model and cluster. Alpa also generate executables based on the training code and parallel execution plan.
-In the runtime phase, Alpa orchestrates the parallel execution of these executables on the cluster devices.
+Like many existing machine learning compilers, Alpa parallelizes the ML computation in two steps: a compilation step, followed by a runtime step. 
+In the compilation step, Alpa takes a model description and a device cluster as input and performs a few compilation passes and optimizations to generate  
+a model-parallel execution plan, which is suitable for the model and cluster; Alpa also generates executables based on the training code and parallel execution plan.
+In the runtime step, Alpa orchestrates the parallel execution of these executables on the cluster devices.
 
 Compilation
 ^^^^^^^^^^^
 
-Before we start introducing the compilation architecture, we introduce two important terms introduced by Alpa.
+Before we start introducing the compilation architecture, we bring in two important terms introduced by Alpa.
 Unlike many existing distributed ML training systems, Alpa views existing ML parallelization approaches into two orthogonal categories: 
 *intra-operator* and *inter-operator* parallelisms. They are distinguished by the fact that if they involve partitioning operators along any tensor axis. 
 Some examples falling into the two categories are listed below:

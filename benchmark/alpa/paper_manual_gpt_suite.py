@@ -50,31 +50,105 @@ max_global_batch_size = 1024
 test_gpt_suite = {
     #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM,  ...
 1: [
+
+    # (1,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  1,  True,  *fixed_params),
+    # (2,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  2,  True,  *fixed_params),
+    # (4,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  4,  True,  *fixed_params),
+    # (8,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  8,  True,  *fixed_params),
+    # (16,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  16,  True,  *fixed_params),
+    # (32,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  32,  True,  *fixed_params),
+    (64,  *gpt_specs["350M"], 1,   1,   1,   1,   1,  64,  True,  *fixed_params),
+
 ],
 
+2: [
+    # (1,  *gpt_specs["1.3B"], 1,   1,   1,   1,   2,  1,  True,  *fixed_params),
+    # (256,  *gpt_specs["1.3B"], 1,   1,   1,   1,   2,  256,  True,  *fixed_params),
+    # (256,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  256,  True,  *fixed_params),
+    #
+    # (1,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  1,  True,  *fixed_params),
+    # (2,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  2,  True,  *fixed_params),
+    # (4,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  4,  True,  *fixed_params),
+    # (8,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  8,  True,  *fixed_params),
+    (16,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  16,  True,  *fixed_params),
+    (32,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  32,  True,  *fixed_params),
+    (64,  *gpt_specs["1.3B"], 1,   2,   1,   2,   1,  64,  True,  *fixed_params),
+],
+
+
 4: [
-    (256,  *gpt_specs["760M"], 4,   1,   1,   4,   1,  32,  True,  *fixed_params),
+    # (256,  *gpt_specs["760M"], 4,   1,   1,   4,   1,  32,  True,  *fixed_params),
+    # (256,  *gpt_specs["1.3B"], 1,   2,   1,   2,   2,  64,  True,  *fixed_params),
+
+    # (256,  *gpt_specs["1.3B"], 1,   2,   1,   2,   2,  256,  True,  *fixed_params),
+    # (64,  *gpt_specs["1.3B"], 2,   1,   1,   2,   2,  32,  True,  *fixed_params),
+    (2,  *gpt_specs["1.3B"], 1,   2,   1,   2,   2,  2,  True,  *fixed_params),
 ],
 
 8: [
     #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
     # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
-    (32,  *gpt_specs["2.6B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
+    # (32,  *gpt_specs["2.6B"],  2,   2,   1,   4,   2,  4,    False,  *fixed_params),
+    # (512,  *gpt_specs["2.6B"],  1,   4,   1,   4,   2,  64,    True,  *fixed_params),
+
+    # (1024,  *gpt_specs["2.6B"],  1,   2,   1,   2,   4,  128,    True,  *fixed_params),
+    # (32,  *gpt_specs["2.6B"],  1,   4,   1,   4,   2,  32,    False,  *fixed_params),
+    # (256,  *gpt_specs["2.6B"],  1,   4,   1,   4,   2,  256,    True,  *fixed_params),
+
+    # (1,  *gpt_specs["2.6B"],  1,   2,   1,   2,   4,  1,    True,  *fixed_params),
+
+    # (64,  *gpt_specs["2.6B"],  1,   2,   1,   2,   4,  64,    True,  *fixed_params),
+
+    (256,  *gpt_specs["1.3B"],  1,   2,   1,   2,   4,  64,    True,  *fixed_params),
+
+    # (64,  *gpt_specs["2.6B"],  2,   1,   1,   2,   4,  32,    True,  *fixed_params),
+
 ],
 
 16: [
-    (1024,  *gpt_specs["6.7B"],  2,   1,   1,   2,   8,  256,    True,  *fixed_params),
+    # (1024,  *gpt_specs["6.7B"],  2,   1,   1,   2,   8,  256,    True,  *fixed_params),
+    # (512,  *gpt_specs["6.7B"],  1,   4,   1,   4,   4,  64,    True,  *fixed_params),
+    # (256,  *gpt_specs["6.7B"],  1,   4,   1,   4,   4,  32,    True,  *fixed_params),
+    # (1024,  *gpt_specs["6.7B"],  1,   4,   1,   4,   4,  128,    True,  *fixed_params),
+    # (1024,  *gpt_specs["6.7B"],  1,   4,   1,   4,   4,  128,    True,  *fixed_params),
+    # (256,  *gpt_specs["6.7B"],  1,   2,   1,   2,   8,  64,    True,  *fixed_params),
+    # (1024,  *gpt_specs["6.7B"],  1,   2,   1,   2,   8,  256,    True,  *fixed_params),
+
+    # (512,  *gpt_specs["6.7B"],  1,   1,   1,   1,   16,  256,    True,  *fixed_params),
+    (256,  *gpt_specs["6.7B"],  1,   4,   1,   4,   4,  256,    True,  *fixed_params),
+
 ],
 
 32: [
     # losing cases are below.
-    (4,  *gpt_specs["15B"],  1,   8,   1,   8,   4,  1,    True,  *fixed_params),
+    # (4,  *gpt_specs["15B"],  1,   8,   1,   8,   4,  1,    True,  *fixed_params),
     # (8,  *gpt_specs["15B"],  1,   8,   1,   8,   4,  2,    True,  *fixed_params),
+
+    # (512,  *gpt_specs["15B"],  1,   8,   1,   8,   4,  128,    True,  *fixed_params),
     # (1024,  *gpt_specs["15B"],  1,   8,   1,   8,   4,  256,    True,  *fixed_params),
+
+
+    # (32,  *gpt_specs["15B"],  1,   4,   1,   4,   8,  8,    True,  *fixed_params),
+    (256,  *gpt_specs["15B"],  1,   4,   1,   4,   8,  64,    True,  *fixed_params),
+    # (512,  *gpt_specs["15B"],  1,   4,   1,   4,   8,  128,    True,  *fixed_params),
+    # (4,  *gpt_specs["15B"],  1,   4,   1,   4,   8,  1,    True,  *fixed_params),
     # (1024,  *gpt_specs["15B"],  1,   4,   1,   4,   8,  256,    True,  *fixed_params),
+
+    # (32,  *gpt_specs["15B"],  1,   2,   1,   2,   16,  16,    True,  *fixed_params),
+
+    # (256,  *gpt_specs["15B"],  1,   4,   1,   4,   8,  256,    True,  *fixed_params),
 ],
 
 64: [
+
+    # (1024,  *gpt_specs["39B"],  1,   4,   1,   4,   16,  1024,    True,  *fixed_params),
+
+    # (256,  *gpt_specs["39B"],  1,   4,   1,   4,   16,  128,    True,  *fixed_params),
+    (256,  *gpt_specs["39B"],  1,   4,   1,   4,   16,  256,    True,  *fixed_params),
+    # (1024,  *gpt_specs["39B"],  1,   4,   1,   4,   16,  1024,    True,  *fixed_params),
+
+    # (4,  *gpt_specs["39B"],  1,   8,   1,   8,   8,  2,    True,  *fixed_params),
+    # (512,  *gpt_specs["39B"],  1,   8,   1,   8,   8,  256,    True,  *fixed_params),
 ]
 
 }

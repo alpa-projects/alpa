@@ -947,12 +947,14 @@ class CrossMeshCommunicator:
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 dst_sharding_spec, extra_slice = self._rewrite_allgather_specs(
                     dst_sharding_spec, dst_mesh, var)
-                src_array = VirtualDistributedArray(device_mesh=src_mesh,
-                                aval=var.aval,
-                                sharding_spec=src_sharding_spec)
-                dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
-                                aval=var.aval,
-                                sharding_spec=dst_sharding_spec)
+                src_array = VirtualDistributedArray(
+                    device_mesh=src_mesh,
+                    aval=var.aval,
+                    sharding_spec=src_sharding_spec)
+                dst_array = VirtualDistributedArray(
+                    device_mesh=dst_mesh,
+                    aval=var.aval,
+                    sharding_spec=dst_sharding_spec)
                 task_spec = ReshardingTaskSpec(src_array, dst_array,
                                                extra_slice)
                 self.resharding_specs[src_mesh_index][dst_mesh_index][repr(

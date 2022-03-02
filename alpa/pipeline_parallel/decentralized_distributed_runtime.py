@@ -456,7 +456,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
 
-    def _compile_task_configs(self, var_at) -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
+    def _compile_task_configs(
+        self, var_at
+    ) -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
         """
         Assign uuids for each task and prepare configs.
 

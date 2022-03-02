@@ -753,11 +753,11 @@ def profile_layer_communication_cost(
             out_sharding_spec = src_outvar_sharding_spec[src_outvars[invar]]
             in_sharding_spec = dst_invar_sharding_spec[idx]
             src_array = VirtualDistributedArray(device_mesh=src_mesh,
-                            aval=invar.aval,
-                            sharding_spec=out_sharding_spec)
+                                                aval=invar.aval,
+                                                sharding_spec=out_sharding_spec)
             dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
-                            aval=invar.aval,
-                            sharding_spec=in_sharding_spec)
+                                                aval=invar.aval,
+                                                sharding_spec=in_sharding_spec)
             task_spec = ReshardingTaskSpec(src_array, dst_array)
             # create resharding strategy, ignore global load balance
             dummy_resharding_strategy(task_spec)

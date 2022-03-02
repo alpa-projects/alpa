@@ -122,7 +122,8 @@ class VirtualDistributedArray:
     @property
     def partial_tiled(self):
         """Whether this distributed array is mixed sharded and replicated."""
-        if (self.replicated_maxes and len(self.replicated_maxes) < len(self.sharding_spec.mesh_mapping)):
+        if (self.replicated_maxes and len(self.replicated_maxes) < len(
+                self.sharding_spec.mesh_mapping)):
             return True
         return False
 

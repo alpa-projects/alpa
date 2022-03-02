@@ -45,7 +45,7 @@ from alpa.util import (benchmark_func, get_microbatch_sharding_spec,
                        infer_offset_and_n_elements, jax_tensor_index)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 ReshardingTileSpec = namedtuple("ReshardingSendSpec",
                                 ["offset", "rank", "gpu_idx"])
@@ -230,10 +230,8 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in offset)
             to_send = xla_buffer_to_cupy(self.buffers[uuid])
             if slice_shape == tensor_shape:
-                # print(">>> send fastest path")
                 col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
             else:
-                # print(">>> send slow path")
                 ind, n_elements = infer_offset_and_n_elements(offset)
                 col.send_multigpu(to_send[ind],
                                   dst_rank,
@@ -241,7 +239,6 @@ class MeshHostWorker:
                                   group_name,
                                   n_elements=n_elements)
         else:
-            print(">>> send slowest path")
             # slower path, because of indexing.
             logger.debug(
                 "Send goes along the slowest path. "
@@ -283,11 +280,8 @@ class MeshHostWorker:
             to_recv = xla_buffer_to_cupy(self.buffers[uuid],
                                          take_ownership=True)
             if slice_shape == tensor_shape:
-                # print(">>> Recv fastest path")
                 col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
             else:
-
-                # print(">>> Recv slow path")
                 ind, n_elements = infer_offset_and_n_elements(
                     indices_in_dst_tile)
                 col.recv_multigpu(to_recv[ind],
@@ -297,7 +291,6 @@ class MeshHostWorker:
                                   n_elements=n_elements)
             self.buffers[uuid] = cupy_to_xla_buffer(to_recv)
         else:
-            print(">>> Recv slowest path")
             # The following call will allocate memory and cause a few H2D and D2D kernels.
             # See:https://github.com/alpa-projects/alpa/issues/145
             logger.debug(

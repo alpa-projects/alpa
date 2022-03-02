@@ -1153,13 +1153,11 @@ class PipelineMeshWorkerExecutable:
             #     f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
-                # timers("compute").start(sync_func=self.worker.sync)
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
                 timers("compute").suspend()
-                # timers("compute").suspend(sync_func=self.worker.sync)
             elif instruction.opcode == PipelineInstType.SEND:
                 timers("resharding_send").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,

@@ -18,7 +18,7 @@ from alpa.global_env import global_config
 from alpa.pipeline_parallel.local_pipeline_parallel import (
     local_pipeline_parallel_callable)
 from alpa.pipeline_parallel.primitive_def import mark_gradient
-from alpa.pipeline_parallel.three_d_parallel import three_d_parallel_callable
+from alpa.pipeline_parallel.pipeshard_parallel import pipeshard_parallel_callable
 from alpa.shard_parallel.shard_callable import shard_parallel_callable
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval)
@@ -29,17 +29,17 @@ unsafe_map, map = map, safe_map  # type: ignore
 
 def parallelize(fun=None,
                 *,
-                donate_argnums="auto",
                 static_argnums="auto",
+                donate_argnums="auto",
                 batch_argnums=(1,)):
     """
     Automatically parallelize a jax function.
 
     Args:
         fun: The function to be parallelized.
-        donate_argnums: The same as the donate_argnums argument of jax.jit.
-          If it is "auto", alpa uses heuristic rules to infer this.
         static_argnums: The same as the static_argnums argument of jax.jit.
+          If it is "auto", alpa uses heuristic rules to infer this.
+        donate_argnums: The same as the donate_argnums argument of jax.jit.
           If it is "auto", alpa uses heuristic rules to infer this.
         batch_argnums: The indices of arguments that are the data batch.
           This information is used to split the original data batch into micro batches
@@ -105,8 +105,8 @@ def parallelize(fun=None,
             if isinstance(devices, list):
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
-                f, in_tree, out_tree_hashable, donated_invars, batch_invars,
-                devices, global_config.strategy,
+                f, in_tree, out_tree_hashable, static_argnums, donated_invars,
+                batch_invars, devices, global_config.strategy,
                 global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
@@ -117,7 +117,7 @@ def parallelize(fun=None,
                 # In this mode, this function returns sharded arguments without executing
                 # the computation. This is used to prepare sharded arguments
                 # for benchmark purposes, so we can exclude the time for sharding arguments.
-                sharded_args = compiled_func.shard_args_only(*args_flat)
+                sharded_args = compiled_func.preshard_dynamic_args(*args_flat)
                 return tree_unflatten(in_tree, sharded_args)
             elif return_value_mode == "get_executable":
                 # Return the compiled executable
@@ -155,6 +155,7 @@ def parallelize_callable(
     fun: lu.WrappedFun,
     in_tree: PyTreeDef,
     out_tree_thunk: Callable[[], PyTreeDef],
+    static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
     devices,
@@ -172,12 +173,14 @@ def parallelize_callable(
     # Choose parallel strategy
     if strategy == "shard_parallel":
         return shard_parallel_callable(fun, in_tree, out_tree_thunk,
-                                       donated_invars, batch_invars, devices,
+                                       static_argnums, donated_invars,
+                                       batch_invars, devices,
                                        memory_budget_per_device, *avals)
-    elif strategy == "3d_parallel":
-        return three_d_parallel_callable(fun, in_tree, out_tree_thunk,
-                                         donated_invars, batch_invars, devices,
-                                         memory_budget_per_device, *avals)
+    elif strategy == "pipeshard_parallel":
+        return pipeshard_parallel_callable(fun, in_tree, out_tree_thunk,
+                                           donated_invars, batch_invars,
+                                           devices, memory_budget_per_device,
+                                           *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices, *avals)
     else:
@@ -201,5 +204,22 @@ def grad(*args, **kwargs):
     def ret(*call_args, **call_kwargs):
         func = api.grad(*args, **kwargs)
         return mark_gradient(func(*call_args, **call_kwargs))
+
+    return ret
+
+
+def value_and_grad(*args, **kwargs):
+    """The same as jax.value_and_grad, but inserts a gradient marker after the gradient computation.
+
+    This function annotates all gradient tensors. This information is used to perform
+    gradient accumulation transformation.
+    If any auxiliary tensors are returned, they are averaged over mini batches in the same
+    way as how the gradients are averaged.
+    """
+
+    def ret(*call_args, **call_kwargs):
+        func = api.value_and_grad(*args, **kwargs)
+        val, grad = func(*call_args, **call_kwargs)
+        return mark_gradient((val, grad))
 
     return ret

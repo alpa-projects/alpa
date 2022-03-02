@@ -51,6 +51,7 @@ def shard_parallel_callable(
     fun: lu.WrappedFun,
     in_tree: PyTreeDef,
     out_tree_thunk: Callable,
+    static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
     devices,
@@ -117,15 +118,15 @@ def shard_parallel_callable(
 
     if global_config.num_micro_batches is not None:
         return shard_parallel_internal_gradient_accumulation(
-            fun, in_tree, out_tree_thunk, donated_invars, batch_invars,
-            physical_mesh, logical_mesh_choices,
+            fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
+            batch_invars, physical_mesh, logical_mesh_choices,
             global_config.shard_parallel_mesh_shape_search_mode,
             memory_budget_per_device, search_task, record_file, strategy_config,
             *avals)
 
     return shard_parallel_internal(
-        fun, in_tree, out_tree_thunk, donated_invars, physical_mesh,
-        logical_mesh_choices,
+        fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
+        physical_mesh, logical_mesh_choices,
         global_config.shard_parallel_mesh_shape_search_mode,
         memory_budget_per_device, search_task, record_file, strategy_config,
         *avals)
@@ -133,7 +134,8 @@ def shard_parallel_callable(
 
 def shard_parallel_internal(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
-        donated_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
+        static_argnums: Sequence[int], donated_invars: Sequence[bool],
+        physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
         logical_mesh_search_mode: str, memory_budget_per_device: float,
         search_task: Optional[SearchTask], record_file: str,
@@ -213,14 +215,16 @@ def shard_parallel_internal(
                                           avals,
                                           out_avals,
                                           donated_invars,
+                                          static_argnums=static_argnums,
+                                          out_tree_thunk=out_tree_thunk,
                                           flop_count=flop_count)
     return compiled.get_driver_callable()
 
 
 def shard_parallel_internal_gradient_accumulation(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
-        donated_invars: Sequence[bool], batch_invars: Sequence[bool],
-        physical_mesh: PhysicalDeviceMesh,
+        static_argnums: Sequence[int], donated_invars: Sequence[bool],
+        batch_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
         logical_mesh_search_mode: str, memory_budget_per_device: float,
         search_task: SearchTask, record_file: str,
@@ -385,8 +389,10 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
                                   compute_grad_eqns) + old_grad_vars
     new_invars = clone_vars(old_invars, gensym_func)
     combined_eqns.append(
-        new_jaxpr_eqn(new_invars, old_invars, pipeline_p,
-                      {"mark_type": "start"}, None))
+        new_jaxpr_eqn(new_invars, old_invars, pipeline_p, {
+            "mark_type": "start",
+            "name": "_accumulate_grad"
+        }, None))
     global_invar_substitute.update(zip(old_invars, new_invars))
     accumulate_grad_invars = new_invars
 
@@ -404,7 +410,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p, {
             "mark_type": "end",
-            "name": "grad_acc_boundary"
+            "name": "_accumulate_grad"
         }, None))
 
     # Wrap all invars of apply_grad

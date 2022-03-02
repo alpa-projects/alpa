@@ -179,14 +179,14 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
 
     if pipeline_stage_mode == "uniform_layer_gpipe":
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 num_micro_batches=num_micro_batches,
                                 sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                                 sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
                                 pipeline_parallel_schedule="1f1b")
     else:
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches)
 

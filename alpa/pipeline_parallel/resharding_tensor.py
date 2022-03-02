@@ -26,12 +26,13 @@ class VirtualDistributedArray:
     """
     Distributed Array without allocating remote buffers.
 
-    VDA wrapper differs from DistributedArray (DA) in that:
+    VirtualDistributedArray wrapper differs from DistributedArray in that:
     (1) it does not allocate a remote buffer at construction;
     (2) its device_mesh attribute is a virtual mesh (not physical).
 
     Args:
-        device_mesh (VirtualPhysicalMesh): the virtual mesh this VDA locates on.
+        device_mesh (VirtualPhysicalMesh): the virtual mesh this
+            VirtualDistributedArray locates on.
         aval (aval): shape information about the array.
         sharding_spec (ShardingSpec): sharding spec of this array.
     """
@@ -121,8 +122,8 @@ class VirtualDistributedArray:
     @property
     def partial_tiled(self):
         """Whether this distributed array is mixed sharded and replicated."""
-        if self.replicated_maxes and len(self.replicated_maxes) \
-                < len(self.sharding_spec.mesh_mapping):
+        if (self.replicated_maxes and len(self.replicated_maxes) < len(
+                self.sharding_spec.mesh_mapping)):
             return True
         return False
 
@@ -144,12 +145,12 @@ class VirtualDistributedArray:
 
     @property
     def num_tiles(self):
-        """Return the number of tiles of the VDA."""
+        """Return the number of tiles of the VirtualDistributedArray."""
         return np.prod(self.tile_shape)
 
     @property
     def tiles(self):
-        """Return all the shards of the VDA following their orders."""
+        """Return all the shards of the VirtualDistributedArray following their orders."""
         if self._tiles is None:
             # Below are for tiled or partial_tiled.
             num_tiles = np.prod(self.tile_shape)
@@ -196,7 +197,7 @@ class Tile:
     Representing a full tile (shard) on the original distributed array.
 
     Args:
-        index (List[int]): the index of this shard in the tile_assignments matrix of the VDA.
+        index (List[int]): the index of this shard in the tile_assignments matrix of the VirtualDistributedArray.
         index_flat (int): flattend index, row-majored.
         replica_device_ids (List[int]): the device ids this shard is replicated on.
         replica_device_strs (List[str]): the device strs this shard is replicated on.
@@ -228,7 +229,7 @@ class TileSlice(Tile):
     """
     Representing a slice of a tile of the array using an offset.
 
-    TileSlice subsets Tile, and Tile subsets VDA.
+    TileSlice subsets Tile, and Tile subsets VirtualDistributedArray.
 
     Args:
         offset (List[slice]): a list of slice objects to represent the offset made on the shard.
@@ -248,6 +249,3 @@ class TileSlice(Tile):
         for o in self.offset:
             size = size * (o.stop - o.start)
         return size
-
-
-VDA = VirtualDistributedArray

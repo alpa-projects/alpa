@@ -190,6 +190,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         # states
         self.donate_invars = []
+        self.delete_after_shard = []
         self.input_indices = []
         self.mesh_arg_indices = []
         self.batch_arg_on_mesh = []
@@ -455,8 +456,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
 
-    def _compile_task_configs(self, var_at) \
-            -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
+    def _compile_task_configs(
+        self, var_at
+    ) -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
         """
         Assign uuids for each task and prepare configs.
 
@@ -510,7 +512,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx, var_at,
-                    executable_config_lists, keys, True)
+                    executable_config_lists, keys,
+                    global_config.use_memzero_for_gradient_accumulation)
 
         # 2. PartialGradAccMeshExecutable
         for stage_idx, stage in enumerate(self.stages):
@@ -562,7 +565,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if donate and invar in global_invar_set:
                     donated_invar_set.add(invar)
         num_mesh = len(self.physical_meshes)
-        global_invar_indices = {}
+        global_indices = {}
         invar_counter = 0
         mesh_arg_lists = [None for _ in range(num_mesh)]
         self.batch_arg_on_mesh = [None] * len(self.global_invars)
@@ -572,15 +575,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for arg_idx, invar in enumerate(self.global_invars):
             if invar in not_batch_invars:
                 key = invar, 0
-                global_invar_indices[key] = invar_counter
+                global_indices[key] = invar_counter
                 invar_counter += 1
                 continue
             self.batch_arg_on_mesh[arg_idx] = []
             for batch_idx in range(self.num_batch):
                 key = invar, batch_idx
-                global_invar_indices[key] = invar_counter
+                global_indices[key] = invar_counter
                 invar_counter += 1
         # dispatch args to each mesh
+        arg_last_use = [-1] * invar_counter
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = {}
@@ -609,8 +613,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 pxla.spec_to_indices(key[0].aval.shape, var_to_spec[key[0]])
                 for key in mesh_arg_list
             ])
-            self.mesh_arg_indices.append(
-                [global_invar_indices[key] for key in mesh_arg_list])
+            mesh_global_indices = [global_indices[key] for key in mesh_arg_list]
+            for global_idx in mesh_global_indices:
+                arg_last_use[global_idx] = mesh_idx
+            self.mesh_arg_indices.append(mesh_global_indices)
+        for mesh_idx in range(num_mesh):
+            self.delete_after_shard.append([
+                arg_last_use[idx] == mesh_idx and donate
+                for idx, donate in zip(self.mesh_arg_indices[mesh_idx],
+                                       self.donate_invars[mesh_idx])
+            ])
         # get local uuids for each input:
         input_local_uuid_list = {}
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -794,8 +806,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_args = [
                 split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
-            input_bufs[mesh_idx] = physical_mesh.shard_args(
-                self.input_indices[mesh_idx], self.donate_invars[mesh_idx],
+            input_bufs[mesh_idx] = physical_mesh.shard_args_to_bufs(
+                self.input_indices[mesh_idx], self.delete_after_shard[mesh_idx],
                 mesh_args)
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
@@ -842,11 +854,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         self.mesh_index_to_outvar_indices_mapping[mesh_idx]
                         [i]].aval.dtype
                     output_bufs[mesh_idx][i][j] = RemoteBufferRef(
-                        physical_mesh,
-                        host_id,
-                        device_id,
-                        output_uuid_transposed[i][host_id][device_id],
-                        dtype=dtype)
+                        physical_mesh, host_id, device_id,
+                        output_uuid_transposed[i][host_id][device_id])
         return self.outs_handler(output_bufs)
 
     def _setup_outs_handler(self):
@@ -862,7 +871,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for i, _ in enumerate(avals):
                 aval = avals[i]
                 if not is_replicated[i]:
-                    # construct DA
+                    # construct DistributedArray
                     mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
                     device_mesh = self.physical_meshes[mesh_idx]
                     outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
@@ -874,7 +883,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
                         indices=pxla.spec_to_indices(aval.shape, spec))
                 else:
-                    # otherwise, construct RDA
+                    # otherwise, construct RepliatedDistributedArray
                     meshes = []
                     distributed_arrays = []
                     for _, mesh_idx in enumerate(
@@ -1078,6 +1087,7 @@ class PipelineMeshWorkerExecutable:
         self.acc_in_uuids = [list(uuids) for uuids in list(acc_local_uuids)]
         self.acc_out_uuids = acc_out_uuids
         self.partial_grad_exec_uuids = OrderedSet()
+        self.use_memzero = False
         # Create tasks
         for task_config in executable_configs:
             self._related_exec_uuids.append(task_config.exec_uuid)
@@ -1092,6 +1102,7 @@ class PipelineMeshWorkerExecutable:
             if isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0
                 # allocate buffers
+                self.use_memzero = True
                 self.worker.put_executable(task_config.exec_uuid,
                                            AllocZeroBufferWorkerExecutable,
                                            task_config.grad_shard_shapes,
@@ -1186,10 +1197,13 @@ class PipelineMeshWorkerExecutable:
                 self.global_buffers[global_id] = buffers[local_id]
 
         # now acc_grad_buffers are those after grad acc, before apply grad
+        # with memzero, these buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
-        for in_uuids, out_uuids in zip(self.acc_in_uuids, self.acc_out_uuids):
-            for in_uuid, out_uuid in zip(in_uuids, out_uuids):
-                self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
+        if self.use_memzero:
+            for in_uuids, out_uuids in zip(self.acc_in_uuids,
+                                           self.acc_out_uuids):
+                for in_uuid, out_uuid in zip(in_uuids, out_uuids):
+                    self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # monkey patch
         self.worker.buffers = self.global_buffers
         # Clean the dict

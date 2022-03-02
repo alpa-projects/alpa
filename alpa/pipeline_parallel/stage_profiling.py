@@ -27,7 +27,7 @@ from alpa.pipeline_parallel.computation import (
     rearrange_vars)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
-from alpa.pipeline_parallel.resharding_tensor import VDA
+from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.shard_parallel.auto_sharding import (compile_with_search,
                                                compile_with_given_strategy,
                                                HloProtoStatus,
@@ -752,12 +752,12 @@ def profile_layer_communication_cost(
         if invar in src_outvars:
             out_sharding_spec = src_outvar_sharding_spec[src_outvars[invar]]
             in_sharding_spec = dst_invar_sharding_spec[idx]
-            src_array = VDA(device_mesh=src_mesh,
-                            aval=invar.aval,
-                            sharding_spec=out_sharding_spec)
-            dst_array = VDA(device_mesh=dst_mesh,
-                            aval=invar.aval,
-                            sharding_spec=in_sharding_spec)
+            src_array = VirtualDistributedArray(device_mesh=src_mesh,
+                                                aval=invar.aval,
+                                                sharding_spec=out_sharding_spec)
+            dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
+                                                aval=invar.aval,
+                                                sharding_spec=in_sharding_spec)
             task_spec = ReshardingTaskSpec(src_array, dst_array)
             # create resharding strategy, ignore global load balance
             dummy_resharding_strategy(task_spec)

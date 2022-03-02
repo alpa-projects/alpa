@@ -456,8 +456,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
 
-    def _compile_task_configs(self, var_at) \
-            -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
+    def _compile_task_configs(
+        self, var_at
+    ) -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
         """
         Assign uuids for each task and prepare configs.
 
@@ -870,7 +871,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for i, _ in enumerate(avals):
                 aval = avals[i]
                 if not is_replicated[i]:
-                    # construct DA
+                    # construct DistributedArray
                     mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
                     device_mesh = self.physical_meshes[mesh_idx]
                     outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
@@ -882,7 +883,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
                         indices=pxla.spec_to_indices(aval.shape, spec))
                 else:
-                    # otherwise, construct RDA
+                    # otherwise, construct RepliatedDistributedArray
                     meshes = []
                     distributed_arrays = []
                     for _, mesh_idx in enumerate(

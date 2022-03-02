@@ -12,7 +12,7 @@ from alpa.device_mesh import (DistributedArray, RemoteBufferRef,
                               ReshardingTileSpec)
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
-from alpa.pipeline_parallel.resharding_tensor import VDA, TileSlice, unflatten_tile_index
+from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray, TileSlice, unflatten_tile_index
 from alpa.util import OrderedSet
 
 logger = logging.getLogger(__name__)
@@ -343,8 +343,8 @@ class SymbolicReshardingTask(ReshardingTask):
                                            receiver_rank, receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
-                    sender_rank, sender_gpu_idx = \
-                        self.collective_group.device_str_to_rank_map[sender]
+                    sender_rank, sender_gpu_idx = (
+                        self.collective_group.device_str_to_rank_map[sender])
                     indices_in_dst_tile = self._indices_in_dst_post_allgather(
                         indices_in_dst_tiles[sender_idx], receiver)
                     recv_tile_specs.append(
@@ -546,8 +546,8 @@ class ReshardingTaskSpec:
     A helper class specifies how to perform cross-mesh resharding for two arrays.
 
     Args:
-        src_array (VirtualDistributedArray): the source VDA.
-        dst_array (VirtualDistributedArray): the destination VDA.
+        src_array (VirtualDistributedArray): the source VirtualDistributedArray.
+        dst_array (VirtualDistributedArray): the destination VirtualDistributedArray.
     """
 
     def __init__(self, src_array, dst_array, allgather_slice=None):
@@ -939,7 +939,7 @@ class CrossMeshCommunicator:
             out_sharding_specs = src_stage.output_sharding_specs
             in_sharding_specs = dst_stage.input_sharding_specs
 
-            # Make a ReshardSpec for each VDA
+            # Make a ReshardSpec for each VirtualDistributedArray
             for var, out_var_index, in_var_index in zip(resharding_vars,
                                                         out_var_indices,
                                                         in_var_indices):
@@ -947,12 +947,14 @@ class CrossMeshCommunicator:
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 dst_sharding_spec, extra_slice = self._rewrite_allgather_specs(
                     dst_sharding_spec, dst_mesh, var)
-                src_array = VDA(device_mesh=src_mesh,
-                                aval=var.aval,
-                                sharding_spec=src_sharding_spec)
-                dst_array = VDA(device_mesh=dst_mesh,
-                                aval=var.aval,
-                                sharding_spec=dst_sharding_spec)
+                src_array = VirtualDistributedArray(
+                    device_mesh=src_mesh,
+                    aval=var.aval,
+                    sharding_spec=src_sharding_spec)
+                dst_array = VirtualDistributedArray(
+                    device_mesh=dst_mesh,
+                    aval=var.aval,
+                    sharding_spec=dst_sharding_spec)
                 task_spec = ReshardingTaskSpec(src_array, dst_array,
                                                extra_slice)
                 self.resharding_specs[src_mesh_index][dst_mesh_index][repr(

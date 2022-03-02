@@ -180,8 +180,8 @@ class AutoShardingConvTest(unittest.TestCase):
 
         # Get optimized HLO IR
         executable = train_step.get_executable(state, {"x": x, "y": y})
-        return state, executable.get_hlo_text(
-        ), executable.auto_sharding_objective
+        return (state, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def test_n_layer_conv_data_parallel(self):
         batch_size = 16

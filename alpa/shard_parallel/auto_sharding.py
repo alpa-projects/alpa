@@ -372,7 +372,9 @@ def run_spmd_partitioner_pass(
 def run_backend_compilation(backend: xe.Client,
                             xla_computation: Union[xe.XlaComputation,
                                                    xe.HloModule, bytes],
-                            strategy_config: StrategyConfig, num_devices: int):
+                            strategy_config: StrategyConfig,
+                            num_devices: int,
+                            bypass_device_assignment_check: bool = False):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:
@@ -380,6 +382,7 @@ def run_backend_compilation(backend: xe.Client,
       xla_computation: The input HLO Module. The status should be SPMD_PARTITIONED.
       strategy_config: The auto-sharding strategy solution.
       num_devices: The total number of devices.
+      bypass_device_assignment_check: Whether to compile without exact devices.
     """
     compile_options = get_compile_options(
         num_replicas=1,
@@ -399,7 +402,7 @@ def run_backend_compilation(backend: xe.Client,
 
     with XlaPassContext({
             # Build options
-            "build_option::bypass_device_assignment_check": False,
+            "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
             "build_option::run_pre_spmd_partitioner_passes": False,
             "build_option::run_auto_sharding": False,
             "build_option::run_spmd_partitioner": False,

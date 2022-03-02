@@ -269,9 +269,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 donatable_dict[mesh_idx], acc_grad_outvars, num_micro_batches,
-                logical_mesh_choices, autosharding_option,
-                memory_budget_per_device, logical_mesh_search_mode, search_task,
-                record_file)
+                logical_mesh, autosharding_option, memory_budget_per_device)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

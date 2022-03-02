@@ -93,8 +93,8 @@ class AutoShardingMoETest(unittest.TestCase):
                 "labels": labels,
                 "rng": rngkey
             }, deterministic, model.apply)
-        return optimizer, executable.get_hlo_text(
-        ), executable.auto_sharding_objective
+        return (optimizer, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size,
                    num_heads, vocab_size, S, E, deterministic, device_mesh):
@@ -181,8 +181,8 @@ class AutoShardingMoETest(unittest.TestCase):
                 "position_ids": position_ids,
                 "labels": labels,
             }, deterministic, rngkey)
-        return state, executable.get_hlo_text(
-        ), executable.auto_sharding_objective
+        return (state, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def test_moe_layer(self):
         batch_size = 64

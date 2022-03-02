@@ -408,7 +408,7 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         worker_cls = ray.remote(num_cpus=1,
                                 num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
-            worker_cls.options({
+            worker_cls.options(runtime_env={
                 "env_vars": env_vars
             }).remote(prof_result, mesh_num_devices, num_micro_batches)
             for _ in range(num_cpus)

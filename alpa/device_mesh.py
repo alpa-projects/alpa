@@ -1430,6 +1430,7 @@ def _shard_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
             for device_id in range(device_mesh.num_devices):
                 mb = datas[device_id * num_batch:(device_id + 1) * num_batch]
                 concate_datas.append(np.concatenate(mb, axis=batch_dim))
+            datas = concate_datas
         return _device_mesh_put(device_mesh, datas, num_batch, batch_dim)
 
 

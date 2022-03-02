@@ -536,8 +536,8 @@ class PhysicalDeviceMesh:
             self.device_strs = []
             for i in range(self.num_hosts):
                 ip = self.host_info[i]["NodeManagerAddress"]
-                self.device_strs.extend([device_id_to_str(ip, j)
-                                         for j in devices[i]])
+                self.device_strs.extend(
+                    [device_id_to_str(ip, j) for j in devices[i]])
             self._launch_xla_servers()
 
             self.to_delete_remote_buffers = [[] for _ in range(self.num_hosts)]
@@ -1170,8 +1170,8 @@ class VirtualPhysicalMesh:
         self.device_strs = []
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
-            self.device_strs.extend([device_id_to_str(ip, j)
-                                     for j in devices[i]])
+            self.device_strs.extend(
+                [device_id_to_str(ip, j) for j in devices[i]])
 
     def slice_1d(self, dim, indices):
         """

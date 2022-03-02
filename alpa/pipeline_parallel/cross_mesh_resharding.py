@@ -1,7 +1,8 @@
 """Cross mesh resharding for pipeline parallelism."""
+from collections import namedtuple
 import logging
 import math
-from typing import List, Any
+from typing import List, Any, Sequence
 
 import numpy as np
 import ray
@@ -19,6 +20,8 @@ from alpa.util import OrderedSet
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+LocalAllgatherThunkInfo = namedtuple("LocalAllgatherThunkInfo",
+                                     ["tensor_dim, mesh_dim, chunk_idx, chunk"])
 resharding_task_counter = 0
 
 
@@ -41,7 +44,7 @@ class ReshardingTask:
     """
 
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
-        self.task_spec = task_spec
+        self.task_spec: ReshardingTaskSpec = task_spec
         self.collective_group = collective_group
         self.src_mesh = src_mesh
         self.dst_mesh = dst_mesh
@@ -190,17 +193,20 @@ class SymbolicReshardingTask(ReshardingTask):
         return self._allgather_tasks
 
     def _indices_in_dst_post_allgather(self, indices, receiver):
-        if self.task_spec.local_chunks is None:
+        if not self.task_spec.local_chunks:
             return indices
-        tensor_axis, mesh_axis, _ = self.task_spec.local_chunks
-        _, offset, _, dst_mesh_shape = self._allgather_receiver_step_and_offset(
-            receiver)
-        allgather_dim_size = (self.task_spec.aval.shape[tensor_axis] //
-                              dst_mesh_shape[mesh_axis])
+
         indices = list(indices)
-        indices[tensor_axis] = slice(
-            offset * allgather_dim_size + indices[tensor_axis].start,
-            offset * allgather_dim_size + indices[tensor_axis].stop, None)
+        for chunk_info in self.task_spec.local_chunks:
+            tensor_dim, mesh_dim, chunk_idx, chunk = chunk_info
+            # TODO(yonghao)
+            _, offset, _, dst_mesh_shape = self._allgather_receiver_step_and_offset(
+                receiver)
+            allgather_dim_size = (self.task_spec.aval.shape[tensor_dim] //
+                                  dst_mesh_shape[mesh_dim])
+            indices[tensor_dim] = slice(
+                offset * allgather_dim_size + indices[tensor_dim].start,
+                offset * allgather_dim_size + indices[tensor_dim].stop, None)
         shape = self.task_spec.aval.shape
         for idx, tensor_slice in enumerate(indices):
             if tensor_slice.start is None:
@@ -209,6 +215,7 @@ class SymbolicReshardingTask(ReshardingTask):
         return indices
 
     def _allgather_receiver_step_and_offset(self, receiver):
+        # TODO(yonghao)
         _, mesh_axis, extra_sharding = self.task_spec.local_chunks
         # the dst mesh of col group may not be dst mesh of resharding task
         host_idx, device_idx = self.collective_group.device_str_to_rank_map[
@@ -551,7 +558,8 @@ class ReshardingTaskSpec:
         dst_array (VirtualDistributedArray): the destination VirtualDistributedArray.
     """
 
-    def __init__(self, src_array, dst_array, local_chunks=None):
+    def __init__(self, src_array, dst_array,
+                 local_chunks: Sequence[LocalAllgatherThunkInfo]):
         self.src = src_array
         self.dst = dst_array
         self._dst_tile_to_src_tiles_map = None
@@ -738,11 +746,13 @@ class ReshardingTaskSpec:
         ret_str = ""
         ret_str += f"{self.src_sharding_spec} -> {self.dst_sharding_spec};"
         if self.local_chunks:
-            shard_dim, shard_axis, extra_sharding = self.local_chunks
-            ret_str += (
-                f" allgather: shard at tensor dim {shard_dim}, " +
-                f"shard at mesh axis {shard_axis}, chunked value {extra_sharding}"
-            )
+            ret_str += " allgather: "
+            for allgather_chunk_info in self.local_chunks:
+                shard_dim, shard_axis, _, extra_sharding = allgather_chunk_info
+                ret_str += (
+                    f"(shard at tensor dim {shard_dim}, " +
+                    f"shard at mesh axis {shard_axis}, chunked value {extra_sharding}), "
+                )
         return ret_str
 
 
@@ -990,7 +1000,8 @@ class CrossMeshCommunicator:
                 sharding[tensor_dim] = add_chunk(dim_sharding, new_chunk)
                 chunk_idx = len(sharding[tensor_dim].chunks) - 1
                 local_chunks.append(
-                    (tensor_dim, mesh_dim, chunk_idx, new_chunk))
+                    LocalAllgatherThunkInfo(tensor_dim, mesh_dim, chunk_idx,
+                                            new_chunk))
                 dim_local_mapping.append((tensor_dim, chunk_idx))
 
                 replica //= new_chunk
@@ -1083,7 +1094,7 @@ class CrossMeshCommunicator:
     def _generate_send_recv_resharding_strategy_by_loads(
             spec, src_loads, dst_loads):
         """Generate the resharding strategy by balancing loads."""
-        is_local_allgather = spec.local_chunks is not None
+        is_local_allgather = len(spec.local_chunks) > 0
         per_spec_plans = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array

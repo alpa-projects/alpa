@@ -1,0 +1,66 @@
+#!/bin/bash
+#SBATCH --job-name=unet2auto
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --tasks-per-node=1
+#SBATCH --cpus-per-task=128
+#SBATCH --mem=0
+#SBATCH --gres=gpu:2
+#SBATCH --error=./expe/run2auto.err
+#SBATCH --output=./expe/run2auto.out
+#SBATCH --time=04:00:00
+#SBATCH --partition=long
+
+export TMP=/home/hexu.zhao/tmp
+
+. /apps/local/conda_init.sh
+conda activate /home/hexu.zhao/alpa-env
+module load nvidia/cuda/11.4
+ulimit -S -u 16384
+
+set -x
+
+# Getting the node names
+nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
+nodes_array=($nodes)
+
+echo $SLURM_JOB_NODELIST
+
+head_node=${nodes_array[0]}
+head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
+
+# __doc_head_ray_start__
+port=6628
+SLURM_GPUS_PER_TASK=2
+SLURM_CPUS_PER_TASK=32
+ip_head=$head_node_ip:$port
+export ip_head
+echo "IP Head: $ip_head"
+
+echo "Starting HEAD at $head_node"
+srun --nodes=1 --ntasks=1 -w "$head_node" \
+    ray start --head --node-ip-address="$head_node_ip" --port=$port \
+    --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus "${SLURM_GPUS_PER_TASK}" --block &
+# __doc_head_ray_end__
+
+sleep 10
+
+# number of nodes other than the head node
+worker_num=$((SLURM_JOB_NUM_NODES - 1))
+echo $worker_num
+
+for ((i = 1; i <= worker_num; i++)); do
+    node_i=${nodes_array[$i]}
+    echo "Starting WORKER $i at $node_i"
+    srun --nodes=1 --ntasks=1 -w "$node_i" \
+        ray start --address "$ip_head" \
+        --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus "${SLURM_GPUS_PER_TASK}" --block &
+    sleep 5
+done
+# __doc_worker_ray_end__
+
+# __doc_script_start__
+
+python3 -u unet_benchmark_3d.py --suite unet.test --exp_name auto_2_gpus --num-hosts 1 --num-devices-per-host 2
+
+ray stop

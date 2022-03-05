@@ -207,7 +207,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
-                                         logical_mesh_shape, 1, 1, None)
+                                         logical_mesh_shape, 1, 1, None, 0)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
         sharding_annotated_proto = compiled.hlo_modules(

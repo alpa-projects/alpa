@@ -241,8 +241,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:
             xla_stages[i] = XlaShardedPipelineComputation.dummy_computation(
-                jax_all_stages[i].name, logical_mesh_choices[0].shape,
-                gensym_func)
+                jax_all_stages[i].name, logical_mesh.shape, gensym_func)
 
         stage_donate_invars = [
             donate_invars_dict[stage_idx]

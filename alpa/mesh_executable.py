@@ -472,6 +472,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         self.apply_grad_invar_indices = apply_grad_invar_indices
         self.num_micro_batches = num_micro_batches
         self.flop_count = flop_count
+        self.auto_sharding_objective = strategy_config.auto_sharding_objective
 
         # Read sharding specs
         logical_mesh_shape = strategy_config.logical_mesh_shape

@@ -108,28 +108,41 @@ def _allgather_dim_offset(length, offset, chunks, local_allgather_idx):
     return atom_len * allgather_offset
 
 
-def _signle_tensor_dim_allgather_tasks(mesh_shape, tensor_dim_mapped_mesh_dim,
-                                       tensor_dim):
+def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
     # TODO(yonghao): given an N-dimension mesh shape, create allgathers by
     # enumerating all indices
-    def get_group_and_offset_steps():
-        allgather_dims = set(tensor_dim_mapped_mesh_dim)
-        allgather_lens = []
-        group_lens = []
-        for d, l in enumerate(mesh_shape):
-            if d in allgather_dims:
-                allgather_lens.append(l)
+    def iter_tool(depth, length, steps):
+        local_delta = [1] * (length[depth] - 1) + [-1 * (length[depth] - 1)]
+        offset = 0
+        for delta in local_delta:
+            if depth == len(steps) - 1:
+                yield offset
             else:
-                group_lens.append(l)
-        offset_steps = _suffix_prod(allgather_lens)[1:]
-        group_steps = _suffix_prod(group_lens)[1:]
-        steps = []
-        for d in range(len(mesh_shape)):
-            if d in allgather_dims:
-                steps.append(offset_steps)
+                sub_iter = iter_tool(depth + 1, length, steps)
+                for o in sub_iter:
+                    yield offset + o
+            offset += steps[depth] * delta
 
-    group_idx = 0
-    offset = 0
+    steps = _suffix_prod(mesh_shape)
+    offset_steps = []
+    offset_length = []
+    group_steps = []
+    group_length = []
+    for d, l in enumerate(mesh_shape):
+        if d in allgather_dims:
+            offset_steps.append(steps[d + 1])
+            offset_length.append(l)
+        else:
+            group_steps.append(steps[d + 1])
+            group_length.append(l)
+    group_iter = iter_tool(0, group_length, group_steps)
+    offsets = list(iter_tool(0, offset_length, offset_steps))
+    groups = []
+    for group_idx in group_iter:
+        receivers = []
+        for offset in offsets:
+            receivers.append(offset + group_idx)
+        groups.append(receivers)
 
 
 class ReshardingTask:

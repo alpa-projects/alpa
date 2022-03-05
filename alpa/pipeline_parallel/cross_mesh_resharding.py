@@ -109,8 +109,8 @@ def _allgather_dim_offset(length, offset, chunks, local_allgather_idx):
 
 
 def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
-    # TODO(yonghao): given an N-dimension mesh shape, create allgathers by
-    # enumerating all indices
+    """given an N-dim mesh shape, group all receivers into allgather groups."""
+
     def iter_tool(depth, length, steps):
         local_delta = [1] * (length[depth] - 1) + [-1 * (length[depth] - 1)]
         offset = 0
@@ -275,7 +275,7 @@ class SymbolicReshardingTask(ReshardingTask):
         # Dict of worker -> ((indices, rank, gpu index))
         self._receiver_tasks = {w: [] for w in self.dst_mesh.workers}
         # Dict of worker -> ((device_ids), (device_strs), (slices))
-        self._allgather_tasks = {host: {} for host in self.dst_mesh.workers}
+        self._allgather_tasks = {host: [] for host in self.dst_mesh.workers}
 
         self.sender_uuid_plan = []
         self.receiver_uuid_plan = []
@@ -306,6 +306,8 @@ class SymbolicReshardingTask(ReshardingTask):
         return self._allgather_tasks
 
     def _allgather_receiver_offset(self, receiver, logical_mesh_shape):
+        if not self.task_spec.local_chunks:
+            return -1
         host_idx, device_idx = self.collective_group.device_str_to_rank_map[
             receiver]
         if host_idx >= self.collective_group.src_mesh.num_hosts:
@@ -317,7 +319,7 @@ class SymbolicReshardingTask(ReshardingTask):
             flatten_idx //= mesh_dim
         return reversed(offsets)
 
-    def _indices_in_dst_post_allgather(self, indices, receiver):
+    def _indices_in_dst_post_allgather(self, indices, allgather_offset):
         if not self.task_spec.local_chunks:
             return indices
 
@@ -325,9 +327,8 @@ class SymbolicReshardingTask(ReshardingTask):
         # TODO(yonghao): the two lines should run only once for all receiver
         dst_spec = self.task_spec.dst_sharding_spec
         logical_mesh_shape = _allgather_logical_mesh_from_spec(dst_spec)
-        allgather_offset = self._allgather_receiver_offset(receiver)
         shape = self.task_spec.aval.shape
-        # TODO(yonghao): collect each tensor dimension's local allgather chunk status
+        # FIXME(yonghao): collect each tensor dimension's local allgather chunk status
         # We should modify the local_chunks to record enough info for this.
         per_tensor_dim_chunks_info = []
         for dim_chunks in per_tensor_dim_chunks_info:
@@ -449,10 +450,11 @@ class SymbolicReshardingTask(ReshardingTask):
                                            receiver_rank, receiver_gpu_idx))
                     self.sender_uuid_plan.append(sender)
                     # Receiver's task
-                    sender_rank, sender_gpu_idx = (
-                        self.collective_group.device_str_to_rank_map[sender])
+                    sender_rank, sender_gpu_idx = \
+                        self.collective_group.device_str_to_rank_map[sender]
+                    allgather_offset = self._allgather_receiver_offset(receiver)
                     indices_in_dst_tile = self._indices_in_dst_post_allgather(
-                        indices_in_dst_tiles[sender_idx], receiver)
+                        indices_in_dst_tiles[sender_idx], allgather_offset)
                     recv_tile_specs.append(
                         ReshardingTileSpec(indices_in_dst_tile, sender_rank,
                                            sender_gpu_idx))
@@ -463,17 +465,31 @@ class SymbolicReshardingTask(ReshardingTask):
 
     def _compile_allgather_tasks(self):
         """Compile allgather tasks on destination mesh."""
-        # TODO(yonghao): do allgather at each tensor dimension.
-        for flatten_id, indices in enumerate(self.task_spec.dst_indices):
-            receiver = self.dst_mesh.device_strs[flatten_id]
-            participant_worker = self.collective_group.device_str_to_mesh_worker_map[
-                receiver]
-            group_spec = self._allgather_tasks[participant_worker].setdefault(
-                group_idx,
-                ReshardingAllGatherSpec(device_ids=[], tensor_slices=[]))
-            group_spec.device_ids.append(flatten_id %
-                                         self.dst_mesh.num_devices_per_host)
-            group_spec.tensor_slices.append(post_allgather_indices)
+        # FIXME(yonghao): get tensor dim specs.
+        tensor_dim_specs = []
+        mesh_shape = self.dst_mesh.shape
+        dst_indices = self.task_spec.dst_indices
+        dst_spec = self.task_spec.dst_sharding_spec
+        tensor_shape = self.task_spec.dst.tensor_shape
+        for tensor_dim_spec in tensor_dim_specs:
+            dst_indices = pxla.spec_to_indices(tensor_shape, dst_spec)
+            allgather_dims = tensor_dim_spec
+            allgather_groups = _signle_tensor_dim_allgather_groups(
+                mesh_shape, allgather_dims)
+            tensor_slices = []
+            for offset, receiver_idx in enumerate(allgather_groups[0]):
+                indices = dst_indices[receiver_idx]
+                tensor_slices.append(
+                    self._indices_in_dst_post_allgather(indices, offset))
+            for group_ids in allgather_groups:
+                host = group_ids[0] // self.dst_mesh.num_devices_per_host
+                device_ids = [
+                    gid % self.dst_mesh.num_devices_per_host
+                    for gid in group_ids
+                ]
+                self._allgather_tasks[host].append(
+                    ReshardingAllGatherSpec(device_ids, tensor_slices))
+            # FIXME(yonghao): rewrite dst_spec
         return self._allgather_tasks
 
     # FIXME(Hao): test the function below; it might be buggy.

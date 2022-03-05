@@ -12,7 +12,7 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh
+from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh
 from alpa.global_env import global_config
 from alpa.util import map_to_shape, count_communication_primitives
 
@@ -231,9 +231,9 @@ class AutoShardingMLPTest(unittest.TestCase):
         state = train_step(state, {"x": x, "y": y})
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-        return state, hlo_ir, testing.last_compiled_auto_sharding_objective
+        executable = train_step.get_executable(state, {"x": x, "y": y})
+        return (state, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def test_n_layer_mlp_data_parallel(self):
         num_layers = 6

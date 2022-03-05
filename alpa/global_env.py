@@ -224,7 +224,7 @@ def set_parallelize_options(
 
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"
 
-os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
-                                         "") + " --xla_gpu_autotune_level=0"
+#os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
+#                                         "") + " --xla_gpu_autotune_level=0"
 
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

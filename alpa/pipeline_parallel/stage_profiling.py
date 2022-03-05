@@ -28,9 +28,9 @@ from alpa.pipeline_parallel.computation import (
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
-from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                               compile_with_given_strategy,
-                                               HloProtoStatus,
+from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
+                                               run_spmd_partitioner_pass,
+                                               run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
 from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_computation,
                        OrderedSet)
@@ -125,7 +125,6 @@ class CompileWorker:
 
     def __init__(self):
         self.cnt = 0
-        self.backend = xla_bridge.get_backend("gpu")
 
     def compile_stage_for_profiling(self, stage_id, config: CompileConfig,
                                     logical_mesh, autosharding_option,
@@ -149,23 +148,20 @@ class CompileWorker:
         # Compile with search to get sharding annotations.
         jaxpr_args = (config.input_avals, config.output_avals,
                       config.donate_invars)
-        mesh_kwargs = {
-            "logical_mesh_choices": [logical_mesh],
+        other_kwargs = {
+            "logical_mesh": logical_mesh,
             "return_mode": "stage_and_hook_protos",
+            "as_option": autosharding_option,
             "num_micro_batches": num_micro_batches,
-            "bypass_device_assignment_check": True,
             "memory_budget_per_device": None,
-            "logical_mesh_search_mode": "cost_model",
-            "search_task": None,
-            "record_file": None,
         }
         try:
-            _, (proto_names, protos, hooked_proto,
-                strategy_config) = self.compile_proto_with_search(
-                    stage_id, config.model_proto, jaxpr_args,
-                    autosharding_option, mesh_kwargs)
+            computation = xla_client.XlaComputation(config.model_proto)
+            proto_names, protos, hooked_proto, strategy_config = run_auto_sharding_pass(
+                computation, *jaxpr_args, **other_kwargs)
         except RuntimeError as e:
-            logger.warning(f"Compilation error for stage {stage_id} : {e}")
+            logger.warning(f"Compilation error (auto-sharding pass) "
+                           f"for stage {stage_id} : {e}")
             return stage_id, None
 
         assert (len(protos) <=
@@ -190,33 +186,27 @@ class CompileWorker:
         # Compile accumulate_grad part to fully optimized
         rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
         try:
-            compiled = compile_with_given_strategy(
-                self.backend,
+            hlo_module = run_spmd_partitioner_pass(
                 sharding_annotated_computation,
-                strategy_config,
                 logical_mesh.num_devices,
-                HloProtoStatus.SHARDING_ANNOTATED,
-                bypass_device_assignment_check=True,
                 rewrite_for_grad_acc=rewrite_for_grad_acc,
                 rewrite_grad_acc_indices=config.output_acc_grad_indices)
         except IndexError as e:
-            logger.warning(f"Compilation error for stage {stage_id} : {e}")
+            logger.warning(f"Compilation error (spmd partitioner pass) "
+                           f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        optimized_proto = compiled.hlo_modules(
-        )[0].as_serialized_hlo_module_proto()
+        optimized_proto = hlo_module.as_serialized_hlo_module_proto()
         return stage_id, CompileOutput(optimized_proto, strategy_config,
                                        input_sharding_protos,
                                        output_sharding_proto, hooked_proto,
                                        apply_grad_input_sharding_protos)
 
-    def compile_proto_with_search(self, stage_id, proto, jaxpr_args,
-                                  autosharding_option, mesh_kwargs):
-        """Wrap compile_with_search."""
-        built = xla_client.XlaComputation(proto)
-        mesh_kwargs["as_option"] = autosharding_option
-        return stage_id, compile_with_search(self.backend, built, *jaxpr_args,
-                                             **mesh_kwargs)
+    def run_auto_sharding_pass(self, stage_id, proto, jaxpr_args, other_kwargs):
+        """Run auto-sharding pass on a proto."""
+        computation = xla_client.XlaComputation(proto)
+        return stage_id, run_auto_sharding_pass(computation, *jaxpr_args,
+                                                **other_kwargs)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -366,18 +356,11 @@ class HloCostModelProfileWorker:
                 intermediate_size, initial_size):
         """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
-        xla_computation = xla_client.XlaComputation(compiled_output.model_proto)
-
-        hlo_proto_status = HloProtoStatus.FULLY_OPTIMIZED
         try:
-            compiled = compile_with_given_strategy(
-                self.backend,
-                xla_computation,
-                compiled_output.strategy_config,
-                self.num_devices,
-                hlo_proto_status,
-                bypass_device_assignment_check=True,
-                run_backend_codegen=True)
+            compiled = run_backend_compilation(self.backend,
+                                               compiled_output.model_proto,
+                                               compiled_output.strategy_config,
+                                               self.num_devices, True)
         except RuntimeError:
             return stage_id, np.inf, -1, (0, 0, 0, 0)
 
@@ -421,10 +404,13 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         gpu_per_cpu = 1
         while gpu_per_cpu * num_cpus > num_gpus:
             gpu_per_cpu /= 2
+        env_vars = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"}
         worker_cls = ray.remote(num_cpus=1,
                                 num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
-            worker_cls.remote(prof_result, mesh_num_devices, num_micro_batches)
+            worker_cls.options(runtime_env={
+                "env_vars": env_vars
+            }).remote(prof_result, mesh_num_devices, num_micro_batches)
             for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)

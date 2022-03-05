@@ -7,7 +7,7 @@ import numpy as np
 import optax
 
 import alpa
-from alpa import parallelize, global_config, set_parallelize_options, testing
+from alpa import parallelize, global_config, set_parallelize_options
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.util import (map_to_shape, count_communication_primitives,
                         print_used_time, compute_param_number, GB)
@@ -232,7 +232,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
 
     # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
-    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
+    ilp_objective = executable.auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
     with open("tmp/last_wresnet_2d.hlo", "w") as fout:
         fout.write(hlo_text)

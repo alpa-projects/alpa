@@ -7,7 +7,7 @@ from typing import Callable, Sequence, Optional
 import numpy as np
 
 from jax import linear_util as lu, disable_jit
-import jax._src.lib.xla_bridge as xb
+from jax._src.lib import xla_bridge as xb
 from jax.core import Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym, ShapedArray
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
@@ -18,9 +18,8 @@ from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluste
 from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
-from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                               compile_with_given_strategy,
-                                               HloProtoStatus)
+from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
+                                               run_spmd_partitioner_pass)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
 
@@ -180,45 +179,33 @@ def shard_parallel_internal(
 
     # Compile a XLA executable
     if strategy_config is None:
-        compiled, strategy_config = compile_with_search(
-            backend,
+        hlo_module, strategy_config = run_auto_sharding_pass(
             built,
             avals,
             out_avals,
             donated_invars,
-            logical_mesh_choices,
-            "executable",
+            logical_mesh_choices[0],
+            "single",
             1,
             global_config.default_autosharding_option,
-            bypass_device_assignment_check=physical_mesh.is_distributed,
-            memory_budget_per_device=memory_budget_per_device,
-            logical_mesh_search_mode=logical_mesh_search_mode,
-            logical_mesh_search_physical_mesh=physical_mesh,
-            search_task=search_task,
-            record_file=record_file)
+            memory_budget_per_device=memory_budget_per_device)
     else:
-        compiled = compile_with_given_strategy(
-            backend,
-            built,
-            strategy_config,
-            physical_mesh.num_devices,
-            HloProtoStatus.UNOPTIMIZED,
-            bypass_device_assignment_check=physical_mesh.is_distributed)
+        assert NotImplementedError
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
     # Compile a mesh executable
-    compiled = NormalMeshDriverExecutable(physical_mesh,
-                                          compiled,
-                                          strategy_config,
-                                          avals,
-                                          out_avals,
-                                          donated_invars,
-                                          static_argnums=static_argnums,
-                                          out_tree_thunk=out_tree_thunk,
-                                          flop_count=flop_count)
-    return compiled.get_driver_callable()
+    executable = NormalMeshDriverExecutable(physical_mesh,
+                                            hlo_module,
+                                            strategy_config,
+                                            avals,
+                                            out_avals,
+                                            donated_invars,
+                                            static_argnums=static_argnums,
+                                            out_tree_thunk=out_tree_thunk,
+                                            flop_count=flop_count)
+    return executable.get_driver_callable()
 
 
 def shard_parallel_internal_gradient_accumulation(
@@ -251,22 +238,16 @@ def shard_parallel_internal_gradient_accumulation(
         built.as_hlo_module())
     flop_count *= num_micro_batches
 
-    hlo_proto_names, hlo_protos, strategy_config = compile_with_search(
-        backend,
+    hlo_proto_names, hlo_protos, strategy_config = run_auto_sharding_pass(
         built,
         avals,
         out_avals,
         donated_invars,
-        logical_mesh_choices,
+        logical_mesh_choices[0],
         "stage_protos",
         num_micro_batches,
         global_config.default_autosharding_option,
-        bypass_device_assignment_check=physical_mesh.is_distributed,
-        memory_budget_per_device=memory_budget_per_device,
-        logical_mesh_search_mode=logical_mesh_search_mode,
-        logical_mesh_search_physical_mesh=physical_mesh,
-        search_task=search_task,
-        record_file=record_file)
+        memory_budget_per_device=memory_budget_per_device)
     assert len(hlo_protos) == 2
     assert hlo_proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
@@ -286,19 +267,11 @@ def shard_parallel_internal_gradient_accumulation(
     setup_computation_alias(apply_grad, tmp_donate_invars)
 
     bypass_device_assignment_check = physical_mesh.is_distributed
-    accumulate_grad = compile_with_given_strategy(
-        backend,
-        accumulate_grad,
-        strategy_config,
-        physical_mesh.num_devices,
-        HloProtoStatus.SHARDING_ANNOTATED,
-        bypass_device_assignment_check,
-        rewrite_for_grad_acc=True)
-    apply_grad = compile_with_given_strategy(backend, apply_grad,
-                                             strategy_config,
-                                             physical_mesh.num_devices,
-                                             HloProtoStatus.SHARDING_ANNOTATED,
-                                             bypass_device_assignment_check)
+    accumulate_grad = run_spmd_partitioner_pass(accumulate_grad,
+                                                physical_mesh.num_devices,
+                                                rewrite_for_grad_acc=True)
+    apply_grad = run_spmd_partitioner_pass(apply_grad,
+                                           physical_mesh.num_devices)
 
     # Compile them to a single mesh executable
     mesh_executable = GradAccMeshDriverExecutable(physical_mesh,

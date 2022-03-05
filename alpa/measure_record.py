@@ -40,17 +40,20 @@ class StrategyConfig:
 
     def __init__(self, build_random_seed: int, logical_mesh_shape: Tuple[int],
                  all_gather_threshold: int, all_reduce_threshold: int,
-                 auto_sharding_solution_vector: np.ndarray):
+                 auto_sharding_solution_vector: np.ndarray,
+                 auto_sharding_objective: int):
         self.build_random_seed = build_random_seed
         self.logical_mesh_shape = logical_mesh_shape
         self.all_gather_threshold = all_gather_threshold
         self.all_reduce_threshold = all_reduce_threshold
         self.auto_sharding_solution_vector = auto_sharding_solution_vector
+        self.auto_sharding_objective = auto_sharding_objective
 
     def to_jsonable(self):
         return (self.build_random_seed, tuple(self.logical_mesh_shape),
                 self.all_gather_threshold, self.all_reduce_threshold,
-                to_int_tuple(self.auto_sharding_solution_vector))
+                to_int_tuple(self.auto_sharding_solution_vector),
+                self.auto_sharding_objective)
 
     @staticmethod
     def from_jsonable(value):
@@ -58,7 +61,8 @@ class StrategyConfig:
          all_reduce_threshold, auto_sharding_solution_vector) = value
         return StrategyConfig(build_random_seed, logical_mesh_shape,
                               all_gather_threshold, all_reduce_threshold,
-                              np.array(auto_sharding_solution_vector))
+                              np.array(auto_sharding_solution_vector),
+                              self.auto_sharding_objective)
 
 
 class MeasureInput(namedtuple("MeasureInput", ["task", "config"])):

@@ -7,7 +7,6 @@ import jax
 from jax import core, lax, numpy as jnp
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   wrap_name)
-from jax.lib import xla_client as xc
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
 import numpy as np
 

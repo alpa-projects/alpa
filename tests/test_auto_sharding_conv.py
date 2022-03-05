@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
+from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, global_config
 from alpa.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
@@ -179,9 +179,9 @@ class AutoShardingConvTest(unittest.TestCase):
         state = train_step(state, {"x": x, "y": y})
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-        return state, hlo_ir, testing.last_compiled_auto_sharding_objective
+        executable = train_step.get_executable(state, {"x": x, "y": y})
+        return (state, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def test_n_layer_conv_data_parallel(self):
         batch_size = 16

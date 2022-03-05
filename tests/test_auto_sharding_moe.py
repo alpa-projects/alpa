@@ -10,7 +10,7 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
 import optax
 
-from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
+from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, global_config
 from alpa.util import map_to_shape, count_communication_primitives
 from alpa.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.model.model_util import optax_adafactor
@@ -86,9 +86,15 @@ class AutoShardingMoETest(unittest.TestCase):
             }, deterministic, model.apply)
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
+        executable = train_step.get_executable(
+            optimizer, {
+                "hidden_states": hidden_states,
+                "attention_mask": attention_mask,
+                "labels": labels,
+                "rng": rngkey
+            }, deterministic, model.apply)
+        return (optimizer, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size,
                    num_heads, vocab_size, S, E, deterministic, device_mesh):
@@ -167,9 +173,16 @@ class AutoShardingMoETest(unittest.TestCase):
             }, deterministic, rngkey)
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-        return state, hlo_ir, testing.last_compiled_auto_sharding_objective
+        executable = train_step.get_executable(
+            state, {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
+                "position_ids": position_ids,
+                "labels": labels,
+            }, deterministic, rngkey)
+        return (state, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def test_moe_layer(self):
         batch_size = 64

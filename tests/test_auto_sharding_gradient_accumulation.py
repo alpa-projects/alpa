@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from alpa import (parallelize, set_parallelize_options, grad, testing,
-                  global_config, PhysicalDeviceMesh, DeviceCluster)
+from alpa import (parallelize, set_parallelize_options, grad, global_config,
+                  PhysicalDeviceMesh, DeviceCluster)
 from alpa.util import count_communication_primitives
 from alpa.testing import assert_allclose
 
@@ -33,7 +33,7 @@ class GradAccumulationTest(unittest.TestCase):
 
     def run_gradient_accumulation(self, use_ray, use_2d_mesh):
         if use_ray:
-            device_cluster = DeviceCluster()
+            device_cluster = DeviceCluster(use_cpu_on_driver=False)
             physical_mesh = device_cluster.get_physical_mesh()
             logical_mesh = physical_mesh.get_default_logical_mesh()
         else:

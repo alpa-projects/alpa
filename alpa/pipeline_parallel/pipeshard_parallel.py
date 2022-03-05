@@ -226,15 +226,14 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
     compile_workers = CompileWorkerPool(num_meshes, 1)
-    compile_fn = lambda w, v: w.compile_proto_with_search.remote(*v)  # noqa
+    compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
     compile_intermediate = [None] * num_meshes
     total_flops = 0
     default_autosharding_option = global_config.default_autosharding_option
     for mesh_idx in range(num_meshes):
         virtual_mesh = virtual_meshes[mesh_idx]
-        logical_mesh_choices = [
-            virtual_mesh.get_logical_mesh(logical_mesh_shapes[mesh_idx])
-        ]
+        logical_mesh = virtual_mesh.get_logical_mesh(
+            logical_mesh_shapes[mesh_idx])
         logical_mesh_search_mode = "cost_model"
         autosharding_option = default_autosharding_option.deepcopy_and_update(
             autosharding_option_dicts[mesh_idx])
@@ -242,8 +241,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:
             xla_stages[i] = XlaShardedPipelineComputation.dummy_computation(
-                jax_all_stages[i].name, logical_mesh_choices[0].shape,
-                gensym_func)
+                jax_all_stages[i].name, logical_mesh.shape, gensym_func)
 
         stage_donate_invars = [
             donate_invars_dict[stage_idx]
@@ -254,19 +252,15 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         if global_config.pipeline_distributed_compile:
             proto, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
-            mesh_kwargs = {
-                "logical_mesh_choices": logical_mesh_choices,
+            other_kwargs = {
+                "logical_mesh": logical_mesh,
                 "return_mode": "stage_protos",
+                "as_option": autosharding_option,
                 "num_micro_batches": num_micro_batches,
-                "bypass_device_assignment_check": True,
                 "memory_budget_per_device": memory_budget_per_device,
-                "logical_mesh_search_mode": logical_mesh_search_mode,
-                "search_task": search_task,
-                "record_file": record_file,
             }
-            compile_workers.submit(
-                compile_fn,
-                (mesh_idx, proto, jaxpr_args, autosharding_option, mesh_kwargs))
+            compile_workers.submit(compile_fn,
+                                   (mesh_idx, proto, jaxpr_args, other_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops
@@ -274,9 +268,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 donatable_dict[mesh_idx], acc_grad_outvars, num_micro_batches,
-                logical_mesh_choices, autosharding_option,
-                memory_budget_per_device, logical_mesh_search_mode, search_task,
-                record_file)
+                logical_mesh, autosharding_option, memory_budget_per_device)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

@@ -1,7 +1,7 @@
 """ILP Solver"""
 import numpy as np
 
-from alpa.auto_sharding import call_solver_serialized_args
+from alpa.shard_parallel.auto_sharding import _call_solver_serialized_args
 
 
 def call_solver(N, M, s_len, s_follow, E, A, L, c, d, m, r, v, s_init):
@@ -50,7 +50,7 @@ def call_solver(N, M, s_len, s_follow, E, A, L, c, d, m, r, v, s_init):
     # Serialize init value
     s_init_np = None
 
-    return call_solver_serialized_args(
+    return _call_solver_serialized_args(
         N, M, s_len_np, s_follow_np, E_np, A_np, L_np,
         c_np, d_np, m_np, r_np, v_np, s_init_np)
 

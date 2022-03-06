@@ -81,7 +81,7 @@ class MeshHostWorker:
         self.local_devices = self.backend.local_devices()
         self.allgather_communicators = {}
         self.buffers = {}  # Dict[uuid -> DeviceArray]
-        self.executables = {}
+        self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
@@ -207,7 +207,6 @@ class MeshHostWorker:
                                   rank,
                                   backend=backend,
                                   group_name=group_name)
-        return 0
 
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
@@ -329,7 +328,6 @@ class MeshHostWorker:
         assert col.get_rank(group_name) == my_rank
         g = col.check_and_get_group(group_name)
         g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx, nccl_uid)
-        return True
 
     def generate_nccl_uid(self, group_name):
         """Generate the NCCL unique ID in advance."""
@@ -423,7 +421,6 @@ class MeshHostWorker:
         return self.executables[uuid].profile_with_dummy_inputs(
             self.backend, self.local_devices, **kwargs)
 
-    # TODO(yonghao): the sync function should be carefully reconsidered
     def profile_resharding_send_task(self,
                                      uuid,
                                      buf_uuids,
@@ -431,6 +428,7 @@ class MeshHostWorker:
                                      repeat=3,
                                      number=3,
                                      sync=False):
+        # TODO(yonghao): the sync function should be carefully reconsidered
         run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
@@ -459,7 +457,6 @@ class MeshHostWorker:
 
     def reset_timer(self, name: str):
         timers(name).reset()
-        return True
 
     ##### Other Functions #####
     def sync(self):
@@ -506,16 +503,14 @@ class PhysicalDeviceMesh:
 
         if not use_ray:
             self.is_distributed = False
-            self.devices = devices or xb.local_devices()
+            self.devices = devices if devices is not None else xb.local_devices()
             self.host_ids = [0]
             self.host_info = None
-            self.head_ip = "127.0.0.1"
+            self.head_ip = head_ip or "127.0.0.1"
             self.num_devices_per_host = len(self.devices)
             self.workers = None
             self.launched = False
-            self.device_strs = [
-                device_id_to_str(self.head_ip, d.id) for d in self.devices
-            ]
+            self.device_strs = []
         else:
             self.is_distributed = True
             self.host_ids = host_ids

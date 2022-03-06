@@ -173,6 +173,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                  out_tree_thunk: Optional[Callable] = None,
                  flop_count: Optional[int] = None):
         self.physical_mesh = physical_mesh
+        self.hlo_module = hlo_module
         self.avals = avals
         self.out_avals = out_avals
         self.donated_invars = donated_invars
@@ -207,6 +208,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
+        if physical_mesh.head_ip == "fake":
+            return
+
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:

@@ -52,14 +52,16 @@ def _add_chunk(spec, chunk):
     return pxla.Chunked([chunk])
 
 
-def _get_mesh_mapping(sharding, init_mesh_mapping, squeezed_mesh_mapping):
+def _get_chunk_prefixsum(shardings):
     chunk_cnt = 0
     chunk_prefixsum = []
-    for dim_sharding in sharding:
+    for dim_sharding in shardings:
         chunk_prefixsum.append(chunk_cnt)
         if isinstance(dim_sharding, pxla.Chunked):
             chunk_cnt += len(dim_sharding.chunks)
 
+def _get_mesh_mapping(shardings, init_mesh_mapping, squeezed_mesh_mapping):
+    chunk_prefixsum = _get_chunk_prefixsum(shardings)
     mesh_mapping = []
     for mesh_dim, mapping in enumerate(squeezed_mesh_mapping):
         prev_mapping = init_mesh_mapping[mesh_dim]
@@ -72,10 +74,55 @@ def _get_mesh_mapping(sharding, init_mesh_mapping, squeezed_mesh_mapping):
         for (tensor_dim, chunk_idx) in mapping:
             mesh_mapping.append(
                 pxla.ShardedAxis(chunk_prefixsum[tensor_dim] + chunk_idx))
-            replicas //= sharding[tensor_dim].chunks[chunk_idx]
+            replicas //= shardings[tensor_dim].chunks[chunk_idx]
         if replicas > 1:
             mesh_mapping.append(pxla.Replicated(replicas))
     return mesh_mapping
+
+
+def _reduce_chunk(spec, tensor_dim, remove_last_chunks):
+    """
+    Rewrite the sharding spec on given dimension by removing the last n chunks
+    on that dimension.
+    """
+    def add_or_merge(mesh_mapping, replica):
+        if isinstance(mesh_mapping[-1], pxla.Replicated):
+            replica *= mesh_mapping[-1].replica
+            mesh_mapping[-1] = pxla.Replicated(replica)
+        else:
+            mesh_mapping.append(pxla.Replicated(replica))
+    # get new chunks
+    cur_chunks = spec.shardings[tensor_dim].chunks
+    new_chunks = cur_chunks[:-1 * remove_last_chunks]
+    new_chunks = (pxla.Chunked(new_chunks)
+                  if len(new_chunks) > 0 else pxla.NoSharding())
+    shardings = list(spec.shardings)
+    shardings[tensor_dim] = new_chunks
+    # axis->(tensor dim, chunk idx)
+    chunk_axis_to_tensor_dim = []
+    for t_dim, dim_spec in enumerate(spec.sharding):
+        if isinstance(dim_spec, pxla.Chunked):
+            for chunk_idx in range(len(dim_spec.chunks)):
+                chunk_axis_to_tensor_dim.append((t_dim, chunk_idx))
+    # (tensor dim, chunk idx)->new axis
+    new_prefix_sum = _get_chunk_prefixsum(shardings)
+    remove_idx = len(spec.sharding[tensor_dim].chunks) - remove_last_chunks
+    mesh_mapping = []
+    for mapping in spec.mesh_mapping:
+        if isinstance(mapping, pxla.Replicated):
+            add_or_merge(mesh_mapping, mapping.replica)
+            continue
+        assert isinstance(mapping, pxla.ShardedAxis)
+        t_dim, chunk_idx = chunk_axis_to_tensor_dim[mapping.axis]
+        if t_dim == tensor_dim and chunk_idx >= remove_idx:
+            replica = spec.sharding[t_dim].chunks[chunk_idx]
+            add_or_merge(mesh_mapping, replica)
+        else:
+            axis = new_prefix_sum[t_dim] + chunk_idx
+            mesh_mapping.append(pxla.ShardedAxis(axis))
+    # new spec
+    new_spec = pxla.ShardingSpec(shardings, mesh_mapping)
+    return new_spec
 
 
 def _allgather_logical_mesh_from_spec(sharding_spec):
@@ -467,13 +514,13 @@ class SymbolicReshardingTask(ReshardingTask):
         """Compile allgather tasks on destination mesh."""
         # FIXME(yonghao): get tensor dim specs.
         tensor_dim_specs = []
-        mesh_shape = self.dst_mesh.shape
         dst_indices = self.task_spec.dst_indices
         dst_spec = self.task_spec.dst_sharding_spec
         tensor_shape = self.task_spec.dst.tensor_shape
         for tensor_dim_spec in tensor_dim_specs:
             dst_indices = pxla.spec_to_indices(tensor_shape, dst_spec)
-            allgather_dims = tensor_dim_spec
+            mesh_shape = _allgather_logical_mesh_from_spec(dst_spec)
+            allgather_dims, tensor_dim = tensor_dim_spec
             allgather_groups = _signle_tensor_dim_allgather_groups(
                 mesh_shape, allgather_dims)
             tensor_slices = []
@@ -489,7 +536,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 ]
                 self._allgather_tasks[host].append(
                     ReshardingAllGatherSpec(device_ids, tensor_slices))
-            # FIXME(yonghao): rewrite dst_spec
+            dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(allgather_dims))
         return self._allgather_tasks
 
     # FIXME(Hao): test the function below; it might be buggy.

@@ -35,7 +35,7 @@ def _suffix_prod(ary):
     out = [1]
     for e in reversed(ary):
         out.append(out[-1] * e)
-    return reversed(out)
+    return list(reversed(out))
 
 
 def _get_chunk_value(spec):
@@ -57,6 +57,7 @@ def _get_chunk_prefixsum(shardings):
         chunk_prefixsum.append(chunk_cnt)
         if isinstance(dim_sharding, pxla.Chunked):
             chunk_cnt += len(dim_sharding.chunks)
+    return chunk_prefixsum
 
 
 def _get_mesh_mapping(shardings, init_mesh_mapping, squeezed_mesh_mapping):
@@ -86,18 +87,19 @@ def _reduce_chunk(spec, tensor_dim, remove_last_chunks):
     """
 
     def add_or_merge(mesh_mapping, replica):
-        if isinstance(mesh_mapping[-1], pxla.Replicated):
+        if (len(mesh_mapping) > 0 and
+                isinstance(mesh_mapping[-1], pxla.Replicated)):
             replica *= mesh_mapping[-1].replica
             mesh_mapping[-1] = pxla.Replicated(replica)
         else:
             mesh_mapping.append(pxla.Replicated(replica))
 
     # get new chunks
-    cur_chunks = spec.shardings[tensor_dim].chunks
+    cur_chunks = spec.sharding[tensor_dim].chunks
     new_chunks = cur_chunks[:-1 * remove_last_chunks]
     new_chunks = (pxla.Chunked(new_chunks)
                   if len(new_chunks) > 0 else pxla.NoSharding())
-    shardings = list(spec.shardings)
+    shardings = list(spec.sharding)
     shardings[tensor_dim] = new_chunks
     # axis->(tensor dim, chunk idx)
     chunk_axis_to_tensor_dim = []
@@ -160,6 +162,9 @@ def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
     """given an N-dim mesh shape, group all receivers into allgather groups."""
 
     def iter_tool(depth, length, steps):
+        if len(steps) == 0:
+            yield 0
+            return
         local_delta = [1] * (length[depth] - 1) + [-1 * (length[depth] - 1)]
         offset = 0
         for delta in local_delta:
@@ -191,6 +196,7 @@ def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
         for offset in offsets:
             receivers.append(offset + group_idx)
         groups.append(receivers)
+    return groups
 
 
 class _AllgatherSpec:
@@ -213,7 +219,7 @@ class _AllgatherSpec:
 
     def mapped_mesh_dim(self, tensor_dim, sharding_spec):
         """Get the mapped mesh dim of a tensor dim's allgather chunks."""
-        shardings = sharding_spec.shardings
+        shardings = sharding_spec.sharding
         prefix_sum = _get_chunk_prefixsum(shardings)
 
         allgather_chunks = self._allgather_chunk_num[tensor_dim]
@@ -228,7 +234,7 @@ class _AllgatherSpec:
         return mesh_dims
 
     def start_idx(self, tensor_dim, sharding_spec):
-        dim_sharding = sharding_spec.shardings[tensor_dim]
+        dim_sharding = sharding_spec.sharding[tensor_dim]
         return len(dim_sharding.chunks) - self._allgather_chunk_num[tensor_dim]
 
     @property
@@ -414,7 +420,7 @@ class SymbolicReshardingTask(ReshardingTask):
         for mesh_dim in reversed(logical_mesh_shape):
             offsets.append(flatten_idx % mesh_dim)
             flatten_idx //= mesh_dim
-        return reversed(offsets)
+        return list(reversed(offsets))
 
     def _indices_in_dst_post_allgather(self,
                                        indices,
@@ -430,7 +436,8 @@ class SymbolicReshardingTask(ReshardingTask):
         shape = self.task_spec.aval.shape
         for tensor_dim in allgather_spec.allgather_dims:
             allgather_start_idx = allgather_spec.start_idx(tensor_dim, dst_spec)
-            mapped_chunks = dst_spec.shardings[tensor_dim][allgather_start_idx:]
+            mapped_chunks = dst_spec.sharding[tensor_dim].chunks[
+                allgather_start_idx:]
             mapped_offset = [
                 mesh_idx[idx]
                 for idx in allgather_spec.mapped_mesh_dim(tensor_dim, dst_spec)
@@ -521,6 +528,8 @@ class SymbolicReshardingTask(ReshardingTask):
 
     def _compile_send_recv_tasks(self):
         """Generate all send/recv tasks."""
+        logical_mesh_shape = _allgather_logical_mesh_from_spec(
+            self.task_spec.dst_sharding_spec)
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
                 self.task_spec.dst_tile_to_src_tiles_map):
             spec_plan = self.task_spec.strategy.per_spec_plans[i]
@@ -541,6 +550,8 @@ class SymbolicReshardingTask(ReshardingTask):
                 receiver_rank, receiver_gpu_idx = (
                     self.collective_group.device_str_to_rank_map[receiver])
                 recv_tile_specs = []
+                mesh_idx = self._allgather_receiver_offset(
+                    receiver, logical_mesh_shape)
                 for sender_idx, sender in enumerate(senders):
                     # Sender's task
                     sender_worker = self.collective_group.device_str_to_mesh_worker_map[
@@ -552,9 +563,8 @@ class SymbolicReshardingTask(ReshardingTask):
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
                         self.collective_group.device_str_to_rank_map[sender]
-                    allgather_offset = self._allgather_receiver_offset(receiver)
                     indices_in_dst_tile = self._indices_in_dst_post_allgather(
-                        indices_in_dst_tiles[sender_idx], allgather_offset)
+                        indices_in_dst_tiles[sender_idx], mesh_idx)
                     recv_tile_specs.append(
                         ReshardingTileSpec(indices_in_dst_tile, sender_rank,
                                            sender_gpu_idx))
@@ -577,13 +587,21 @@ class SymbolicReshardingTask(ReshardingTask):
             allgather_groups = _signle_tensor_dim_allgather_groups(
                 mesh_shape, mesh_dims)
             tensor_slices = []
-            for offset, receiver_idx in enumerate(allgather_groups[0]):
+            for receiver_idx in allgather_groups[0]:
                 indices = dst_indices[receiver_idx]
+                flatten_idx = receiver_idx
+                mesh_idx = []
+                for mesh_dim in reversed(mesh_shape):
+                    mesh_idx.append(flatten_idx % mesh_dim)
+                    flatten_idx //= mesh_dim
+                mesh_idx = list(reversed(mesh_idx))
                 tensor_slices.append(
-                    self._indices_in_dst_post_allgather(
-                        indices, offset, dst_spec, tmp_allgather_spec))
+                    self._indices_in_dst_post_allgather(indices, mesh_idx,
+                                                        dst_spec,
+                                                        tmp_allgather_spec))
             for group_ids in allgather_groups:
-                host = group_ids[0] // self.dst_mesh.num_devices_per_host
+                host_idx = group_ids[0] // self.dst_mesh.num_devices_per_host
+                host = self.dst_mesh.workers[host_idx]
                 device_ids = [
                     gid % self.dst_mesh.num_devices_per_host
                     for gid in group_ids

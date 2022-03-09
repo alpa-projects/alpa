@@ -391,8 +391,7 @@ class MeshHostWorker:
     def put_resharding_allgather_task(self, uuid, tasks):
         all_gather_task = ReshardingAllGatherTask(tasks)
         allgather_specs = all_gather_task.allgather_specs
-        for group_idx in allgather_specs:
-            allgather_spec: ReshardingAllGatherSpec = allgather_specs[group_idx]
+        for allgather_spec in allgather_specs:
             device_ids = sorted(allgather_spec.device_ids)
             if repr(device_ids) not in self.allgather_communicators:
                 communicators = nccl.NcclCommunicator.initAll(list(device_ids))
@@ -402,8 +401,7 @@ class MeshHostWorker:
     def run_allgather_task(self, uuid, buffer_uuids):
         task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
         allgather_specs = task.allgather_specs
-        for group_idx in allgather_specs:
-            allgather_spec: ReshardingAllGatherSpec = allgather_specs[group_idx]
+        for allgather_spec in allgather_specs:
             self.allgather(buffer_uuids, allgather_spec.device_ids,
                            allgather_spec.tensor_slices)
 

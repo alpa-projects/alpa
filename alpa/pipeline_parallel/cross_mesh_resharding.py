@@ -575,20 +575,18 @@ class SymbolicReshardingTask(ReshardingTask):
 
     def _compile_allgather_tasks(self):
         """Compile allgather tasks on destination mesh."""
-        dst_indices = self.task_spec.dst_indices
         dst_spec = self.task_spec.dst_sharding_spec
         tensor_shape = self.task_spec.dst.tensor_shape
         allgather_spec = self.task_spec.allgather_spec
         tmp_allgather_spec = self.task_spec.allgather_spec
         for tensor_dim in allgather_spec.allgather_dims:
-            dst_indices = pxla.spec_to_indices(tensor_shape, dst_spec)
+            indices = pxla.spec_to_indices(tensor_shape, dst_spec)[0]
             mesh_shape = _allgather_logical_mesh_from_spec(dst_spec)
             mesh_dims = allgather_spec.mapped_mesh_dim(tensor_dim, dst_spec)
             allgather_groups = _signle_tensor_dim_allgather_groups(
                 mesh_shape, mesh_dims)
             tensor_slices = []
             for receiver_idx in allgather_groups[0]:
-                indices = dst_indices[receiver_idx]
                 flatten_idx = receiver_idx
                 mesh_idx = []
                 for mesh_dim in reversed(mesh_shape):

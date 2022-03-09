@@ -85,6 +85,7 @@ class MeshHostWorker:
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
+        self.data_loaders = {}  # Dict[uuid -> ]
         set_override_backend(self.backend)
 
         if global_config.pipeline_use_signal_send_recv:
@@ -128,8 +129,10 @@ class MeshHostWorker:
                             device_id: int,
                             shape: Sequence[int],
                             dtype=np.float32):
+        if dtype == np.int64:
+            dtype = np.int32
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
-            np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
+            np.empty(shape, dtype), self.local_devices[device_id]))
 
     def shard_and_put_non_zero_buffer(self, uuids, shape, dtype, indices,
                                       num_batch):
@@ -407,6 +410,13 @@ class MeshHostWorker:
 
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)
+
+    ##### Data Loader Related Functions #####
+    def put_data_loader(self, uuid, gen_func):
+        pass
+
+    def delete_data_loader(self, uuid):
+        del self.data_loaders[uuid]
 
     ##### Profiling Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
@@ -795,12 +805,12 @@ class PhysicalDeviceMesh:
                 DistributedArray(self, microbatch_aval, sharding_spec, refs))
         return microbatch_arrays
 
-    def shard_args_to_bufs(self, sharding_indices: Sequence[Sequence[Index]],
+    def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
         """Shard high-level arguments as low-level buffers."""
         if self.is_distributed:
             input_bufs = []
-            for arg, indices, donated in zip(args, sharding_indices,
+            for arg, indices, donated in zip(args, shard_indices,
                                              donated_invars):
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
@@ -822,23 +832,24 @@ class PhysicalDeviceMesh:
             return input_bufs
         else:
             # single host w/o Ray
-            return pxla.shard_args(self.devices, sharding_indices, args)
+            return pxla.shard_args(self.devices, shard_indices, args)
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
-                             sharding_indices: Sequence[Sequence[Index]],
+                             shard_indices: Sequence[Sequence[Index]],
                              sharding_specs: Sequence[ShardingSpec], args):
         """Shard arguments (np.ndarray) as distributed arrays."""
         arrays = []
         if self.is_distributed:
             for i in range(len(avals)):
-                buffers = _shard_array(args[i], self, sharding_indices[i])
+                #buffers = _shard_array(args[i], self, shard_indices[i])
+                buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
                 arrays.append(
                     DistributedArray(self, avals[i], sharding_specs[i], buffers,
-                                     sharding_indices[i]))
+                                     shard_indices[i]))
         else:
             for i in range(len(avals)):
                 shards = [
-                    args[i][sharding_indices[i][k]]
+                    args[i][shard_indices[i][k]]
                     for k in range(len(self.devices))
                 ]
                 buffers = [
@@ -846,7 +857,7 @@ class PhysicalDeviceMesh:
                 ]
                 arrays.append(
                     pxla._ShardedDeviceArray(avals[i], sharding_specs[i],
-                                             buffers, sharding_indices[i]))
+                                             buffers, shard_indices[i]))
 
         return arrays
 
@@ -883,7 +894,7 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
-    ##### Profiling related Functions #####
+    ##### Profiling Related Functions #####
     def profile_hlo_ops(self,
                         op_infos: Sequence[Tuple],
                         cache_filename: str,

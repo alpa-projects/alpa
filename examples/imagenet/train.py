@@ -239,10 +239,12 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
-  #ray.init(address="auto")
-  #physical_mesh = alpa.DeviceCluster().get_physical_mesh()
-  physical_mesh = alpa.PhysicalDeviceMesh()
+  ray.init(address="auto")
+  physical_mesh = alpa.DeviceCluster().get_physical_mesh()
+  #physical_mesh = alpa.PhysicalDeviceMesh()
   alpa.set_parallelize_options(physical_mesh)
+
+  #alpa.global_config.use_dummy_value_for_benchmarking = True
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)

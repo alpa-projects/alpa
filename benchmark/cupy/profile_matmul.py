@@ -29,11 +29,7 @@ def benchmark(n, k, m, dtype):
 benchmark(1024, 1024, 1024, "float32")
 benchmark(4096, 4096, 4096, "float32")
 benchmark(8192, 8192, 8192, "float32")
+benchmark(1024, 1024, 1024, "float16")
 benchmark(4096, 4096, 4096, "float16")
-
-#benchmark(4096, 2304, 9216, "float32")
-#benchmark(4096, 9216, 2304, "float32")
-#
-#benchmark(8192, 2304, 4608, "float32")
-#benchmark(8192, 4608, 2304, "float32")
-
+benchmark(8192, 8192, 8192, "float16")
+benchmark(16384, 16384, 16384, "float16")

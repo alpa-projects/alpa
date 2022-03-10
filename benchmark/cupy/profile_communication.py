@@ -143,7 +143,7 @@ class GpuHost:
 
     def profile(self):
         # All-reduce
-        for i in range(28, 29):
+        for i in range(27, 31):
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size))])
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size//2))])
 
@@ -154,7 +154,7 @@ class GpuHost:
             #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
 
         # Send-recv
-        for i in range(28, 29):
+        for i in range(27, 31):
             self.profile_send_recv(1 << i, cp.float32, 0, 1)
             self.profile_send_recv(1 << i, cp.float32, 0, self.world_size - 1)
 

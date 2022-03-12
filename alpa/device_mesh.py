@@ -190,8 +190,14 @@ class MeshHostWorker:
     def run_executable(self, uuid: int, *args, **kwargs):
         self.executables[uuid].execute_on_worker(*args, **kwargs)
 
+    def get_exec_hlo_text(self, uuid: int):
+        return self.executables[uuid].get_hlo_text()
+
     def get_exec_total_allocation_size(self, uuid: int):
         return self.executables[uuid].get_total_allocation_size()
+
+    def get_exec_grad_sync_channel_ids(self, uuid: int):
+        return self.executables[uuid].grad_sync_channel_ids
 
     ##### Cross Mesh Resharding Related Functions #####
     @staticmethod
@@ -534,13 +540,10 @@ class PhysicalDeviceMesh:
                 ]
             self.devices = devices
             self.device_strs = []
-            for i, _ in enumerate(self.host_ids):
+            for i in range(self.num_hosts):
                 ip = self.host_info[i]["NodeManagerAddress"]
-                self.device_strs.extend([
-                    device_id_to_str(ip, i)
-                    for devices_this_host in self.devices
-                    for i in devices_this_host
-                ])
+                self.device_strs.extend(
+                    [device_id_to_str(ip, j) for j in devices[i]])
             self._launch_xla_servers()
 
             self.to_delete_remote_buffers = [[] for _ in range(self.num_hosts)]
@@ -1171,13 +1174,10 @@ class VirtualPhysicalMesh:
         self.devices = devices
         # Depending on gpu_ids, generate device strs and ask Ray to allocate.
         self.device_strs = []
-        for i, _ in enumerate(self.host_ids):
+        for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
-            self.device_strs.extend([
-                device_id_to_str(ip, i)
-                for devices_this_host in devices
-                for i in devices_this_host
-            ])
+            self.device_strs.extend(
+                [device_id_to_str(ip, j) for j in devices[i]])
 
     def slice_1d(self, dim, indices):
         """
@@ -1281,31 +1281,19 @@ class VirtualPhysicalMesh:
         return self.get_logical_mesh((1, self.num_devices))
 
 
-def set_jax_env_on_driver(use_gpu_on_driver=False):
+def set_jax_env_on_driver(use_cpu_on_driver=True):
     """Set jax environment flags for the driver process, so the driver
     process can release GPU memory for the worker processes."""
 
     # Use cpu backend
-    if not use_gpu_on_driver:
-        jax.config.update('jax_platform_name', 'cpu')
-
-    # Use platform allocator in the driver process for auto-tuning
-    # the conv algorithms and gemm algorithms in cudnn and cublas.
-    old_allocator = os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", None)
-
-    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-    backend = xb.get_backend("gpu")
-
-    if old_allocator:
-        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = old_allocator
-    else:
-        del os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]
+    if use_cpu_on_driver:
+        jax.config.update("jax_platform_name", "cpu")
 
 
 class DeviceCluster:
     """A ray cluster with GPU devices."""
 
-    def __init__(self, use_gpu_on_driver=False):
+    def __init__(self, use_cpu_on_driver=True):
         # pylint: disable=import-outside-toplevel
         from ray.worker import _global_node as ray_global_node
         try:
@@ -1313,7 +1301,7 @@ class DeviceCluster:
         except AttributeError:
             raise RuntimeError(
                 "Cannot access ray global node. Did you call ray.init?")
-        self.head_ip = self.head_info['node_ip_address']
+        self.head_ip = self.head_info["node_ip_address"]
 
         # Gather host ids
         self.host_info = []
@@ -1329,7 +1317,7 @@ class DeviceCluster:
             assert number.is_integer()
             self.num_devices.append(int(number))
 
-        set_jax_env_on_driver(use_gpu_on_driver)
+        set_jax_env_on_driver(use_cpu_on_driver)
 
     @property
     def num_cpus(self):

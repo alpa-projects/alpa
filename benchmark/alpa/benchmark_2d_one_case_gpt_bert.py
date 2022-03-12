@@ -6,7 +6,7 @@ import numpy as np
 import optax
 
 import alpa
-from alpa import parallelize, global_config, set_parallelize_options, testing
+from alpa import parallelize, global_config, set_parallelize_options
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.util import map_to_shape, count_communication_primitives, print_used_time, GB
@@ -152,7 +152,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
 
     # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
-    ilp_objective = testing.last_compiled_auto_sharding_objective or 0.0
+    ilp_objective = executable.auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
     with open("tmp/last_2d.hlo", "w") as fout:
         fout.write(hlo_text)

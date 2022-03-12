@@ -32,10 +32,6 @@ class AutoShardingBasicTest(unittest.TestCase):
         a = jnp.ones((128, 128))
         b = add_one(a)
 
-        # Check sharding strategy
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
-
         # Assert b is sharded
         assert (b.sharding_spec == pxla.ShardingSpec(
             sharding=(NoSharding(), Chunked([4])),
@@ -100,8 +96,9 @@ class AutoShardingBasicTest(unittest.TestCase):
         func(optimizer, x, y, {"dropout": rngkey})
 
         # Check sharding strategy (data-parallel)
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+        hlo_ir = func.get_executable(optimizer, x, y, {
+            "dropout": rngkey
+        }).get_hlo_text()
         assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
 
         assert hlo_ir.count("channel_id") == 1
@@ -132,9 +129,11 @@ class AutoShardingBasicTest(unittest.TestCase):
             #b = a.reshape((9, 16))
             return b
 
-        split(jnp.ones((144)))
+        a = jnp.ones(144)
+        split(a)
 
-        assert_close(testing.last_compiled_auto_sharding_objective, 0)
+        executable = split.get_executable(a)
+        assert_close(executable.auto_sharding_objective, 0)
 
 
 def suite():

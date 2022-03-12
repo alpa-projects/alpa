@@ -159,12 +159,12 @@ class BaseDistributedRuntime(BaseRuntime):
         raise NotImplementedError()
 
     def _precompile_sharding_specs(self):
-        """Run get_compiled() for each stage to get sharding specs."""
+        """Run spmd partitioner pass for each stage to get sharding specs."""
         for stage_idx, stage in enumerate(self.stages):
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
             assert len(mesh_indices) == 1
             mesh_idx = mesh_indices[0]
-            stage.get_compiled(self.physical_meshes[mesh_idx])
+            stage.get_spmd_partitioned()
 
     def _establish_nccl_groups(self):
         """

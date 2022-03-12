@@ -185,10 +185,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         self.uuid_counter = 0
         self.flop_count = flop_count
-        self.instruction_lists = {}
-        self.hlo_texts_after_spmd_partitioner = []
+        self.instruction_lists = {}  # Dict[worker -> List[PipelineInstruction]]
 
-        # states
         self.donate_invars = []
         self.delete_after_shard = []
         self.input_indices = []
@@ -199,13 +197,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.mesh_output_indices = []
         self.output_spec_list = [[] for _ in range(self.num_mesh)]
 
-        # make this the states of this class
+        self.hlo_texts_after_spmd_partitioner = []
+        self.executable_uuids = []
+
+        # Compile pipeline instructions and send mesh executables to workers
         (executable_config_lists, input_local_uuid_list, grad_uuids,
          accumulated_uuid_lists) = self._compile()
 
-        self._worker_executable_uuid_mapping = {}
-        self._executable_uuid_worker_mapping = {}
-        # we create a PipelineMeshWorkerExecutable for each MeshHostWorker
+        # Create a PipelineMeshWorkerExecutable for each MeshHostWorker
+        self.worker_executable_uuid_mapping = {}
+        self.executable_uuid_worker_mapping = {}
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_grad_uuids = list(grad_uuids[mesh_idx])
             for worker_idx, worker in enumerate(physical_mesh.workers):
@@ -221,10 +222,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 uuid = next_mesh_executable_uuid()
                 worker.put_executable.remote(uuid, PipelineMeshWorkerExecutable,
                                              *args)
-                self._worker_executable_uuid_mapping[worker] = uuid
-                self._executable_uuid_worker_mapping[uuid] = worker
+                self.worker_executable_uuid_mapping[worker] = uuid
+                self.executable_uuid_worker_mapping[uuid] = worker
 
-        # for handling input/outputs
+        # For handling input/outputs
         self.outs_handler: Callable = None
         self._setup_outs_handler()
 
@@ -268,12 +269,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # compile args for tasks
         (executable_config_lists, executable_uuids,
          grad_uuids) = self._compile_task_configs(var_at)
-        # mesh_arg_indices
+        self.executable_uuids = executable_uuids
 
         input_local_uuid_list = self._compile_split_input_to_microbatches(
             not_batch_invars, var_at)
 
-        # Microbatch-related work
         worker_tmp_instructions = {}
         for mesh in self.physical_meshes:
             for worker in mesh.workers:
@@ -462,7 +462,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         """
         Assign uuids for each task and prepare configs.
 
-        It resembles the __init__() method in DriverExecutables.
+        The configs save arguments for the __init__() method in DriverExecutable.
 
         Returns:
             executable_config_lists: configs of executables put on each mesh;
@@ -523,18 +523,13 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_idx = self.schedule.stage_placement(stage_idx)
             assert len(mesh_idx) == 1
             mesh_idx = list(mesh_idx)[0]
-            compiled = stage.get_compiled(self.physical_meshes[mesh_idx])
-            hlo_module = compiled.hlo_modules()[0]
-            self.hlo_texts_after_spmd_partitioner.append(hlo_module.to_string())
+            hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
-            strategy_config = stage.strategy_config
-            grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
-                hlo_module, stage.output_acc_grad_indices)
             for worker in self.physical_meshes[mesh_idx].workers:
                 executable_config_lists[worker].append(
-                    PartialGradWorkerExecutableConfig(exec_uuid, hlo_proto,
-                                                      strategy_config,
-                                                      grad_sync_channel_ids))
+                    PartialGradWorkerExecutableConfig(
+                        exec_uuid, hlo_proto, stage.strategy_config,
+                        stage.output_acc_grad_indices))
         return executable_config_lists, executable_uuids, grad_uuids
 
     def _compile_split_input_to_microbatches(self, not_batch_invars, var_at):
@@ -829,7 +824,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
-                    self._worker_executable_uuid_mapping[worker],
+                    self.worker_executable_uuid_mapping[worker],
                     input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
                     **kwargs)
 
@@ -991,6 +986,19 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
     def get_hlo_text(self, after_spmd_partitioner=True):
         """Return the HLO text for all stages."""
         if after_spmd_partitioner:
+            if self.hlo_texts_after_spmd_partitioner:
+                return self.hlo_texts_after_spmd_partitioner
+
+            hlo_texts = []
+            for stage_idx in range(len(self.stages)):
+                mesh_idx = self.schedule.stage_placement(stage_idx)
+                assert len(mesh_idx) == 1
+                mesh_idx = list(mesh_idx)[0]
+                physical_mesh = self.physical_meshes[mesh_idx]
+                hlo_text = physical_mesh.workers[0].get_exec_hlo_text.remote(
+                    self.executable_uuids[stage_idx])
+                hlo_texts.append(hlo_text)
+            self.hlo_texts_after_spmd_partitioner = ray.get(hlo_texts)
             return self.hlo_texts_after_spmd_partitioner
         else:
             ret = []
@@ -1048,7 +1056,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker: MeshHostWorker
                 all_worker_profiled.append(
                     worker.profile_executable_with_dummy_inputs.remote(
-                        self._worker_executable_uuid_mapping[worker]))
+                        self.worker_executable_uuid_mapping[worker]))
             if len(all_worker_profiled) == 1:
                 all_worker_profiled = all_worker_profiled[0]
             all_profiled_handles.append(all_worker_profiled)

@@ -23,10 +23,6 @@ from alpa.pipeline_parallel.layer_construction import (
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.util import get_ray_namespace_str
 
-# Store last compiled executables for unit tests.
-last_compiled_executable = None
-last_compiled_auto_sharding_objective = -1
-
 
 def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
     """Assert the arrays in x and y are all close."""

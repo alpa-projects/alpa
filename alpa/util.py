@@ -19,6 +19,7 @@ import jax
 from jax._src import dispatch
 from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.dlpack import from_dlpack, to_dlpack
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
                       ShapedArray, Var)
@@ -26,7 +27,6 @@ from jax.experimental.maps import FrozenDict
 from jax.interpreters import xla, pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import _DeviceArray
-from jax.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import jax.numpy as jnp
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import optim, linen as nn
 
-from alpa import parallelize, set_parallelize_options, testing, PhysicalDeviceMesh, global_config
+from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, global_config
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
                                    FlaxBertForMaskedLMModule)
 from alpa.util import count_communication_primitives
@@ -82,10 +82,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
             }, deterministic, model.apply)
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+        executable = train_step.get_executable(
+            optimizer, {
+                "hidden_states": hidden_states,
+                "attention_mask": attention_mask,
+                "label": label,
+                "rng": rngkey
+            }, deterministic, model.apply)
 
-        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
+        return (optimizer, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
                      num_heads, vocab_size, deterministic, device_mesh):
@@ -146,10 +152,18 @@ class AutoShardingAttentionTest(unittest.TestCase):
             })
 
         # Get optimized HLO IR
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+        executable = train_step.get_executable(
+            optimizer, {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
+                "position_ids": position_ids,
+                "labels": labels,
+                "rng": rngkey
+            })
 
-        return optimizer, hlo_ir, testing.last_compiled_auto_sharding_objective
+        return (optimizer, executable.get_hlo_text(),
+                executable.auto_sharding_objective)
 
     def test_bert_layer_data_parallel(self):
         batch_size = 64
@@ -365,11 +379,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         optimize = func(optimizer, x, y)
 
         # Check communication cost
-        hlo_module = testing.last_compiled_executable.hlo_modules()[0]
-        hlo_ir = hlo_module.to_string()
+        executable = func.get_executable(optimizer, x, y)
+        hlo_ir = executable.get_hlo_text()
+        objective = executable.auto_sharding_objective
 
         params = jax.tree_util.tree_leaves(optimizer.target)
-        objective = testing.last_compiled_auto_sharding_objective
         expected = (
             logical_mesh.all_reduce_cost(
                 vocab_size * hidden_size * 4 / mesh_shape[1], 0) +

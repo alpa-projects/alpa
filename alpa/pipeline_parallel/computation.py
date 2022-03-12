@@ -6,14 +6,14 @@ from typing import Sequence, Any, Dict
 
 import jax
 from jax import jit
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
                       ShapedArray)
-from jax.interpreters import xla
+from jax.interpreters import xla, pxla
 from jax.interpreters.partial_eval import remat_call_p
-from jax.lib import xla_bridge as xb, xla_client as xc
 from jaxlib import xla_extension
 import numpy as np
 
@@ -23,11 +23,10 @@ from alpa.mesh_executable import PartialGradAccMeshDriverExecutable
 from alpa.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
                                                   pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.shard_parallel.auto_sharding import (compile_with_search,
-                                               compile_with_given_strategy,
+from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
+                                               run_spmd_partitioner_pass,
                                                get_input_output_sharding_specs,
-                                               hlo_sharding_to_sharding_spec,
-                                               HloProtoStatus)
+                                               hlo_sharding_to_sharding_spec)
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
                        jaxpr_to_hlo_computation, setup_computation_alias,
@@ -193,14 +192,14 @@ class XlaPipelineComputation(PipelineComputation):
 class XlaShardedPipelineComputation(PipelineComputation):
     """A pipeline computation defined by XLA HLO proto. The XLA HLO is annotated by sharding spec."""
 
-    hlo_proto: Any = None
-    donated_invars: Any = None
+    sharding_annotated_proto: bytes = None
+    donated_invars: Sequence[bool] = None
     strategy_config: StrategyConfig = None
-    input_sharding_specs: Any = None
-    output_sharding_specs: Any = None
+    input_sharding_specs: Sequence[pxla.ShardingSpec] = None
+    output_sharding_specs: Sequence[pxla.ShardingSpec] = None
     output_acc_grad_indices: Sequence[int] = None
     donatables: OrderedSet[Var] = None
-    compiled = None
+    spmd_partitioned_hlo_module: xe.HloModule = None
 
     @classmethod
     def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
@@ -208,14 +207,15 @@ class XlaShardedPipelineComputation(PipelineComputation):
         backend_name = 'gpu'
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
-                                         logical_mesh_shape, 1, 1, None)
+                                         logical_mesh_shape, 1, 1, None, 0)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
-        hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+        sharding_annotated_proto = compiled.hlo_modules(
+        )[0].as_serialized_hlo_module_proto()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
             name=name,
-            hlo_proto=hlo_proto,
+            sharding_annotated_proto=sharding_annotated_proto,
             strategy_config=strategy_config,
             donated_invars=[],
             invars=[],
@@ -229,11 +229,11 @@ class XlaShardedPipelineComputation(PipelineComputation):
             cls,
             *,
             jax_pipeline_computation: JaxPipelineComputation,
-            auto_sharded_hlo_proto: xc.XlaComputation,
+            sharding_annotated_proto: xc.XlaComputation,
             strategy_config: StrategyConfig,
-            donated_invars=None,
-            acc_grad_outvars=(),
-            donatables=None):
+            donated_invars: Sequence[bool] = None,
+            acc_grad_outvars: Sequence[Var] = (),
+            donatables: OrderedSet[Var] = None):
         """Run auto-sharding optimizer on a Jax pipeline computation."""
         if donatables is None:
             donatables = OrderedSet()
@@ -248,7 +248,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         ]
 
         return cls(name=jax_pipeline_computation.name,
-                   hlo_proto=auto_sharded_hlo_proto,
+                   sharding_annotated_proto=sharding_annotated_proto,
                    strategy_config=strategy_config,
                    donated_invars=donated_invars,
                    invars=jax_pipeline_computation.invars,
@@ -303,66 +303,48 @@ class XlaShardedPipelineComputation(PipelineComputation):
         for invar in donated_invars:
             self.donated_invars[var_indices[invar]] = True
 
-    def get_compiled(self, mesh=None, is_distributed=None):
-        """Compile the XLA computation to get sharding specs."""
-        # TODO(yonghao): use more general cache functions
-        if self.compiled is not None:
-            return self.compiled
-
-        if (not isinstance(mesh, PhysicalDeviceMesh) and
-                is_distributed is None):
-            raise RuntimeError(
-                "Require a pre-allocated physical mesh to compile the runnable."
-            )
-
-        is_distributed = (mesh.is_distributed
-                          if mesh is not None else is_distributed)
+    def get_spmd_partitioned(self):
+        """Run spmd partitioner to get the input/output sharding specs after partitioning."""
+        if self.spmd_partitioned_hlo_module is not None:
+            return self.spmd_partitioned_hlo_module
 
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
-        xla_computation = xc.XlaComputation(self.hlo_proto)
+        xla_computation = xc.XlaComputation(self.sharding_annotated_proto)
         setup_computation_alias(xla_computation, self.donated_invars)
-        backend_name = 'gpu'
-        backend = xb.get_backend(backend_name)
+
         num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
-        compiled = compile_with_given_strategy(
-            backend,
+        spmd_partitioned_hlo_module = run_spmd_partitioner_pass(
             xla_computation,
-            self.strategy_config,
             num_devices,
-            HloProtoStatus.SHARDING_ANNOTATED,
-            bypass_device_assignment_check=is_distributed,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-            compiled.hlo_modules()[0], avals, out_avals, num_devices,
+            spmd_partitioned_hlo_module, avals, out_avals, num_devices,
             strategy_config.logical_mesh_shape)
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
-        self.compiled = compiled
-        return compiled
+        self.spmd_partitioned_hlo_module = spmd_partitioned_hlo_module
+        return spmd_partitioned_hlo_module
 
-    def get_runnable(self, mesh=None):
+    def get_runnable(self, mesh):
         """Return a callable of the pipeline computation."""
-        compiled = self.get_compiled(mesh)
-        # hlo_module = compiled.hlo_modules()[0]
+        hlo_module = self.get_spmd_partitioned()
 
-        # Return the final callable
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
-            mesh, compiled, self.strategy_config, avals, out_avals,
+            mesh, hlo_module, self.strategy_config, avals, out_avals,
             self.donated_invars, self.output_acc_grad_indices)
-
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):
         """Get the HLO text."""
-        xla_computation = xc.XlaComputation(self.hlo_proto)
+        xla_computation = xc.XlaComputation(self.sharding_annotated_proto)
         return xla_computation.as_hlo_text()
 
 
@@ -793,7 +775,7 @@ def generate_computations_from_protos(jax_computations, computation_names,
     proto_dict = dict(zip(computation_names, computation_protos))
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto_dict[computation.name],
+            sharding_annotated_proto=proto_dict[computation.name],
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
@@ -858,9 +840,8 @@ def generate_sharded_xla_computations_arguments(
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
-        num_micro_batches, logical_mesh_choices, autosharding_option,
-        memory_budget_per_device, logical_mesh_search_mode, search_task,
-        record_file):
+        num_micro_batches, logical_mesh, autosharding_option,
+        memory_budget_per_device):
     """
     Generate sharded XLA computations.
 
@@ -873,27 +854,19 @@ def generate_sharded_xla_computations(
     built = xc.XlaComputation(proto)
     in_avals, out_avals, donated_invars = jaxpr_args
 
-    backend_name = "gpu"
-    backend = xb.get_backend(backend_name)
-    _, computation_protos, strategy_config = compile_with_search(
-        backend,
+    _, computation_protos, strategy_config = run_auto_sharding_pass(
         built,
         in_avals,
         out_avals,
         donated_invars,
-        logical_mesh_choices,
+        logical_mesh,
         "stage_protos",
         num_micro_batches,
         autosharding_option,
-        bypass_device_assignment_check=True,
-        memory_budget_per_device=memory_budget_per_device,
-        logical_mesh_search_mode=logical_mesh_search_mode,
-        logical_mesh_search_physical_mesh=None,
-        search_task=search_task,
-        record_file=record_file)
+        memory_budget_per_device=memory_budget_per_device)
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-            auto_sharded_hlo_proto=proto,
+            sharding_annotated_proto=proto,
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,

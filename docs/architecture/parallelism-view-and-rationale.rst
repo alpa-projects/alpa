@@ -1,0 +1,5 @@
+.. _rationale:
+
+Rationale
+=========
+test

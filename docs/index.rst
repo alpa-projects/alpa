@@ -8,6 +8,12 @@ Alpa documentation
    install/from_source
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Architecture
+
+   architecture/overview.rst
+
+.. toctree::
    :maxdepth: 2
    :caption: Tutorials
 

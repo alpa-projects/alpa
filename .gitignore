@@ -32,7 +32,6 @@ tests/*.json
 benchmark/deepspeed/data
 
 # plots
-*.png
 *.pdf
 
 # Numpy cache

@@ -26,7 +26,8 @@ from alpa.pipeline_parallel.computation import (
     merge_marked_jaxprs_with_named_call, merge_unmarked_with_call,
     rearrange_vars)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
-    SymbolicReshardingTask, CollectiveGroup, ReshardingTaskSpec)
+    CrossMeshCommunicator, SymbolicReshardingTask, CollectiveGroup,
+    ReshardingTaskSpec)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
@@ -698,28 +699,12 @@ def create_collective_group(src_mesh: PhysicalDeviceMesh,
     return cg
 
 
-def dummy_resharding_strategy(spec: ReshardingTaskSpec):
+def dummy_resharding_send_recv_strategy(spec: ReshardingTaskSpec):
     """Generates a dummy sharding strategy for profiling."""
-    strategy = []
-    _sender_loads = {sender: 0 for sender in spec.src.device_mesh.device_strs}
-    for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
-        # plan is a 2D array
-        per_spec_plan = np.empty(
-            (len(dst_tile.replica_device_strs), len(src_tileslices)),
-            dtype=object)
-        for receiver_idx, _ in enumerate(dst_tile.replica_device_strs):
-            for src_tileslice_idx, src_tileslice in enumerate(src_tileslices):
-                loads = {
-                    sender: _sender_loads[sender]
-                    for sender in src_tileslice.replica_device_strs
-                }
-                sender = min(loads, key=loads.get)
-                per_spec_plan[receiver_idx][src_tileslice_idx] = sender
-                # upload load on-the-fly
-                _sender_loads[sender] += src_tileslice.slice_size
-        strategy.append(per_spec_plan)
-    spec.set_resharding_strategy(strategy)
-    return strategy
+    src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
+    dst_loads = {dst: 0 for dst in spec.dst.device_mesh.device_strs}
+    return CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
+        spec, src_loads, dst_loads)
 
 
 # FIXME(Hao): this function is broken by recent updates. Use with caution.
@@ -752,7 +737,8 @@ def profile_layer_communication_cost(
                                                 sharding_spec=in_sharding_spec)
             task_spec = ReshardingTaskSpec(src_array, dst_array)
             # create resharding strategy, ignore global load balance
-            dummy_resharding_strategy(task_spec)
+            strategy = dummy_resharding_send_recv_strategy(task_spec)
+            task_spec.set_resharding_strategy(strategy)
             # create distributed array as dummy inputs
             input_indices = pxla.spec_to_indices(invar.aval.shape,
                                                  out_sharding_spec)

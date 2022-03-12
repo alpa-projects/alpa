@@ -17,10 +17,13 @@ from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
+from alpa.pipeline_parallel.cross_mesh_resharding import (
+    CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
+    SymbolicReshardingTask)
 from alpa.pipeline_parallel.layer_construction import (
-    automatic_layer_construction, manual_layer_construction, automatic_remat,
-    manual_remat)
+    automatic_layer_construction, manual_layer_construction)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
+from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.util import get_ray_namespace_str
 
 
@@ -199,6 +202,36 @@ def get_bert_layer_train_step(use_parallel,
         return parallelize(train_step)
     else:
         return train_step
+
+
+def test_resharding_strategy(var,
+                             src_mesh,
+                             src_sharding_spec,
+                             dst_mesh,
+                             dst_sharding_spec,
+                             src_loads=None,
+                             dst_loads=None):
+    # Resharding task spec and send/recv strategy
+    src_loads = src_loads or {src for src in src_mesh.device_strs}
+    dst_loads = dst_loads or {dst for dst in dst_mesh.device_strs}
+    (dst_sharding_spec,
+     extra_slice) = CrossMeshCommunicator._rewrite_allgather_specs(
+         dst_sharding_spec, dst_mesh, var)
+    src_array = VirtualDistributedArray(device_mesh=src_mesh,
+                    aval=var.aval,
+                    sharding_spec=src_sharding_spec)
+    dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
+                    aval=var.aval,
+                    sharding_spec=dst_sharding_spec)
+    task_spec = ReshardingTaskSpec(src_array, dst_array, extra_slice)
+    strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
+        task_spec, src_loads, dst_loads)
+    task_spec.set_resharding_strategy(strategy)
+    # Resharding task. Compile send/recv from strategy and allgather.
+    collective_group = CollectiveGroup(task_spec.get_participant_device_strs(),
+                                       src_mesh, dst_mesh)
+    task = SymbolicReshardingTask(task_spec, collective_group, src_mesh,
+                                  dst_mesh)
 
 
 class PipelineBasicTest(unittest.TestCase):

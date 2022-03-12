@@ -268,6 +268,10 @@ def shard_parallel_internal_gradient_accumulation(
         search_task=search_task,
         record_file=record_file)
     assert len(hlo_protos) == 2
+    if hlo_proto_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
+        hlo_proto_names[0], hlo_proto_names[1] = (hlo_proto_names[1],
+                                                  hlo_proto_names[0])
+        hlo_protos[0], hlo_protos[1] = hlo_protos[1], hlo_protos[0]
     assert hlo_proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
     # Compile these two HLOs separately to get two XLA executables

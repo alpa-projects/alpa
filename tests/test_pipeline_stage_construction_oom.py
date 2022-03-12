@@ -28,7 +28,7 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                          do_numerical_test=False):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,

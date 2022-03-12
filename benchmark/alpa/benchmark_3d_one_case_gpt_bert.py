@@ -179,14 +179,14 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
 
     if pipeline_stage_mode == "uniform_layer_gpipe":
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 num_micro_batches=num_micro_batches,
                                 sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
                                 sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
                                 pipeline_parallel_schedule="1f1b")
     else:
         set_parallelize_options(devices=virtual_mesh,
-                                strategy="3d_parallel",
+                                strategy="pipeshard_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches)
 
@@ -290,7 +290,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                      virtual_mesh.num_devices,
                                      np.mean(latencies), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
-    report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
+    #report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
     executable.shutdown()
     return (parameter_count, mem_allocated, max_mem_allocated, latencies,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()

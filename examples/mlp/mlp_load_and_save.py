@@ -1,19 +1,22 @@
 import unittest
 import os
 
+import flax
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
 from jax import random
 import optax
 import ray
+import pickle
+from tempfile import TemporaryFile
 
 import alpa
 from alpa import (parallelize, set_parallelize_options, mark_pipeline,
                   DeviceCluster, automatic_layer_construction)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
-from alpa.util import get_ray_namespace_str
+from alpa.util import get_ray_namespace_str, tree_to_nparray
 
 ### For this quickstart tutorial, we'll be running linear regression on a 4-layer MLP. 
 
@@ -28,8 +31,8 @@ rngkey = jax.random.PRNGKey(0)
 
 ### Set global environment variables
 # Here, we're setting the devices used to be the device cluster we defined earlier.
-# set_parallelize_options(devices=devices, strategy="3d_parallel")
-set_parallelize_options(devices=devices, strategy="3d_parallel", pipeline_stage_mode="auto_gpipe")
+# set_parallelize_options(devices=devices, strategy="pipeshard_parallel")
+set_parallelize_options(devices=devices, strategy="pipeshard_parallel", pipeline_stage_mode="auto_gpipe")
 
 ### Building our model
 # The model will be a two layer MLP model with a ReLU non-linearity. The input an output
@@ -91,13 +94,12 @@ opt_state = tx.init(params)
 
 @parallelize(batch_argnums=(2,))
 def parallel_train_step(opt_state, params, batch):
-    # @automatic_layer_construction(layer_num=4)
+    @automatic_layer_construction(layer_num=4)
     def loss_func(params, x, y):
         out = model.apply(params, x)
         loss = jnp.mean((out - y)**2)
         return loss
 
-    loss_func = automatic_layer_construction(loss_func, layer_num=4)
     grads = alpa.grad(loss_func)(params, batch["x"], batch["y"])
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
@@ -132,6 +134,82 @@ for _ in range(num_epochs):
 
 # We check that the parameters are the same. 
 assert_allclose(params_orig, params_with_pipeline, 1e-3, 1e-3)
+
+# Save initial model, original model, and the parallel model to a temporary file
+outfile = TemporaryFile()
+state_dict = flax.serialization.to_state_dict(opt_state)
+pickle.dump(tree_to_nparray(state_dict), outfile)
+outfile_param = TemporaryFile()
+param_dict = flax.serialization.to_state_dict(params)
+pickle.dump(param_dict, outfile_param)
+
+outfile_orig = TemporaryFile()
+state_dict_orig = flax.serialization.to_state_dict(state_orig)
+pickle.dump(tree_to_nparray(state_dict_orig), outfile_orig)
+outfile_param_orig = TemporaryFile()
+param_dict_orig = flax.serialization.to_state_dict(params_orig)
+pickle.dump(param_dict_orig, outfile_param_orig)
+
+outfile_with_pipeline = TemporaryFile()
+state_dict_with_pipeline = flax.serialization.to_state_dict(state_with_pipeline)
+pickle.dump(tree_to_nparray(state_dict_with_pipeline), outfile_with_pipeline)
+outfile_param_with_pipeline = TemporaryFile()
+param_dict_with_pipeline = flax.serialization.to_state_dict(params_with_pipeline)
+pickle.dump(tree_to_nparray(param_dict_with_pipeline), outfile_param_with_pipeline)
+
+# Load models from the temporary file
+outfile.seek(0)
+loaded_state_dict = pickle.load(outfile)
+loaded_state = flax.serialization.from_state_dict(
+    opt_state, loaded_state_dict)
+outfile.close()
+
+outfile_param.seek(0)
+loaded_param_dict = pickle.load(outfile_param)
+loaded_param = flax.serialization.from_state_dict(
+    params, loaded_param_dict)
+outfile_param.close()
+
+outfile_orig.seek(0)
+loaded_state_dict_orig = pickle.load(outfile_orig)
+loaded_state_orig = flax.serialization.from_state_dict(
+    state_orig, loaded_state_dict_orig)
+outfile_orig.close()
+
+outfile_param_orig.seek(0)
+loaded_param_dict_orig = pickle.load(outfile_param_orig)
+loaded_param_orig = flax.serialization.from_state_dict(
+    params_orig, loaded_param_dict_orig)
+outfile_param_orig.close()
+
+outfile_with_pipeline.seek(0)
+loaded_state_dict_with_pipeline = pickle.load(outfile_with_pipeline)
+loaded_state_with_pipeline = flax.serialization.from_state_dict(
+    state_with_pipeline, loaded_state_dict_with_pipeline)
+outfile_with_pipeline.close()
+
+outfile_param_with_pipeline.seek(0)
+loaded_param_dict_with_pipeline = pickle.load(outfile_param_with_pipeline)
+loaded_param_with_pipeline = flax.serialization.from_state_dict(
+    params_with_pipeline, loaded_param_dict_with_pipeline)
+outfile_param_with_pipeline.close()
+
+# Evaluate all three loaded models
+def loss_func(params, x, y):
+    out = model.apply(params, x)
+    loss = jnp.mean((out - y)**2)
+    return loss
+
+loss = loss_func(loaded_param, batch["x"], batch["y"])
+loss_orig = loss_func(loaded_param_orig, batch["x"], batch["y"])
+loss_with_pipeline = loss_func(loaded_param_with_pipeline, batch["x"], batch["y"])
+
+print(f"Initial Loss: {loss}")
+print(f"Single-device Loss: {loss_orig}")
+print(f"Parallelized Loss: {loss_with_pipeline}")
+
+assert_allclose(loss_orig, loss_with_pipeline, 1e-3, 1e-3)
+assert loss > loss_with_pipeline, "Error: Trained loss is more than initial loss."
 
 # Shutting down the the pipelined executable. 
 parallel_train_step.get_executable(opt_state, params, batch).shutdown()

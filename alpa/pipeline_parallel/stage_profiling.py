@@ -168,6 +168,13 @@ class CompileWorker:
                 2), "Can only compile no more than two stages (compute+(apply))"
 
         # Read input/output shardings
+
+        if len(protos) > 1:
+            if proto_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
+                proto_names[0], proto_names[1] = proto_names[1], proto_names[0]
+                protos[0], protos[1] = protos[1], protos[0]
+            assert proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
+
         acc_grad_proto = protos[0]
         sharding_annotated_computation = xla_client.XlaComputation(
             acc_grad_proto)
@@ -176,7 +183,6 @@ class CompileWorker:
              acc_grad_proto, logical_mesh.num_devices)
 
         if len(protos) > 1:
-            assert proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
             apply_grad_proto = protos[1]
             apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
                 apply_grad_proto, logical_mesh.num_devices)

@@ -1,6 +1,6 @@
 """
 Advanced API Usage
-=================
+==================
 
 This page will cover some more advanced examples of Alpa.
 """
@@ -22,8 +22,7 @@ from alpa.model.model_util import TrainState
 from alpa.util import count_communication_primitives, get_ray_namespace_str
 
 # launch the cluster
-ray.init(address="auto", namespace=get_ray_namespace_str(prefix="alpa-example"))
-jax.config.update('jax_platform_name', 'cpu')
+ray.init()
 cluster = DeviceCluster()
 global_config.devices = cluster.get_physical_mesh()
 
@@ -140,9 +139,7 @@ as_option.restore(as_option_backup)
 # --------------------------
 #
 # Alpa can forcibly generates data parallel solution, or map a specific
-# mesh dimension to the batch dimension. The batch dimension is set in
-#
-# .. TODO(yonghao): link to how to set dimension
+# mesh dimension to the batch dimension.
 #
 # With force_batch_dim_to_mesh_dim, Alpa forcibly maps the given logical mesh
 # dimension (0 or 1) to batch dimension inferred in auto-sharding.
@@ -206,8 +203,6 @@ def profile_and_pp_pipeshard_stats(executable):
 ###########################################
 # Specify layer clustering
 # ------------------------
-#
-# TODO(yonghao): add link to layer cluster section in Alpa paper here
 #
 # Layer cluster forms a number of JaxprEqns (atom in JAX IR) into the same layer.
 # We can also manually assign layers using the pipeline marker.
@@ -278,8 +273,6 @@ executable.shutdown()
 #
 # Specify stage construction
 # --------------------------
-#
-# TODO(yonghao): add link to stage construction section in Alpa paper here
 #
 # Stage construction merges layers into stages and assigns devices to each stage
 # with a logical mesh shape. Here we manually give the stage construction plan

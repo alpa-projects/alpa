@@ -6,20 +6,27 @@ import unittest
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import jax
+from jax import xla
+from jax._src.api import ShapeDtypeStruct
+from jax.core import ShapedArray
 from jax.experimental.maps import FrozenDict as FrozenDictJax
+from jax.interpreters import pxla
 import jax.numpy as jnp
 import numpy as np
 import optax
 import ray
 
 from alpa.api import parallelize, grad, value_and_grad
-from alpa.device_mesh import DeviceCluster
+from alpa.device_mesh import DeviceCluster, shard_arg_handlers
 from alpa.global_env import set_parallelize_options, global_config
+from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
     SymbolicReshardingTask)
+from alpa.pipeline_parallel.decentralized_distributed_runtime import (
+    DecentralizedDistributedRuntime)
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
@@ -204,13 +211,16 @@ def get_bert_layer_train_step(use_parallel,
         return train_step
 
 
-def test_resharding_strategy(var,
-                             src_mesh,
-                             src_sharding_spec,
-                             dst_mesh,
-                             dst_sharding_spec,
-                             src_loads=None,
-                             dst_loads=None):
+def test_resharding(var,
+                    src_mesh,
+                    src_sharding_spec,
+                    dst_mesh,
+                    dst_sharding_spec,
+                    src_loads=None,
+                    dst_loads=None,
+                    use_scatter_gather=True):
+    backup_scatter_gather = global_config.use_scatter_gather
+    global_config.use_scatter_gather = use_scatter_gather
     # Resharding task spec and send/recv strategy
     src_loads = src_loads or {src for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst for dst in dst_mesh.device_strs}
@@ -218,11 +228,11 @@ def test_resharding_strategy(var,
      extra_slice) = CrossMeshCommunicator._rewrite_allgather_specs(
          dst_sharding_spec, dst_mesh, var)
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
-                    aval=var.aval,
-                    sharding_spec=src_sharding_spec)
+                                        aval=var.aval,
+                                        sharding_spec=src_sharding_spec)
     dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
-                    aval=var.aval,
-                    sharding_spec=dst_sharding_spec)
+                                        aval=var.aval,
+                                        sharding_spec=dst_sharding_spec)
     task_spec = ReshardingTaskSpec(src_array, dst_array, extra_slice)
     strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
         task_spec, src_loads, dst_loads)
@@ -232,6 +242,39 @@ def test_resharding_strategy(var,
                                        src_mesh, dst_mesh)
     task = SymbolicReshardingTask(task_spec, collective_group, src_mesh,
                                   dst_mesh)
+    # Compile pipeline instructions
+    instruction_lists = {worker: [] for worker in src_mesh.workers}
+    for worker in dst_mesh.workers:
+        instruction_lists[worker] = []
+    src_uuids = np.arange(np.prod(src_mesh.shape)).reshape(src_mesh.shape)
+    dst_uuids = np.arange(np.prod(dst_mesh.shape)).reshape(dst_mesh.shape)
+    DecentralizedDistributedRuntime._compile_resharding_task(
+        src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+    exec_uuids = {}
+    # Compile Pipeline Executable
+    for worker_idx, worker in enumerate(src_mesh.workers):
+        exec_uuid = next_mesh_executable_uuid()
+        worker.put_executable.remote(exec_uuid, instruction_lists[worker],
+                                     src_uuids[worker_idx], [], [], [], [],
+                                     [False] * src_mesh.num_devices_per_host)
+        exec_uuids[worker] = exec_uuid
+    for worker_idx, worker in enumerate(dst_mesh.workers):
+        exec_uuid = next_mesh_executable_uuid()
+        worker.put_executable.remote(exec_uuid, instruction_lists[worker],
+                                     [], dst_uuids[worker_idx], [], [], [],
+                                     [False] * dst_mesh.num_devices_per_host)
+        exec_uuids[worker] = exec_uuid
+    # Prepare and shard args
+    test_array = np.arange(np.prod(var.aval.shape),
+                           dtype=var.aval.dtype).reshape(var.aval.shape)
+    indices = pxla.spec_to_indices(var.aval.shape, src_sharding_spec)
+    if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
+        arg = xla.canonicalize_dtype(arg)
+    buf_refs = shard_arg_handlers[type(arg)](arg, src_mesh, indices)
+    # TODO(yonghao): Run executables
+
+    # Restore backup
+    global_config.use_scatter_gather = backup_scatter_gather
 
 
 class PipelineBasicTest(unittest.TestCase):

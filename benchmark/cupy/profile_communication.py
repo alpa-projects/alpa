@@ -1,4 +1,6 @@
+import argparse
 import time
+import os
 
 import cupy as cp
 from cupy.cuda import nccl
@@ -71,6 +73,7 @@ class GpuHost:
         out_buffer = cp.ones(int(size), dtype)
 
         do_all_reduce(comm, in_buffer, out_buffer)
+        do_all_reduce(comm, in_buffer, out_buffer)
 
         number = min(max(10, int((1 << 30) / (size * dtype().nbytes))), 1 << 13)
         cp.cuda.Device(0).synchronize()
@@ -124,6 +127,7 @@ class GpuHost:
 
         buf = cp.ones(int(size), dtype)
         do_send_recv(comm, buf, self.rank == from_rank)
+        do_send_recv(comm, buf, self.rank == from_rank)
 
         number = min(max(10, int((1 << 30) / (size * dtype().nbytes))), 1 << 13)
         cp.cuda.Device(0).synchronize()
@@ -143,7 +147,7 @@ class GpuHost:
 
     def profile(self):
         # All-reduce
-        for i in range(27, 31):
+        for i in range(29, 30):
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size))])
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size//2))])
 
@@ -154,7 +158,7 @@ class GpuHost:
             #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
 
         # Send-recv
-        for i in range(27, 31):
+        for i in range(29, 30):
             self.profile_send_recv(1 << i, cp.float32, 0, 1)
             self.profile_send_recv(1 << i, cp.float32, 0, self.world_size - 1)
 
@@ -164,23 +168,35 @@ class GpuHost:
 
 
 if __name__ == "__main__":
-    ray.init(address="auto")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--efa", action="store_true",
+        help="Use AWS EFS on p3.24 or p4.24 instances")
+    args = parser.parse_args()
 
+    ray.init(address="auto")
     num_gpus = int(ray.cluster_resources()["GPU"])
 
     nccl_uuid_list = [cp.cuda.nccl.get_unique_id() for _ in range(500)]
 
     workers = []
     for i in range(num_gpus):
-        env_vars = {
-            #"NCCL_SOCKET_NTHREADS": "4",
-            #"NCCL_NSOCKS_PERTHREAD": "8",
-            #"NCCL_ALGO": "tree",
-            #"NCCL_DEBUG": "INFO",
-        }
+        if args.efa:
+            env_vars = {
+                "FI_PROVIDER": "efa",
+                "FI_EFA_USE_DEVICE_RDMA": "1",
+                #"NCCL_DEBUG": "INFO",
+                "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+            }
+        else:
+            env_vars = {
+                "NCCL_SOCKET_NTHREADS": "4",
+                "NCCL_NSOCKS_PERTHREAD": "4",
+                #"NCCL_DEBUG": "INFO",
+                "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+            }
+
         workers.append(GpuHost.options(runtime_env={"env_vars": env_vars})\
                               .remote(i, num_gpus, nccl_uuid_list))
 
     ray.get([w.profile.remote() for w in workers])
     ray.get([w.sync.remote() for w in workers])
-

@@ -7,6 +7,8 @@ from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import jax
 from jax import xla
+from jax._src.abstract_arrays import ShapedArray
+from jax.core import Var
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 from jax.interpreters import pxla
 import jax.numpy as jnp
@@ -469,3 +471,53 @@ class PipelineBasicTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         executable.shutdown()
         return hlo_text
+
+
+class ReshardingTest(unittest.TestCase):
+
+    def setUp(self):
+        ray.init(address="auto",
+                 namespace=get_ray_namespace_str(
+                     prefix=global_config.unittest_ray_namespace_prefix))
+
+    def tearDown(self):
+        ray.shutdown()
+        time.sleep(1)
+
+    def test_resharding_task(self,
+                             src_mesh_shape,
+                             dst_mesh_shape,
+                             src_sharding_spec,
+                             dst_sharding_spec,
+                             shape,
+                             dtype=None,
+                             use_scatter_gather=True):
+        device_cluster = DeviceCluster()
+        virtual_mesh = device_cluster.get_virtual_physical_mesh()
+        src_num_host = src_mesh_shape[0]
+        dst_num_host = dst_mesh_shape[0]
+        src_mesh = virtual_mesh.slice_2d(range(src_num_host),
+                                         [range(src_mesh_shape[1])] *
+                                         src_num_host).get_physical_mesh()
+        if (src_mesh_shape[1] + dst_mesh_shape[1] <=
+                virtual_mesh.num_devices_per_host):
+            dst_host_indices = range(dst_num_host)
+            dst_device_indices = [
+                range(src_mesh_shape[1], src_mesh_shape[1] + dst_mesh_shape[1])
+            ] * dst_num_host
+        else:
+            dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
+            dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
+        dst_mesh = virtual_mesh.slice_2d(
+            dst_host_indices, dst_device_indices).get_physical_mesh()
+
+        dtype = dtype or jnp.int32
+        var = Var(0, "", ShapedArray(shape, dtype))
+        test_resharding(var,
+                        src_mesh,
+                        src_sharding_spec,
+                        dst_mesh,
+                        dst_sharding_spec,
+                        use_scatter_gather=use_scatter_gather)
+        src_mesh.shutdown()
+        dst_mesh.shutdown()

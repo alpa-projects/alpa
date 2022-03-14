@@ -252,21 +252,21 @@ def test_resharding(var,
     src_uuids = np.arange(np.prod(src_mesh.shape)).reshape(src_mesh.shape)
     dst_uuids = np.arange(np.prod(dst_mesh.shape)).reshape(dst_mesh.shape)
     DecentralizedDistributedRuntime._compile_resharding_task(
-        src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+        src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists, True)
     exec_uuids = {}
     # Compile Pipeline Executable
     for worker_idx, worker in enumerate(src_mesh.workers):
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
                                      instruction_lists[worker],
-                                     src_uuids[worker_idx], [], [], [], [],
+                                     [src_uuids[worker_idx]], [], [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     for worker_idx, worker in enumerate(dst_mesh.workers):
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
                                      instruction_lists[worker], [],
-                                     dst_uuids[worker_idx], [], [], [],
+                                     [dst_uuids[worker_idx]], [], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     # Prepare array and shard args

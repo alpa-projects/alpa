@@ -677,9 +677,13 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             self.mesh_output_indices.append(mesh_out_indices)
 
     @staticmethod
-    def _compile_resharding_task(src_mesh, dst_mesh, src_uuids: np.ndarray,
+    def _compile_resharding_task(src_mesh,
+                                 dst_mesh,
+                                 src_uuids: np.ndarray,
                                  resharding_task: SymbolicReshardingTask,
-                                 recv_uuids: np.ndarray, instruction_lists):
+                                 recv_uuids: np.ndarray,
+                                 instruction_lists,
+                                 set_empty_buffer=False):
         """
         Compile and generate SEND and RECV PipelineInstructions for a ReshardingTask.
 
@@ -689,6 +693,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             src_uuids: uuids of resharded buffer in src mesh
             resharding_task: the task to be compiled
             recv_uuids: uuids of resharded buffer in dst mesh
+            set_empty_buffer: set the empty buffer when recv or not
         """
         num_devices_per_host = dst_mesh.num_devices_per_host
         send_buf_uuids = {worker: [] for worker in src_mesh.workers}
@@ -729,8 +734,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             allgather_uuid = (resharding_task.allgather_worker_task_ids[w] if
                               resharding_task.is_local_allgather_task else None)
             instruction_lists[w].append(
-                PipelineInstruction.Recv(task_uuid, output_uuids, False,
-                                         allgather_uuid))
+                PipelineInstruction.Recv(task_uuid, output_uuids,
+                                         set_empty_buffer, allgather_uuid))
 
     def _compile_free(self, worker, used_outside, donated):
         """Compile and generate FREE PipelineInstruction to recycle memory."""
@@ -1226,6 +1231,5 @@ class PipelineMeshWorkerExecutable:
         return ret
 
     def __del__(self):
-        self.worker.delete_executable(self.my_uuid)
         for exec_id in self._related_exec_uuids:
             self.worker.delete_executable(exec_id)

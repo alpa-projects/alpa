@@ -27,12 +27,13 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
     SymbolicReshardingTask)
 from alpa.pipeline_parallel.decentralized_distributed_runtime import (
-    DecentralizedDistributedRuntime, PipelineMeshWorkerExecutable)
+    AllocateZeroWorkerExecutableConfig, DecentralizedDistributedRuntime,
+    PipelineInstruction, PipelineMeshWorkerExecutable)
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
-from alpa.util import get_ray_namespace_str
+from alpa.util import get_ray_namespace_str, get_shard_shape
 
 
 def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
@@ -217,15 +218,15 @@ def test_resharding(var,
                     src_sharding_spec,
                     dst_mesh,
                     dst_sharding_spec,
+                    use_scatter_gather,
                     src_loads=None,
-                    dst_loads=None,
-                    use_scatter_gather=True):
+                    dst_loads=None):
     backup_scatter_gather = global_config.use_scatter_gather
     global_config.use_scatter_gather = use_scatter_gather
     # Resharding task spec and send/recv strategy
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
-    (dst_sharding_spec,
+    (rewrite_dst_sharding_spec,
      extra_slice) = CrossMeshCommunicator._rewrite_allgather_specs(
          dst_sharding_spec, dst_mesh, var)
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
@@ -233,7 +234,7 @@ def test_resharding(var,
                                         sharding_spec=src_sharding_spec)
     dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
                                         aval=var.aval,
-                                        sharding_spec=dst_sharding_spec)
+                                        sharding_spec=rewrite_dst_sharding_spec)
     task_spec = ReshardingTaskSpec(src_array, dst_array, extra_slice)
     strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
         task_spec, src_loads, dst_loads)
@@ -251,10 +252,30 @@ def test_resharding(var,
     instruction_lists = {worker: [] for worker in src_mesh.workers}
     for worker in dst_mesh.workers:
         instruction_lists[worker] = []
+    executable_config_lists = {worker: [] for worker in dst_mesh.workers}
     src_uuids = np.arange(np.prod(src_mesh.shape)).reshape(src_mesh.shape)
     dst_uuids = np.arange(np.prod(dst_mesh.shape)).reshape(dst_mesh.shape)
+    # allocate the buffer
+    exec_uuid = next_mesh_executable_uuid()
+    config = AllocateZeroWorkerExecutableConfig(
+        exec_uuid, [get_shard_shape(var.aval, dst_sharding_spec)],
+        [var.aval.dtype])
+    output_uuids = np.expand_dims(dst_uuids, axis=1)
+    for worker_idx, worker in enumerate(dst_mesh.workers):
+        executable_config_lists[worker].append(config)
+        in_uuids = []
+        out_uuids = output_uuids[worker_idx]
+        instruction_lists[worker].append(
+            PipelineInstruction.Run(config.exec_uuid,
+                                    in_uuids,
+                                    out_uuids, {
+                                        "sync_before": False,
+                                        "sync_after": False
+                                    },
+                                    info="allocate zero for recv"))
+    # resharding task
     DecentralizedDistributedRuntime._compile_resharding_task(
-        src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists, True)
+        src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
     exec_uuids = {}
     # Compile Pipeline Executable
     for worker_idx, worker in enumerate(src_mesh.workers):
@@ -268,7 +289,8 @@ def test_resharding(var,
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
                                      instruction_lists[worker], [],
-                                     [dst_uuids[worker_idx]], [], [], [],
+                                     [dst_uuids[worker_idx]],
+                                     executable_config_lists[worker], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     # Prepare array and shard args
@@ -513,11 +535,7 @@ class ReshardingTest(unittest.TestCase):
 
         dtype = dtype or jnp.int32
         var = Var(0, "", ShapedArray(shape, dtype))
-        test_resharding(var,
-                        src_mesh,
-                        src_sharding_spec,
-                        dst_mesh,
-                        dst_sharding_spec,
-                        use_scatter_gather=use_scatter_gather)
+        test_resharding(var, src_mesh, src_sharding_spec, dst_mesh,
+                        dst_sharding_spec, use_scatter_gather)
         src_mesh.shutdown()
         dst_mesh.shutdown()

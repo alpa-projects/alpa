@@ -676,6 +676,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     var_to_spec_all_meshes[mesh_idx][outvar])
             self.mesh_output_indices.append(mesh_out_indices)
 
+    # TODO(yonghao): set empty buffer is not compatiable with local allgather
     @staticmethod
     def _compile_resharding_task(src_mesh,
                                  dst_mesh,

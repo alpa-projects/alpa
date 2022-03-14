@@ -17,9 +17,9 @@ import optax
 import ray
 
 from alpa.api import parallelize, grad, value_and_grad
-from alpa.device_mesh import DeviceCluster, shard_arg_handlers
+from alpa.device_mesh import DeviceCluster, DistributedArray, shard_arg_handlers
 from alpa.global_env import set_parallelize_options, global_config
-from alpa.mesh_executable import next_mesh_executable_uuid
+from alpa.mesh_executable import create_remote_buffer_refs, get_uuid_np_array, next_mesh_executable_uuid
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.cross_mesh_resharding import (
@@ -219,6 +219,8 @@ def test_resharding(var,
                     src_loads=None,
                     dst_loads=None,
                     use_scatter_gather=True):
+    if global_config.eagerly_create_communicators:
+        raise NotImplementedError
     backup_scatter_gather = global_config.use_scatter_gather
     global_config.use_scatter_gather = use_scatter_gather
     # Resharding task spec and send/recv strategy
@@ -240,6 +242,7 @@ def test_resharding(var,
     # Resharding task. Compile send/recv from strategy and allgather.
     collective_group = CollectiveGroup(task_spec.get_participant_device_strs(),
                                        src_mesh, dst_mesh)
+    collective_group.instantiate()
     task = SymbolicReshardingTask(task_spec, collective_group, src_mesh,
                                   dst_mesh)
     # Compile pipeline instructions
@@ -264,15 +267,29 @@ def test_resharding(var,
                                      [], dst_uuids[worker_idx], [], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
-    # Prepare and shard args
+    # Prepare array and shard args
     test_array = np.arange(np.prod(var.aval.shape),
                            dtype=var.aval.dtype).reshape(var.aval.shape)
     indices = pxla.spec_to_indices(var.aval.shape, src_sharding_spec)
     if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
         arg = xla.canonicalize_dtype(arg)
-    buf_refs = shard_arg_handlers[type(arg)](arg, src_mesh, indices)
-    # TODO(yonghao): Run executables
-
+    input_refs = shard_arg_handlers[type(arg)](arg, src_mesh, indices)
+    input_uuids = get_uuid_np_array(input_refs).reshape(src_mesh.shape)
+    output_refs, output_uuids = create_remote_buffer_refs(dst_mesh)
+    output_uuids = output_uuids.reshape(dst_mesh.shape)
+    # Run executables
+    for worker_idx, worker in enumerate(src_mesh.workers):
+        worker.run_executable.remote(exec_uuids[worker], [input_uuids[worker_idx]], [])
+    for worker_idx, worker in enumerate(dst_mesh.workers):
+        worker.run_executable.remote(exec_uuids[worker], [], [output_uuids[worker_idx]])
+    output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec, output_refs)
+    # Check correctness
+    assert_allclose(test_array, output_array._value)
+    # Delete executables
+    for worker in src_mesh.workers:
+        worker.delete_executable.remote(exec_uuids[worker])
+    for worker in dst_mesh.workers:
+        worker.delete_executable.remote(exec_uuids[worker])
     # Restore backup
     global_config.use_scatter_gather = backup_scatter_gather
 

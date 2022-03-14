@@ -14,7 +14,6 @@ from typing import Any, Callable, Sequence, Tuple
 Conv3x3 = functools.partial(nn.Conv, kernel_size=(3, 3))
 
 class TrainState(train_state.TrainState):
-    # batch_stats: Any
     dynamic_scale: optim.DynamicScale
 
 class IdentityLayer(nn.Module):
@@ -23,7 +22,6 @@ class IdentityLayer(nn.Module):
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         return x
-
 
 def central_crop(inputs, target_shape):
     """Returns a central crop in axis (1, 2).

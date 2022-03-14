@@ -1,38 +1,67 @@
-## Unet on Coco segmentation task
-
-Trains Unet on the COCO dataset.
-
 Adopted from https://github.com/google-research/scenic for Unet and 
-https://github.com/baudcode/tf-semantic-segmentation for COCO dataset, 
-we add the following modifications to better demonstrate the training speedup by Alpa. And we could also show Alpa's scalibility here.
-- We allow the number of convolution layers at each height to be changed which are 2 for default unet configuration, making it more flexible to scale up. 
-- Use a large batch size.
-- ...
+https://github.com/baudcode/tf-semantic-segmentation for COCO dataset
+
+## COCO Segmentation Task
+
+Train a Unet model ([Ronneberger et al., 2015]) on the COCO Segmentation task ([Lin et al., 2015]).
+
+In this example, we allow to change the number of convolution layers at each height which was 2 for default unet configuration. This modification allows us to scale up model size more easily and then could better demonstrate parallelization speedup by Alpa. 
+
+Table of contents:
+
+- [Requirements](#requirements)
+- [Running Locally](#running-locally)
+  - [Overriding parameters on the command line](#overriding-parameters-on-the-command-line)
+  - [Preparing the dataset](#preparing-the-dataset)
+- [Scalability Analysis](#scalability-analysis)
+  - [Statistics](#statistics)
+  - [Run benchmark](#run-benchmark)
 
 ### Requirements
-* Tensorflow 2.8.0
-* imageio 2.16.0
-* opencv-python 4.5.5.62
+* For data preprocess: `Tensorflow`, `imageio`, `opencv-python`
 
-### Scalability 
+### Running Locally
+
+```shell
+python main.py --workdir=./coco --config=configs/default.py
+```
+
+#### Overriding parameters on the command line
+
+Specify a hyperparameter configuration by the means of setting `--config` flag. Configuration flag is defined using config_flags. config_flags allows overriding configuration fields. This can be done as follows:
+
+```shell
+python main.py --workdir=./coco --config=configs/default.py --config.data_path="./COCO_dataset"
+```
+
+#### Preparing the dataset
+
+Users need to specify save path of dataset, then dataset will be automatically downloaded at the first time of running this code. The dataset is large, users need to reserve at least 35G available storage for unzipped COCO dataset. 
+
+
+### Scalability Analysis
+
+We benchmark unet on various number of GPUs to see scalability of Alpa's parallelization strategy. 
+
+#### Statistics
+
+Experiments are carried out on Nvidia A100 GPU clusters in which each host has 4 A100 GPU and each A100 GPU has 40GB memory. 
+
+*TODO: Finish all experiments and upload the results*
 
 | # of GPU   | 2 | 4 | 8 | 16 | 32 |
 | :------ | -----: | -------: | -------------: | ----------: | :---------------------------------------- |
-| config(bsz, channelsz, blockcnt): |  (256, (64, 64, 96, 128), (6, 6, 6, 6, 6)) | (256, (64, 128, 256, 256), (10, 10, 10, 10, 10)) | (64, (384, 384), (32, 64, 128, 256), (8, 8, 8, 8, 8)) | | |
-| compilation time(s): | 155.21 | 6249.41 | 805.98 | | |
-| one batch execution time(s): | 16.63 | 19.27 | 1.96 | | |
-| tflops: | 5.55 | 9.58 | 3.23 | | |
-| param_count(B): | 0.007 | 0.052 | 0.032 | | |
-| max_mem_allocated(G): | 33.89 | 15.59 | 1.88| | |
-### How to run
+| A | | | | | |
+| B | | | | | |
+| ... | | | | | |
 
-- To run the naive example for correctness test:
+#### Run benchmark
 
-> `python train_unet_coco.py --num-gpu 2`
+Users could feel free to run the benchmark code with command below. Arguments `--num-hosts` and `--num-devices-per-host` are to specify the amount of resources to use, their product is the exactly the number of devices for parallelization. Users could also set hyperparameters in `./config/benchmark_unet_suite.py`. Here is an example for 2 gpu training case:
 
-- To reproduce experiments results, run command below. A slurm script is also provided in ./scripts. To modify model and other configurations, please refer to unet_suite.py. 
-
-> `python3 -u unet_benchmark_3d.py --suite unet.test --exp_name auto_2_gpus --num-hosts 1 --num-devices-per-host 2`
+```shell
+python3 -u benchmark_main.py --num-hosts 1 --num-devices-per-host 2
+```
 
 
 

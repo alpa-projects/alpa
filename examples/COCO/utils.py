@@ -5,20 +5,127 @@ import sys
 import shutil
 import subprocess
 import urllib.request as urllib
-from io import BytesIO
 import numpy as np
-import PIL
-import requests
 import tqdm
 import multiprocessing
 import threading
-import io
-import PIL.Image
-import base64
 import tensorflow as tf
-
 from functools import reduce
-#from .settings import logger
+import colorsys
+import random
+
+class ThreadWithReturnValue(threading.Thread):
+    def __init__(self, group=None, target=None, name=None,
+                 args=(), kwargs={}, Verbose=None):
+        threading.Thread.__init__(self, group, target, name, args, kwargs)
+        self._return = None
+
+    def run(self):
+        if self._target is not None:
+            self._return = self._target(*self._args, **self._kwargs)
+
+    def join(self, *args):
+        if sys.version_info >= (3, 0):
+            threading.Thread.join(self, *args)
+        else:
+            threading.Thread.join(self)
+
+        return self._return
+
+
+def parallize_v2(f, args, desc='threading'):
+    threads = multiprocessing.cpu_count()
+    print(f"number of threads: {threads}")
+    # threads = 1
+    return parallize(f, args, threads=threads, desc=desc)
+
+
+def parallize(f, args, threads=None, desc='threading'):
+    """
+        Args:
+            - f: function
+            - args: list or list(tuple), list when threads not None
+    """
+    def parse_arg(arg):
+        if type(arg) == list or type(arg) == set or type(arg) == tuple:
+            return tuple(arg)
+        elif type(arg) == dict:
+            return arg
+        else:
+            return (arg, )
+
+    if threads is not None:
+
+        results = []
+        for i in tqdm.trange(0, len(args), threads, desc=desc):
+            func_args = [parse_arg(arg) for arg in args[i:i + threads]]
+            if len(func_args) == 0:
+                continue
+
+            if type(func_args[0]) == dict:
+                active_threads = [ThreadWithReturnValue(
+                    target=f, kwargs=arg) for arg in func_args]
+            else:
+                active_threads = [ThreadWithReturnValue(
+                    target=f, args=arg) for arg in func_args]
+            [thread.start() for thread in active_threads]
+            results += [thread.join() for thread in active_threads]
+        return results
+    else:
+        if len(args) == 0:
+            return []
+
+        if type(args[0]) == dict:
+            active_threads = [ThreadWithReturnValue(
+                target=f, kwargs=arg) for arg in args]
+        else:
+            args = [parse_arg(arg) for arg in args]
+            active_threads = [ThreadWithReturnValue(
+                target=f, args=arg) for arg in args]
+
+        [thread.start() for thread in active_threads]
+        return [thread.join() for thread in active_threads]
+
+
+def parallize_v3(f, args, n_processes=None, desc='parallize_v3'):
+    if n_processes == None:
+        n_processes = multiprocessing.cpu_count()
+
+    with multiprocessing.Pool(n_processes) as pool:
+        results = [r for r in tqdm.tqdm(pool.imap(f, args), desc=desc, total=len(args))]
+
+    return results
+
+
+def get_colors(N, shuffle=False, bright=True):
+    """
+    https://github.com/pedropro/TACO/blob/master/detector/visualize.py
+
+    Generate random colors.
+    To get visually distinct colors, generate them in HSV space then
+    convert to RGB.
+    """
+    colors = [[0, 0, 0]]
+    if N == 1:
+        return colors
+
+    brightness = 1.0 if bright else 0.7
+    hsv = [(i / (N - 1), 1, brightness) for i in range(N - 1)]
+    colors.extend(list(map(lambda c: list(map(lambda x: int(x * 255), colorsys.hsv_to_rgb(*c))), hsv)))
+
+    if shuffle:
+        random.shuffle(colors)
+    return colors
+
+
+def apply_mask(image, mask, color, alpha=0.5):
+    for c in range(3):
+        image[:, :, c] = np.where(mask == 1,
+                                  image[:, :, c] *
+                                  (1 - alpha) + alpha * color[c],
+                                  image[:, :, c])
+    return image
+
 
 class LOG:
     def info(self, s):
@@ -98,33 +205,6 @@ def kill(port: int):
     logger.info("kill process with pid %d on port %d" % (pid, port))
     cmd = ['kill', '%d' % pid]
     return call_for_ret_code(cmd)
-
-
-def get_image_from_url(url, auth=None):
-    req = requests.get(url, auth=auth)
-    image = PIL.Image.open(BytesIO(req.content))
-    return np.asarray(image)
-
-
-def get_random_image(width=640, height=480, grayscale=False):
-    # https://picsum.photos/g/200/300
-
-    urls = [
-        "https://picsum.photos/%s%d/%d/?random" % (
-            "g/" if grayscale else "", width, height),
-        "https://loremflickr.com/%s%d/%d" % (
-            "g/" if grayscale else "", width, height),
-        "http://lorempixel.com/%s%d/%d" % (
-            "g/" if grayscale else "", width, height)
-    ]
-    for url in urls:
-        try:
-            image = get_image_from_url(url)
-            return image
-        except Exception:
-            pass
-
-    raise Exception("No service could be reached")
 
 
 def get_files(directory, extensions=None):
@@ -386,42 +466,6 @@ def download_and_extract(url, destination_dir, chk_exists=True, overwrite=False,
 
     return destination_dir
 
-
-# def get_now_timestamp(mode="postgis"):
-#     now = datetime.now()
-#     return format_datetime(now, mode=mode)
-
-
-# def get_now_datetime():
-#     return datetime.now().replace(tzinfo=pytz.utc)
-
-
-# def format_datetime(d, mode="postgis"):
-#     if mode == 'postgis':
-#         return d.replace(tzinfo=pytz.utc).strftime("%Y-%m-%d %H:%M:%S")
-#     elif mode == 'filename':
-#         return d.replace(tzinfo=pytz.utc).strftime("%Y-%m-%d_%H-%M-%S")
-#     else:
-#         return d.replace(tzinfo=pytz.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def ndarray_to_base64(img):
-    pil_img = PIL.Image.fromarray(img)
-    buff = io.BytesIO()
-    pil_img.save(buff, format="PNG")
-    return base64.b64encode(buff.getvalue()).decode("utf-8")
-
-
-def get_size(path='.'):
-    total_size = 0
-    for dirpath, _, filenames in os.walk(path):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            # skip if it is symbolic link
-            if not os.path.islink(fp):
-                total_size += os.path.getsize(fp)
-
-    return total_size
 
 def get_gpu_stats():
     cmd = ["nvidia-smi", 

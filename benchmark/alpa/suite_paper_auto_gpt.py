@@ -39,7 +39,7 @@ paper_auto_gpt_suite = {
 }
 
 
-test_auto_gpt_suite = {
+tmp_auto_gpt_suite = {
 1: get_auto_test_case("125M", [64], [6]),
 2: get_auto_test_case("350M", [64], [6]),
 4: get_auto_test_case("760M", [64], [6], "manual_gpipe", {

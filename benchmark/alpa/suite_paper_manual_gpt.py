@@ -76,7 +76,7 @@ perf_test_gpt_suite = {
     #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,  ...
 1: [
     (16,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   True,  *fixed_params),
-]
+],
 
 8: [
     # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.  (p3.16xlarge)

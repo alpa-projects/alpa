@@ -19,9 +19,10 @@ def benchmark_all(args):
         print(f"No available benchmark suite for {args.suite} with {num_gpus} GPUs.")
         exit()
     output_name = args.exp_name + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    model = args.suite.split(".")[0]
 
     for case in benchmark_suites[args.suite][num_gpus]:
-        case_str = str((args.model,) + case)
+        case_str = str((model,) + case)
 
         if args.nnodes == 1:
             # Single node
@@ -44,7 +45,6 @@ def benchmark_all(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--nproc_per_node", type=int, required=True)
     parser.add_argument("--nnodes", type=int, default=1)
     parser.add_argument("--node_rank", type=int)

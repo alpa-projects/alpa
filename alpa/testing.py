@@ -18,8 +18,7 @@ from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.layer_construction import (
-    automatic_layer_construction, manual_layer_construction, automatic_remat,
-    manual_remat)
+    automatic_layer_construction, manual_layer_construction)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.util import get_ray_namespace_str
 

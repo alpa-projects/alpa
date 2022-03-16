@@ -39,8 +39,8 @@ def test_resharding(var,
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
     (rewrite_dst_sharding_spec,
-     extra_slice) = CrossMeshCommunicator._rewrite_allgather_specs(
-         dst_sharding_spec, dst_mesh, var)
+     extra_slice) = CrossMeshCommunicator._rewrite_allgather_spec(
+         dst_sharding_spec, dst_mesh, var.aval.shape)
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
                                         aval=var.aval,
                                         sharding_spec=src_sharding_spec)

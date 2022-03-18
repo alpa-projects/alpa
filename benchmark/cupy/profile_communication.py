@@ -50,6 +50,9 @@ class GpuHost:
         self.ct = 0
 
     def init_communicator(self, groups):
+        if np.max(groups) > self.world_size:
+            return None
+
         comm = None
         for group in groups:
             nccl_uuid = self.nccl_uuid_list[self.ct]
@@ -59,7 +62,6 @@ class GpuHost:
                     assert comm is None
                     comm = cp.cuda.nccl.NcclCommunicator(
                         len(group), nccl_uuid, group.index(self.rank))
-
 
         cp.cuda.Device(0).synchronize()
         return comm
@@ -145,6 +147,43 @@ class GpuHost:
             print(f"SendRecv: {groups}\tBytes: {array_size / GB:.5f} GB\t"
                   f"Time: {time_cost:.5f} s\tBandwidth: {bandwidth / (1<<30):.2f} GB/s")
 
+    def profile_multi_send_recv(self, size, dtype, groups):
+        comm = self.init_communicator(groups)
+        time.sleep(1)
+        comm_sync = self.init_communicator([list(np.ravel(groups))])
+        if comm is None or comm_sync is None:
+            return
+
+        assert all(len(group) == 2 for group in groups)
+
+        senders = set(group[0] for group in groups)
+        receivers = set(group[1] for group in groups)
+
+        buf = cp.ones(int(size), dtype)
+        buf_sync = cp.ones(1, dtype)
+
+        do_send_recv(comm, buf, self.rank in senders)
+        do_send_recv(comm, buf, self.rank in senders)
+        do_all_reduce(comm_sync, buf_sync, buf_sync)
+
+        number = min(max(10, int((1 << 30) / (size * dtype().nbytes))), 1 << 13)
+        cp.cuda.Device(0).synchronize()
+        tic = time.time()
+        for i in range(number):
+            do_send_recv(comm, buf, self.rank in senders)
+        do_all_reduce(comm_sync, buf_sync, buf_sync)
+        cp.cuda.Device(0).synchronize()
+        toc = time.time()
+
+        if self.rank == groups[0][0]:
+            time_cost = (toc - tic) / number
+            array_size = size * dtype().nbytes
+            communication_size = array_size
+            bandwidth = len(groups) * communication_size / time_cost
+            print(f"SendRecv: {groups}\tBytes: {array_size / GB:.5f} GB\t"
+                  f"Time: {time_cost:.5f} s\tBandwidth: {bandwidth / (1<<30):.2f} GB/s")
+
+
     def profile(self):
         # All-reduce
         for i in range(29, 30):
@@ -157,11 +196,19 @@ class GpuHost:
             #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3], [4, 5, 6, 7]])
             #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
 
-        # Send-recv
+        # single Send-recv
         for i in range(29, 30):
             self.profile_send_recv(1 << i, cp.float32, 0, 1)
             self.profile_send_recv(1 << i, cp.float32, 0, self.world_size - 1)
 
+        # multiple p2p Send-recv
+        for i in range(29, 30):
+            self.profile_multi_send_recv(1 << i, cp.float32, [[0, 1], [2, 3]])
+            self.profile_multi_send_recv(1 << i, cp.float32, [[0, self.world_size - 4], [1, self.world_size - 3]])
+            self.profile_multi_send_recv(1 << i, cp.float32, [[0, self.world_size - 2], [1, self.world_size - 1]])
+            self.profile_multi_send_recv(1 << i, cp.float32, [[0, self.world_size - 4], [1, self.world_size - 3], [2, self.world_size - 2], [3, self.world_size - 1]])
+            self.profile_multi_send_recv(1 << i, cp.float32, [[0, self.world_size - 8], [1, self.world_size - 7], [2, self.world_size - 6], [3, self.world_size - 5],
+                                                              [4, self.world_size - 4], [5, self.world_size - 3], [6, self.world_size - 2], [7, self.world_size - 1]])
 
     def sync(self):
         return
@@ -171,6 +218,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--efa", action="store_true",
         help="Use AWS EFS on p3.24 or p4.24 instances")
+    parser.add_argument("--debug", action="store_true",
+        help="Print nccl debug information")
     args = parser.parse_args()
 
     ray.init(address="auto")
@@ -184,16 +233,17 @@ if __name__ == "__main__":
             env_vars = {
                 "FI_PROVIDER": "efa",
                 "FI_EFA_USE_DEVICE_RDMA": "1",
-                #"NCCL_DEBUG": "INFO",
-                "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+                "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),  # For libnccl-net.so
             }
         else:
             env_vars = {
                 "NCCL_SOCKET_NTHREADS": "4",
                 "NCCL_NSOCKS_PERTHREAD": "4",
-                #"NCCL_DEBUG": "INFO",
                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
             }
+
+        if args.debug:
+            env_vars["NCCL_DEBUG"] = "INFO"
 
         workers.append(GpuHost.options(runtime_env={"env_vars": env_vars})\
                               .remote(i, num_gpus, nccl_uuid_list))

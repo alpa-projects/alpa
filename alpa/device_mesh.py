@@ -841,8 +841,8 @@ class PhysicalDeviceMesh:
         arrays = []
         if self.is_distributed:
             for i in range(len(avals)):
-                #buffers = _shard_array(args[i], self, shard_indices[i])
-                buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
+                buffers = _shard_array(args[i], self, shard_indices[i])
+                #buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
                 arrays.append(
                     DistributedArray(self, avals[i], sharding_specs[i], buffers,
                                      shard_indices[i]))

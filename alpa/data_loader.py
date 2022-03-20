@@ -9,9 +9,12 @@ import numpy as np
 import ray
 
 from alpa.device_mesh import PhysicalDeviceMesh, DistributedArray, _shard_array
+from alpa.mesh_executable import next_remote_buffer_uuid
 
 
 class DataLoader:
+    """A driver-only dataloader that loads data on the driver process and
+    sends the data to all workers."""
 
     def __init__(self,
                  input_iter,
@@ -75,19 +78,105 @@ def next_mesh_data_loader_uuid():
     return mesh_data_loader_counter
 
 
+def get_num_devices_for_whole_batch(sharding_spec):
+    """Get the number of devices for a whole batch."""
+    num_devices = 1
+    for sharding in sharding_spec.sharding:
+        if isinstance(sharding, pxla.Chunked):
+            num_devices *= np.prod(sharding.chunks)
+
+    for assignment in sharding_spec.mesh_mapping:
+        if isinstance(assignment, pxla.Replicated):
+            num_devices *= assignment.replicas
+
+    sharding = sharding_specs.sharding[batch_dim]
+
+    num_data_chunk = 1
+    if isinstance(sharding, pxla.Chunked):
+        num_data_chunk = np.prod(sharding.chunks)
+
+        # Assert the data chunk is mapped to the first dim of device mesh
+        for assignment in sharding_spec.mesh_mapping:
+            if isinstance(assignment, pxla.ShardedAxis):
+                assert assignment.axis == 0
+
+    return num_devices / num_data_chunk
+
 
 class MeshDriverDataLoader:
+    """The driver part of a distributed data loader. The driver part creates a distributed
+    array and sends commands to let workers load the data in parallel."""
+
     def __init__(self,
+                 batch_size,
+                 num_samples,
                  input_iter_func,
+                 avals,
                  sharding_specs,
-                 physical_mesh=None,
+                 physical_mesh,
                  prefetch_size=1):
-        self.input_iter = input_iter
-        self.sharding_specs = sharding_specs
-        self.prefetch_size = prefetch_size
-        self.physical_mesh = physical_mesh
+        indices = [
+            tuple(spec.indices(aval.shape))
+            for spec, aval in zip(sharding_specs, avals)
+        ]
 
         self.uuid = next_mesh_data_loader_uuid()
+
+        # Create output DisributedArray
+        self.output_uuids = []
+        self.output_arrays = []
+        for i in range(len(avals)):
+            buf_refs, buf_uuids = create_remote_buffer_refs(physical_mesh)
+            self.output_uuids.append(buf_uuids)
+            self.output_arrays.append(
+                DistributedArray(physical_mesh, avals[i], sharding_specs[i], buf_refs)
+            )
+
+        # Create worker part data loaders
+        self.worker_data_loaders = []
+
+        for i in range(physical_mesh.num_hosts):
+            host_output_uuids = []
+            host_indices = []
+            for j in range(len(avals)):
+                batch_size = avals[j].shape[0]
+                num_devices_for_one_batch = get_num_devices_for_whole_batch(sharding_specs[j])
+                num_hosts_for_one_batch = max(1, num_devices_for_one_batch / num_devices_per_host)
+                assert num_hosts_for_one_batch.is_integer(), f"{num_hosts_for_one_batch}"
+                num_hosts_for_one_batch = int(num_hosts_for_one_batch)
+
+                batch_size_per_host = batch_size / (num_hosts / num_hosts_for_one_batch)
+                assert batch_size_per_host.is_integer()
+                batch_size_per_host = int(batch_size_per_host)
+
+                num_batches = len(data) // batch_size
+                num_samples_per_host = num_batches * batch_size_per_host
+
+                start = i * num_samples_per_host
+                end = (i + 1) * num_samples_per_host
+
+                host_output_uuids.append(self.output_uuids[j][i])
+                host_indices.append([])
+                for k in range(physical_mesh.num_devices_per_host):
+                    device_id = i * physical_mesh.num_devices_per_host + k
+                    tmp_indices = list(indices[i][device_id])
+                    tmp_indices[0] = slice(tmp_indices[0].start - i // num_hosts_for_one_batch * per_host_batch_size,
+                                           tmp_indices[0].stop - i // num_hosts_for_one_batch * per_host_batch_size,
+                                           tmp_indices[0].step)
+                    host_indices[-1].append(tuple(tmp_indices))
+
+            physical_mesh.workers[i].put_data_loader(self.uuid, 
+
+    def __iter__(self):
+        # Create the iterators on workers
+        for w in self.physical_mesh.workers:
+            w.data_loader_iter.remote(self.uuid)
+
+        # Yield next batch
+        for i in range(self.length):
+            for w in self.worker_data_loaders:
+                w.data_loader_next.remote(self.uuid)
+            yield self.output_arrays
 
     def __del__(self):
         physical_mesh = self.physical_mesh
@@ -99,6 +188,9 @@ class MeshDriverDataLoader:
 
 
 class MeshWorkerDataLoader:
+    """The worker part of a distributed data loader. The driver part creates a distributed
+    array and sends commands to let workers load the data in parallel."""
+
     def __init__(self,
                  mesh_host_worker,
                  input_iter,
@@ -124,8 +216,10 @@ class MeshWorkerDataLoader:
                     args[i][self.shard_indices[i][k]]
                     for k in range(len(self.devices))
                 ]
-
-                batch.append([jax.device_put(x, d) for x, d in zip(shards, self.devices)])
+                buffers = [
+                    jax.device_put(x, d) for x, d in zip(shards, self.devices)
+                ]
+                batch.append(buffers)
 
             self.queue.append(batch)
 

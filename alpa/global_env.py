@@ -64,6 +64,7 @@ class GlobalConfig:
         ########## Options of device mesh ##########
         self.xla_client_mem_fraction = 0.90
         self.delete_remote_buffers_threshold = 500
+        self.use_aws_efa = False  # use AWS EFA network interface
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_search_logical_mesh_shape = False

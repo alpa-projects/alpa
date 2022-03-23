@@ -332,6 +332,19 @@ def profile_one_hlo_op(backend,
                        op_info,
                        only_once=False):
     """Profile one HLO operator."""
+
+    # p3.16
+    #dot_fp16_work = 50e12
+    #dot_fp32_work = 10e12
+    #comm_single_node_work = 1 << 33
+    #comm_multi_node_work = 1 << 31
+
+    # p4.24
+    dot_fp16_work = 100e12
+    dot_fp32_work = 50e12
+    comm_single_node_work = 1 << 34
+    comm_multi_node_work = 1 << 32
+
     if op_info[0] == "dot":
         n, m, k, dtype_str = op_info[1]
         dtype = to_np_dtype(dtype_str)
@@ -346,9 +359,9 @@ def profile_one_hlo_op(backend,
 
         flop_ct = max(2 * n * m * k, 1)
         if dtype_str == "f16":
-            work = 50e12
+            work = dot_fp16_work
         elif dtype_str == "f32":
-            work = 10e12
+            work = dot_fp32_work
         else:
             raise ValueError(f"Invalid type: {dtype_str}")
         number = min(max(10, int(work / flop_ct)), 1 << 12)
@@ -367,9 +380,9 @@ def profile_one_hlo_op(backend,
 
         if max(replica_groups[0]) - min(
                 replica_groups[0]) < num_devices_per_node:
-            work = 1 << 33
+            work = comm_single_node_work
         else:
-            work = 1 << 31
+            work = comm_multi_node_work
         number = min(max(10, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
     elif op_info[0] == "all-reduce":
@@ -385,9 +398,9 @@ def profile_one_hlo_op(backend,
 
         if max(replica_groups[0]) - min(
                 replica_groups[0]) < num_devices_per_node:
-            work = 1 << 32
+            work = comm_single_node_work / 2
         else:
-            work = 1 << 30
+            work = comm_multi_node_work / 2
         number = min(max(10, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
     elif op_info[0] == "all-to-all":
@@ -406,9 +419,9 @@ def profile_one_hlo_op(backend,
 
         if max(replica_groups[0]) - min(
                 replica_groups[0]) < num_devices_per_node:
-            work = 1 << 33
+            work = comm_single_node_work
         else:
-            work = 1 << 31
+            work = comm_multi_node_work
         number = min(max(10, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
     elif op_info[0] == "reduce-scatter":
@@ -427,9 +440,9 @@ def profile_one_hlo_op(backend,
 
         if max(replica_groups[0]) - min(
                 replica_groups[0]) < num_devices_per_node:
-            work = 1 << 33
+            work = comm_single_node_work
         else:
-            work = 1 << 31
+            work = comm_multi_node_work
         number = min(max(10, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
     elif op_info[0] == "barrier":
@@ -606,7 +619,7 @@ def profile_dot(device_cluster, cache_filename):
     # Profile dot
     op_infos = []
     for dtype in ["f16", "f32"]:
-        for i in range(0, 48):
+        for i in range(0, 64):
             n = 128 * i
             op_infos.append(("dot", (n, n, n, dtype)))
     results, _, _ = physical_mesh.profile_hlo_ops(op_infos, cache_filename)

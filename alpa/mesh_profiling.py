@@ -329,8 +329,7 @@ def profile_one_hlo_op(backend,
                        host_id,
                        num_devices,
                        num_devices_per_node,
-                       op_info,
-                       only_once=False):
+                       op_info):
     """Profile one HLO operator."""
 
     # p3.16
@@ -445,11 +444,10 @@ def profile_one_hlo_op(backend,
             work = comm_multi_node_work
         number = min(max(10, int(work / max(size * dtype.itemsize, 1))),
                      1 << 13)
-    elif op_info[0] == "barrier":
-        replica_groups, dtype, size = (tuple(
-            i for i in range(num_devices)),), "f32", 1
-        dtype = to_np_dtype(dtype)
-        shapes = [((size,), dtype), ((size,), dtype)]
+    elif op_info[0] == "create-communicator":
+        replica_groups, = op_info[1]
+        dtype = to_np_dtype("f32")
+        shapes = [((1,), dtype), ((1,), dtype)]
 
         def op_func(operands):
             channel_id = backend.create_channel_handle()
@@ -457,18 +455,33 @@ def profile_one_hlo_op(backend,
                                  channel_id)
             operands[-1] = out
 
-        work = number = 1
+        work = number = 0
+    elif op_info[0] == "barrier":
+        replica_groups= (tuple(i for i in range(num_devices)),)
+        dtype = to_np_dtype("f32")
+        shapes = [((1,), dtype), ((1,), dtype)]
+
+        def op_func(operands):
+            channel_id = backend.create_channel_handle()
+            out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
+                                 channel_id)
+            operands[-1] = out
+
+        work = number = 0
     else:
         raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
-    warmup = max(number // 10, 2)
-    if only_once:
+    if number == 0:
         warmup = 1
-        number = 0
+    else:
+        warmup = max(number // 10, 2)
 
-    rank_0_print(
-        host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
-        f"time: {time.time():.0f}.")
+    if op_info[0] in ["create-communicator", "barrier"]:
+        rank_0_print(host_id, f"{op_info[0]}")
+    else:
+        rank_0_print(
+            host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
+            f"time: {time.time():.0f}.")
 
     # Compile
     shapes, compiled = _compile_profiling_executable(backend, shapes, op_func,
@@ -493,7 +506,7 @@ def profile_one_hlo_op(backend,
     device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
     [d.synchronize_all_activity() for d in local_devices]
 
-    if only_once:
+    if number == 0:
         return -1.0
 
     # Run profiling
@@ -525,6 +538,9 @@ def run_with_timeout(func, args=(), kwargs={}, timeout=None):
     if t.is_alive():
         raise TimeoutError
 
+    if not ret_value:
+        raise RuntimeError
+
     return ret_value[0]
 
 
@@ -548,8 +564,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                            local_devices,
                            host_id,
                            num_devices,
-                           num_devices_per_node, ("barrier",),
-                           only_once=True)
+                           num_devices_per_node, ("barrier",))
 
     old_cache_len = len(cache_dict)
     all_cache_hit = True
@@ -571,12 +586,11 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
             if all_cache_hit == True and run_barrier:
                 # First time, create the nccl communicator
                 run_with_timeout(barrier, timeout=default_timeout)
-                dummy_op_info = ("all-reduce", (op_info[1][0], op_info[1][1],
-                                                1))
+                tmp_op_info = ("create-communicator", (op_info[1][0],))
                 mean_time = run_with_timeout(
                     profile_one_hlo_op,
                     (backend, local_devices, host_id, num_devices,
-                     num_devices_per_node, dummy_op_info, True),
+                     num_devices_per_node, tmp_op_info),
                     timeout=default_timeout)
 
             # Profile one op
@@ -768,6 +782,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
                 fail_ct += 1
 
             if fail_ct > 5:  # Skip this batch if there are too many errors
+                print(f"Failed key: {batch_key}")
                 failed_batch_keys.add(batch_key)
                 pickle.dump(failed_batch_keys,
                             open(failed_batch_keys_filename, "wb"))

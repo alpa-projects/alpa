@@ -614,6 +614,62 @@ class PhysicalDeviceMesh(ABC):
             return self.get_logical_mesh(
                 (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.01])
 
+    ##### Executable Related Functions #####
+    @abstractmethod
+    def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
+                           donated_invars: Sequence[bool], args):
+        """Shard high-level arguments as low-level buffers."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
+                             shard_indices: Sequence[Sequence[Index]],
+                             sharding_specs: Sequence[ShardingSpec], args):
+        """Shard arguments (np.ndarray) as distributed arrays."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_outputs_handler(self, avals: Sequence[ShapedArray],
+                            sharding_specs: Sequence[ShardingSpec]):
+        """Get a function that wraps low-level buffers to high-level output arrays."""
+        raise NotImplementedError()
+
+    ##### Profiling Related Functions #####
+    @abstractmethod
+    def get_remote_timer(self, timer_name: str):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def reset_remote_timer(self, timer_name: str):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_memory_allocated(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_max_memory_allocated(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_available_memory(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def reset_memory_stats(self):
+        raise NotImplementedError()
+
+    ##### Other Functions #####
+    @abstractmethod
+    def sync_workers(self):
+        """Sync all device activities on workers."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def shutdown(self, forced=False):
+        """Shut down the mesh."""
+        raise NotImplementedError()
+
 
 class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
     """
@@ -634,13 +690,11 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
-        """Shard high-level arguments as low-level buffers."""
         return pxla.shard_args(self.devices, shard_indices, args)
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
                              sharding_specs: Sequence[ShardingSpec], args):
-        """Shard arguments (np.ndarray) as distributed arrays."""
         arrays = []
         for i in range(len(avals)):
             shards = [
@@ -656,7 +710,6 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
-        """Get a function that wraps low-level buffers to high-level output arrays."""
         outs_handler = pxla.local_avals_to_results_handler(
             sharding_specs, avals)
         return outs_handler
@@ -685,12 +738,10 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Other Functions #####
     def sync_workers(self):
-        """Sync all device activities on workers."""
         for device in self.devices:
             device.synchronize_all_activity()
 
     def shutdown(self, forced=False):
-        """Shut down the mesh."""
         self.sync_workers()
 
 
@@ -785,7 +836,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     @property
     def host_ips(self):
-        """Return a list containing all host IPs."""
         ips = [
             self.host_info[i]["NodeManagerAddress"]
             for i, _ in enumerate(self.host_ids)
@@ -886,7 +936,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
-        """Shard high-level arguments as low-level buffers."""
         input_bufs = []
         for arg, indices, donated in zip(args, shard_indices, donated_invars):
             # Fast path for DistributedArray
@@ -911,7 +960,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
                              sharding_specs: Sequence[ShardingSpec], args):
-        """Shard arguments (np.ndarray) as distributed arrays."""
         arrays = []
         for i in range(len(avals)):
             buffers = _shard_array(args[i], self, shard_indices[i])
@@ -923,7 +971,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
-        """Get a function that wraps low-level buffers to high-level output arrays."""
         indices = [
             pxla.spec_to_indices(aval.shape, spec)
             for aval, spec in zip(avals, sharding_specs)
@@ -991,11 +1038,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Other Functions #####
     def sync_workers(self):
-        """Sync all device activities on workers."""
         ray.get([w.sync.remote() for w in self.workers])
 
     def shutdown(self, forced=False):
-        """Shut down the mesh."""
         if not self.launched:
             return
         if not forced:

@@ -621,8 +621,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
     the native XLA runtime.
     """
 
-    def __init__(self,
-                 devices: Sequence["Device"] = None):
+    def __init__(self, devices: Sequence["Device"] = None):
         self.devices = devices if devices is not None else xb.local_devices()
         self.num_devices_per_host = len(self.devices)
         self.device_strs = []
@@ -645,15 +644,14 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         arrays = []
         for i in range(len(avals)):
             shards = [
-                args[i][shard_indices[i][k]]
-                for k in range(len(self.devices))
+                args[i][shard_indices[i][k]] for k in range(len(self.devices))
             ]
             buffers = [
                 jax.device_put(x, d) for x, d in zip(shards, self.devices)
             ]
             arrays.append(
-                pxla._ShardedDeviceArray(avals[i], sharding_specs[i],
-                                         buffers, shard_indices[i]))
+                pxla._ShardedDeviceArray(avals[i], sharding_specs[i], buffers,
+                                         shard_indices[i]))
         return arrays
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
@@ -854,7 +852,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 self.to_delete_remote_buffers[host_id] = []
             self.to_delete_remote_buffers_ct = 0
 
-    def block_until_ready_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
+    def block_until_ready_remote_buffers(self,
+                                         buf_refs: List["RemoteBufferRef"]):
         """Block until the remote buffers are ready."""
         tasks = []
         for buf_ref in buf_refs:
@@ -889,8 +888,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                            donated_invars: Sequence[bool], args):
         """Shard high-level arguments as low-level buffers."""
         input_bufs = []
-        for arg, indices, donated in zip(args, shard_indices,
-                                         donated_invars):
+        for arg, indices, donated in zip(args, shard_indices, donated_invars):
             # Fast path for DistributedArray
             if isinstance(arg, DistributedArray) and arg.indices == indices:
                 input_bufs.append(arg.remote_buffers)
@@ -934,14 +932,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         def outs_handler(bufs):
             ret = []
             for i, _ in enumerate(avals):
-                dis_array = DistributedArray(
-                    device_mesh=self,
-                    aval=avals[i],
-                    sharding_spec=sharding_specs[i],
-                    remote_buffers=bufs[i],
-                    indices=indices[i])
+                dis_array = DistributedArray(device_mesh=self,
+                                             aval=avals[i],
+                                             sharding_spec=sharding_specs[i],
+                                             remote_buffers=bufs[i],
+                                             indices=indices[i])
                 ret.append(dis_array)
             return ret
+
         return outs_handler
 
     def delete_remote_executable(self, executable: "MeshDriverExecutable"):
@@ -975,20 +973,17 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def get_memory_allocated(self):
         self.sync_workers()
         return max(
-            ray.get([w.get_memory_allocated.remote() for w in self.workers
-                    ]))
+            ray.get([w.get_memory_allocated.remote() for w in self.workers]))
 
     def get_max_memory_allocated(self):
         self.sync_workers()
         return max(
-            ray.get([
-                w.get_max_memory_allocated.remote() for w in self.workers
-            ]))
+            ray.get([w.get_max_memory_allocated.remote() for w in self.workers
+                    ]))
 
     def get_available_memory(self):
         return min(
-            ray.get([w.get_available_memory.remote() for w in self.workers
-                    ]))
+            ray.get([w.get_available_memory.remote() for w in self.workers]))
 
     def reset_memory_stats(self):
         for worker in self.workers:
@@ -1390,10 +1385,11 @@ class DeviceCluster:
         for host_id in host_ids:
             assert self.host_num_devices[host_id] >= num_devices_per_host
 
-        return DistributedPhysicalDeviceMesh(host_ids=host_ids,
-                                             host_info=host_info,
-                                             num_devices_per_host=num_devices_per_host,
-                                             head_ip=self.head_ip)
+        return DistributedPhysicalDeviceMesh(
+            host_ids=host_ids,
+            host_info=host_info,
+            num_devices_per_host=num_devices_per_host,
+            head_ip=self.head_ip)
 
     def get_virtual_physical_mesh(self,
                                   host_ids: Sequence[int] = None,

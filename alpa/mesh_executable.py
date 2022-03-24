@@ -21,7 +21,8 @@ from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from alpa.device_mesh import (LocalPhysicalDeviceMesh, DistributedPhysicalDeviceMesh)
+from alpa.device_mesh import (LocalPhysicalDeviceMesh,
+                              DistributedPhysicalDeviceMesh)
 from alpa.global_env import global_config
 from alpa.measure_record import StrategyConfig
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,

@@ -29,7 +29,8 @@ class AutoShardingMixedTest(unittest.TestCase):
         as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = LocalPhysicalDeviceMesh(devices=self.devices[:np.prod(shape)])
+        device_mesh = LocalPhysicalDeviceMesh(
+            devices=self.devices[:np.prod(shape)])
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def test_dot_all_to_all(self):

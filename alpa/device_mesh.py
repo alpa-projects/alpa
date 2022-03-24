@@ -133,7 +133,7 @@ class MeshHostWorker:
         if dtype == np.int64:
             dtype = np.int32
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
-            np.empty(shape, dtype), self.local_devices[device_id]))
+            np.full(shape, 1e-8, dtype), sef.local_devices[device_id]))
 
     def shard_and_put_non_zero_buffer(self, uuids, shape, dtype, indices,
                                       num_batch):

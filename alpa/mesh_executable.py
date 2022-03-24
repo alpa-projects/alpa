@@ -209,9 +209,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
-        if physical_mesh.head_ip == "fake":
-            return
-
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
@@ -347,7 +344,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return self.hlo_text
 
     def __del__(self):
-        self.physical_mesh.delete_remote_executable(self)
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self)
 
 
 def get_buffers(buffer_dict, uuids):
@@ -754,7 +752,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         return self.hlo_text
 
     def __del__(self):
-        self.physical_mesh.delete_remote_executable(self)
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self)
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
@@ -1049,7 +1048,8 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         raise NotImplementedError
 
     def __del__(self):
-        self.physical_mesh.delete_remote_executable(self)
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self)
 
 
 class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):

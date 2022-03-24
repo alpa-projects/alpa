@@ -550,7 +550,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     results = []
     num_devices_per_node = 8
     save_every = 15
-    default_timeout = 20
+    default_timeout = 30
 
     if os.path.exists(cache_filename):
         rank_0_print(host_id,
@@ -684,7 +684,8 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
             for size, dtype in size_configs:
                 all_specs.add((tuple(replica_group), dtype, size))
     all_specs = list(all_specs)
-    all_specs.sort(key=lambda k: (k[0], k[1], -k[2]))
+    all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1],
+        to_np_dtype(k[1]).itemsize, -k[2]))
     return list(all_specs)
 
 
@@ -704,6 +705,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
     for i in range(*comm_size_range):
         size_configs.append((1 << i, "f32"))
         size_configs.append((1 << i, "f16"))
+    size_configs.append((1 << (i + 1), "f16"))
 
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
@@ -730,7 +732,7 @@ def profile_all(device_cluster, cluster_key, comm_size_range, cache_filename):
 
         op_infos = []
         for op_type in [
-                "all-gather", "all-reduce", "all-to-all", "reduce-scatter"
+                "all-reduce", "all-gather", "all-to-all", "reduce-scatter"
         ]:
             for spec in all_specs:
                 op_infos.append((op_type, spec))

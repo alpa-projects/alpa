@@ -40,7 +40,7 @@ if __name__ == "__main__":
     cluster = DeviceCluster()
 
     # Must use an absolute efs filename because ray actors are on distributed workers.
-    comm_size_range = (0, 32)
+    comm_size_range = (0, args.comm_size_max + 1)
     prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range,
         cache_filename="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl")
     prof_database.save(args.filename)

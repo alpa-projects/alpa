@@ -1329,11 +1329,11 @@ class DeviceCluster:
                     self.host_info.append(node)
 
         # Gather device info
-        self.num_devices = []
+        self.host_num_devices = []
         for host_info in self.host_info:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
-            self.num_devices.append(int(number))
+            self.host_num_devices.append(int(number))
 
         set_jax_env_on_driver(use_cpu_on_driver)
 
@@ -1341,6 +1341,10 @@ class DeviceCluster:
     def num_cpus(self):
         return sum(
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
+
+    @property
+    def num_devices(self):
+        return sum(self.host_num_devices)
 
     def get_physical_mesh(self,
                           host_ids: Sequence[int] = None,
@@ -1360,10 +1364,10 @@ class DeviceCluster:
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
-        num_devices_per_host = num_devices_per_host or self.num_devices[
+        num_devices_per_host = num_devices_per_host or self.host_num_devices[
             host_ids[0]]
         for host_id in host_ids:
-            assert self.num_devices[host_id] >= num_devices_per_host
+            assert self.host_num_devices[host_id] >= num_devices_per_host
 
         return PhysicalDeviceMesh(host_ids=host_ids,
                                   host_info=host_info,
@@ -1383,10 +1387,10 @@ class DeviceCluster:
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
-        num_devices_per_host = num_devices_per_host or self.num_devices[
+        num_devices_per_host = num_devices_per_host or self.host_num_devices[
             host_ids[0]]
         for host_id in host_ids:
-            assert self.num_devices[host_id] >= num_devices_per_host
+            assert self.host_num_devices[host_id] >= num_devices_per_host
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,

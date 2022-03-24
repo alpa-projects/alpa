@@ -99,6 +99,7 @@ def get_num_devices_for_whole_batch(sharding_spec, batch_dim=0):
         for assignment in sharding_spec.mesh_mapping:
             if isinstance(assignment, pxla.ShardedAxis):
                 assert assignment.axis == 0
+                break
 
     return num_devices / num_data_chunk
 
@@ -116,7 +117,7 @@ class MeshDriverDataLoader:
                  physical_mesh,
                  prefetch_size=1):
         indices = [
-            tuple(spec.indices(aval.shape))
+            tuple(np.ravel(spec.indices(aval.shape)))
             for spec, aval in zip(sharding_specs, avals)
         ]
 
@@ -153,17 +154,18 @@ class MeshDriverDataLoader:
 
                 num_samples_per_host = self.num_batches * batch_size_per_host
 
-                start = i * num_samples_per_host
-                end = (i + 1) * num_samples_per_host
+                start = (i // num_hosts_for_one_batch) * num_samples_per_host
+                end = ((i // num_hosts_for_one_batch) + 1) * num_samples_per_host
 
                 host_output_uuids.append(self.output_uuids[j][i * physical_mesh.num_devices_per_host:(i+1) * physical_mesh.num_devices_per_host])
                 host_indices.append([])
                 for k in range(physical_mesh.num_devices_per_host):
                     device_id = i * physical_mesh.num_devices_per_host + k
                     tmp_indices = list(indices[j][device_id])
-                    tmp_indices[0] = slice(tmp_indices[0].start - i // num_hosts_for_one_batch * num_samples_per_host,
-                                           tmp_indices[0].stop - i // num_hosts_for_one_batch * num_samples_per_host,
-                                           tmp_indices[0].step)
+                    if tmp_indices[0].start is not None:
+                        tmp_indices[0] = slice(tmp_indices[0].start - i // num_hosts_for_one_batch * batch_size_per_host,
+                                               tmp_indices[0].stop - i // num_hosts_for_one_batch * batch_size_per_host,
+                                               tmp_indices[0].step)
                     host_indices[-1].append(tuple(tmp_indices))
 
             args = (input_iter_func, (start, end, batch_size_per_host),

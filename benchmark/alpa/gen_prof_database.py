@@ -20,7 +20,8 @@ if __name__ == "__main__":
     parser.add_argument("--cluster-key", type=str, default="default")
     parser.add_argument("--filename", type=str, default="prof_database.pkl")
     parser.add_argument("--efa", action="store_true")
-    parser.add_argument("--comm-size-max", type=int)
+    parser.add_argument("--comm-size-max", type=int, required=True)
+    parser.add_argument("--max-fail-retry", type=int, default=5)
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
@@ -40,8 +41,10 @@ if __name__ == "__main__":
     cluster = DeviceCluster()
 
     # Must use an absolute efs filename because ray actors are on distributed workers.
-    comm_size_range = (0, args.comm_size_max + 1)
-    prof_database = cluster.profile_all(args.cluster_key, comm_size_range=comm_size_range,
+    prof_database = cluster.profile_all(
+        args.cluster_key,
+        comm_size_range=(0, args.comm_size_max + 1),
+        max_fail_retry=args.max_fail_retry,
         cache_filename="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl")
     prof_database.save(args.filename)
     print(f"Save profiling database to {args.filename}")

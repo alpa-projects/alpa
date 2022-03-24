@@ -15,6 +15,9 @@ dist
 # pycharm
 .idea
 
+# vscode
+*vscode*
+
 # Analysis temp files
 *.nvprof
 *.prof
@@ -29,7 +32,6 @@ tests/*.json
 benchmark/deepspeed/data
 
 # plots
-*.png
 *.pdf
 
 # Numpy cache

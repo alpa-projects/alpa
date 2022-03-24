@@ -16,7 +16,6 @@ from alpa.global_env import global_config
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
-                                  get_grad_sync_channel_ids_with_hint,
                                   next_mesh_executable_uuid, get_uuid_np_array,
                                   next_remote_buffer_uuid, RemoteBufferRef)
 from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
@@ -329,10 +328,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         src_idx, src_uuids = list(var_at[key].items())[0]
                         resharding_task = self._resharding_tasks[src_idx][
                             mesh_idx][var_key]
-                        self._compile_resharding_task(src_idx, mesh_idx,
-                                                      src_uuids,
-                                                      resharding_task,
-                                                      recv_uuids)
+                        self._compile_resharding_task(
+                            self.physical_meshes[src_idx],
+                            self.physical_meshes[mesh_idx], src_uuids,
+                            resharding_task, recv_uuids, self.instruction_lists)
                         received_keys.add(key)
 
                 # execute
@@ -677,22 +676,26 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     var_to_spec_all_meshes[mesh_idx][outvar])
             self.mesh_output_indices.append(mesh_out_indices)
 
-    def _compile_resharding_task(self, src_mesh_idx: int, dst_mesh_idx: int,
+    # TODO(yonghao): set empty buffer is not compatiable with local allgather
+    @staticmethod
+    def _compile_resharding_task(src_mesh,
+                                 dst_mesh,
                                  src_uuids: np.ndarray,
                                  resharding_task: SymbolicReshardingTask,
-                                 recv_uuids: np.ndarray):
+                                 recv_uuids: np.ndarray,
+                                 instruction_lists,
+                                 set_empty_buffer=False):
         """
         Compile and generate SEND and RECV PipelineInstructions for a ReshardingTask.
 
         Args:
-            src_mesh_idx: mesh index of the src mesh
-            dst_mesh_idx: mesh index of the dst mesh
+            src_mesh: the src mesh
+            dst_mesh: the dst mesh
             src_uuids: uuids of resharded buffer in src mesh
             resharding_task: the task to be compiled
             recv_uuids: uuids of resharded buffer in dst mesh
+            set_empty_buffer: set the empty buffer when recv or not
         """
-        src_mesh = self.physical_meshes[src_mesh_idx]
-        dst_mesh = self.physical_meshes[dst_mesh_idx]
         num_devices_per_host = dst_mesh.num_devices_per_host
         send_buf_uuids = {worker: [] for worker in src_mesh.workers}
         recv_buf_uuids = {worker: [] for worker in dst_mesh.workers}
@@ -712,7 +715,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # add send tasks for each worker
         for w, task_uuid in resharding_task.send_worker_task_ids.items():
             input_uuids = send_buf_uuids[w]
-            self.instruction_lists[w].append(
+            instruction_lists[w].append(
                 PipelineInstruction.Send(task_uuid, input_uuids))
 
         # collect uuids of each recv_tile in each worker based on resharding_task's plan
@@ -731,9 +734,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             output_uuids = recv_buf_uuids[w]
             allgather_uuid = (resharding_task.allgather_worker_task_ids[w] if
                               resharding_task.is_local_allgather_task else None)
-            self.instruction_lists[w].append(
-                PipelineInstruction.Recv(task_uuid, output_uuids, False,
-                                         allgather_uuid))
+            instruction_lists[w].append(
+                PipelineInstruction.Recv(task_uuid, output_uuids,
+                                         set_empty_buffer, allgather_uuid))
 
     def _compile_free(self, worker, used_outside, donated):
         """Compile and generate FREE PipelineInstruction to recycle memory."""
@@ -1229,6 +1232,5 @@ class PipelineMeshWorkerExecutable:
         return ret
 
     def __del__(self):
-        self.worker.delete_executable(self.my_uuid)
         for exec_id in self._related_exec_uuids:
             self.worker.delete_executable(exec_id)

@@ -804,7 +804,7 @@ class CrossMeshCommunicator:
         for _, _, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
                 strategy = self._generate_send_recv_resharding_strategy_by_loads(
-                    spec)
+                    spec, self._sender_loads, self._receiver_loads)
                 spec.set_resharding_strategy(strategy)
 
     @property
@@ -969,7 +969,9 @@ class CrossMeshCommunicator:
                     continue
                 yield i, j, self.resharding_specs[i][j]
 
-    def _generate_send_recv_resharding_strategy_by_loads(self, spec):
+    @staticmethod
+    def _generate_send_recv_resharding_strategy_by_loads(
+            spec, src_loads, dst_loads):
         """Generate the resharding strategy by balancing loads."""
         is_local_allgather = spec.allgather_slice is not None
         per_spec_plans = []
@@ -983,14 +985,14 @@ class CrossMeshCommunicator:
                 for src_tileslice_idx, src_tileslice in enumerate(
                         src_tileslices):
                     loads = {
-                        sender: self._sender_loads[sender]
+                        sender: src_loads[sender]
                         for sender in src_tileslice.replica_device_strs
                     }
                     sender = min(loads, key=loads.get)
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
                     # upload load on-the-fly
-                    self._sender_loads[sender] += src_tileslice.slice_size
-                    self._receiver_loads[receiver] += src_tileslice.slice_size
+                    src_loads[sender] += src_tileslice.slice_size
+                    dst_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
         strategy = ReshardingStrategy(per_spec_plans, is_local_allgather)
         return strategy

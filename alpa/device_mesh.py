@@ -33,8 +33,6 @@ from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
 from alpa.global_env import global_config
-from alpa.mesh_executable import (RemoteBufferRef, MeshDriverExecutable,
-                                  create_remote_buffer_refs)
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
@@ -803,7 +801,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Buffer Related Functions #####
     def get_remote_buffers(self,
-                           buf_refs: List[RemoteBufferRef],
+                           buf_refs: List["RemoteBufferRef"],
                            batching=False):
         """Get values of remote buffers."""
 
@@ -836,7 +834,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         buf_ref.uuid))
             return ray.get(obj_refs)
 
-    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+    def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
         if self.workers is None or not ray.is_initialized():
             return
@@ -856,7 +854,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 self.to_delete_remote_buffers[host_id] = []
             self.to_delete_remote_buffers_ct = 0
 
-    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+    def block_until_ready_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Block until the remote buffers are ready."""
         tasks = []
         for buf_ref in buf_refs:
@@ -946,7 +944,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             return ret
         return outs_handler
 
-    def delete_remote_executable(self, executable: MeshDriverExecutable):
+    def delete_remote_executable(self, executable: "MeshDriverExecutable"):
         """Delete remote worker executables of a driver executable."""
         if self.workers is None or not ray.is_initialized():
             return
@@ -1023,7 +1021,7 @@ class DistributedArray:
                  device_mesh: PhysicalDeviceMesh,
                  aval: ShapedArray,
                  sharding_spec: ShardingSpec,
-                 remote_buffers: Sequence[RemoteBufferRef],
+                 remote_buffers: Sequence["RemoteBufferRef"],
                  indices: Optional[Sequence[Index]] = None):
         self.device_mesh = device_mesh
         self.aval = aval
@@ -1428,6 +1426,7 @@ class DeviceCluster:
 # Register ShardArg Handler
 ########################################
 def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
+    from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     device_ids = np.arange(device_mesh.num_devices_per_host)
     buf_step = device_mesh.num_devices_per_host * num_batch
@@ -1441,6 +1440,7 @@ def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
 
 
 def _device_mesh_put_dummy(array, device_mesh, indices, num_batch):
+    from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     step = device_mesh.num_devices_per_host * num_batch
     for host_id in range(device_mesh.num_hosts):

@@ -10,7 +10,7 @@ from flax.training.train_state import TrainState
 import optax
 import ray
 
-from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
+from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
 from alpa.mesh_profiling import estimate_hlo_module_cost
 from alpa.util import map_to_shape
 
@@ -86,7 +86,7 @@ class HloCostModelTest(unittest.TestCase):
         prof_database = ProfilingResultDatabase()
         prof_database.load("tmp_prof_database.pkl")
 
-        device_mesh = PhysicalDeviceMesh()
+        device_mesh = LocalPhysicalDeviceMesh()
         logical_mesh = device_mesh.get_default_logical_mesh()
         hlo_module = self.run_n_layer_mlp(num_layers, batch_size, hidden_dim,
                                           hidden_dim, hidden_dim, logical_mesh)

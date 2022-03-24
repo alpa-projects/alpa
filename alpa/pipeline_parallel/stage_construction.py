@@ -505,8 +505,7 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
         sliced_meshes (List[Mesh]): List of meshes to spawn worker on.
     """
     output_meshes = []
-    if not original_mesh.is_distributed:
-        raise RuntimeError("SingleDeviceMesh is not supported.")
+    assert isinstance(original_mesh, VirtualPhysicalMesh)
     if original_mesh.num_devices < num_meshes:
         raise RuntimeError("#device < #workers.")
     num_device_per_mesh = int(original_mesh.num_devices / num_meshes)

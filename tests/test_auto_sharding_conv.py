@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, global_config
+from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, global_config
 from alpa.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
@@ -83,7 +83,7 @@ class AutoShardingConvTest(unittest.TestCase):
         as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = PhysicalDeviceMesh(devices=self.devices)
+        device_mesh = LocalPhysicalDeviceMesh(devices=self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_n_layer_conv(self,

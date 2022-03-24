@@ -12,7 +12,7 @@ from flax import optim
 import ray
 
 from alpa import (parallelize, set_parallelize_options, testing, global_config, DeviceCluster,
-                   PhysicalDeviceMesh)
+                   LocalPhysicalDeviceMesh)
 from alpa.testing import assert_only_has_allreduce
 from alpa.util import write_tsv, list_gpu_info, benchmark_func
 
@@ -52,7 +52,7 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
 
     # Mesh configs
     if args.local:
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
+        physical_mesh = LocalPhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()
@@ -178,4 +178,3 @@ if __name__ == "__main__":
     global_config.use_dummy_value_for_benchmarking = True
 
     benchmark_all(args.use_profiling)
-

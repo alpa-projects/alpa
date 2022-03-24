@@ -62,7 +62,7 @@ class GlobalConfig:
         self.default_autosharding_option = AutoShardingOption()
 
         ########## Options of device mesh ##########
-        self.xla_client_mem_fraction = 0.9
+        self.xla_client_mem_fraction = 0.90
         self.delete_remote_buffers_threshold = 500
 
         ########## Options of shard_parallel ##########

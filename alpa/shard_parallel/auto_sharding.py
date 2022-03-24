@@ -57,7 +57,6 @@ class LogicalDeviceMesh:
         self.physical_mesh = physical_mesh
         self.id_mesh = np.array(id_mesh)
         self.flatten_ids = tuple(int(x) for x in self.id_mesh.flatten())
-        self.is_multi_host = False
 
         # coefficient for alpha-beta communication model
         if mesh_alpha is None:

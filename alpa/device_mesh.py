@@ -81,10 +81,12 @@ class MeshHostWorker:
         self.local_devices = self.backend.local_devices()
         self.allgather_communicators = {}
         self.buffers = {}  # Dict[uuid -> DeviceArray]
-        self.executables = {}
+        self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
+        self.data_loaders = {}  # Dict[uuid -> MeshWorkerDataLoader]
+        self.data_loader_iters = {}  # Dict[uuid -> iterator]
         set_override_backend(self.backend)
 
         if global_config.pipeline_use_signal_send_recv:
@@ -128,6 +130,8 @@ class MeshHostWorker:
                             device_id: int,
                             shape: Sequence[int],
                             dtype=np.float32):
+        if dtype == np.int64:
+            dtype = np.int32
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
             np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
 
@@ -199,6 +203,17 @@ class MeshHostWorker:
     def get_exec_grad_sync_channel_ids(self, uuid: int):
         return self.executables[uuid].grad_sync_channel_ids
 
+    ##### Data loader Related Functions #####
+    def put_data_loader(self, uuid: int, *args):
+        from alpa.data_loader import MeshWorkerDataLoader
+        self.data_loaders[uuid] = MeshWorkerDataLoader(self, *args)
+
+    def data_loader_iter(self, uuid: int):
+        self.data_loader_iters[uuid] = iter(self.data_loaders[uuid])
+
+    def data_loader_next(self, uuid: int):
+        next(self.data_loader_iters[uuid])
+
     ##### Cross Mesh Resharding Related Functions #####
     @staticmethod
     def init_collective_group(world_size, rank, backend, group_name):
@@ -207,7 +222,6 @@ class MeshHostWorker:
                                   rank,
                                   backend=backend,
                                   group_name=group_name)
-        return 0
 
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
@@ -329,7 +343,6 @@ class MeshHostWorker:
         assert col.get_rank(group_name) == my_rank
         g = col.check_and_get_group(group_name)
         g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx, nccl_uid)
-        return True
 
     def generate_nccl_uid(self, group_name):
         """Generate the NCCL unique ID in advance."""
@@ -410,6 +423,10 @@ class MeshHostWorker:
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)
 
+    ##### Data Loader Related Functions #####
+    def delete_data_loader(self, uuid):
+        del self.data_loaders[uuid]
+
     ##### Profiling Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
                         single_timeout: float):
@@ -423,7 +440,6 @@ class MeshHostWorker:
         return self.executables[uuid].profile_with_dummy_inputs(
             self.backend, self.local_devices, **kwargs)
 
-    # TODO(yonghao): the sync function should be carefully reconsidered
     def profile_resharding_send_task(self,
                                      uuid,
                                      buf_uuids,
@@ -431,6 +447,7 @@ class MeshHostWorker:
                                      repeat=3,
                                      number=3,
                                      sync=False):
+        # TODO(yonghao): the sync function should be carefully reconsidered
         run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
@@ -459,7 +476,6 @@ class MeshHostWorker:
 
     def reset_timer(self, name: str):
         timers(name).reset()
-        return True
 
     ##### Other Functions #####
     def sync(self):
@@ -506,16 +522,15 @@ class PhysicalDeviceMesh:
 
         if not use_ray:
             self.is_distributed = False
-            self.devices = devices or xb.local_devices()
+            self.devices = devices if devices is not None else xb.local_devices(
+            )
             self.host_ids = [0]
             self.host_info = None
-            self.head_ip = "127.0.0.1"
+            self.head_ip = head_ip or "127.0.0.1"
             self.num_devices_per_host = len(self.devices)
             self.workers = None
             self.launched = False
-            self.device_strs = [
-                device_id_to_str(self.head_ip, d.id) for d in self.devices
-            ]
+            self.device_strs = []
         else:
             self.is_distributed = True
             self.host_ids = host_ids
@@ -800,12 +815,12 @@ class PhysicalDeviceMesh:
                 DistributedArray(self, microbatch_aval, sharding_spec, refs))
         return microbatch_arrays
 
-    def shard_args_to_bufs(self, sharding_indices: Sequence[Sequence[Index]],
+    def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
         """Shard high-level arguments as low-level buffers."""
         if self.is_distributed:
             input_bufs = []
-            for arg, indices, donated in zip(args, sharding_indices,
+            for arg, indices, donated in zip(args, shard_indices,
                                              donated_invars):
                 # Fast path for DistributedArray
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
@@ -827,23 +842,24 @@ class PhysicalDeviceMesh:
             return input_bufs
         else:
             # single host w/o Ray
-            return pxla.shard_args(self.devices, sharding_indices, args)
+            return pxla.shard_args(self.devices, shard_indices, args)
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
-                             sharding_indices: Sequence[Sequence[Index]],
+                             shard_indices: Sequence[Sequence[Index]],
                              sharding_specs: Sequence[ShardingSpec], args):
         """Shard arguments (np.ndarray) as distributed arrays."""
         arrays = []
         if self.is_distributed:
             for i in range(len(avals)):
-                buffers = _shard_array(args[i], self, sharding_indices[i])
+                buffers = _shard_array(args[i], self, shard_indices[i])
+                #buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
                 arrays.append(
                     DistributedArray(self, avals[i], sharding_specs[i], buffers,
-                                     sharding_indices[i]))
+                                     shard_indices[i]))
         else:
             for i in range(len(avals)):
                 shards = [
-                    args[i][sharding_indices[i][k]]
+                    args[i][shard_indices[i][k]]
                     for k in range(len(self.devices))
                 ]
                 buffers = [
@@ -851,7 +867,7 @@ class PhysicalDeviceMesh:
                 ]
                 arrays.append(
                     pxla._ShardedDeviceArray(avals[i], sharding_specs[i],
-                                             buffers, sharding_indices[i]))
+                                             buffers, shard_indices[i]))
 
         return arrays
 
@@ -888,7 +904,7 @@ class PhysicalDeviceMesh:
         for i in range(self.num_hosts):
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
-    ##### Profiling related Functions #####
+    ##### Profiling Related Functions #####
     def profile_hlo_ops(self,
                         op_infos: Sequence[Tuple],
                         cache_filename: str,
@@ -1009,6 +1025,9 @@ class DistributedArray:
         for buf in self.remote_buffers:
             del buf
         self.device_buffers = None
+        self._npy_value = None
+
+    def flush(self):
         self._npy_value = None
 
     @property
@@ -1311,11 +1330,11 @@ class DeviceCluster:
                     self.host_info.append(node)
 
         # Gather device info
-        self.num_devices = []
+        self.host_num_devices = []
         for host_info in self.host_info:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
-            self.num_devices.append(int(number))
+            self.host_num_devices.append(int(number))
 
         set_jax_env_on_driver(use_cpu_on_driver)
 
@@ -1323,6 +1342,10 @@ class DeviceCluster:
     def num_cpus(self):
         return sum(
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
+
+    @property
+    def num_devices(self):
+        return sum(self.host_num_devices)
 
     def get_physical_mesh(self,
                           host_ids: Sequence[int] = None,
@@ -1342,10 +1365,10 @@ class DeviceCluster:
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
-        num_devices_per_host = num_devices_per_host or self.num_devices[
+        num_devices_per_host = num_devices_per_host or self.host_num_devices[
             host_ids[0]]
         for host_id in host_ids:
-            assert self.num_devices[host_id] >= num_devices_per_host
+            assert self.host_num_devices[host_id] >= num_devices_per_host
 
         return PhysicalDeviceMesh(host_ids=host_ids,
                                   host_info=host_info,
@@ -1365,10 +1388,10 @@ class DeviceCluster:
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
-        num_devices_per_host = num_devices_per_host or self.num_devices[
+        num_devices_per_host = num_devices_per_host or self.host_num_devices[
             host_ids[0]]
         for host_id in host_ids:
-            assert self.num_devices[host_id] >= num_devices_per_host
+            assert self.host_num_devices[host_id] >= num_devices_per_host
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,

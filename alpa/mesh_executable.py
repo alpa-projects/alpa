@@ -94,7 +94,7 @@ class RemoteBufferRef:
 
 
 def create_remote_buffer_refs(device_mesh,
-                              batching=1,
+                              num_batches=1,
                               host_indices=None,
                               device_indices=None):
     """Create remote buffer references for an distribued array on a device mesh."""
@@ -102,7 +102,7 @@ def create_remote_buffer_refs(device_mesh,
         host_indices = range(device_mesh.num_hosts)
     if device_indices is None:
         device_indices = range(device_mesh.num_devices_per_host)
-    size = len(host_indices) * len(device_indices) * batching
+    size = len(host_indices) * len(device_indices) * num_batches
     uuids = next_remote_buffer_uuid(size)
     if size == 1:
         uuids = (uuids,)
@@ -110,7 +110,7 @@ def create_remote_buffer_refs(device_mesh,
     refs = []
     for host_id in host_indices:
         for device_id in device_indices:
-            for batch_id in range(batching):
+            for batch_id in range(num_batches):
                 refs.append(
                     RemoteBufferRef(device_mesh, host_id, device_id,
                                     next(uuid_iter)))
@@ -173,6 +173,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                  out_tree_thunk: Optional[Callable] = None,
                  flop_count: Optional[int] = None):
         self.physical_mesh = physical_mesh
+        self.hlo_module = hlo_module
         self.avals = avals
         self.out_avals = out_avals
         self.donated_invars = donated_invars
@@ -207,6 +208,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
+        if physical_mesh.head_ip == "fake":
+            return
+
         if physical_mesh.is_distributed:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:

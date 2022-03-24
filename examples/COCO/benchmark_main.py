@@ -249,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-devices-per-host", type=int, default=None)
     parser.add_argument("--exp_name", type=str, default="default")
     args = parser.parse_args()
-
+    run_cmd("mkdir -p tmp")
     disable_tqdm_globally()
     # Get the benchmark suite
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
@@ -279,17 +279,13 @@ if __name__ == "__main__":
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
 
-        try:
-            ray.init(address="auto", ignore_reinit_error=True,
+        ray.init(address="auto", ignore_reinit_error=True,
                         namespace=get_ray_namespace_str())
-            tf.config.experimental.set_visible_devices([], 'GPU')
-            jax.config.update('jax_platform_name', 'cpu')
-            global_config.use_dummy_value_for_benchmarking = True
-            result = benchmark_unet_internal(benchmark_case, args.niter, num_hosts, num_devices_per_host)
-            ray.shutdown()
-        except:
-            print("Fail ", model_config)
-            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
+        tf.config.experimental.set_visible_devices([], 'GPU')
+        jax.config.update('jax_platform_name', 'cpu')
+        global_config.use_dummy_value_for_benchmarking = True
+        result = benchmark_unet_internal(benchmark_case, args.niter, num_hosts, num_devices_per_host)
+        ray.shutdown()
         
         (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
@@ -305,7 +301,7 @@ if __name__ == "__main__":
         values = [model_type + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
                     num_micro_batches, use_remat, prefer_reduce_scatter,
                     f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
-                    f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                    f"{parameter_count/1e6:.4f}M", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                     f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
                     forward_stage_layer_ids, submesh_shapes,
                     logical_mesh_shapes, autosharding_option_dicts,

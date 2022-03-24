@@ -37,18 +37,18 @@ def get_config():
     config.model = 'Unet'
     config.dataset = 'COCOdataset'
     config.num_gpu = 2
-    config.data_path = "/l/users/hexu.zhao/coco_dataset"
+    config.data_path = "/home/ubuntu/coco_dataset"
     
-    config.learning_rate = 0.3
+    config.learning_rate = 0.01
     config.batch_size = 64
-    config.train_epochs = 10
+    config.train_epochs = 1
     config.labels_count = 12
     config.image_h = 384
     config.image_w = 384
-    config.channel_size = (16, 64, 64, 128)
-    config.block_cnt = (6, 6, 6, 6, 6)
+    config.channel_size = (16, 32, 32, 32)
+    config.block_cnt = (2, 2, 2, 2, 2)
     config.use_batch_norm = False
     config.padding = "SAME"
-    config.layer_num = 8
-    
+    config.layer_num = 4
+
     return config

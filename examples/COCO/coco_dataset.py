@@ -432,19 +432,19 @@ class Coco(Dataset):
 
         data_urls = self.DATA_URLS[str(self.year)]
 
-        def down(url):
+        def down(url, save_folder):
             encoded = str(base64.b64encode(bytes(url, 'utf-8')), 'utf-8')
             # return
-            return download_and_extract(url, os.path.join(self.cache_dir, encoded))
+            return download_and_extract(url, os.path.join(self.cache_dir, save_folder))
 
-        train_dir = down(data_urls[DataType.TRAIN])
-        test_dir = down(data_urls[DataType.TEST])
-        val_dir = down(data_urls[DataType.VAL])
+        train_dir = down(data_urls[DataType.TRAIN], DataType.TRAIN)
+        test_dir = down(data_urls[DataType.TEST], DataType.TEST)
+        val_dir = down(data_urls[DataType.VAL], DataType.VAL)
 
         train_images = get_files(train_dir, extensions=['jpg'])
         val_images = get_files(val_dir, extensions=['jpg'])
         test_images = get_files(test_dir, extensions=['jpg'])
-        annotations_dir = down(data_urls['annotations'])
+        annotations_dir = down(data_urls['annotations'], "annotations")
 
         anns_train_reader = CocoAnnotationReader(os.path.join(annotations_dir, 'annotations', 'instances_train%d.json' % self.year))
         self.reader = anns_train_reader

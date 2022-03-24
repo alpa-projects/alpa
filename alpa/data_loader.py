@@ -131,8 +131,8 @@ class MeshDriverDataLoader:
             buf_refs, buf_uuids = create_remote_buffer_refs(physical_mesh)
             self.output_uuids.append(buf_uuids)
             self.output_arrays.append(
-                DistributedArray(physical_mesh, avals[i], sharding_specs[i], buf_refs)
-            )
+                DistributedArray(physical_mesh, avals[i], sharding_specs[i],
+                                 buf_refs))
 
         # Create worker part data loaders
         self.worker_data_loaders = []
@@ -143,29 +143,41 @@ class MeshDriverDataLoader:
             host_indices = []
             for j in range(len(avals)):
                 batch_size = avals[j].shape[0]
-                num_devices_for_one_batch = get_num_devices_for_whole_batch(sharding_specs[j])
-                num_hosts_for_one_batch = max(1, num_devices_for_one_batch / physical_mesh.num_devices_per_host)
-                assert float(num_hosts_for_one_batch).is_integer(), f"{num_hosts_for_one_batch}"
+                num_devices_for_one_batch = get_num_devices_for_whole_batch(
+                    sharding_specs[j])
+                num_hosts_for_one_batch = max(
+                    1, num_devices_for_one_batch /
+                    physical_mesh.num_devices_per_host)
+                assert float(num_hosts_for_one_batch).is_integer(
+                ), f"{num_hosts_for_one_batch}"
                 num_hosts_for_one_batch = int(num_hosts_for_one_batch)
 
-                batch_size_per_host = batch_size / (physical_mesh.num_hosts / num_hosts_for_one_batch)
+                batch_size_per_host = batch_size / (physical_mesh.num_hosts /
+                                                    num_hosts_for_one_batch)
                 assert batch_size_per_host.is_integer()
                 batch_size_per_host = int(batch_size_per_host)
 
                 num_samples_per_host = self.num_batches * batch_size_per_host
 
                 start = (i // num_hosts_for_one_batch) * num_samples_per_host
-                end = ((i // num_hosts_for_one_batch) + 1) * num_samples_per_host
+                end = (
+                    (i // num_hosts_for_one_batch) + 1) * num_samples_per_host
 
-                host_output_uuids.append(self.output_uuids[j][i * physical_mesh.num_devices_per_host:(i+1) * physical_mesh.num_devices_per_host])
+                host_output_uuids.append(
+                    self.output_uuids[j][i * physical_mesh.num_devices_per_host:
+                                         (i + 1) *
+                                         physical_mesh.num_devices_per_host])
                 host_indices.append([])
                 for k in range(physical_mesh.num_devices_per_host):
                     device_id = i * physical_mesh.num_devices_per_host + k
                     tmp_indices = list(indices[j][device_id])
                     if tmp_indices[0].start is not None:
-                        tmp_indices[0] = slice(tmp_indices[0].start - i // num_hosts_for_one_batch * batch_size_per_host,
-                                               tmp_indices[0].stop - i // num_hosts_for_one_batch * batch_size_per_host,
-                                               tmp_indices[0].step)
+                        tmp_indices[0] = slice(
+                            tmp_indices[0].start -
+                            i // num_hosts_for_one_batch * batch_size_per_host,
+                            tmp_indices[0].stop -
+                            i // num_hosts_for_one_batch * batch_size_per_host,
+                            tmp_indices[0].step)
                     host_indices[-1].append(tuple(tmp_indices))
 
             args = (input_iter_func, (start, end, batch_size_per_host),
@@ -198,13 +210,8 @@ class MeshWorkerDataLoader:
     """The worker part of a distributed data loader. The driver part creates a distributed
     array and sends commands to let workers load the data in parallel."""
 
-    def __init__(self,
-                 mesh_host_worker,
-                 input_iter_func,
-                 input_iter_args,
-                 output_uuids,
-                 shard_indices,
-                 prefetch_size):
+    def __init__(self, mesh_host_worker, input_iter_func, input_iter_args,
+                 output_uuids, shard_indices, prefetch_size):
         self.input_iter = input_iter_func(*input_iter_args)
         self.output_uuids = output_uuids
         self.shard_indices = shard_indices

@@ -10,7 +10,7 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
 import optax
 
-from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, global_config
+from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, global_config
 from alpa.util import map_to_shape, count_communication_primitives
 from alpa.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.model.model_util import optax_adafactor
@@ -34,7 +34,7 @@ class AutoShardingMoETest(unittest.TestCase):
         as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = PhysicalDeviceMesh(self.devices)
+        device_mesh = LocalPhysicalDeviceMesh(self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_moe_layer(self, batch_size, seq_len, hidden_size, num_heads, S, E,

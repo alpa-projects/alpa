@@ -8,7 +8,7 @@ from jax._src.abstract_arrays import ShapedArray
 import numpy as np
 import ray
 
-from alpa.device_mesh import PhysicalDeviceMesh, DistributedArray, _shard_array
+from alpa.device_mesh import LocalPhysicalDeviceMesh, DistributedArray, _shard_array
 from alpa.mesh_executable import next_remote_buffer_uuid, create_remote_buffer_refs
 
 
@@ -26,7 +26,7 @@ class DataLoader:
         self.prefetch_size = prefetch_size
 
         if physical_mesh is None:
-            self.physical_mesh = PhysicalDeviceMesh()
+            self.physical_mesh = LocalPhysicalDeviceMesh()
         else:
             self.physical_mesh = physical_mesh
 

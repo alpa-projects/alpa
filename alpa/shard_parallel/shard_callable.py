@@ -8,20 +8,24 @@ import numpy as np
 
 from jax import linear_util as lu, disable_jit
 from jax._src.lib import xla_bridge as xb
-from jax.core import Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym, ShapedArray
+from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
+                      ShapedArray)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
-from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh, DeviceCluster
+from alpa.device_mesh import (LogicalDeviceMesh, PhysicalDeviceMesh,
+                              LocalPhysicalDeviceMesh, DeviceCluster)
 from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
-from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
+from alpa.mesh_executable import (NormalMeshDriverExecutable,
+                                  GradAccMeshDriverExecutable)
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
-from alpa.util import jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch, setup_computation_alias, OrderedSet
+from alpa.util import (jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch,
+                       setup_computation_alias, OrderedSet)
 
 
 def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
@@ -63,9 +67,9 @@ def shard_parallel_callable(
 
     # Get physical mesh and logical mesh.
     if devices is None:
-        devices = PhysicalDeviceMesh(devices=xb.local_devices())
+        devices = LocalPhysicalDeviceMesh(devices=xb.local_devices())
     elif isinstance(devices, (list, tuple)):
-        devices = PhysicalDeviceMesh(devices=devices)
+        devices = LocalPhysicalDeviceMesh(devices=devices)
     elif isinstance(devices, DeviceCluster):
         devices = devices.get_physical_mesh()
 
@@ -271,7 +275,6 @@ def shard_parallel_internal_gradient_accumulation(
         (False,) * num_grads)
     setup_computation_alias(apply_grad, tmp_donate_invars)
 
-    bypass_device_assignment_check = physical_mesh.is_distributed
     accumulate_grad = run_spmd_partitioner_pass(accumulate_grad,
                                                 physical_mesh.num_devices,
                                                 rewrite_for_grad_acc=True)

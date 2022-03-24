@@ -1,4 +1,5 @@
 """The device mesh runtime that manages buffers and runs computation distributedly."""
+from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
 from functools import partial
@@ -32,8 +33,6 @@ from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
 from alpa.global_env import global_config
-from alpa.mesh_executable import (RemoteBufferRef, MeshDriverExecutable,
-                                  create_remote_buffer_refs)
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
@@ -502,146 +501,33 @@ def device_id_to_str(host_ip, device_id, device_type="gpu"):
 used_port_set = set((None,))
 
 
-class PhysicalDeviceMesh:
-    """
-    A physical device mesh to run computation distributedly.
-
-    This can be either a single-host device mesh (by using the native XLA runtime) or
-    a multi-host device mesh (by using ray actors and the distributed XLA runtime).
-    """
-
-    def __init__(self,
-                 devices: Union[Sequence[Sequence[int]],
-                                Sequence["Device"]] = None,
-                 host_ids: Sequence[int] = None,
-                 host_info: Sequence[dict] = None,
-                 head_ip: str = None,
-                 num_devices_per_host: int = None,
-                 use_ray: bool = False):
-        self.use_ray = use_ray  # TODO: infer use_ray by checking ip addresses.
-
-        if not use_ray:
-            self.is_distributed = False
-            self.devices = devices if devices is not None else xb.local_devices(
-            )
-            self.host_ids = [0]
-            self.host_info = None
-            self.head_ip = head_ip or "127.0.0.1"
-            self.num_devices_per_host = len(self.devices)
-            self.workers = None
-            self.launched = False
-            self.device_strs = []
-        else:
-            self.is_distributed = True
-            self.host_ids = host_ids
-            self.host_info = host_info
-            self.head_ip = head_ip
-            self.num_devices_per_host = num_devices_per_host
-            self.workers = None
-            self.launched = False
-
-            if devices is not None:
-                if len(devices) != len(host_ids):
-                    raise RuntimeError(
-                        "Please specify the gpu IDs used on each host.")
-                if not all(len(ids) == num_devices_per_host for ids in devices):
-                    raise RuntimeError(
-                        "Devices specified for each host does not align "
-                        "with `num_devices_per_host`.")
-            else:
-                devices = [
-                    list(range(num_devices_per_host))
-                    for i, _ in enumerate(host_ids)
-                ]
-            self.devices = devices
-            self.device_strs = []
-            for i in range(self.num_hosts):
-                ip = self.host_info[i]["NodeManagerAddress"]
-                self.device_strs.extend(
-                    [device_id_to_str(ip, j) for j in devices[i]])
-            self._launch_xla_servers()
-
-            self.to_delete_remote_buffers = [[] for _ in range(self.num_hosts)]
-            self.to_delete_remote_buffers_ct = 0
-
-    def _launch_xla_servers(self):
-        # Launch distributed xla runtime
-        port = None
-        while port in used_port_set:
-            port = np.random.randint(20000, 25000)
-        used_port_set.add(port)
-
-        self.server_address = f"{self.head_ip}:{port}"
-        self.service_server = None
-        logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
-        self.service_server = xla_client._xla.get_distributed_runtime_service(
-            self.server_address, self.num_hosts)
-        logger.debug(f"Success to start XLA gRPC server on port: {port}...")
-        time.sleep(0.5)
-
-        # Launch workers
-        self.workers = []
-        for i in range(self.num_hosts):
-            # Set XLA environment variables
-            env_vars = {
-                "ALPA_IS_WORKER": "True",
-                "NCCL_USE_MULTISTREAM": "False",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": str(
-                    global_config.xla_client_mem_fraction),
-                # "NCCL_LAUNCH_MODE": "PARALLEL",
-                # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
-                # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
-                # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
-                # "BETTER_EXCEPTIONS": "1",
-                # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
-            }
-            if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
-                env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
-                    "XLA_PYTHON_CLIENT_ALLOCATOR"]
-
-            # Launch a ray actor
-            node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
-            cls = ray.remote(num_gpus=self.num_devices_per_host,
-                             resources={node_resource: 1e-3})(MeshHostWorker)
-            worker = cls.options(runtime_env={
-                "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i)
-            self.workers.append(worker)
-        self.sync_workers()
-        self.launched = True
+class PhysicalDeviceMesh(ABC):
+    num_devices_per_host: int
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU model."""
         gpu_type = list_gpu_info()
         gpu_name = gpu_type.split("\n")[0].split(" (UUID:")[0][7:]
-        ret = f"{len(self.host_ids)},{self.num_devices_per_host},{gpu_name}"
+        ret = f"{self.num_hosts},{self.num_devices_per_host},{gpu_name}"
         ret = ret.replace(" ", "-")
         return ret
 
     @property
-    def host_ips(self):
-        """Return a list containing all host IPs."""
-        ips = [
-            self.host_info[i]["NodeManagerAddress"]
-            for i, _ in enumerate(self.host_ids)
-        ]
-        return ips
-
-    @property
     def shape(self):
-        return (len(self.host_ids), self.num_devices_per_host)
+        return self.num_hosts, self.num_devices_per_host
 
     @property
     def num_devices(self):
         """Return the total number of GPUs on this mesh."""
-        return len(self.host_ids) * self.num_devices_per_host
+        return self.num_hosts * self.num_devices_per_host
 
     @property
+    @abstractmethod
     def num_hosts(self):
         """Return the number of hosts in the mesh."""
-        return len(self.host_ids)
+        raise NotImplementedError()
 
-    ##### Mesh Related Functions #####
+    ##### Logical Mesh Related Functions #####
     def get_logical_mesh(self,
                          mesh_shape,
                          mesh_alpha=None,
@@ -728,9 +614,192 @@ class PhysicalDeviceMesh:
             return self.get_logical_mesh(
                 (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.01])
 
+
+class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
+    """
+    A single-host physical device mesh to run computation distributedly. It uses
+    the native XLA runtime.
+    """
+
+    def __init__(self, devices: Sequence["Device"] = None):
+        self.devices = devices if devices is not None else xb.local_devices()
+        self.num_devices_per_host = len(self.devices)
+        self.device_strs = []
+
+    @property
+    def num_hosts(self):
+        """Return the number of hosts in the mesh."""
+        return 1
+
+    ##### Executable Related Functions #####
+    def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
+                           donated_invars: Sequence[bool], args):
+        """Shard high-level arguments as low-level buffers."""
+        return pxla.shard_args(self.devices, shard_indices, args)
+
+    def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
+                             shard_indices: Sequence[Sequence[Index]],
+                             sharding_specs: Sequence[ShardingSpec], args):
+        """Shard arguments (np.ndarray) as distributed arrays."""
+        arrays = []
+        for i in range(len(avals)):
+            shards = [
+                args[i][shard_indices[i][k]] for k in range(len(self.devices))
+            ]
+            buffers = [
+                jax.device_put(x, d) for x, d in zip(shards, self.devices)
+            ]
+            arrays.append(
+                pxla._ShardedDeviceArray(avals[i], sharding_specs[i], buffers,
+                                         shard_indices[i]))
+        return arrays
+
+    def get_outputs_handler(self, avals: Sequence[ShapedArray],
+                            sharding_specs: Sequence[ShardingSpec]):
+        """Get a function that wraps low-level buffers to high-level output arrays."""
+        outs_handler = pxla.local_avals_to_results_handler(
+            sharding_specs, avals)
+        return outs_handler
+
+    ##### Profiling Related Functions #####
+    def get_remote_timer(self, timer_name: str):
+        return timers(timer_name)
+
+    def reset_remote_timer(self, timer_name: str):
+        timers(timer_name).reset()
+
+    def get_memory_allocated(self):
+        self.sync_workers()
+        return max([d.memory_allocated() for d in self.devices])
+
+    def get_max_memory_allocated(self):
+        self.sync_workers()
+        return max([d.max_memory_allocated() for d in self.devices])
+
+    def get_available_memory(self):
+        return min([device.available_memory() for device in self.devices])
+
+    def reset_memory_stats(self):
+        for device in self.devices:
+            device.clear_memory_stats()
+
+    ##### Other Functions #####
+    def sync_workers(self):
+        """Sync all device activities on workers."""
+        for device in self.devices:
+            device.synchronize_all_activity()
+
+    def shutdown(self, forced=False):
+        """Shut down the mesh."""
+        self.sync_workers()
+
+
+class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
+    """
+    A multi-host physical device mesh to run computation distributedly. It uses
+    ray actors and the distributed XLA runtime.
+    """
+
+    def __init__(self,
+                 devices: Union[Sequence[Sequence[int]]] = None,
+                 host_ids: Sequence[int] = None,
+                 host_info: Sequence[dict] = None,
+                 head_ip: str = None,
+                 num_devices_per_host: int = None):
+        self.host_ids = host_ids
+        self.host_info = host_info
+        self.head_ip = head_ip
+        self.num_devices_per_host = num_devices_per_host
+        self.workers = None
+        self.launched = False
+
+        if devices is not None:
+            if len(devices) != len(host_ids):
+                raise RuntimeError(
+                    "Please specify the gpu IDs used on each host.")
+            if not all(len(ids) == num_devices_per_host for ids in devices):
+                raise RuntimeError(
+                    "Devices specified for each host does not align "
+                    "with `num_devices_per_host`.")
+        else:
+            devices = [
+                list(range(num_devices_per_host))
+                for i, _ in enumerate(host_ids)
+            ]
+        self.devices = devices
+        self.device_strs = []
+        for i in range(self.num_hosts):
+            ip = self.host_info[i]["NodeManagerAddress"]
+            self.device_strs.extend(
+                [device_id_to_str(ip, j) for j in devices[i]])
+        self._launch_xla_servers()
+
+        self.to_delete_remote_buffers = [[] for _ in range(self.num_hosts)]
+        self.to_delete_remote_buffers_ct = 0
+
+    def _launch_xla_servers(self):
+        # Launch distributed xla runtime
+        port = None
+        while port in used_port_set:
+            port = np.random.randint(20000, 25000)
+        used_port_set.add(port)
+
+        self.server_address = f"{self.head_ip}:{port}"
+        self.service_server = None
+        logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
+        self.service_server = xla_client._xla.get_distributed_runtime_service(
+            self.server_address, self.num_hosts)
+        logger.debug(f"Success to start XLA gRPC server on port: {port}...")
+        time.sleep(0.5)
+
+        # Launch workers
+        self.workers = []
+        for i in range(self.num_hosts):
+            # Set XLA environment variables
+            env_vars = {
+                "ALPA_IS_WORKER": "True",
+                "NCCL_USE_MULTISTREAM": "False",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": str(
+                    global_config.xla_client_mem_fraction),
+                # "NCCL_LAUNCH_MODE": "PARALLEL",
+                # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
+                # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
+                # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
+                # "BETTER_EXCEPTIONS": "1",
+                # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
+            }
+            if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
+                env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
+                    "XLA_PYTHON_CLIENT_ALLOCATOR"]
+
+            # Launch a ray actor
+            node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
+            cls = ray.remote(num_gpus=self.num_devices_per_host,
+                             resources={node_resource: 1e-3})(MeshHostWorker)
+            worker = cls.options(runtime_env={
+                "env_vars": env_vars
+            }).remote(self.server_address, self.num_hosts, i)
+            self.workers.append(worker)
+        self.sync_workers()
+        self.launched = True
+
+    @property
+    def host_ips(self):
+        """Return a list containing all host IPs."""
+        ips = [
+            self.host_info[i]["NodeManagerAddress"]
+            for i, _ in enumerate(self.host_ids)
+        ]
+        return ips
+
+    @property
+    def num_hosts(self):
+        """Return the number of hosts in the mesh."""
+        return len(self.host_ids)
+
     ##### Buffer Related Functions #####
     def get_remote_buffers(self,
-                           buf_refs: List[RemoteBufferRef],
+                           buf_refs: List["RemoteBufferRef"],
                            batching=False):
         """Get values of remote buffers."""
 
@@ -763,7 +832,7 @@ class PhysicalDeviceMesh:
                         buf_ref.uuid))
             return ray.get(obj_refs)
 
-    def delete_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+    def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
         if self.workers is None or not ray.is_initialized():
             return
@@ -783,7 +852,8 @@ class PhysicalDeviceMesh:
                 self.to_delete_remote_buffers[host_id] = []
             self.to_delete_remote_buffers_ct = 0
 
-    def block_until_ready_remote_buffers(self, buf_refs: List[RemoteBufferRef]):
+    def block_until_ready_remote_buffers(self,
+                                         buf_refs: List["RemoteBufferRef"]):
         """Block until the remote buffers are ready."""
         tasks = []
         for buf_ref in buf_refs:
@@ -797,7 +867,6 @@ class PhysicalDeviceMesh:
                         microbatch_aval):
         """Shard high-level arguments as low-level buffers,
         then reorganize them into micro batches."""
-        assert self.is_distributed
         new_spec = get_microbatch_sharding_spec(sharding_spec, batch_dim,
                                                 num_microbatch)
         indices = pxla.spec_to_indices(arg.shape, new_spec)
@@ -818,85 +887,62 @@ class PhysicalDeviceMesh:
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
         """Shard high-level arguments as low-level buffers."""
-        if self.is_distributed:
-            input_bufs = []
-            for arg, indices, donated in zip(args, shard_indices,
-                                             donated_invars):
-                # Fast path for DistributedArray
-                if isinstance(arg, DistributedArray) and arg.indices == indices:
-                    input_bufs.append(arg.remote_buffers)
-                elif isinstance(arg, ReplicatedDistributedArray):
-                    replica = arg.get_replica_on_mesh(self)
-                    assert replica.indices == indices
-                    input_bufs.append(replica.remote_buffers)
-                else:  # Slow path
-                    if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
-                        arg = xla.canonicalize_dtype(arg)
-                    buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
-                    input_bufs.append(buf_refs)
-                    if donated and hasattr(arg, "delete"):
-                        # shard_arg_handler always creates new buffers,
-                        # so we can delete the old buffers
-                        arg.delete()
+        input_bufs = []
+        for arg, indices, donated in zip(args, shard_indices, donated_invars):
+            # Fast path for DistributedArray
+            if isinstance(arg, DistributedArray) and arg.indices == indices:
+                input_bufs.append(arg.remote_buffers)
+            elif isinstance(arg, ReplicatedDistributedArray):
+                replica = arg.get_replica_on_mesh(self)
+                assert replica.indices == indices
+                input_bufs.append(replica.remote_buffers)
+            else:  # Slow path
+                if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
+                    arg = xla.canonicalize_dtype(arg)
+                buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
+                input_bufs.append(buf_refs)
+                if donated and hasattr(arg, "delete"):
+                    # shard_arg_handler always creates new buffers,
+                    # so we can delete the old buffers
+                    arg.delete()
 
-            return input_bufs
-        else:
-            # single host w/o Ray
-            return pxla.shard_args(self.devices, shard_indices, args)
+        return input_bufs
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
                              sharding_specs: Sequence[ShardingSpec], args):
         """Shard arguments (np.ndarray) as distributed arrays."""
         arrays = []
-        if self.is_distributed:
-            for i in range(len(avals)):
-                buffers = _shard_array(args[i], self, shard_indices[i])
-                #buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
-                arrays.append(
-                    DistributedArray(self, avals[i], sharding_specs[i], buffers,
-                                     shard_indices[i]))
-        else:
-            for i in range(len(avals)):
-                shards = [
-                    args[i][shard_indices[i][k]]
-                    for k in range(len(self.devices))
-                ]
-                buffers = [
-                    jax.device_put(x, d) for x, d in zip(shards, self.devices)
-                ]
-                arrays.append(
-                    pxla._ShardedDeviceArray(avals[i], sharding_specs[i],
-                                             buffers, shard_indices[i]))
-
+        for i in range(len(avals)):
+            buffers = _shard_array(args[i], self, shard_indices[i])
+            #buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
+            arrays.append(
+                DistributedArray(self, avals[i], sharding_specs[i], buffers,
+                                 shard_indices[i]))
         return arrays
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
         """Get a function that wraps low-level buffers to high-level output arrays."""
-        if self.is_distributed:
-            indices = [
-                pxla.spec_to_indices(aval.shape, spec)
-                for aval, spec in zip(avals, sharding_specs)
-            ]
+        indices = [
+            pxla.spec_to_indices(aval.shape, spec)
+            for aval, spec in zip(avals, sharding_specs)
+        ]
 
-            def outs_handler(bufs):
-                ret = []
-                for i, _ in enumerate(avals):
-                    dis_array = DistributedArray(
-                        device_mesh=self,
-                        aval=avals[i],
-                        sharding_spec=sharding_specs[i],
-                        remote_buffers=bufs[i],
-                        indices=indices[i])
-                    ret.append(dis_array)
-                return ret
-        else:
-            outs_handler = pxla.local_avals_to_results_handler(
-                sharding_specs, avals)
+        def outs_handler(bufs):
+            ret = []
+            for i, _ in enumerate(avals):
+                dis_array = DistributedArray(device_mesh=self,
+                                             aval=avals[i],
+                                             sharding_spec=sharding_specs[i],
+                                             remote_buffers=bufs[i],
+                                             indices=indices[i])
+                ret.append(dis_array)
+            return ret
+
         return outs_handler
 
-    def delete_remote_executable(self, executable: MeshDriverExecutable):
+    def delete_remote_executable(self, executable: "MeshDriverExecutable"):
         """Delete remote worker executables of a driver executable."""
         if self.workers is None or not ray.is_initialized():
             return
@@ -910,7 +956,6 @@ class PhysicalDeviceMesh:
                         cache_filename: str,
                         single_timeout: Optional[float] = None,
                         batch_timeout: Optional[float] = None):
-        assert self.is_distributed
         tasks = []
         for w in self.workers:
             tasks.append(
@@ -919,78 +964,49 @@ class PhysicalDeviceMesh:
         return ray.get(tasks, timeout=batch_timeout)[0]
 
     def get_remote_timer(self, timer_name: str):
-        if self.is_distributed:
-            return ray.get(self.workers[0].get_timer.remote(timer_name))
-        else:
-            return timers(timer_name)
+        return ray.get(self.workers[0].get_timer.remote(timer_name))
 
     def reset_remote_timer(self, timer_name: str):
-        if self.is_distributed:
-            for worker in self.workers:
-                ray.get(worker.reset_timer.remote(timer_name))
-        else:
-            timers(timer_name).reset()
+        for worker in self.workers:
+            ray.get(worker.reset_timer.remote(timer_name))
 
     def get_memory_allocated(self):
         self.sync_workers()
-        if self.is_distributed:
-            return max(
-                ray.get([w.get_memory_allocated.remote() for w in self.workers
-                        ]))
-        else:
-            return max([d.memory_allocated() for d in self.devices])
+        return max(
+            ray.get([w.get_memory_allocated.remote() for w in self.workers]))
 
     def get_max_memory_allocated(self):
         self.sync_workers()
-        if self.is_distributed:
-            return max(
-                ray.get([
-                    w.get_max_memory_allocated.remote() for w in self.workers
-                ]))
-        else:
-            return max([d.max_memory_allocated() for d in self.devices])
+        return max(
+            ray.get([w.get_max_memory_allocated.remote() for w in self.workers
+                    ]))
 
     def get_available_memory(self):
-        if self.is_distributed:
-            return min(
-                ray.get([w.get_available_memory.remote() for w in self.workers
-                        ]))
-        else:
-            return min([device.available_memory() for device in self.devices])
+        return min(
+            ray.get([w.get_available_memory.remote() for w in self.workers]))
 
     def reset_memory_stats(self):
-        if self.is_distributed:
-            for worker in self.workers:
-                ray.get(worker.reset_memory_stats.remote())
-        else:
-            for device in self.devices:
-                device.clear_memory_stats()
+        for worker in self.workers:
+            ray.get(worker.reset_memory_stats.remote())
 
     ##### Other Functions #####
     def sync_workers(self):
         """Sync all device activities on workers."""
-        if self.is_distributed:
-            ray.get([w.sync.remote() for w in self.workers])
-        else:
-            for device in self.devices:
-                device.synchronize_all_activity()
+        ray.get([w.sync.remote() for w in self.workers])
 
     def shutdown(self, forced=False):
         """Shut down the mesh."""
-        if self.is_distributed:
-            if not self.launched:
-                return
-            if not forced:
-                ray.get([w.shutdown.remote() for w in self.workers])
-            for worker in self.workers:
-                ray.kill(worker)
-            self.workers = None
-            # shutdown grpc server
-            self.service_server.shutdown()
-            self.service_server = None
-            self.launched = False
-        else:
-            self.sync_workers()
+        if not self.launched:
+            return
+        if not forced:
+            ray.get([w.shutdown.remote() for w in self.workers])
+        for worker in self.workers:
+            ray.kill(worker)
+        self.workers = None
+        # shutdown grpc server
+        self.service_server.shutdown()
+        self.service_server = None
+        self.launched = False
 
 
 class DistributedArray:
@@ -1000,7 +1016,7 @@ class DistributedArray:
                  device_mesh: PhysicalDeviceMesh,
                  aval: ShapedArray,
                  sharding_spec: ShardingSpec,
-                 remote_buffers: Sequence[RemoteBufferRef],
+                 remote_buffers: Sequence["RemoteBufferRef"],
                  indices: Optional[Sequence[Index]] = None):
         self.device_mesh = device_mesh
         self.aval = aval
@@ -1271,13 +1287,12 @@ class VirtualPhysicalMesh:
 
     def get_physical_mesh(self):
         """Convert to a physical mesh (which will request resources from Ray)."""
-        return PhysicalDeviceMesh(
+        return DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
-            devices=self.devices,
-            use_ray=True)
+            devices=self.devices)
 
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Generate a logical mesh."""
@@ -1370,11 +1385,11 @@ class DeviceCluster:
         for host_id in host_ids:
             assert self.host_num_devices[host_id] >= num_devices_per_host
 
-        return PhysicalDeviceMesh(host_ids=host_ids,
-                                  host_info=host_info,
-                                  num_devices_per_host=num_devices_per_host,
-                                  head_ip=self.head_ip,
-                                  use_ray=True)
+        return DistributedPhysicalDeviceMesh(
+            host_ids=host_ids,
+            host_info=host_info,
+            num_devices_per_host=num_devices_per_host,
+            head_ip=self.head_ip)
 
     def get_virtual_physical_mesh(self,
                                   host_ids: Sequence[int] = None,
@@ -1407,6 +1422,7 @@ class DeviceCluster:
 # Register ShardArg Handler
 ########################################
 def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
+    from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     device_ids = np.arange(device_mesh.num_devices_per_host)
     buf_step = device_mesh.num_devices_per_host * num_batch
@@ -1420,6 +1436,7 @@ def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
 
 
 def _device_mesh_put_dummy(array, device_mesh, indices, num_batch):
+    from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     step = device_mesh.num_devices_per_host * num_batch
     for host_id in range(device_mesh.num_hosts):

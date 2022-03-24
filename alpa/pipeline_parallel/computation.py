@@ -17,7 +17,6 @@ from jax.interpreters.partial_eval import remat_call_p
 from jaxlib import xla_extension
 import numpy as np
 
-from alpa.device_mesh import PhysicalDeviceMesh
 from alpa.measure_record import StrategyConfig
 from alpa.mesh_executable import PartialGradAccMeshDriverExecutable
 from alpa.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,

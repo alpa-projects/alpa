@@ -13,7 +13,7 @@ import optax
 
 import alpa
 from alpa import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh, automatic_layer_construction)
+                   DeviceCluster, LocalPhysicalDeviceMesh, automatic_layer_construction)
 from alpa.model.conformer import ConformerForASRModule, ConformerConfig, TrainState
 from alpa.util import (run_cmd, write_tsv, map_to_shape, list_gpu_info,
                         count_communication_primitives, print_used_time,
@@ -121,7 +121,7 @@ def benchmark_model_one_case(benchmark_case):
         num_micro_batches = None
 
     if args.local:
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
+        physical_mesh = LocalPhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()

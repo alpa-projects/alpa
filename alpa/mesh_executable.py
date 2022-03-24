@@ -21,6 +21,8 @@ from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
 
+from alpa.device_mesh import (LocalPhysicalDeviceMesh,
+                              DistributedPhysicalDeviceMesh)
 from alpa.global_env import global_config
 from alpa.measure_record import StrategyConfig
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
@@ -134,7 +136,7 @@ def get_sync_func_driver(physical_mesh):
     """Get the sync function on the driver."""
 
     def sync_func_driver():
-        assert not physical_mesh.is_distributed
+        assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
         physical_mesh.devices[0].synchronize_all_activity()
 
     return sync_func_driver
@@ -208,10 +210,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
-        if physical_mesh.head_ip == "fake":
-            return
-
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
@@ -219,6 +218,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                                         strategy_config)
             self.hlo_text = None  # will be fetched from the workers later
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             backend = xb.get_backend("gpu")
             self.compiled = run_backend_compilation(backend, hlo_module,
                                                     strategy_config,
@@ -241,7 +241,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         input_bufs = physical_mesh.shard_args_to_bufs(self.input_indices,
                                                       self.donated_invars, args)
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             ## Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
                 len(args), num_hosts, num_devices_per_host).transpose([1, 0,
@@ -278,6 +278,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     for buf in bufs:
                         buf.set_deleted_on_workers()
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             timers(self.timer_name).start(self.sync_func)
             output_bufs = self.compiled.execute_sharded_on_local_devices(
                 input_bufs)
@@ -307,7 +308,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def profile_with_dummy_inputs(self, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
-        if self.physical_mesh.is_distributed:
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             tasks = []
             for worker in self.physical_mesh.workers:
                 tasks.append(
@@ -319,6 +320,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     return [np.inf] * len(cost_vec)
             costs = np.mean(costs, axis=0)
         else:
+            assert isinstance(self.physical_mesh, LocalPhysicalDeviceMesh)
             costs = profile_xla_executable(self.compiled, xb.get_backend("gpu"),
                                            self.physical_mesh.devices)
         return costs
@@ -330,11 +332,12 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        if self.physical_mesh.is_distributed:
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             return (ray.get(self.physical_mesh.workers[0].
                             get_exec_total_allocation_size.remote(
                                 self.exec_uuid)))
         else:
+            assert isinstance(self.physical_mesh, LocalPhysicalDeviceMesh)
             return self.compiled.total_allocation_size()
 
     def get_hlo_text(self):
@@ -342,7 +345,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return self.hlo_text
 
     def __del__(self):
-        self.physical_mesh.delete_remote_executable(self)
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self)
 
 
 def get_buffers(buffer_dict, uuids):
@@ -546,7 +550,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             for w in physical_mesh.workers:
                 w.put_executable.remote(
                     self.exec_uuid, GradAccMeshWorkerExecutable,
@@ -559,6 +563,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.hlo_text = None  # will be fetched from the workers later
             self.grad_sync_channel_ids = None  # TODO(lmzheng): fetch from the workers
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             backend = xb.get_backend("gpu")
 
             self.accumulate_grad = run_backend_compilation(
@@ -624,7 +629,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.next_batch_indices, (True,) * len(self.next_batch_indices),
             next_batches)
 
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
                 len(input_bufs), num_hosts,
@@ -674,6 +679,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 for buf in bufs:
                     buf.set_deleted_on_workers()
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             # Prepare gradient buffers
             timers(self.timer_name).start(self.sync_func)
             grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
@@ -724,11 +730,12 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
-        if self.physical_mesh.is_distributed:
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             return ray.get(self.physical_mesh.workers[0].
                            get_exec_total_allocation_size.remote(
                                self.exec_uuid))
         else:
+            assert isinstance(self.physical_mesh, LocalPhysicalDeviceMesh)
             return max(self.accumulate_grad.total_allocation_size(),
                        self.apply_grad.total_allocation_size())
 
@@ -736,7 +743,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         """Return the HLO IR in the text format."""
         if self.hlo_text is not None:
             return self.hlo_text
-        assert self.physical_mesh.is_distributed
+        assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
         self.hlo_text = ray.get(
             self.physical_mesh.workers[0].get_exec_hlo_text.remote(
                 self.exec_uuid))
@@ -746,7 +753,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         return self.hlo_text
 
     def __del__(self):
-        self.physical_mesh.delete_remote_executable(self)
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self)
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
@@ -883,7 +891,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
@@ -894,6 +902,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             self.grad_sync_channel_ids = None
             self.skip_allreduce_env_name = None
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             backend = xb.get_backend("gpu")
             self.compiled = run_backend_compilation(backend, hlo_module,
                                                     strategy_config,
@@ -973,12 +982,13 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
             grad_avals, grad_sharding_specs)
 
         self.exec_uuid = next_mesh_executable_uuid()
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         AllocZeroBufferWorkerExecutable,
                                         grad_shard_shapes, grad_shard_dtypes)
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
                 xb.get_backend("gpu"), physical_mesh.devices, grad_shard_shapes,
                 grad_shard_dtypes)
@@ -1002,7 +1012,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         num_outs = len(self.out_avals)
         num_devices_per_host = physical_mesh.num_devices_per_host
 
-        if physical_mesh.is_distributed:
+        if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Get output uuids
             output_uuids = (next_remote_buffer_uuid(
                 num_hosts * num_outs * num_devices_per_host).reshape(
@@ -1026,6 +1036,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
                         physical_mesh, host_id, device_id,
                         output_uuids[i][host_id][device_id])
         else:
+            assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             timers(self.timer_name).start(self.sync_func)
             output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
                 [])
@@ -1038,7 +1049,8 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         raise NotImplementedError
 
     def __del__(self):
-        self.physical_mesh.delete_remote_executable(self)
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self)
 
 
 class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):

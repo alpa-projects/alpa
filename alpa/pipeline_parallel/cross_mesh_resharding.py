@@ -7,12 +7,14 @@ import ray
 from jax.interpreters import pxla
 
 import alpa.collective as col
-from alpa.device_mesh import (DistributedArray, RemoteBufferRef,
-                              ReshardingAllGatherSpec, ReshardingRecvSpec,
-                              ReshardingTileSpec)
+from alpa.device_mesh import (DistributedArray, ReshardingAllGatherSpec,
+                              ReshardingRecvSpec, ReshardingTileSpec)
+from alpa.mesh_executable import RemoteBufferRef
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
-from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray, TileSlice, unflatten_tile_index
+from alpa.pipeline_parallel.resharding_tensor import (VirtualDistributedArray,
+                                                      TileSlice,
+                                                      unflatten_tile_index)
 from alpa.util import OrderedSet
 
 logger = logging.getLogger(__name__)

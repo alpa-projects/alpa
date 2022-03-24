@@ -10,7 +10,7 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh
+from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh
 from alpa.global_env import global_config
 from alpa.util import map_to_shape, count_communication_primitives
 
@@ -29,7 +29,8 @@ class AutoShardingMixedTest(unittest.TestCase):
         as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = PhysicalDeviceMesh(devices=self.devices[:np.prod(shape)])
+        device_mesh = LocalPhysicalDeviceMesh(
+            devices=self.devices[:np.prod(shape)])
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def test_dot_all_to_all(self):

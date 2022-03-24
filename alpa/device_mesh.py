@@ -85,7 +85,8 @@ class MeshHostWorker:
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
-        self.data_loaders = {}  # Dict[uuid -> ]
+        self.data_loaders = {}  # Dict[uuid -> MeshWorkerDataLoader]
+        self.data_loader_iters = {}  # Dict[uuid -> iterator]
         set_override_backend(self.backend)
 
         if global_config.pipeline_use_signal_send_recv:
@@ -201,6 +202,17 @@ class MeshHostWorker:
 
     def get_exec_grad_sync_channel_ids(self, uuid: int):
         return self.executables[uuid].grad_sync_channel_ids
+
+    ##### Data loader Related Functions #####
+    def put_data_loader(self, uuid: int, *args):
+        from alpa.data_loader import MeshWorkerDataLoader
+        self.data_loaders[uuid] = MeshWorkerDataLoader(self, *args)
+
+    def data_loader_iter(self, uuid: int):
+        self.data_loader_iters[uuid] = iter(self.data_loaders[uuid])
+
+    def data_loader_next(self, uuid: int):
+        next(self.data_loader_iters[uuid])
 
     ##### Cross Mesh Resharding Related Functions #####
     @staticmethod
@@ -412,9 +424,6 @@ class MeshHostWorker:
         col.destroy_collective_group(group_name)
 
     ##### Data Loader Related Functions #####
-    def put_data_loader(self, uuid, gen_func):
-        pass
-
     def delete_data_loader(self, uuid):
         del self.data_loaders[uuid]
 
@@ -1015,6 +1024,9 @@ class DistributedArray:
         for buf in self.remote_buffers:
             del buf
         self.device_buffers = None
+        self._npy_value = None
+
+    def flush(self):
         self._npy_value = None
 
     @property

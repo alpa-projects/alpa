@@ -13,7 +13,7 @@ from . import util
 
 # Shortcut
 from alpa.api import clear_callable_cache, grad, parallelize, value_and_grad
-from alpa.data_loader import DataLoader
+from alpa.data_loader import DataLoader, MeshDriverDataLoader
 from alpa.device_mesh import DeviceCluster, PhysicalDeviceMesh, DistributedArray, fetch
 from alpa.global_env import global_config, set_parallelize_options
 from alpa.mesh_profiling import ProfilingResultDatabase

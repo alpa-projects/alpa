@@ -519,7 +519,7 @@ class PhysicalDeviceMesh(ABC):
     @property
     def num_devices(self):
         """Return the total number of GPUs on this mesh."""
-        raise self.num_hosts * self.num_devices_per_host
+        return self.num_hosts * self.num_devices_per_host
 
     @property
     @abstractmethod

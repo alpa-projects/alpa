@@ -45,23 +45,22 @@ We benchmark unet on various number of GPUs to see scalability of Alpa's paralle
 
 #### Statistics
 
-Experiments are carried out on Nvidia A100 GPU clusters in which each host has 4 A100 GPU and each A100 GPU has 40GB memory. 
+Experiments are carried out on AWS p3 series instances. 
+For experiments with 2 or 4 gpus, I use single p3.8xlarge in which there are 4 V100 for each host and each V100 has 16 GB memory. For experiments with 8 and more gpus, I use p3.16xlarge in which there are 8 V100 for each host and each V100 has 16 GB memory. 
 
-*TODO: Finish all experiments and upload the results*
 
 | # of GPU   | 2 | 4 | 8 | 16 | 32 |
 | :------ | -----: | -------: | -------------: | ----------: | :---------------------------------------- |
-| A | | | | | |
-| B | | | | | |
-| ... | | | | | |
+| tflops | 2.69 | 4.96 | 7.25 | 10.16 | 10.64 |
+| param_count | 0.4143M | 0.8567M | 1.5918M | 3.1771M | 6.5202M |
 
 #### Run benchmark
 
-Users could feel free to run the benchmark code with command below. Arguments `--num-hosts` and `--num-devices-per-host` are to specify the amount of resources to use, their product is the exactly the number of devices for parallelization. Users could also set hyperparameters in `./config/benchmark_unet_suite.py`. Here is an example for 2 gpu training case:
+Users could feel free to run the benchmark code with command below. Arguments `--num-hosts` and `--num-devices-per-host` are to specify the amount of resources to use, their product is the exactly the number of devices for parallelization. `--num-devices-per-host` should be less than the number of gpus avaible in each host. Users could also set hyperparameters in `./config/benchmark_unet_suite.py`. Here is an example for 2 gpu training case:
 
 ```shell
 python3 -u benchmark_main.py --num-hosts 1 --num-devices-per-host 2
 ```
 
-
+One thing to mention, users may need to increase `profile_timeout` in global variables if the profiling time is too long on some platforms. 
 

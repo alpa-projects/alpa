@@ -18,8 +18,8 @@ from suite_paper_wresnet import paper_auto_wresnet_suite
 
 benchmark_suites = {
     "gpt.tmp": tmp_gpt_suite,
-    "gpt.fast_perf_test": fast_perf_test_gpt_suite,
     "gpt.perf_test": perf_test_gpt_suite,
+    "gpt.fast_perf_test": fast_perf_test_gpt_suite,
     "gpt.manual_tuning": manual_tuning_gpt_suite,
     "gpt.tmp_auto": tmp_auto_gpt_suite,
     "gpt.paper_auto": paper_auto_gpt_suite,

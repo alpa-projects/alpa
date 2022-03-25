@@ -147,14 +147,14 @@ class ReshardingTest(unittest.TestCase):
         ray.shutdown()
         time.sleep(1)
 
-    def test_resharding_task(self,
-                             src_mesh_shape,
-                             dst_mesh_shape,
-                             src_sharding_spec,
-                             dst_sharding_spec,
-                             tensor_shape,
-                             use_scatter_gather=True,
-                             tensor_dtype=None):
+    def run_resharding_task(self,
+                            src_mesh_shape,
+                            dst_mesh_shape,
+                            src_sharding_spec,
+                            dst_sharding_spec,
+                            tensor_shape,
+                            use_scatter_gather=True,
+                            tensor_dtype=None):
         device_cluster = DeviceCluster()
         virtual_mesh = device_cluster.get_virtual_physical_mesh()
         src_num_host = src_mesh_shape[0]
@@ -190,23 +190,23 @@ class ReshardingTest(unittest.TestCase):
              NoSharding()], [Replicated(2)])
         dst_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, False)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, False)
         src_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, False)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, False)
         src_spec = ShardingSpec(
             [NoSharding(), Chunked([2]),
              NoSharding()], [ShardedAxis(0)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, False)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, False)
 
     def test_4gpu_allgather(self):
         src_shape = (1, 2)
@@ -218,17 +218,17 @@ class ReshardingTest(unittest.TestCase):
         dst_spec = ShardingSpec(
             [NoSharding(), NoSharding(),
              NoSharding()], [Replicated(2)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
         src_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
         src_spec = ShardingSpec(
             [NoSharding(), Chunked([2]),
              NoSharding()], [ShardedAxis(0)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
 
 
 def suite():

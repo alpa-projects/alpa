@@ -15,7 +15,6 @@ from suite_paper_wresnet import fast_perf_test_wresnet_suite
 benchmark_suites = {
     "gpt.tmp": tmp_gpt_suite,
     "gpt.fast_perf_test": fast_perf_test_gpt_suite,
-    "gpt.perf_test": perf_test_gpt_suite,
     "gpt.manual_tuning": manual_tuning_gpt_suite,
 
     "moe.tmp": tmp_moe_suite,

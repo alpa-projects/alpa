@@ -344,7 +344,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         """Return the HLO IR in the text format."""
         if self.hlo_text is not None:
             return self.hlo_text
-        assert self.physical_mesh.is_distributed
+        assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
         self.hlo_text = ray.get(
             self.physical_mesh.workers[0].get_exec_hlo_text.remote(
                 self.exec_uuid))

@@ -50,7 +50,7 @@ class GpuHost:
         self.ct = 0
 
     def init_communicator(self, groups):
-        if np.max(groups) > self.world_size:
+        if np.max(groups) >= self.world_size:
             return None
         if len(set(np.ravel(groups))) < len(np.ravel(groups)):
             return None

@@ -328,12 +328,8 @@ def rank_0_print(host_id, msg):
         print(msg, flush=True)
 
 
-def profile_one_hlo_op(backend,
-                       local_devices,
-                       host_id,
-                       num_devices,
-                       num_devices_per_node,
-                       op_info):
+def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
+                       num_devices_per_node, op_info):
     """Profile one HLO operator."""
 
     # p3.16
@@ -457,7 +453,7 @@ def profile_one_hlo_op(backend,
 
         work = number = 0
     elif op_info[0] == "barrier":
-        replica_groups= (tuple(i for i in range(num_devices)),)
+        replica_groups = (tuple(i for i in range(num_devices)),)
         dtype = to_np_dtype("f32")
         shapes = [((1,), dtype), ((1,), dtype)]
 
@@ -560,10 +556,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
         cache_dict = {}
 
     def barrier():
-        profile_one_hlo_op(backend,
-                           local_devices,
-                           host_id,
-                           num_devices,
+        profile_one_hlo_op(backend, local_devices, host_id, num_devices,
                            num_devices_per_node, ("barrier",))
 
     old_cache_len = len(cache_dict)
@@ -684,13 +677,13 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
             for size, dtype in size_configs:
                 all_specs.add((tuple(replica_group), dtype, size))
     all_specs = list(all_specs)
-    all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1],
-        to_np_dtype(k[1]).itemsize, -k[2]))
+    all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).
+                                  itemsize, -k[2]))
     return list(all_specs)
 
 
-def profile_all(device_cluster, cluster_key, comm_size_range,
-                max_fail_retry, cache_filename):
+def profile_all(device_cluster, cluster_key, comm_size_range, max_fail_retry,
+                cache_filename):
     """Profile costs for all dot and communication primitives."""
     from alpa.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)

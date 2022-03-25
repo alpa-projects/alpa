@@ -14,6 +14,12 @@ Alpa documentation
    architecture/overview.rst
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Developer Guide
+
+   developer/developer_guide.rst
+
+.. toctree::
    :maxdepth: 2
    :caption: Tutorials
 

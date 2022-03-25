@@ -1,0 +1,64 @@
+# This workflows will upload a Python Package using Twine when a release is created
+# For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
+
+name: Release Python Package
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Python 3.7
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.7'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git wget unzip
+          python -m pip install --upgrade pip
+          pip install setuptools wheel twine
+
+      - name: Build and publish
+        env:
+          TWINE_USERNAME: "__token__"
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          export PROTOC=$(pwd)/bin/protoc
+          export VERSION=$(./GENVER --pep440)
+          HOME=$(pwd) python setup.py sdist bdist_wheel
+          ls -ltr dist/
+          python -m twine upload dist/*
+
+      - name: Bump VERSION file and commit
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git checkout -b actions/version-bump
+          cat VERSION | awk -F. -v OFS=. 'NF==1{print ++$NF}; NF>1{$NF=sprintf("%0*d", length($NF), ($NF+1)); print}' > VERSION.tmp && mv VERSION.tmp VERSION
+          git add VERSION
+          git commit -m "Bump candidate version"
+
+      - name: Push branch
+        uses: ad-m/github-push-action@40bf560
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: actions/version-bump
+          force: true
+
+      - name: Create version-bump PR
+        uses: repo-sync/pull-request@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          source_branch: "actions/version-bump"
+          destination_branch: "master"
+          pr_title: "Bumping VERSION file due to recent release"
+          pr_body: "*Automated PR*: This should update the candidate version. Please delete source branch upon merge"

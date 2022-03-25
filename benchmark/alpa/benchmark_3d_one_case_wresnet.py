@@ -17,55 +17,6 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
 from alpa.util import map_to_shape, print_used_time, compute_param_number, GB, to_str_round
 
-# B = batch_size, I = image_size,
-# L = num_layers, C = num_base_channels, W = width_factor, 
-# D0 = mesh_dimension_0, D1 = mesh_dimension_1,
-# NB = num_micro_batches, FM = force_batch_dim_mapping,
-# RS = prefer_reduce_scatter, Remat = use_rematerialization
-# LS = logical_mesh_search_space
-
-paper_auto_wresnet_suite = {  # key = number of gpus, value = a list of cases
-1: [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (1536, 224, 50,  160,  2,  "fp32", 24, False, False, True,  "single_node_model_parallel"),
-],
-
-2: [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (1536, 224, 50,  224,  2, "fp32",  24, False, True,  True,  "single_node_model_parallel"),
-],
-
-4 : [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-   (1536,  224, 50,  320,  2, "fp32",  24, False, True,  True,  "single_node_model_parallel"),
-],
-
-8: [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (1536, 224, 50,  448,  2, "fp32",  24, False, True,  True,  "single_node_model_parallel"),
-],
-
-16: [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    (1536, 224, 50,  640,  2,  "fp32", 32, False, True,  True,  "single_node_model_parallel"),
-],
-
-32: [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    #(1536, 224, 50,  640,  2,  "fp32", 32, False, True,  True, "single_node_model_parallel"),
-    (1520, 224, 50,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel"),
-],
-
-64: [
-    # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
-    # (1536, 224, 50,  320,  32, "fp32", 32, False, False, True,  "single_node_model_parallel"),
-    # (1520, 224, 50,  320,  32, "fp32", 38, False, False, True,  "single_node_model_parallel"),
-    # (1536, 224, 101,  320,  16, "fp32", 48, False, False, True,  "single_node_model_parallel"),
-    (1520, 224, 101,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel"),
-    # (1536, 224, 50,  320,  32, "fp32", 48, False, False, True,  "single_node_model_parallel"),
-    # (1536, 224, 50,  320,  32, "fp32", 48, False, False, True,  "single_node_model_parallel"),
-],
-}
 
 resnet_layer_to_alpa_layer = {50: 16, 101: 33}
 

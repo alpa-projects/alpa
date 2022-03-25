@@ -492,15 +492,6 @@ class MeshHostWorker:
         self.distributed_client.shutdown()
 
 
-def device_id_to_str(host_ip, device_id, device_type="gpu"):
-    """Convert device id (int) to a canonical device string."""
-    return "{}:{}:{}".format(host_ip, device_type, str(device_id))
-
-
-# Used ports for XLA distributed runtime servers.
-used_port_set = set((None,))
-
-
 class PhysicalDeviceMesh(ABC):
     num_devices_per_host: int
 
@@ -745,6 +736,15 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.sync_workers()
 
 
+def device_id_to_str(host_ip, device_id, device_type="gpu"):
+    """Convert device id (int) to a canonical device string."""
+    return "{}:{}:{}".format(host_ip, device_type, str(device_id))
+
+
+# Used ports for XLA distributed runtime servers.
+used_port_set = set((None,))
+
+
 class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     """
     A multi-host physical device mesh to run computation distributedly. It uses
@@ -822,6 +822,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
                 env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
                     "XLA_PYTHON_CLIENT_ALLOCATOR"]
+
+            if global_config.use_aws_efa:
+                env_vars.update({
+                    "FI_PROVIDER": "efa",
+                    "FI_EFA_USE_DEVICE_RDMA": "1",
+                    "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH",
+                                                      ""),  # For libnccl-net.so
+                })
 
             # Launch a ray actor
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]

@@ -342,6 +342,12 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_hlo_text(self):
         """Return the HLO IR in the text format."""
+        if self.hlo_text is not None:
+            return self.hlo_text
+        assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
+        self.hlo_text = ray.get(
+            self.physical_mesh.workers[0].get_exec_hlo_text.remote(
+                self.exec_uuid))
         return self.hlo_text
 
     def __del__(self):

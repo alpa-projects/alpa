@@ -4,9 +4,7 @@ name: Docs
 
 on:
   push:
-    branches:
-      - main
-      - 'hao-wheel*'
+    branches: [main]
   pull_request:
     branches: [ main ]
 
@@ -20,23 +18,24 @@ jobs:
         uses: actions/setup-python@v2
         with:
           python-version: 3.8
-      - name: Test runner
-        run:
-          nvidia-smi >> report.md
-#      - name: Build and install train package
-#        run: |
-#          pip install -e ./adaptdl
-#      - name: Build and install api dependencies
-#        run: |
-#          pip install torch torchtext
-#      - name: Install sphinx
-#        run: |
-#          pip install sphinx sphinx-rtd-theme
-#      - name: Build docs
-#        run: |
-#          cd docs && make html
-#      - name: Upload docs
-#        uses: actions/upload-artifact@v1
+
+      - name: Build and install api dependencies
+        run: |
+          pip install matplotlib
+
+      - name: Install sphinx
+        run: |
+          pip install sphinx sphinx-rtd-theme sphinx-gallery
+
+      - name: Build docs
+        run: |
+          export ALPA_TUTORIAL_EXEC_PATTERN=none
+          cd docs && make html
+
+#      - name: Deploy
+#        uses: peaceiris/actions-gh-pages@v3
 #        with:
-#          name: DocumentationHTML
-#          path: docs/_build/html/
+#          personal_token: ${{ secrets.PERSONAL_TOKEN }}
+#          external_repository: alpa-projects/alpa-projects.github.io
+#          publish_branch: master
+#          publish_dir: ./docs/_build/html

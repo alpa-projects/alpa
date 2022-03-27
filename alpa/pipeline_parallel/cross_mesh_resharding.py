@@ -86,13 +86,13 @@ def _reduce_chunk(spec, tensor_dim, remove_last_chunks):
     on that dimension.
     """
 
-    def add_or_merge(mesh_mapping, replica):
+    def add_or_merge(mesh_mapping, replicas):
         if (len(mesh_mapping) > 0 and
                 isinstance(mesh_mapping[-1], pxla.Replicated)):
-            replica *= mesh_mapping[-1].replica
-            mesh_mapping[-1] = pxla.Replicated(replica)
+            replicas *= mesh_mapping[-1].replicas
+            mesh_mapping[-1] = pxla.Replicated(replicas)
         else:
-            mesh_mapping.append(pxla.Replicated(replica))
+            mesh_mapping.append(pxla.Replicated(replicas))
 
     # get new chunks
     cur_chunks = spec.sharding[tensor_dim].chunks
@@ -113,13 +113,13 @@ def _reduce_chunk(spec, tensor_dim, remove_last_chunks):
     mesh_mapping = []
     for mapping in spec.mesh_mapping:
         if isinstance(mapping, pxla.Replicated):
-            add_or_merge(mesh_mapping, mapping.replica)
+            add_or_merge(mesh_mapping, mapping.replicas)
             continue
         assert isinstance(mapping, pxla.ShardedAxis)
         t_dim, chunk_idx = chunk_axis_to_tensor_dim[mapping.axis]
         if t_dim == tensor_dim and chunk_idx >= remove_idx:
-            replica = spec.sharding[t_dim].chunks[chunk_idx]
-            add_or_merge(mesh_mapping, replica)
+            replicas = spec.sharding[t_dim].chunks[chunk_idx]
+            add_or_merge(mesh_mapping, replicas)
         else:
             axis = new_prefix_sum[t_dim] + chunk_idx
             mesh_mapping.append(pxla.ShardedAxis(axis))
@@ -202,7 +202,7 @@ def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
 class _AllgatherSpec:
 
     def __init__(self, allgather_chunk_indices):
-        """allgather chunk indices: a list of (tensor_dimension, chunk_index)"""
+        """allgather chunk indices: a list of (tensor_dim, chunk_index, _)"""
         self._allgather_chunk_num = {}
         allgather_chunk_indices = sorted(allgather_chunk_indices)
         cur_tensor_dim = -1
@@ -229,7 +229,7 @@ class _AllgatherSpec:
         for d, mapping in enumerate(sharding_spec.mesh_mapping):
             if isinstance(mapping, pxla.ShardedAxis):
                 idx = mapping.axis - start_axis
-                if idx >= 0 and idx <= allgather_chunks:
+                if idx >= 0 and idx < allgather_chunks:
                     mesh_dims[idx] = d
         return mesh_dims
 

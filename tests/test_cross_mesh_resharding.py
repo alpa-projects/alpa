@@ -248,7 +248,7 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(ReshardingTest("test_4gpu_send_recv"))
     suite.addTest(ReshardingTest("test_4gpu_allgather"))
-    # suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
+    suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
     return suite
 
 

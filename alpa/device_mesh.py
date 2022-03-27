@@ -55,8 +55,8 @@ ReshardingRecvSpec = namedtuple("ReshardingRecvSpec",
                                 ["device_id", "shape", "dtype", "tile_specs"])
 ReshardingRecvTask = namedtuple("ReshardingRecvTask",
                                 ["recv_specs", "group_name"])
-ReshardingAllGatherSpec = namedtuple("ReshardingAllGatherSpec",
-                                     ["device_ids", "tensor_slices"])
+ReshardingAllGatherSpec = namedtuple(
+    "ReshardingAllGatherSpec", ["device_ids", "tensor_slices", "output_slice"])
 ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
                                      ["allgather_specs"])
 
@@ -338,10 +338,11 @@ class MeshHostWorker:
         return uid
 
     def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
-                  tensor_slices: Sequence[slice]):
+                  tensor_slices: Sequence[slice], output_slice):
         cupy_buffers = []
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         relative_idx = dict(zip(sorted(device_ids), range(len(device_ids))))
+        output_idx, _ = infer_offset_and_n_elements(output_slice)
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
@@ -349,9 +350,10 @@ class MeshHostWorker:
             cupy_buffer = xla_buffer_to_cupy(xla_buffer, take_ownership=True)
             ind, n_elements = infer_offset_and_n_elements(tensor_slice)
             cupy_slice = cupy_buffer[ind]
+            cupy_output_slice = cupy_buffer[output_idx]
             communicators[relative_idx[device_id]].allGather(
                 nccl_util.get_tensor_ptr(cupy_slice),
-                nccl_util.get_tensor_ptr(cupy_buffer), n_elements,
+                nccl_util.get_tensor_ptr(cupy_output_slice), n_elements,
                 nccl_util.get_nccl_tensor_dtype(cupy_buffer),
                 cupy.cuda.Stream.null.ptr)
             cupy_buffers.append(cupy_buffer)
@@ -403,7 +405,8 @@ class MeshHostWorker:
         allgather_specs = task.allgather_specs
         for allgather_spec in allgather_specs:
             self.allgather(buffer_uuids, allgather_spec.device_ids,
-                           allgather_spec.tensor_slices)
+                           allgather_spec.tensor_slices,
+                           allgather_spec.output_slice)
 
     def destroy_collective_group(self, group_name: str = "default"):
         col.destroy_collective_group(group_name)

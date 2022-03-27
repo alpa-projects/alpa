@@ -239,7 +239,7 @@ class _AllgatherSpec:
 
     @property
     def allgather_dims(self):
-        return self._allgather_chunk_num.keys()
+        return list(self._allgather_chunk_num.keys())
 
     def post_allgather(self, tensor_dim):
         ret = _AllgatherSpec([])
@@ -579,24 +579,13 @@ class SymbolicReshardingTask(ReshardingTask):
         tensor_shape = self.task_spec.dst.tensor_shape
         allgather_spec = self.task_spec.allgather_spec
         tmp_allgather_spec = self.task_spec.allgather_spec
-        for tensor_dim in allgather_spec.allgather_dims:
+        for tensor_dim in reversed(allgather_spec.allgather_dims):
             indices = pxla.spec_to_indices(tensor_shape, dst_spec)[0]
             mesh_shape = _allgather_logical_mesh_from_spec(dst_spec)
             mesh_dims = allgather_spec.mapped_mesh_dim(tensor_dim, dst_spec)
             allgather_groups = _signle_tensor_dim_allgather_groups(
                 mesh_shape, mesh_dims)
-            tensor_slices = []
-            for receiver_idx in allgather_groups[0]:
-                flatten_idx = receiver_idx
-                mesh_idx = []
-                for mesh_dim in reversed(mesh_shape):
-                    mesh_idx.append(flatten_idx % mesh_dim)
-                    flatten_idx //= mesh_dim
-                mesh_idx = list(reversed(mesh_idx))
-                tensor_slices.append(
-                    self._indices_in_dst_post_allgather(indices, mesh_idx,
-                                                        dst_spec,
-                                                        tmp_allgather_spec))
+            post_dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
             for group_ids in allgather_groups:
                 host_idx = group_ids[0] // self.dst_mesh.num_devices_per_host
                 host = self.dst_mesh.workers[host_idx]
@@ -604,8 +593,24 @@ class SymbolicReshardingTask(ReshardingTask):
                     gid % self.dst_mesh.num_devices_per_host
                     for gid in group_ids
                 ]
+                tensor_slices = []
+                for receiver_idx in group_ids:
+                    flatten_idx = receiver_idx
+                    mesh_idx = []
+                    for mesh_dim in reversed(mesh_shape):
+                        mesh_idx.append(flatten_idx % mesh_dim)
+                        flatten_idx //= mesh_dim
+                    mesh_idx = list(reversed(mesh_idx))
+                    tensor_slices.append(
+                        self._indices_in_dst_post_allgather(
+                            indices, mesh_idx, dst_spec, tmp_allgather_spec))
+                output_slice = list(tensor_slices[0])
+                output_slice[tensor_dim] = slice(
+                    0, self.task_spec.aval.shape[tensor_dim] /
+                    _get_chunk_value(post_dst_spec.sharding[tensor_dim]), None)
                 self._allgather_tasks[host].append(
-                    ReshardingAllGatherSpec(device_ids, tensor_slices))
+                    ReshardingAllGatherSpec(device_ids, tensor_slices,
+                                            output_slice))
             dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
             tmp_allgather_spec = tmp_allgather_spec.post_allgather(tensor_dim)
         return self._allgather_tasks

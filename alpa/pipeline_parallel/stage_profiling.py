@@ -367,7 +367,7 @@ class HloCostModelProfileWorker:
             compiled = run_backend_compilation(self.backend,
                                                compiled_output.model_proto,
                                                compiled_output.strategy_config,
-                                               self.num_devices, True)
+                                               self.num_devices)
         except RuntimeError:
             return stage_id, np.inf, -1, (0, 0, 0, 0)
 

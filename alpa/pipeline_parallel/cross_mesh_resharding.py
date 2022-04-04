@@ -574,18 +574,38 @@ class SymbolicReshardingTask(ReshardingTask):
                 self._receiver_tasks[receiver_worker].append(receiver_task)
 
     def _compile_allgather_tasks(self):
-        """Compile allgather tasks on destination mesh."""
+        """
+        Compile allgather tasks on destination mesh. Allgather tasks are
+        created with the order described below:
+
+        1. Iterate all tensor dimensions that has chunks inserted by
+        _rewrite_allgather_spec;
+        2. The rewritten sharding spec corresponds to a logical mesh shape, and
+        each receiver has its own index with respect to the mesh shape. Let the
+        index be (x_0,x_1,...,x_n) and the mesh shape is (l_0,l_1,...,l_n);
+        3. The iterated tensor dimension corresponds to some logical mesh
+        dimensions, assume these dimensions are D \subset [n]. The index is
+        categorized into two parts. The first is (x_{i_0},x_{i_1},...x_{i_m}),
+        where {i_0,i_1,...,i_m}=D while the second is the rest. The first part
+        is named group index while the second is allgather index.
+        4. Devices with the same group index forms an allgather group, and the
+        allgather index indicates their order inside the group.
+        """
         dst_spec = self.task_spec.dst_sharding_spec
         tensor_shape = self.task_spec.dst.tensor_shape
         allgather_spec = self.task_spec.allgather_spec
         tmp_allgather_spec = self.task_spec.allgather_spec
+        # use reverse order to keep the result always continuous.
         for tensor_dim in reversed(allgather_spec.allgather_dims):
             indices = pxla.spec_to_indices(tensor_shape, dst_spec)[0]
+            # The mesh shape is changed as a tensor dim's sharding is changed
             mesh_shape = _allgather_logical_mesh_from_spec(dst_spec)
             mesh_dims = allgather_spec.mapped_mesh_dim(tensor_dim, dst_spec)
+            # Get allgather groups
             allgather_groups = _signle_tensor_dim_allgather_groups(
                 mesh_shape, mesh_dims)
             post_dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
+            # For each group, get device ids, tensor slices and other allgather config
             for group_ids in allgather_groups:
                 host_idx = group_ids[0] // self.dst_mesh.num_devices_per_host
                 host = self.dst_mesh.workers[host_idx]
@@ -604,6 +624,7 @@ class SymbolicReshardingTask(ReshardingTask):
                     tensor_slices.append(
                         self._indices_in_dst_post_allgather(
                             indices, mesh_idx, dst_spec, tmp_allgather_spec))
+                # the tensor dim's sharding is changed, use it for output slice.
                 output_slice = list(tensor_slices[0])
                 output_slice[tensor_dim] = slice(
                     0, self.task_spec.aval.shape[tensor_dim] /
@@ -611,6 +632,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 self._allgather_tasks[host].append(
                     ReshardingAllGatherSpec(device_ids, tensor_slices,
                                             output_slice))
+            # change the tensor dim's sharding and the remained allgather spec.
             dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
             tmp_allgather_spec = tmp_allgather_spec.post_allgather(tensor_dim)
         return self._allgather_tasks
@@ -1059,6 +1081,19 @@ class CrossMeshCommunicator:
     @staticmethod
     def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, mesh,
                                 var_shape):
+        """
+        Given a sharding spec, if use_scatter_gather is turned on and the tensor
+        corresponding to the spec is not fully sharded, the function rewrite the
+        spec to a fully-sharded one, and return info of added chunks.
+
+        The rewrite is by steps below:
+        1. Iterate all logical mesh dimensions(m_dim) along which the tensor is
+        replicated;
+        2. Iterate all tensor dimensions(t_dim). If the length of the tensor on
+        t_dim and the number of replicas on m_dim have a common divisor greater
+        than 1, an extra chunk is appended on t_dim;
+        3. When there is no replicas on m_dim, the iteration terminates.
+        """
 
         local_chunks = []
         if not global_config.use_scatter_gather:

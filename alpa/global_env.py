@@ -63,6 +63,7 @@ class GlobalConfig:
 
         ########## Options of device mesh ##########
         self.xla_client_mem_fraction = 0.90
+        self.xla_gpu_autotune_level = 4
         self.delete_remote_buffers_threshold = 500
         self.use_aws_efa = False  # use AWS EFA network interface
 
@@ -224,8 +225,5 @@ def set_parallelize_options(
 
 
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"
-
-#os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS",
-#                                         "") + " --xla_gpu_autotune_level=0"
 
 #os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=true"

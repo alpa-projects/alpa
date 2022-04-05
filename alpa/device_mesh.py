@@ -817,13 +817,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "NCCL_USE_MULTISTREAM": "False",
                 "XLA_PYTHON_CLIENT_MEM_FRACTION": str(
                     global_config.xla_client_mem_fraction),
+                "XLA_FLAGS": f"--xla_gpu_autotune_level={global_config.xla_gpu_autotune_level}",
+
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
-                # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
-                # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
+
             if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
                 env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
                     "XLA_PYTHON_CLIENT_ALLOCATOR"]

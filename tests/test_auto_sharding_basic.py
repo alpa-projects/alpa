@@ -62,6 +62,19 @@ class AutoShardingBasicTest(unittest.TestCase):
         actual = para_func(a, b)
         testing.assert_allclose(expected, actual)
 
+    def test_one_by_one_mesh(self):
+        set_parallelize_options(devices=jax.local_devices()[0:1])
+
+        @parallelize
+        def add_one(x):
+            x = x + 1
+            return x
+
+        a = jnp.ones((128, 128))
+        b = add_one(a)
+
+        testing.assert_allclose(b, a + 1)
+
     def test_dropout(self):
 
         class Model(nn.Module):
@@ -93,29 +106,54 @@ class AutoShardingBasicTest(unittest.TestCase):
             new_optimizer = optimizer.apply_gradient(grad)
             return new_optimizer
 
-        func(optimizer, x, y, {"dropout": rngkey})
-
         # Check sharding strategy (data-parallel)
-        hlo_ir = func.get_executable(optimizer, x, y, {
-            "dropout": rngkey
-        }).get_hlo_text()
-        assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
+        executable = func.get_executable(optimizer, x, y, {"dropout": rngkey})
+        assert executable.auto_sharding_objective < 1e6
 
+        hlo_ir = executable.get_hlo_text()
+        assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
         assert hlo_ir.count("channel_id") == 1
         assert hlo_ir.count("all-reduce(") == 1
 
-    def test_one_by_one_mesh(self):
-        set_parallelize_options(devices=jax.local_devices()[0:1])
+    def test_gather(self):
+
+        class Model(nn.Module):
+
+            @nn.compact
+            def __call__(self, x):
+                x = nn.Dense(32, use_bias=False)(x)
+                idx = jnp.arange(16)
+                x = x[:,idx]
+                x = nn.Dense(16, use_bias=False)(x)
+                return x
+
+        x = jnp.ones((256, 32))
+        y = jnp.ones((256, 16))
+
+        # Init model and optimizer
+        model = Model()
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, x)
+        optimizer = optim.GradientDescent(1e-2).create(params)
 
         @parallelize
-        def add_one(x):
-            x = x + 1
-            return x
+        def func(optimizer, x, y):
 
-        a = jnp.ones((128, 128))
-        b = add_one(a)
+            def loss_func(params):
+                out = model.apply(params, x)
+                return jnp.mean((out - y)**2)
 
-        testing.assert_allclose(b, a + 1)
+            grad = jax.grad(loss_func)(optimizer.target)
+            new_optimizer = optimizer.apply_gradient(grad)
+            return new_optimizer
+
+        executable = func.get_executable(optimizer, x, y)
+        assert executable.auto_sharding_objective < 1e6
+
+        hlo_ir = executable.get_hlo_text()
+        assert "gather(f32[64,32]" in hlo_ir
+        assert "scatter(f32[64,32]" in hlo_ir
+        assert hlo_ir.count("all-reduce(") == 1
 
     def test_reshape_uneven_partition(self):
         # TODO(lmzheng): Support the uneven partition of reshape.
@@ -140,8 +178,9 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(AutoShardingBasicTest("test_donate_buffer"))
     suite.addTest(AutoShardingBasicTest("test_dot_reshape_transpose"))
-    suite.addTest(AutoShardingBasicTest("test_dropout"))
     suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
+    suite.addTest(AutoShardingBasicTest("test_gather"))
+    suite.addTest(AutoShardingBasicTest("test_dropout"))
     suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
     return suite
 

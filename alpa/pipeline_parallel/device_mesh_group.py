@@ -40,6 +40,7 @@ class DistributedPhysicalDeviceMeshGroup:
         else:
             cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
+        self.collective_groups[dst_mesh_id][src_mesh_id] = cg
 
     def destroy_collective_groups(self):
         for i in range(len(self)):

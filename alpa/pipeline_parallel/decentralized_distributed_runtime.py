@@ -1023,8 +1023,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def shutdown(self):
         """Shutdown the runtime and recycle resources."""
-        self.physical_meshes.shutdown()
         self.reset_benchmark_timers()
+        self.physical_meshes.shutdown()
 
     def _exception_shutdown(self):
         """In this shutdown, some actors might have died."""

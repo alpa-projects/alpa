@@ -346,6 +346,6 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
         """Shutdown the pipeline runtime."""
         # Recycle the recompiled runnables
         del self._runnables
-        self.physical_meshes.shutdown()
         # reset all timers
         reset_pipeline_runtime_benchmark_timers()
+        self.physical_meshes.shutdown()

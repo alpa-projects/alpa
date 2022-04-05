@@ -8,6 +8,7 @@ from jax.core import gensym
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
+from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule,
                                               gen_dependency_with_stages,
@@ -307,4 +308,4 @@ def launch_physical_meshes(virtual_meshes):
     for i in range(len(virtual_meshes)):
         threads[i].join()
 
-    return physical_meshes
+    return DistributedPhysicalDeviceMeshGroup(physical_meshes)

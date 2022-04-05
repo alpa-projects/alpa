@@ -4,7 +4,7 @@ The compilation passes and status of an HloModule:
 
 UNOPTIMIZED
   |
-  |  pre_spmd_partitioner passes
+  |  spmd_simplification passes
   |
   |  auto_sharding pass
   V
@@ -14,7 +14,7 @@ SHARDING_ANNOTATED
   V
 SPMD_PARTITIONED
   |
-  |  post_spmd_partitioner passes
+  |  HLO optimization passes
   V
 FULLY_OPTIMIZED
 """
@@ -357,7 +357,8 @@ def run_backend_compilation(backend: xe.Client,
                             xla_computation: Union[xe.XlaComputation,
                                                    xe.HloModule, bytes],
                             strategy_config: StrategyConfig,
-                            num_devices: int):
+                            num_devices: int,
+                            bypass_device_assignment_check: bool = False):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:
@@ -384,6 +385,10 @@ def run_backend_compilation(backend: xe.Client,
         assert isinstance(xla_computation, xe.XlaComputation)
 
     with XlaPassContext({
+            # Build options
+            "build_option::bypass_device_assignment_check":
+                bypass_device_assignment_check,
+
             # Communication combiner options
             "combiner::all_gather_threshold":
                 strategy_config.all_gather_threshold,

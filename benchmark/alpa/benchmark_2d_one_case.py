@@ -23,6 +23,7 @@ def benchmark_one_case(model, case, niter,
     if not use_separate_process:
         if model == "wresnet":
             global_config.xla_client_mem_fraction = 0.88
+            global_config.xla_gpu_autotune_level = 0
 
         # Launch physical mesh
         if local:

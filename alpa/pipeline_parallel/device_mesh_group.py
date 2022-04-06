@@ -9,8 +9,8 @@ from alpa.util import OrderedSet
 
 class DistributedPhysicalDeviceMeshGroup:
     """A list of physical devices that forms a pipeline."""
-    def __init__(self,
-                 meshes: Sequence[DistributedPhysicalDeviceMesh]):
+
+    def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh]):
         self.meshes = list(meshes)
         self.collective_groups: List[List[Any]] = [
             [None for _ in range(len(self))] for _ in range(len(self))

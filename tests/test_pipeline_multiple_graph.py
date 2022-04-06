@@ -5,12 +5,12 @@ import unittest
 
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
-from alpa.testing import (get_mlp_train_step, MLPModel,
-                          PipelineBasicTest, create_train_state,
-                          assert_allclose)
+from alpa.testing import (get_mlp_train_step, MLPModel, PipelineBasicTest,
+                          create_train_state, assert_allclose)
 
 
 class MultipleGraphRuntimeTest(PipelineBasicTest):
+
     def run_2_mlp(self,
                   manual_pipeline_layer=True,
                   test_remat=False,

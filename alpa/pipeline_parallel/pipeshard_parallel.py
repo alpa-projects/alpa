@@ -103,7 +103,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Construct pipeline stages by merging layers
     if isinstance(devices, VirtualPhysicalMesh):
         virtual_mesh = devices
-        (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes, logical_mesh_shapes,
+        (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
+         logical_mesh_shapes,
          autosharding_option_dicts) = cluster_layers_and_slice_mesh(
              jax_pipeline_layers,
              virtual_mesh,
@@ -138,8 +139,9 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
              autosharding_option_dicts=global_config.
              submesh_autosharding_option_dicts)
         num_meshes = len(physical_meshes)
-        sliced_virtual_meshes = [mesh.get_virtual_physical_mesh() for mesh in physical_meshes]
-
+        sliced_virtual_meshes = [
+            mesh.get_virtual_physical_mesh() for mesh in physical_meshes
+        ]
 
     # Process apply_gradient and donation
     if have_apply_grad:

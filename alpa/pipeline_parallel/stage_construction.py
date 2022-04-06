@@ -758,10 +758,11 @@ def cluster_layers_and_slice_mesh(
             autosharding_option_dicts)
 
 
-def cluster_layers_with_given_meshes(
-        layers, physical_meshes, donation_mapping, global_outvars,
-        pipeline_stage_mode, forward_stage_layer_ids, logical_mesh_shapes,
-        autosharding_option_dicts):
+def cluster_layers_with_given_meshes(layers, physical_meshes, donation_mapping,
+                                     global_outvars, pipeline_stage_mode,
+                                     forward_stage_layer_ids,
+                                     logical_mesh_shapes,
+                                     autosharding_option_dicts):
     timers("stage-construction").start()
 
     # TODO(zhuohan): Support auto_gpipe and merge this function with
@@ -850,6 +851,7 @@ def cluster_layers_with_given_meshes(
             timers(name).stop()
     return (stages, stage_to_mesh, logical_mesh_shapes,
             autosharding_option_dicts)
+
 
 def get_stage_outvars(layers: Sequence[JaxPipelineComputation],
                       layer_assignment, global_outvars) -> List[OrderedSet]:

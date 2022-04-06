@@ -308,8 +308,8 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                         assert task_spec
                         task = EagerReshardingTask(
                             task_spec,
-                            self.physical_meshes.collective_groups[src_mesh_idx][mesh_idx],
-                            self.physical_meshes[src_mesh_idx],
+                            self.physical_meshes.collective_groups[src_mesh_idx]
+                            [mesh_idx], self.physical_meshes[src_mesh_idx],
                             self.physical_meshes[mesh_idx])
                         resharded_val = task.do(val)
                     inputs_list.append(resharded_val)

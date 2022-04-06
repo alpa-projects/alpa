@@ -348,7 +348,8 @@ def run_spmd_partitioner_pass(
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
             "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
     }):
-        compiled_module = xe.run_spmd_partitioner(xla_computation, compile_options)
+        compiled_module = xe.run_spmd_partitioner(xla_computation,
+                                                  compile_options)
 
     return compiled_module
 
@@ -356,8 +357,7 @@ def run_spmd_partitioner_pass(
 def run_backend_compilation(backend: xe.Client,
                             xla_computation: Union[xe.XlaComputation,
                                                    xe.HloModule, bytes],
-                            strategy_config: StrategyConfig,
-                            num_devices: int):
+                            strategy_config: StrategyConfig, num_devices: int):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:

@@ -123,7 +123,7 @@ class AutoShardingBasicTest(unittest.TestCase):
             def __call__(self, x):
                 x = nn.Dense(32, use_bias=False)(x)
                 idx = jnp.arange(16)
-                x = x[:,idx]
+                x = x[:, idx]
                 x = nn.Dense(16, use_bias=False)(x)
                 return x
 

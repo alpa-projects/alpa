@@ -364,11 +364,12 @@ class HloCostModelProfileWorker:
         """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
         try:
-            compiled = run_backend_compilation(self.backend,
-                                               compiled_output.model_proto,
-                                               compiled_output.strategy_config,
-                                               self.num_devices,
-                                               bypass_device_assignment_check=True)
+            compiled = run_backend_compilation(
+                self.backend,
+                compiled_output.model_proto,
+                compiled_output.strategy_config,
+                self.num_devices,
+                bypass_device_assignment_check=True)
         except RuntimeError as e:
             logger.warning(f"Compilation error (backend codegen): {e}")
             return stage_id, np.inf, -1, (0, 0, 0, 0)

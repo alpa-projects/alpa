@@ -387,8 +387,7 @@ def run_backend_compilation(backend: xe.Client,
 
     with XlaPassContext({
             # Build options
-            "build_option::bypass_device_assignment_check":
-                bypass_device_assignment_check,
+            "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
 
             # Communication combiner options
             "combiner::all_gather_threshold":

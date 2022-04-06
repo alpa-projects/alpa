@@ -247,9 +247,10 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     # Call auto-sharding pass on each stage
     xla_stages = [None] * n_stages
-    compile_workers = CompileWorkerPool(num_meshes, 1)
-    compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
-    compile_intermediate = [None] * num_meshes
+    if global_config.pipeline_distributed_compile:
+        compile_workers = CompileWorkerPool(num_meshes, 1)
+        compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
+        compile_intermediate = [None] * num_meshes
     total_flops = 0
     default_autosharding_option = global_config.default_autosharding_option
     for mesh_idx in range(num_meshes):
@@ -309,7 +310,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage
-    compile_workers.shutdown()
+        compile_workers.shutdown()
 
     return xla_stages, total_flops
 

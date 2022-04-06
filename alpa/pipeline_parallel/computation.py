@@ -863,10 +863,10 @@ def generate_sharded_xla_computations(
         num_micro_batches,
         autosharding_option,
         memory_budget_per_device=memory_budget_per_device)
-    computations = generate_computations_from_protos(jax_computations, computation_names,
-                                      computation_protos, computation_donate_invars,
-                                      donatable_lists, acc_grad_outvars,
-                                      strategy_config)
+    computations = generate_computations_from_protos(
+        jax_computations, computation_names, computation_protos,
+        computation_donate_invars, donatable_lists, acc_grad_outvars,
+        strategy_config)
     return computations, flops
 
 

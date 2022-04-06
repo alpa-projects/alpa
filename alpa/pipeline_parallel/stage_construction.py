@@ -764,6 +764,9 @@ def cluster_layers_with_given_meshes(
         autosharding_option_dicts):
     timers("stage-construction").start()
 
+    # TODO(zhuohan): Support auto_gpipe and merge this function with
+    #   cluster_layers_and_slice_mesh.
+
     if pipeline_stage_mode in ["manual_gpipe"]:
         # Assume each forward layer corresponds to a backward layer
         assert len(layers) % 2 == 0

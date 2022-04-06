@@ -75,6 +75,8 @@ class MultipleGraphRuntimeTest(PipelineBasicTest):
 
             return executable
 
+        # TODO(zhuohan): Support distributed compile when there are multiple
+        #  graphs
         global_config.pipeline_distributed_compile = False
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,

@@ -6,7 +6,7 @@ import numpy as np
 import optax
 
 import alpa
-from alpa import parallelize, global_config, set_parallelize_options, PhysicalDeviceMesh
+from alpa import parallelize, global_config, set_parallelize_options, LocalPhysicalDeviceMesh
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.util import map_to_shape, count_communication_primitives, print_used_time, GB
@@ -192,7 +192,7 @@ if __name__ == "__main__":
 
     # Device a fake physical mesh
     num_devices = num_nodes * num_devices_per_node
-    physical_mesh = PhysicalDeviceMesh(devices=np.arange(num_devices), head_ip="fake")
+    physical_mesh = LocalPhysicalDeviceMesh(devices=np.arange(num_devices))
 
     # Compile a mesh executable
     executable = benchmark_2d_one_case_gpt_bert(physical_mesh, "gpt", benchmark_case)

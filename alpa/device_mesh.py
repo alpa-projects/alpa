@@ -15,7 +15,7 @@ from cupy.cuda import nccl
 import jax
 from jax import core, jit, xla, device_put
 from jax._src.api import ShapeDtypeStruct
-import jax._src.lib.xla_bridge as xb
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax._src.numpy.lax_numpy import _multi_slice
 from jax._src.tree_util import tree_leaves
 from jax._src.util import unzip3
@@ -681,7 +681,12 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool], args):
-        return pxla.shard_args(self.devices, shard_indices, args)
+        ret = []
+        for arg, donated, indices in zip(args, donated_invars, shard_indices):
+            ret.append(pxla._shard_arg(arg, self.devices, indices))
+            if isinstance(arg, xe.DeviceArray) and donated:
+                arg.delete()
+        return ret
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
@@ -812,13 +817,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "NCCL_USE_MULTISTREAM": "False",
                 "XLA_PYTHON_CLIENT_MEM_FRACTION": str(
                     global_config.xla_client_mem_fraction),
+                "XLA_FLAGS": f"--xla_gpu_autotune_level={global_config.xla_gpu_autotune_level}",
+
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
-                # "CUDA_VISIBLE_DEVICES": ",".join([str(d) for d in self.device_ids[i]]),
-                # "BETTER_EXCEPTIONS": "1",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
+
             if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
                 env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
                     "XLA_PYTHON_CLIENT_ALLOCATOR"]

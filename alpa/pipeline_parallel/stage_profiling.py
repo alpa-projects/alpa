@@ -321,8 +321,8 @@ class ProfileWorker:
                 return self._profile_impl(stage_id, compiled_output,
                                           profile_info, intermediate_size,
                                           initial_size)
-            except RayActorError:
-                logger.warning("Meet ray actor error in profiling")
+            except RayActorError as e:
+                logger.warning(f"Meet ray actor error in profiling: {e}")
                 self.restart(forced=True)
             except RuntimeError as e:
                 logger.warning(f"Meet runtime error in profiling: {e}")
@@ -367,8 +367,10 @@ class HloCostModelProfileWorker:
             compiled = run_backend_compilation(self.backend,
                                                compiled_output.model_proto,
                                                compiled_output.strategy_config,
-                                               self.num_devices)
-        except RuntimeError:
+                                               self.num_devices,
+                                               bypass_device_assignment_check=True)
+        except RuntimeError as e:
+            logger.warning(f"Compilation error (backend codegen): {e}")
             return stage_id, np.inf, -1, (0, 0, 0, 0)
 
         hlo_module = compiled.hlo_modules()[0]
@@ -451,8 +453,8 @@ def compile_all(stages):
             stage_id, compiled_output = compile_workers.get_next_unordered()
         except TimeoutError:
             logger.warning("Compile worker timeout")
-        except RayActorError:
-            logger.warning("A Compile worker died unexpectedly")
+        except RayActorError as e:
+            logger.warning(f"A Compile worker died unexpectedly: {e}")
             continue
         compiled_outputs[stage_id] = compiled_output
 

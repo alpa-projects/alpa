@@ -861,6 +861,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         """Return the number of hosts in the mesh."""
         return len(self.host_ids)
 
+    def get_virtual_physical_mesh(self):
+        return VirtualPhysicalMesh(
+            host_ids=self.host_ids,
+            host_info=self.host_info,
+            head_ip=self.head_ip,
+            num_devices_per_host=self.num_devices_per_host,
+            devices=self.devices)
+
     ##### Buffer Related Functions #####
     def get_remote_buffers(self,
                            buf_refs: List["RemoteBufferRef"],

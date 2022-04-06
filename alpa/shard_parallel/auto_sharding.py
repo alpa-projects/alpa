@@ -348,7 +348,8 @@ def run_spmd_partitioner_pass(
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
             "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
     }):
-        compiled_module = xe.run_spmd_partitioner(xla_computation, compile_options)
+        compiled_module = xe.run_spmd_partitioner(xla_computation,
+                                                  compile_options)
 
     return compiled_module
 
@@ -386,8 +387,7 @@ def run_backend_compilation(backend: xe.Client,
 
     with XlaPassContext({
             # Build options
-            "build_option::bypass_device_assignment_check":
-                bypass_device_assignment_check,
+            "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
 
             # Communication combiner options
             "combiner::all_gather_threshold":

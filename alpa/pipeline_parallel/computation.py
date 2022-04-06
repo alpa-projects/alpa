@@ -853,7 +853,7 @@ def generate_sharded_xla_computations(
     built = xc.XlaComputation(proto)
     in_avals, out_avals, donated_invars = jaxpr_args
 
-    _, computation_protos, strategy_config = run_auto_sharding_pass(
+    computation_names, computation_protos, strategy_config = run_auto_sharding_pass(
         built,
         in_avals,
         out_avals,
@@ -863,18 +863,10 @@ def generate_sharded_xla_computations(
         num_micro_batches,
         autosharding_option,
         memory_budget_per_device=memory_budget_per_device)
-    computations = [
-        XlaShardedPipelineComputation.from_auto_sharded_computation(
-            sharding_annotated_proto=proto,
-            jax_pipeline_computation=computation,
-            strategy_config=strategy_config,
-            donated_invars=donate_invars,
-            acc_grad_outvars=acc_grad_outvars,
-            donatables=donatables)
-        for computation, proto, donate_invars, donatables in zip(
-            jax_computations, computation_protos, computation_donate_invars,
-            donatable_lists)
-    ]
+    computations = generate_computations_from_protos(
+        jax_computations, computation_names, computation_protos,
+        computation_donate_invars, donatable_lists, acc_grad_outvars,
+        strategy_config)
     return computations, flops
 
 

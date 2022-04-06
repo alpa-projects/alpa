@@ -14,6 +14,7 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (CrossMeshCommunicator,
                                                           CollectiveGroup,
                                                           SymbolicReshardingTask
                                                          )
+from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.global_env import global_config
 
@@ -72,7 +73,7 @@ class BaseDistributedRuntime(BaseRuntime):
                  global_invars: List[Var],
                  grad_dummy_invars,
                  global_outvars: List[Var],
-                 physical_meshes: List[PhysicalDeviceMesh],
+                 physical_meshes: DistributedPhysicalDeviceMeshGroup,
                  dependency,
                  schedule,
                  is_batch,
@@ -89,7 +90,7 @@ class BaseDistributedRuntime(BaseRuntime):
             global_invars (List[Var]): input variables.
             grad_dummy_invars (List[Var]): vars for gradient accumulation.
             global_outvars (List[Var]): output variables.
-            physical_meshes (List[PhysicalDeviceMesh]): the cluster meshes to pipeline over.
+            physical_meshes (DistributedPhysicalDeviceMeshGroup): the cluster meshes to pipeline over.
             dependency (np.array): dependency between stages as an adjacency matrix.
             schedule (GpipeSchedule): schedule to follow to execute the pipeline.
             is_batch (): indicator of the batch dimension.
@@ -113,9 +114,6 @@ class BaseDistributedRuntime(BaseRuntime):
         # Communication-related setup
         # Based on dependency and sharding specs, infer communication spec (cross-mesh)。
         self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
-        self._collective_groups: List[List[Any]] = [
-            [None for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
-        ]
         self._resharding_tasks = [
             [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
@@ -201,15 +199,7 @@ class BaseDistributedRuntime(BaseRuntime):
                     continue
                 if not device_str_groups[i][j]:
                     continue
-                cg = CollectiveGroup(list(device_str_groups[i][j]),
-                                     self.physical_meshes[i],
-                                     self.physical_meshes[j])
-                if global_config.eagerly_create_communicators:
-                    cg.instantiate_now()
-                else:
-                    cg.instantiate()
-                self._collective_groups[i][j] = cg
-                self._collective_groups[j][i] = cg
+                self.physical_meshes.establish_nccl_group(i, j)
         end_time = time.time()
         logger.debug(
             f"Initialize collective group takes {end_time - start_time:.2f}")
@@ -219,17 +209,12 @@ class BaseDistributedRuntime(BaseRuntime):
         for (src_mesh_idx, dst_mesh_idx,
              var_spec_map) in self._communicator.task_spec_iter():
             for key, spec in var_spec_map.items():
-                cg = self._collective_groups[src_mesh_idx][dst_mesh_idx]
+                cg = self.physical_meshes.collective_groups[src_mesh_idx][
+                    dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]
                 dst_mesh = self.physical_meshes[dst_mesh_idx]
                 self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
                     key] = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
-
-    def _destroy_collective_groups(self):
-        for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                if i < j and self._collective_groups[i][j]:
-                    self._collective_groups[i][j].destroy()
 
     def print_resharding_tasks(self):
         """Pretty print all compiled resharding tasks."""

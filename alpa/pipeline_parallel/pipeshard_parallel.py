@@ -24,7 +24,8 @@ from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad
                                               )
-from alpa.pipeline_parallel.stage_construction import cluster_layers_and_slice_mesh
+from alpa.pipeline_parallel.stage_construction import (
+    cluster_layers_and_slice_mesh, cluster_layers_with_given_meshes)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
 
@@ -37,7 +38,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                 donated_invars, batch_invars, devices,
                                 memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
-    if not isinstance(devices, VirtualPhysicalMesh):
+    if not (isinstance(devices, VirtualPhysicalMesh) or
+            isinstance(devices, DistributedPhysicalDeviceMeshGroup)):
         raise RuntimeError(
             f"Unrecognized type of `devices`, got: {type(devices)},"
             "expected type: `VirtualPhysicalMesh`.")
@@ -99,27 +101,45 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     apply_grad_global_info = apply_grad_donation, global_outvars
 
     # Construct pipeline stages by merging layers
-    virtual_mesh = devices
-    (jax_pipeline_stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
-     autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-         jax_pipeline_layers,
-         virtual_mesh,
-         donation_mapping,
-         acc_grad_outvars,
-         num_micro_batches,
-         batch_size,
-         jax_apply_layers=jax_apply_layers,
-         apply_grad_global_info=apply_grad_global_info,
-         pipeline_stage_mode=global_config.pipeline_stage_mode,
-         logical_mesh_search_space=global_config.logical_mesh_search_space,
-         cache_compute_cost=global_config.cache_compute_cost,
-         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-         submesh_shapes=global_config.sub_physical_mesh_shapes,
-         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-         autosharding_option_dicts=global_config.
-         submesh_autosharding_option_dicts)
+    if isinstance(devices, VirtualPhysicalMesh):
+        virtual_mesh = devices
+        (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes, logical_mesh_shapes,
+         autosharding_option_dicts) = cluster_layers_and_slice_mesh(
+             jax_pipeline_layers,
+             virtual_mesh,
+             donation_mapping,
+             acc_grad_outvars,
+             num_micro_batches,
+             batch_size,
+             jax_apply_layers=jax_apply_layers,
+             apply_grad_global_info=apply_grad_global_info,
+             pipeline_stage_mode=global_config.pipeline_stage_mode,
+             logical_mesh_search_space=global_config.logical_mesh_search_space,
+             cache_compute_cost=global_config.cache_compute_cost,
+             forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+             submesh_shapes=global_config.sub_physical_mesh_shapes,
+             logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+             autosharding_option_dicts=global_config.
+             submesh_autosharding_option_dicts)
+        num_meshes = len(sliced_virtual_meshes)
+        physical_meshes = None
+    else:
+        assert isinstance(devices, DistributedPhysicalDeviceMeshGroup)
+        physical_meshes = devices
+        (jax_pipeline_stages, stage_to_mesh, logical_mesh_shapes,
+         autosharding_option_dicts) = cluster_layers_with_given_meshes(
+             jax_pipeline_layers,
+             physical_meshes,
+             donation_mapping,
+             acc_grad_outvars,
+             pipeline_stage_mode=global_config.pipeline_stage_mode,
+             forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+             logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+             autosharding_option_dicts=global_config.
+             submesh_autosharding_option_dicts)
+        num_meshes = len(physical_meshes)
+        sliced_virtual_meshes = [mesh.get_virtual_physical_mesh() for mesh in physical_meshes]
 
-    num_meshes = len(sliced_meshes)
 
     # Process apply_gradient and donation
     if have_apply_grad:
@@ -143,12 +163,12 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Generate pipeline schedule and placement
     if global_config.pipeline_parallel_schedule == "gpipe":
         schedule = GpipeSchedule(dependency=dependency,
-                                 meshes=sliced_meshes,
+                                 meshes=sliced_virtual_meshes,
                                  apply_grad_placement=apply_grad_placement,
                                  num_batch=num_micro_batches)
     elif global_config.pipeline_parallel_schedule == "1f1b":
         schedule = PipeDreamFlush(dependency=dependency,
-                                  meshes=sliced_meshes,
+                                  meshes=sliced_virtual_meshes,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_micro_batches)
     else:
@@ -160,7 +180,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(
-        jax_all_stages, sliced_meshes, schedule, n_stages, num_meshes,
+        jax_all_stages, sliced_virtual_meshes, schedule, n_stages, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
         num_micro_batches, logical_mesh_shapes, autosharding_option_dicts,
         memory_budget_per_device, gensym_func)
@@ -174,7 +194,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                             get_hlo_texts=True)
 
     # Launch all physical meshes in parallel
-    physical_meshes = launch_physical_meshes(sliced_meshes)
+    if physical_meshes is None:
+        physical_meshes = launch_physical_meshes(sliced_virtual_meshes)
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}

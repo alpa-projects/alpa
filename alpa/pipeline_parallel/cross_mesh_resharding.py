@@ -777,9 +777,10 @@ class CrossMeshCommunicator:
         sharded_stages (Sequence[XlaShardedPipelineComputation]): list of stages to
             form the pipeline.
         schedule (Any): the pipelining schedule for these stages.
+        mesh_device_strs (Sequence[Sequence[str]]): list of device strs for the mesh.
     """
 
-    def __init__(self, sharded_stages, schedule):
+    def __init__(self, sharded_stages, schedule, mesh_device_strs):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
         for s in sharded_stages:

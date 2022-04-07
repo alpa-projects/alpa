@@ -219,6 +219,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.hlo_text = None  # will be fetched from the workers later
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
+
+            if physical_mesh.devices[0] is None:
+                # A fake physical mesh for generating HLO module only
+                return
+
             backend = xb.get_backend("gpu")
             self.compiled = run_backend_compilation(backend, hlo_module,
                                                     strategy_config,

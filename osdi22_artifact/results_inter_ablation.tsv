@@ -1,0 +1,41 @@
+##### GPT
+# ours
+inter_op_ablation	p3.16	1	8	gpt	parax.auto_stage	{'param_count': 2.6486, 'tflops': 61}	1639306051
+inter_op_ablation	p3.16	2	8	gpt	parax.auto_stage	{'param_count': 6.6537, 'tflops': 60}	1639359026
+inter_op_ablation	p3.16	4	8	gpt	parax.auto_stage	{'param_count': 15, 'tflops': 60}	1639359026
+
+# equal_mesh
+inter_op_ablation	p3.16	1	8	gpt	parax.equal_mesh	{'param_count': 2.6486, 'tflops': 61}	1639306051
+inter_op_ablation	p3.16	2	8	gpt	parax.equal_mesh	{'param_count': 6.6537, 'tflops': 60}	1639359026
+inter_op_ablation	p3.16	4	8	gpt	parax.equal_mesh	{'param_count': 15, 'tflops': 60}	1639359026
+
+# equal_layer
+inter_op_ablation	p3.16	1	8	gpt	parax.equal_layer	{'param_count': 2.6486, 'tflops': 61}	1639306051
+inter_op_ablation	p3.16	2	8	gpt	parax.equal_layer	{'param_count': 6.6537, 'tflops': 60}	1639359026
+inter_op_ablation	p3.16	4	8	gpt	parax.equal_layer	{'param_count': 15, 'tflops': 60}	1639359026
+
+# equal_eqn
+inter_op_ablation	p3.16	1	8	gpt	parax.equal_eqn	{'param_count': 2.6486, 'tflops': 40}	1639306051
+inter_op_ablation	p3.16	2	8	gpt	parax.equal_eqn	{'param_count': 6.6537, 'tflops': 41}	1639359026
+inter_op_ablation	p3.16	4	8	gpt	parax.equal_eqn	{'param_count': 15, 'tflops': 40}	1639359026
+
+##### W-ResNet
+# ours
+inter_op_ablation	p3.16	1	8	wresnet	parax.auto_stage	{'tflops': 8.04, 'param_count': 0.0}	1634066770
+inter_op_ablation	p3.16	2	8	wresnet	parax.auto_stage	{'tflops': 6.8, 'param_count': 0.0}	1634066791
+inter_op_ablation	p3.16	4	8	wresnet	parax.auto_stage	{'tflops': 6.6, 'param_count': 0.0}	1634066791
+
+# equal_mesh
+inter_op_ablation	p3.16	1	8	wresnet	parax.equal_mesh	{'tflops': 7.2, 'param_count': 0.0}	1634066770
+inter_op_ablation	p3.16	2	8	wresnet	parax.equal_mesh	{'tflops': 6.1, 'param_count': 0.0}	1634066791
+inter_op_ablation	p3.16	4	8	wresnet	parax.equal_mesh	{'tflops': 6.6, 'param_count': 0.0}	1634066791
+
+# equal_layer
+inter_op_ablation	p3.16	1	8	wresnet	parax.equal_layer	{'tflops': 6.6, 'param_count': 0.0}	1634066770
+inter_op_ablation	p3.16	2	8	wresnet	parax.equal_layer	{'tflops': 6.3, 'param_count': 0.0}	1634066791
+inter_op_ablation	p3.16	4	8	wresnet	parax.equal_layer	{'tflops': 4.1, 'param_count': 0.0}	1634066791
+
+# equal_eqn
+inter_op_ablation	p3.16	1	8	wresnet	parax.equal_eqn	{'tflops': 7.3, 'param_count': 0.0}	1634066770
+inter_op_ablation	p3.16	2	8	wresnet	parax.equal_eqn	{'tflops': 3.3, 'param_count': 0.0}	1634066791
+inter_op_ablation	p3.16	4	8	wresnet	parax.equal_eqn	{'tflops': 2.5, 'param_count': 0.0}	1634066791

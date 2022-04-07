@@ -1,0 +1,98 @@
+# GPT
+e2e	p3.16	1	1	gpt	megatron	{'tflops': 47.53, 'param_count': 0.355}	1634066610
+e2e	p3.16	1	2	gpt	megatron	{'tflops': 55.53, 'param_count': 0.759}	1634066656
+e2e	p3.16	1	4	gpt	megatron	{'tflops': 55.89, 'param_count': 1.3}	1634066706
+e2e	p3.16	1	8	gpt	megatron	{'tflops': 50.44, 'param_count': 2.649}	1634066770
+e2e	p3.16	2	8	gpt	megatron	{'tflops': 56.59, 'param_count': 6.654}	1634066791
+e2e	p3.16	4	8	gpt	megatron	{'tflops': 58.24, 'param_count': 15}	1634066833
+e2e	p3.16	8	8	gpt	megatron	{'tflops': 57.84, 'param_count': 39}	1634066833
+
+e2e	p3.16	1	1	gpt	parax.intra_only	{'param_count': 0.3547, 'peak_mem': 11.5104, 'latencies': [71.0564, 71.1258, 71.1504], 'tflops': 46.2003}	1642231379
+e2e	p3.16	1	2	gpt	parax.intra_only	{'param_count': 0.7586, 'peak_mem': 9.4572, 'latencies': [57.272, 57.3766, 57.3797], 'tflops': 59.5364}	1642231775
+e2e	p3.16	1	4	gpt	parax.intra_only	{'param_count': 1.3134, 'peak_mem': 11.0431, 'latencies': [49.691, 49.8834, 49.991], 'tflops': 58.3552}	1642232152
+e2e	p3.16	1	8	gpt	parax.intra_only	{'param_count': 2.6486, 'peak_mem': 12.3009, 'latencies': [57.3982, 57.4127, 57.4347], 'tflops': 50.8198}	1642232654
+e2e	p3.16	2	8	gpt	parax.intra_only	{'param_count': 6.6537, 'peak_mem': 11.1759, 'latencies': [74.5079, 74.3761, 74.2062], 'tflops': 48.423}	1642233283
+e2e	p3.16	4	8	gpt	parax.intra_only	{'param_count': 15.3644, 'peak_mem': 13.7567, 'latencies': [117.7197], 'tflops': 35.074}	1642240375
+e2e	p3.16	8	8	gpt	parax.intra_only	{'param_count': 39.0785, 'peak_mem': 0, 'latencies': [2493.6988], 'tflops': 2.1098}	1642240375
+
+e2e	p3.16	1	1	gpt	parax.inter_only	{'param_count': 0.3547, 'peak_mem': 11.4369, 'latencies': [74.2384, 74.3032, 74.307], 'tflops': 44.2274}	1642261588
+e2e	p3.16	1	2	gpt	parax.inter_only	{'param_count': 0.7586, 'peak_mem': 11.8445, 'latencies': [58.9608, 58.8742, 58.922], 'tflops': 57.9437}	1642262393
+e2e	p3.16	1	4	gpt	parax.inter_only	{'param_count': 1.3134, 'peak_mem': 12.172, 'latencies': [53.7743, 53.8295, 54.0517], 'tflops': 53.9908}	1642263171
+e2e	p3.16	1	8	gpt	parax.inter_only	{'param_count': 2.6486, 'peak_mem': 8.3178, 'latencies': [51.5853, 51.5964, 51.5648], 'tflops': 56.5666}	1642265048
+e2e	p3.16	2	8	gpt	parax.inter_only	{'param_count': 6.6537, 'peak_mem': 12.1708, 'latencies': [60.3089, 60.2804, 60.4066], 'tflops': 59.6848}	1642267005
+e2e	p3.16	4	8	gpt	parax.inter_only	{'param_count': 15.3644, 'peak_mem': 12.9986, 'latencies': [83.221, 83.5159, 82.7446], 'tflops': 49.804}	1642270071
+e2e	p3.16	8	8	gpt	parax.inter_only	{'param_count': 39.0785, 'peak_mem': 13.6447, 'latencies': [102.8154], 'tflops': 50.5459}	1642240375
+
+e2e	p3.16	1	1	gpt	parax.auto	{'tflops': 45.07, 'param_count': 0.355}	1634066610
+e2e	p3.16	1	2	gpt	parax.auto	{'tflops': 57.92, 'param_count': 0.760}	1634066656
+e2e	p3.16	1	4	gpt	parax.auto	{'tflops': 58.21, 'param_count': 1.3}	1634066706
+e2e	p3.16	1	8	gpt	parax.auto	{'tflops': 61.61, 'param_count': 2.6}	1634066770
+e2e	p3.16	2	8	gpt	parax.auto	{'tflops': 60.0, 'param_count': 6.7}	1634066791
+e2e	p3.16	4	8	gpt	parax.auto	{'tflops': 59.9, 'param_count': 15}	1634066833
+e2e	p3.16	8	8	gpt	parax.auto	{'tflops': 57, 'param_count': 39}	1634066833
+
+# MOE
+e2e	p3.16	1	1	moe	deepspeed	{'tflops': 34.24, 'param_count': 0.38}	1634066610
+e2e	p3.16	1	2	moe	deepspeed	{'tflops': 33.11, 'param_count': 0.69}	1634066656
+e2e	p3.16	1	4	moe	deepspeed	{'tflops': 34.67, 'param_count': 1.3}	1634066706
+e2e	p3.16	1	8	moe	deepspeed	{'tflops': 40.01, 'param_count': 2.4}	1634066770
+e2e	p3.16	2	8	moe	deepspeed	{'tflops': 12.91, 'param_count': 10}	1634066791
+e2e	p3.16	4	8	moe	deepspeed	{'tflops': 3.82,  'param_count': 27}	1634066833
+e2e	p3.16	8	8	moe	deepspeed	{'tflops': -1,  'param_count': 70}	1634066833
+
+e2e	p3.16	1	1	moe	parax.intra_only	{'param_count': 0.3835, 'peak_mem': 12.6521, 'latencies': [36.407, 36.6203], 'tflops': 45.4621}	1642240974
+e2e	p3.16	1	2	moe	parax.intra_only	{'param_count': 0.6857, 'peak_mem': 7.4275, 'latencies': [19.6943, 19.676], 'tflops': 42.1687}	1642241207
+e2e	p3.16	1	4	moe	parax.intra_only	{'param_count': 1.3468, 'peak_mem': 8.5447, 'latencies': [18.5722, 18.6191], 'tflops': 41.1305}	1642241597
+e2e	p3.16	1	8	moe	parax.intra_only	{'param_count': 2.383, 'peak_mem': 7.4558, 'latencies': [13.43, 13.6672], 'tflops': 46.7228}	1642241925
+e2e	p3.16	2	8	moe	parax.intra_only	{'param_count': 10.1696, 'peak_mem': 10.5896, 'latencies': [28.7937, 28.7771], 'tflops': 22.9137}	1642242391
+e2e	p3.16	4	8	moe	parax.intra_only	{'param_count': 26.6481, 'peak_mem': 13.1092, 'latencies': [362.7231], 'tflops': 1.5047}	1642244381
+e2e	p3.16	8	8	moe	parax.intra_only	{'param_count': 70.4152, 'peak_mem': 11.2197, 'latencies': [1291.8536], 'tflops': 0.2151}	1642499081
+
+e2e	p3.16	1	1	moe	parax.inter_only	{'param_count': 0.3835, 'peak_mem': 10.6894, 'latencies': [36.8209, 36.8389, 36.8518], 'tflops': 45.4621}	1642272227
+e2e	p3.16	1	2	moe	parax.inter_only	{'param_count': 0.6857, 'peak_mem': 9.9783, 'latencies': [19.3802, 19.3938, 19.3906], 'tflops': 40.7499}	1642272613
+e2e	p3.16	1	4	moe	parax.inter_only	{'param_count': 1.3468, 'peak_mem': 9.9783, 'latencies': [20.0157, 20.0282, 20.0319], 'tflops': 37.5233}	1642273155
+e2e	p3.16	1	8	moe	parax.inter_only	{'param_count': 2.383, 'peak_mem': 4.3798, 'latencies': [15.6869, 15.6954, 15.6629], 'tflops': 39.7964}	1642274620
+e2e	p3.16	2	8	moe	parax.inter_only	{'param_count': 10.1696, 'peak_mem': 11.7901, 'latencies': [20.8715, 21.0822, 20.9865], 'tflops': 31.1186}	1642276386
+e2e	p3.16	4	8	moe	parax.inter_only	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1.0}	1642277939
+e2e	p3.16	8	8	moe	parax.inter_only	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1.0}	1642463088
+
+e2e	p3.16	1	1	moe	parax.auto	{'tflops': 45.4621, 'param_count': 0.38}	1634066610
+e2e	p3.16	1	2	moe	parax.auto	{'tflops': 43.03, 'param_count': 0.69}	1634066656
+e2e	p3.16	1	4	moe	parax.auto	{'tflops': 39.92, 'param_count': 1.3}	1634066706
+e2e	p3.16	1	8	moe	parax.auto	{'tflops': 45.76, 'param_count': 2.4}	1634066770
+e2e	p3.16	2	8	moe	parax.auto	{'tflops': 45.36, 'param_count': 10}	1634066791
+e2e	p3.16	4	8	moe	parax.auto	{'tflops': 38.84, 'param_count': 27}	1634066833
+e2e	p3.16	8	8	moe	parax.auto	{'tflops': 36.55, 'param_count': 70}	1634066833
+
+# Wide-ResNet
+e2e	p3.16	1	1	wresnet	parax.ppdp	{'tflops': 8.3, 'param_count': 0.0}	1634066610
+e2e	p3.16	1	2	wresnet	parax.ppdp	{'tflops': 8.24, 'param_count': 0.0}	1634066656
+e2e	p3.16	1	4	wresnet	parax.ppdp	{'tflops': 8.08, 'param_count': 0.0}	1634066706
+e2e	p3.16	1	8	wresnet	parax.ppdp	{'tflops': 7.72, 'param_count': 0.0}	1634066770
+e2e	p3.16	2	8	wresnet	parax.ppdp	{'tflops': 0.37, 'param_count': 0.0}	1634066791
+e2e	p3.16	4	8	wresnet	parax.ppdp	{'tflops': -1, 'param_count': 0.0}	1634066833
+e2e	p3.16	8	8	wresnet	parax.ppdp	{'tflops': -1, 'param_count': 0.0}	1634066833
+
+e2e	p3.16	1	1	wresnet	parax.intra_only	{'param_count': 0.2541, 'peak_mem': 11.9355, 'latencies': [44.0269, 43.9432], 'tflops': 8.3738}	1642247847
+e2e	p3.16	1	2	wresnet	parax.intra_only	{'param_count': 0.495, 'peak_mem': 12.8335, 'latencies': [42.499, 42.5078], 'tflops': 8.4803}	1642248056
+e2e	p3.16	1	4	wresnet	parax.intra_only	{'param_count': 1.0057, 'peak_mem': 12.6065, 'latencies': [45.0847, 45.1228], 'tflops': 8.1457}	1642248277
+e2e	p3.16	1	8	wresnet	parax.intra_only	{'param_count': 1.965, 'peak_mem': 9.7604, 'latencies': [46.6147, 46.6635], 'tflops': 7.7145}	1642248521
+e2e	p3.16	2	8	wresnet	parax.intra_only	{'param_count': 4.0009, 'peak_mem': 13.0911, 'latencies': [77.7287, 77.8406], 'tflops': 4.7175}	1642248872
+e2e	p3.16	4	8	wresnet	parax.intra_only	{'param_count': 6.7277, 'peak_mem': 13.3896, 'latencies': [154.2054], 'tflops': 1.9642}	1642250322
+e2e	p3.16	8	8	wresnet	parax.intra_only	{'param_count': 13.2671, 'peak_mem': 13.1692, 'latencies': [437.8958], 'tflops': 0.6971}	1642501573
+
+e2e	p3.16	1	1	wresnet	parax.inter_only	{'tflops': 8.3, 'param_count': 0.0}	1634066610
+e2e	p3.16	1	2	wresnet	parax.inter_only	{'tflops': 8.46, 'param_count': 0.0}	1634066656
+e2e	p3.16	1	4	wresnet	parax.inter_only	{'tflops': 6.47, 'param_count': 0.0}	1634066706
+e2e	p3.16	1	8	wresnet	parax.inter_only	{'tflops': 5.46, 'param_count': 0.0}	1634066770
+e2e	p3.16	2	8	wresnet	parax.inter_only	{'tflops': 0.37, 'param_count': 0.0}	1634066791
+e2e	p3.16	4	8	wresnet	parax.inter_only	{'tflops': -1, 'param_count': 0.0}	1634066833
+e2e	p3.16	8	8	wresnet	parax.inter_only	{'tflops': -1, 'param_count': 0.0}	1634066833
+
+e2e	p3.16	1	1	wresnet	parax.auto	{'tflops': 8.3, 'param_count': 0.0}	1634066610
+e2e	p3.16	1	2	wresnet	parax.auto	{'tflops': 8.46, 'param_count': 0.0}	1634066656
+e2e	p3.16	1	4	wresnet	parax.auto	{'tflops': 8.16, 'param_count': 0.0}	1634066706
+e2e	p3.16	1	8	wresnet	parax.auto	{'tflops': 8.04, 'param_count': 0.0}	1634066770
+e2e	p3.16	2	8	wresnet	parax.auto	{'tflops': 6.76, 'param_count': 0.0}	1634066791
+e2e	p3.16	4	8	wresnet	parax.auto	{'tflops': 6.60, 'param_count': 0.0}	1634066833
+e2e	p3.16	8	8	wresnet	parax.auto	{'tflops': 5.3, 'param_count': 0.0}	1634066833

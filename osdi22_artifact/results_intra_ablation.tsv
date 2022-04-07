@@ -1,0 +1,97 @@
+##### GPT
+# Auto-sharding
+intra-op-ablation	p3.16	1	1	gpt	parax.auto_sharding	{'param_count': 0.455288, 'peak_mem': 9.543468, 'latencies': [0.454516, 0.453393, 0.45347], 'tflops': 68.675123}	1639058687
+intra-op-ablation	p3.16	1	2	gpt	parax.auto_sharding	{'param_count': 0.984909, 'peak_mem': 10.344148, 'latencies': [0.536465, 0.536885, 0.536731], 'tflops': 61.988458}	1639058754
+intra-op-ablation	p3.16	1	2	gpt	parax.auto_sharding	{'param_count': 0.984909, 'peak_mem': 9.524175, 'latencies': [0.575294, 0.575292, 0.575376], 'tflops': 57.826565}	1639058826
+intra-op-ablation	p3.16	1	4	gpt	parax.auto_sharding	{'param_count': 1.715856, 'peak_mem': 12.416554, 'latencies': [0.432774, 0.433517, 0.433094], 'tflops': 66.438241}	1639058896
+intra-op-ablation	p3.16	1	4	gpt	parax.auto_sharding	{'param_count': 1.715856, 'peak_mem': 8.737866, 'latencies': [0.583149, 0.580709, 0.580578], 'tflops': 49.488083}	1639058973
+intra-op-ablation	p3.16	1	4	gpt	parax.auto_sharding	{'param_count': 1.715856, 'peak_mem': 7.769514, 'latencies': [0.445496, 0.445706, 0.445894], 'tflops': 64.564467}	1639059046
+intra-op-ablation	p3.16	1	8	gpt	parax.auto_sharding	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639059132
+intra-op-ablation	p3.16	1	8	gpt	parax.auto_sharding	{'param_count': 3.333038, 'peak_mem': 11.08156, 'latencies': [0.579821, 0.580781, 0.580352], 'tflops': 47.854795}	1639059235
+intra-op-ablation	p3.16	1	8	gpt	parax.auto_sharding	{'param_count': 3.333038, 'peak_mem': 8.444959, 'latencies': [0.503278, 0.502678, 0.502553], 'tflops': 55.228672}	1639059332
+intra-op-ablation	p3.16	1	8	gpt	parax.auto_sharding	{'param_count': 3.333038, 'peak_mem': 7.746762, 'latencies': [0.45379, 0.453937, 0.453829], 'tflops': 61.189548}	1639059427
+
+# Data-parallel
+intra-op-ablation	p3.16	1	1	gpt	parax.data_parallel	{'param_count': 0.455288, 'peak_mem': 9.543468, 'latencies': [0.45616, 0.454515, 0.455416], 'tflops': 68.43824}	1639059464
+intra-op-ablation	p3.16	1	2	gpt	parax.data_parallel	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639059538
+intra-op-ablation	p3.16	1	4	gpt	parax.data_parallel	{'param_count': 1.715856, 'peak_mem': 0.0, 'latencies': [-1], 'tflops': -28.776281}	1639059595
+intra-op-ablation	p3.16	1	8	gpt	parax.data_parallel	{'param_count': 3.333038, 'peak_mem': 0.0, 'latencies': [-1], 'tflops': -27.77099}	1639059655
+
+# Zero-2
+intra-op-ablation	p3.16	1	1	gpt	parax.zero_2	{'param_count': 0.455288, 'peak_mem': 9.543468, 'latencies': [0.453706, 0.453832, 0.454407], 'tflops': 68.646571}	1639059691
+intra-op-ablation	p3.16	1	2	gpt	parax.zero_2	{'param_count': 0.984909, 'peak_mem': 10.344148, 'latencies': [0.536552, 0.537523, 0.536968], 'tflops': 61.951479}	1639059759
+intra-op-ablation	p3.16	1	4	gpt	parax.zero_2	{'param_count': 1.715856, 'peak_mem': 12.416554, 'latencies': [0.433004, 0.433089, 0.433804], 'tflops': 66.412066}	1639059830
+intra-op-ablation	p3.16	1	8	gpt	parax.zero_2	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639059920
+
+# Zero-3
+intra-op-ablation	p3.16	1	1	gpt	parax.zero_3	{'param_count': 0.455288, 'peak_mem': 9.543468, 'latencies': [0.453818, 0.454369, 0.4545], 'tflops': 68.609182}	1639059956
+intra-op-ablation	p3.16	1	2	gpt	parax.zero_3	{'param_count': 0.984909, 'peak_mem': 9.588502, 'latencies': [0.635418, 0.634817, 0.636468], 'tflops': 52.345056}	1639060028
+intra-op-ablation	p3.16	1	4	gpt	parax.zero_3	{'param_count': 1.715856, 'peak_mem': 10.016663, 'latencies': [0.498203, 0.497435, 0.497213], 'tflops': 57.82817}	1639060102
+intra-op-ablation	p3.16	1	8	gpt	parax.zero_3	{'param_count': 3.333038, 'peak_mem': 12.998927, 'latencies': [0.522543, 0.521151, 0.52192], 'tflops': 53.214231}	1639060192
+
+# Heuristic
+intra-op-ablation	p3.16	1	1	gpt	parax.heuristic	{'param_count': 0.455288, 'peak_mem': 8.863291, 'latencies': [0.455509, 0.455902, 0.456251], 'tflops': 68.359582}	1639060231
+intra-op-ablation	p3.16	1	2	gpt	parax.heuristic	{'param_count': 0.984909, 'peak_mem': 8.940304, 'latencies': [0.64064, 0.639739, 0.641212], 'tflops': 51.939498}	1639060300
+intra-op-ablation	p3.16	1	4	gpt	parax.heuristic	{'param_count': 1.715856, 'peak_mem': 7.50575, 'latencies': [0.462155, 0.461768, 0.46252], 'tflops': 62.266414}	1639060365
+intra-op-ablation	p3.16	1	8	gpt	parax.heuristic	{'param_count': 3.333038, 'peak_mem': 7.18272, 'latencies': [0.450037, 0.449995, 0.452085], 'tflops': 61.616695}	1639060445
+
+##### W-ResNet
+# Auto-sharding
+intra-op-ablation	p3.16	1	1	wresnet	parax.auto_sharding	{'param_count': 0.254123, 'peak_mem': 10.246164, 'latencies': [0.928909, 0.928707, 0.927112], 'tflops': 8.266534}	1639063493
+intra-op-ablation	p3.16	1	2	wresnet	parax.auto_sharding	{'param_count': 0.495046, 'peak_mem': 8.344852, 'latencies': [0.950886, 0.950261, 0.951717], 'tflops': 7.896472}	1639063574
+intra-op-ablation	p3.16	1	4	wresnet	parax.auto_sharding	{'param_count': 1.005653, 'peak_mem': 8.186086, 'latencies': [0.972383, 0.971999, 0.973023], 'tflops': 7.870951}	1639063661
+intra-op-ablation	p3.16	1	4	wresnet	parax.auto_sharding	{'param_count': 1.005653, 'peak_mem': 9.319303, 'latencies': [1.190901, 1.188962, 1.188552], 'tflops': 6.435}	1639065669
+intra-op-ablation	p3.16	1	8	wresnet	parax.auto_sharding	{'param_count': 1.965011, 'peak_mem': 7.954095, 'latencies': [0.937533, 0.936568, 0.936958], 'tflops': 7.999638}	1639063762
+intra-op-ablation	p3.16	1	8	wresnet	parax.auto_sharding	{'param_count': 1.965011, 'peak_mem': 10.573045, 'latencies': [1.270713, 1.273375, 1.271623], 'tflops': 5.893387}	1639065781
+intra-op-ablation	p3.16	1	8	wresnet	parax.auto_sharding	{'param_count': 1.965011, 'peak_mem': 9.708418, 'latencies': [1.114375, 1.111703, 1.114524], 'tflops': 6.731558}	1639065891
+
+# Data-parallel
+intra-op-ablation	p3.16	1	1	wresnet	parax.data_parallel	{'param_count': 0.254123, 'peak_mem': 10.246164, 'latencies': [0.926373, 0.926685, 0.927584], 'tflops': 8.278678}	1639063935
+intra-op-ablation	p3.16	1	2	wresnet	parax.data_parallel	{'param_count': 0.495046, 'peak_mem': 10.220402, 'latencies': [1.156033, 1.156234, 1.155644], 'tflops': 6.496003}	1639064021
+intra-op-ablation	p3.16	1	4	wresnet	parax.data_parallel	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639064112
+intra-op-ablation	p3.16	1	8	wresnet	parax.data_parallel	{'param_count': 1.965011, 'peak_mem': 0.0, 'latencies': [-1], 'tflops': -7.495819}	1639064187
+
+# Zero-2
+intra-op-ablation	p3.16	1	1	wresnet	parax.zero_2	{'param_count': 0.254123, 'peak_mem': 10.246164, 'latencies': [0.92916, 0.929375, 0.928176], 'tflops': 8.260652}	1639064276
+intra-op-ablation	p3.16	1	2	wresnet	parax.zero_2	{'param_count': 0.495046, 'peak_mem': 9.245128, 'latencies': [0.990319, 0.991795, 0.991086], 'tflops': 7.576873}	1639064353
+intra-op-ablation	p3.16	1	4	wresnet	parax.zero_2	{'param_count': 1.005653, 'peak_mem': 10.783872, 'latencies': [1.101374, 1.100995, 1.101768], 'tflops': 6.949698}	1639064438
+intra-op-ablation	p3.16	1	8	wresnet	parax.zero_2	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639064530
+
+# Zero-3
+intra-op-ablation	p3.16	1	1	wresnet	parax.zero_3	{'param_count': 0.254123, 'peak_mem': 10.246164, 'latencies': [0.928808, 0.928959, 0.929379], 'tflops': 8.25936}	1639064350
+intra-op-ablation	p3.16	1	2	wresnet	parax.zero_3	{'param_count': 0.495046, 'peak_mem': 7.757468, 'latencies': [1.019264, 1.020985, 1.020308], 'tflops': 7.360609}	1639064427
+intra-op-ablation	p3.16	1	4	wresnet	parax.zero_3	{'param_count': 1.005653, 'peak_mem': 7.190951, 'latencies': [1.084267, 1.08344, 1.083113], 'tflops': 7.06368}	1639064510
+intra-op-ablation	p3.16	1	8	wresnet	parax.zero_3	{'param_count': 1.965011, 'peak_mem': 10.168372, 'latencies': [1.256494, 1.254164, 1.25557], 'tflops': 5.970818}	1639064609
+
+# Heuristic
+intra-op-ablation	p3.16	1	1	wresnet	parax.heuristic	{'param_count': 0.254123, 'peak_mem': 10.246164, 'latencies': [0.927255, 0.927009, 0.92932], 'tflops': 8.269932}	1639065025
+intra-op-ablation	p3.16	1	2	wresnet	parax.heuristic	{'param_count': 0.495046, 'peak_mem': 8.663949, 'latencies': [1.529035, 1.529258, 1.528969], 'tflops': 4.910895}	1639065100
+intra-op-ablation	p3.16	1	4	wresnet	parax.heuristic	{'param_count': 1.005653, 'peak_mem': 7.825416, 'latencies': [1.519475, 1.521116, 1.524978], 'tflops': 5.029549}	1639065182
+intra-op-ablation	p3.16	1	8	wresnet	parax.heuristic	{'param_count': 1.965011, 'peak_mem': 8.784785, 'latencies': [2.236424, 2.236533, 2.236542], 'tflops': 3.351585}	1639065287
+
+##### MoE
+# Auto-sharding
+intra-op-ablation	p3.16	1	1	moe	parax.auto_sharding	{'param_count': 0.690395, 'peak_mem': 8.33494, 'latencies': [0.498256, 0.497934, 0.49832], 'tflops': 45.492902}	1639084910
+intra-op-ablation	p3.16	1	2	moe	parax.auto_sharding	{'param_count': 1.90144, 'peak_mem': 9.721371, 'latencies': [0.426508, 0.425691, 0.426092], 'tflops': 38.890024}	1639085096
+intra-op-ablation	p3.16	1	4	moe	parax.auto_sharding	{'param_count': 2.72212, 'peak_mem': 6.587239, 'latencies': [0.267226, 0.267093, 0.267334], 'tflops': 42.608048}	1639085274
+intra-op-ablation	p3.16	1	8	moe	parax.auto_sharding	{'param_count': 5.138924, 'peak_mem': 5.627363, 'latencies': [0.162212, 0.161588, 0.16277], 'tflops': 35.104583}	1639085446
+# Data-parallel
+intra-op-ablation	p3.16	1	1	moe	parax.data_parallel	{'param_count': 0.690395, 'peak_mem': 8.33494, 'latencies': [0.49804, 0.497579, 0.497717], 'tflops': 45.528674}	1639085348
+intra-op-ablation	p3.16	1	2	moe	parax.data_parallel	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639085565
+intra-op-ablation	p3.16	1	4	moe	parax.data_parallel	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639085619
+intra-op-ablation	p3.16	1	8	moe	parax.data_parallel	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639085620
+# Zero-2
+intra-op-ablation	p3.16	1	1	moe	parax.zero_2	{'param_count': 0.690395, 'peak_mem': 8.33494, 'latencies': [0.497788, 0.49864, 0.499609], 'tflops': 45.446495}	1639085228
+intra-op-ablation	p3.16	1	2	moe	parax.zero_2	{'param_count': 1.90144, 'peak_mem': 12.703131, 'latencies': [0.658747, 0.677828, 0.660315], 'tflops': 24.895107}	1639085404
+intra-op-ablation	p3.16	1	4	moe	parax.zero_2	{'param_count': 2.72212, 'peak_mem': 13.621106, 'latencies': [0.430042, 0.42997, 0.429613], 'tflops': 26.485909}	1639085572
+intra-op-ablation	p3.16	1	8	moe	parax.zero_2	{'param_count': -0.0, 'peak_mem': -0.0, 'latencies': [-1], 'tflops': -1}	1639085717
+# Zero-3
+intra-op-ablation	p3.16	1	1	moe	parax.zero_3	{'param_count': 0.690395, 'peak_mem': 8.33494, 'latencies': [0.497788, 0.49864, 0.499609], 'tflops': 45.446495}	1639085228
+intra-op-ablation	p3.16	1	2	moe	parax.zero_3	{'param_count': 1.90144, 'peak_mem': 10.839433, 'latencies': [0.788447, 0.787734, 0.808384], 'tflops': 20.847743}	1639084680
+intra-op-ablation	p3.16	1	4	moe	parax.zero_3	{'param_count': 2.72212, 'peak_mem': 9.553936, 'latencies': [0.5135, 0.512795, 0.513239], 'tflops': 22.186502}	1639084850
+intra-op-ablation	p3.16	1	8	moe	parax.zero_3	{'param_count': 5.138924, 'peak_mem': 13.932202, 'latencies': [0.549701, 0.54984, 0.549012], 'tflops': 10.361116}	1639085015
+# Heuristic
+intra-op-ablation	p3.16	1	1	moe	parax.heuristic	{'param_count': 0.690395, 'peak_mem': 7.585407, 'latencies': [0.511134, 0.511175, 0.511367], 'tflops': 44.331143}	1639085825
+intra-op-ablation	p3.16	1	2	moe	parax.heuristic	{'param_count': 1.90144, 'peak_mem': 10.700556, 'latencies': [0.514553, 0.51527, 0.516545], 'tflops': 32.148108}	1639086006
+intra-op-ablation	p3.16	1	4	moe	parax.heuristic	{'param_count': 2.72212, 'peak_mem': 7.378954, 'latencies': [0.32449, 0.32434, 0.324495], 'tflops': 35.092998}	1639086161
+intra-op-ablation	p3.16	1	8	moe	parax.heuristic	{'param_count': 5.138924, 'peak_mem': 6.062473, 'latencies': [0.364452, 0.361448, 0.359912], 'tflops': 15.730949}	1639086323

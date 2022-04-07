@@ -185,14 +185,14 @@ if __name__ == "__main__":
     # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
     # RS = prefer_reduce_scatter
     benchmark_case = (
-        #B, S,     H      L,   #head, V,     LD0,       LD1,
+        #B, S,     H      L,  #head, V,     LD0,       LD1,
         8,  1024,  2048,  2,  32,    51200, num_nodes, num_devices_per_node, 
         #_,_,  PP,  NB, FM,   Remat, RS,    _  _
-        _, _,  1,   1,  True, True,  False, _, _)
+        _, _,  1,   1,  True, False, False, _, _)
 
     # Device a fake physical mesh
     num_devices = num_nodes * num_devices_per_node
-    physical_mesh = LocalPhysicalDeviceMesh(devices=np.arange(num_devices))
+    physical_mesh = LocalPhysicalDeviceMesh(devices=[None] * num_devices)
 
     # Compile a mesh executable
     executable = benchmark_2d_one_case_gpt_bert(physical_mesh, "gpt", benchmark_case)
@@ -201,10 +201,10 @@ if __name__ == "__main__":
     print(type(executable.hlo_module))
 
     print("Write hlo module to files...")
-    with open("executable.hlo", "w") as fout:
+    with open("executable_hlo.txt", "w") as fout:
         fout.write(executable.hlo_module.to_string())
 
-    with open("executable.hlo.proto", "wb") as fout:
+    with open("executable_hlo.proto", "wb") as fout:
         fout.write(executable.hlo_module.as_serialized_hlo_module_proto())
 
     # Get the sharding specs of the inputs and outputs of the hlo module

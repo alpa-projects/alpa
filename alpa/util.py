@@ -327,7 +327,7 @@ def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = xla.extend_name_stack(xla.wrap_name(name, 'parallelize'))
+    name_stack = xla.new_name_stack(xla.wrap_name(name, 'parallelize'))
     c = xc.XlaBuilder(name)
     xla_consts = xla._xla_consts(c, consts)
     xla_args, donated_invars = xla._xla_callable_args(

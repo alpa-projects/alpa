@@ -9,7 +9,8 @@ from jax._src.lax.lax import _reduce_min, _reduce_max
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
-                                  register_translation, wrap_name)
+                                  register_translation, wrap_name,
+                                  _backend_specific_translations)
 import numpy as np
 
 from alpa.global_env import global_config
@@ -129,8 +130,10 @@ def _remat_translation_rule(ctx, avals_in, avals_out, *in_nodes,
   else:
       return jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes)
 
-for platform in ("cpu", "gpu", "tpu"):
-    register_translation(pe.remat_call_p, _remat_translation_rule, platform=platform)
+for dict_val in _backend_specific_translations.values():
+    if pe.remat_call_p in dict_val:
+        del dict_val[pe.remat_call_p]
+register_translation(pe.remat_call_p, _remat_translation_rule)
 
 
 # Use a special rule for argmin/argmax that does not require variadic reduce.

@@ -3,7 +3,7 @@ import collections
 import itertools
 
 import jax
-from jax.interpreters import pxla
+from jax.interpreters import pxla, xla
 from jax._src.abstract_arrays import ShapedArray
 import numpy as np
 import ray
@@ -40,9 +40,7 @@ class DataLoader:
             # Cache meta info
             if self.first_iter:
                 self.first_iter = False
-                self.avals = [
-                    ShapedArray(a.shape, a.dtype) for a in flatten_args
-                ]
+                self.avals = [xla.abstractify(a) for a in flatten_args]
                 self.indices = [
                     tuple(spec.indices(aval.shape))
                     for spec, aval in zip(self.sharding_specs, self.avals)

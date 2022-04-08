@@ -10,6 +10,7 @@ from flax import linen as nn
 from flax import optim
 
 from alpa import parallelize, set_parallelize_options, testing
+from alpa.util import count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close
 
@@ -112,8 +113,8 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         hlo_ir = executable.get_hlo_text()
         assert "u64[1024]{0} iota()" in hlo_ir  # 1024 = 32 * 32 * 16 / 4 / 4
-        assert hlo_ir.count("channel_id") == 1
-        assert hlo_ir.count("all-reduce(") == 1
+        n_total, n_allreduce, _, _, _ = count_communication_primitives(hlo_ir)
+        assert n_total == n_allreduce == 1
 
     def test_gather(self):
 
@@ -153,7 +154,8 @@ class AutoShardingBasicTest(unittest.TestCase):
         hlo_ir = executable.get_hlo_text()
         assert "gather(f32[64,32]" in hlo_ir
         assert "scatter(f32[64,32]" in hlo_ir
-        assert hlo_ir.count("all-reduce(") == 1
+        _, n_allreduce, _, _, _ = count_communication_primitives(hlo_ir)
+        assert n_allreduce == 1
 
     def test_reshape_uneven_partition(self):
         # TODO(lmzheng): Support the uneven partition of reshape.

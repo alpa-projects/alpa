@@ -11,7 +11,7 @@ from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
-                      ShapedArray)
+                      ShapedArray, get_aval, raise_to_shaped)
 from jax.interpreters import xla, pxla
 from jax.interpreters.partial_eval import remat_call_p
 from jaxlib import xla_extension
@@ -666,9 +666,10 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         #  slicing in XLA.
         new_eqns = list(forward_stage.eqns)
         if add_dummy_dependency_var:
-            dummy_outvar = gensym_func(Literal(0).aval)
-            dummy_eqn = new_jaxpr_eqn([Literal(0), Literal(0)], [dummy_outvar],
-                                      jax.lax.add_p, {})
+            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+            dummy_outvar = gensym_func(zero_literal.aval)
+            dummy_eqn = new_jaxpr_eqn([zero_literal, zero_literal],
+                                      [dummy_outvar], jax.lax.add_p, {})
             new_eqns.insert(-1, dummy_eqn)
             new_invars.append(dummy_outvar)
             marked_dummy_outvar = gensym_func(dummy_outvar.aval)

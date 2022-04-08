@@ -817,7 +817,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "NCCL_USE_MULTISTREAM": "False",
                 "XLA_PYTHON_CLIENT_MEM_FRACTION": str(
                     global_config.xla_client_mem_fraction),
-                "XLA_FLAGS": f"--xla_gpu_autotune_level={global_config.xla_gpu_autotune_level}",
+                "XLA_FLAGS": (
+                    os.environ.get("XLA_FLAGS", "") +
+                    f" --xla_gpu_autotune_level={global_config.xla_gpu_autotune_level}"
+                ),
 
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"

@@ -3,7 +3,7 @@ import collections
 import itertools
 
 import jax
-from jax.interpreters import pxla
+from jax.interpreters import pxla, xla
 from jax._src.abstract_arrays import ShapedArray
 import numpy as np
 import ray
@@ -41,7 +41,7 @@ class DataLoader:
             if self.first_iter:
                 self.first_iter = False
                 self.avals = [
-                    ShapedArray(a.shape, a.dtype) for a in flatten_args
+                    xla.abstractify(a) for a in flatten_args
                 ]
                 self.indices = [
                     tuple(spec.indices(aval.shape))

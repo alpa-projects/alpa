@@ -141,7 +141,7 @@ def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
     maxval = lax.broadcast(lax.tie_in(a, maxval), a.shape)
     maxvals = lax.expand_dims(op(a, (axis,)), (axis,))
     mask_idxs = lax.select(lax.eq(a, maxvals) | lax.ne(a, a), idxs, maxval)
-    return lax._reduce_min(mask_idxs, (axis,))
+    return _reduce_min(mask_idxs, (axis,))
 
 
 jax.xla.register_translation(lax.argmin_p,

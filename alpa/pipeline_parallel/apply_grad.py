@@ -394,10 +394,10 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
         div_out = gensym_fn(invar.aval)
         literal_val = np.array(num_microbatch, invar.aval.dtype)
         new_eqns.append(
-            new_jaxpr_eqn(
-                [invar,
-                 Literal(literal_val, raise_to_shaped(get_aval(literal_val)))],
-                [div_out], div_p, {}))
+            new_jaxpr_eqn([
+                invar,
+                Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+            ], [div_out], div_p, {}))
         mapping[invar] = div_out
     replaced = replace_all_with(closed_jaxpr, mapping)
     final_invars = closed_jaxpr.jaxpr.invars

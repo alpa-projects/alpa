@@ -70,18 +70,21 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
     # Dummy subc for getting subcomp shapes.
     dummy_inputs = xops.Tuple(c, in_nodes)
     dummy_subc = xc.XlaBuilder("remat_dummy_subcomputation")
-    dummy_input_op = parameter(dummy_subc, 0, c.get_shape(dummy_inputs), replicated=[])
+    dummy_input_op = parameter(dummy_subc,
+                               0,
+                               c.get_shape(dummy_inputs),
+                               replicated=[])
     dummy_args = xla_destructure(dummy_subc, dummy_input_op)
-    dummy_ctx = ctx.replace(
-        builder=dummy_subc,
-        name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'remat')))
+    dummy_ctx = ctx.replace(builder=dummy_subc,
+                            name_stack=extend_name_stack(
+                                ctx.name_stack, wrap_name(name, 'remat')))
     dummy_subcomp_outs = jaxpr_subcomp(dummy_ctx, call_jaxpr, (), *dummy_args)
     out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
-  
+
     i_init = xops.Constant(c, np.array(0, dtype=np.int32))
     zeros_like_outs = [_zeros(c, s) for s in out_node_shapes]
     inputs = xops.Tuple(c, [i_init] + list(in_nodes) + zeros_like_outs)
-  
+
     cond_subc = xc.XlaBuilder("remat_cond_subcomputation")
     input_op = parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
     i = xops.GetTupleElement(input_op, 0)
@@ -89,19 +92,19 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
                           xops.Constant(cond_subc, np.array(2, dtype=np.int32)),
                           xc.Shape.array_shape(xc.PrimitiveType.S32, []))
     cond_subc = cond_subc.build(xops.Lt(i, rng))
-  
+
     body_subc = xc.XlaBuilder("remat_body_subcomputation")
     input_op = parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
-    i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes)+1]
+    i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes) + 1]
     i_next = xops.Add(i, xops.Constant(body_subc, np.array(1, dtype=np.int32)))
-    body_ctx = ctx.replace(
-        builder=body_subc,
-        name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'remat')))
+    body_ctx = ctx.replace(builder=body_subc,
+                           name_stack=extend_name_stack(
+                               ctx.name_stack, wrap_name(name, 'remat')))
     subcomp_outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
     out_nodes = [i_next] + args + list(subcomp_outs)
     body_subc = body_subc.build(xops.Tuple(body_subc, out_nodes))
     outs = xops.While(cond_subc, body_subc, inputs)
-    return xla_destructure(c, outs)[len(in_nodes)+1:]
+    return xla_destructure(c, outs)[len(in_nodes) + 1:]
 
 
 def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
@@ -117,18 +120,26 @@ def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
     return outs
 
 
-def _remat_translation_rule(ctx, avals_in, avals_out, *in_nodes,
-                            name, call_jaxpr,
-                            prevent_cse, differentiated, concrete,
-                            policy, device=None):
-  del device, concrete, policy  # Unused.
-  if differentiated and prevent_cse:
-      if global_config.remat_using_while:
-          return _remat_using_while(ctx, in_nodes, name, call_jaxpr)
-      else:
-          return _remat_using_identity(ctx, in_nodes, name, call_jaxpr)
-  else:
-      return jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes)
+def _remat_translation_rule(ctx,
+                            avals_in,
+                            avals_out,
+                            *in_nodes,
+                            name,
+                            call_jaxpr,
+                            prevent_cse,
+                            differentiated,
+                            concrete,
+                            policy,
+                            device=None):
+    del device, concrete, policy  # Unused.
+    if differentiated and prevent_cse:
+        if global_config.remat_using_while:
+            return _remat_using_while(ctx, in_nodes, name, call_jaxpr)
+        else:
+            return _remat_using_identity(ctx, in_nodes, name, call_jaxpr)
+    else:
+        return jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes)
+
 
 for dict_val in _backend_specific_translations.values():
     if pe.remat_call_p in dict_val:
@@ -149,16 +160,14 @@ def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
 
 jax.xla.register_translation(lax.argmin_p,
                              jax.xla.lower_fun(partial(
-                                 _argminmax_gpu_translation_rule,
-                                 _reduce_min),
+                                 _argminmax_gpu_translation_rule, _reduce_min),
                                                multiple_results=False,
                                                new_style=True),
                              platform="gpu")
 
 jax.xla.register_translation(lax.argmax_p,
                              jax.xla.lower_fun(partial(
-                                 _argminmax_gpu_translation_rule,
-                                 _reduce_max),
+                                 _argminmax_gpu_translation_rule, _reduce_max),
                                                multiple_results=False,
                                                new_style=True),
                              platform="gpu")
@@ -227,6 +236,6 @@ def init_dummy(self, *args, **kwargs):
 
 setattr(flax.linen.module.Module, "init_dummy", init_dummy)
 
-
 from flax.optim import dynamic_scale as dynamic_scale_lib
+
 setattr(flax.optim, "DynamicScale", dynamic_scale_lib.DynamicScale)

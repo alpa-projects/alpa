@@ -668,8 +668,8 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         if add_dummy_dependency_var:
             zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
             dummy_outvar = gensym_func(zero_literal.aval)
-            dummy_eqn = new_jaxpr_eqn([zero_literal, zero_literal], [dummy_outvar],
-                                      jax.lax.add_p, {})
+            dummy_eqn = new_jaxpr_eqn([zero_literal, zero_literal],
+                                      [dummy_outvar], jax.lax.add_p, {})
             new_eqns.insert(-1, dummy_eqn)
             new_invars.append(dummy_outvar)
             marked_dummy_outvar = gensym_func(dummy_outvar.aval)

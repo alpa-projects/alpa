@@ -40,9 +40,7 @@ class DataLoader:
             # Cache meta info
             if self.first_iter:
                 self.first_iter = False
-                self.avals = [
-                    xla.abstractify(a) for a in flatten_args
-                ]
+                self.avals = [xla.abstractify(a) for a in flatten_args]
                 self.indices = [
                     tuple(spec.indices(aval.shape))
                     for spec, aval in zip(self.sharding_specs, self.avals)

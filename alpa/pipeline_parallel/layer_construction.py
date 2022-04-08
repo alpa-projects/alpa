@@ -273,6 +273,14 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     """Clusters the jaxpr by cost."""
     layer_num = int(layer_num)
     length = len(jaxpr.eqns)
+    if cost_criteria == "ablation_equal_layer":
+        per_layer_size = length / layer_num
+        solution = [
+            jaxpr.eqns[int(i * per_layer_size):int((i + 1) * per_layer_size)]
+            for i in range(layer_num - 1)
+        ]
+        solution.append(jaxpr.eqns[int((layer_num - 1) * per_layer_size):])
+        return solution, {"total_cost": None}
     non_trivial, input_sizes, compute_costs = costs
     compute_costs_avg = compute_costs.sum() / layer_num
     if cost_criteria == "flops" or cost_criteria == "input_memory":

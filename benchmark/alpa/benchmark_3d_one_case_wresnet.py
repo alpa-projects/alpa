@@ -11,15 +11,13 @@ import ray
 
 import alpa
 from alpa import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, automatic_layer_construction)
+                  DeviceCluster, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
-from alpa.util import map_to_shape, print_used_time, compute_param_number, GB, to_str_round
-
+from alpa.util import print_used_time, compute_param_number, GB, to_str_round
 
 resnet_layer_to_alpa_layer = {50: 16, 101: 33}
-
 
 as_option = global_config.default_autosharding_option
 
@@ -145,15 +143,16 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
     return train_step
 
 
-def benchmark_wresnet_internal(benchmark_case, niter,
-                               num_hosts, num_devices_per_host):
+def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
+                               num_devices_per_host):
     print_used_time(None)
 
     # Model configs
     model_type = "wide_resnet"
     batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
         num_micro_batches, force_batch_dim_mapping,\
-        prefer_reduce_scatter, use_remat, logical_mesh_search_space = benchmark_case
+        prefer_reduce_scatter, use_remat, logical_mesh_search_space,\
+        overwrite_global_config_dict = benchmark_case
     pipeline_stage_mode = "auto_gpipe"
     if dtype == "fp32":
         dtype = jnp.float32
@@ -183,6 +182,9 @@ def benchmark_wresnet_internal(benchmark_case, niter,
                             logical_mesh_search_space=logical_mesh_search_space)
     global_config.auto_stage_construction_imbalance_tolerance = 0.25
 
+    if isinstance(overwrite_global_config_dict, dict):
+        global_config.update_with_dict(overwrite_global_config_dict)
+
     # Prepare input batch
     num_classes = 1024
     batch = {
@@ -202,7 +204,8 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat,
+                                num_layers)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 
@@ -210,9 +213,12 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     executable = train_step.get_executable(state, batch)
     print_used_time("Compile (driver)")
 
-    compilation_times = {k : timers(k).elapsed() for k in
-            ["stage-construction", "stage-construction-dp",
-             "stage-construction-compilation", "stage-construction-profiling"]}
+    compilation_times = {
+        k: timers(k).elapsed() for k in [
+            "stage-construction", "stage-construction-dp",
+            "stage-construction-compilation", "stage-construction-profiling"
+        ]
+    }
     print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
 
     # Dump hlo ir for debugging

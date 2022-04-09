@@ -22,21 +22,19 @@ To install alpa from source, we need to build these forks.
 
 2. Install dependencies
 
-  - CUDA Toolkit: cuda and cudnn
+  - CUDA Toolkit: [cuda](https://developer.nvidia.com/cuda-toolkit), [cudnn](https://developer.nvidia.com/cudnn), and [nccl](https://developer.nvidia.com/nccl)
   - Python packages:
 
   .. code:: bash
 
     pip3 install cmake tqdm numpy scipy numba pybind11 "ray[default]" flax==0.4.1
-    pip3 install cupy-cuda111   # use your own CUDA version
-
-    python3 -m cupyx.tools.install_library --library nccl --cuda 11.1  # use your own CUDA version
+    pip3 install cupy-cuda114  # use your own CUDA version. Here cuda-cuda114 means cuda 11.4.
 
   - ILP Solver:
 
   .. code:: bash
 
-    sudo apt install coinor-cbc glpk-utils
+    sudo apt install coinor-cbc
     pip3 install pulp
 
   If you do not have sudo permission, please try install via [binary](https://projects.coin-or.org/Cbc#DownloadandInstall) or [conda](https://anaconda.org/conda-forge/coincbc).

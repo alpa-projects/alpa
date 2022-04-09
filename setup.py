@@ -1,3 +1,4 @@
 from setuptools import setup
 
-setup(name='alpa')
+setup(name="alpa",
+      packages=["alpa"])

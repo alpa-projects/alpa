@@ -153,7 +153,7 @@ class ManualPipelineMLPModel(nn.Module):
 # model.
 manual_pipeline_model = ManualPipelineMLPModel(hidden_dim=dim)
 manual_pipeline_state = TrainState.create(apply_fn=manual_pipeline_model.apply,
-                                       params=copy.deepcopy(params), tx=tx)
+                                          params=copy.deepcopy(params), tx=tx)
 
 # Define the training step with manually parallelized pipeline stages.
 @alpa.parallelize

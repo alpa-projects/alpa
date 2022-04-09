@@ -22,23 +22,33 @@ To install alpa from source, we need to build these forks.
 
 2. Install dependencies
 
-  - CUDA Toolkit: cuda and cudnn
+  - CUDA Toolkit:
+      Follow the official guides to install `cuda <https://developer.nvidia.com/cuda-toolkit>`_ and `cudnn <https://developer.nvidia.com/cudnn>`_.
   - Python packages:
 
-  .. code:: bash
+      .. code:: bash
+    
+        pip3 install cmake tqdm pybind11 numba numpy scipy pulp ray flax==0.4.1
+        pip3 install cupy-cuda114  # use your own CUDA version. Here cuda-cuda114 means cuda 11.4.
 
-    pip3 install cmake tqdm numpy scipy numba pybind11 ray[default] flax==0.4.0
-    pip3 install cupy-cuda111   # use your own CUDA version
+  - NCCL:
+      First, check whether your system already has NCCL installed.
 
-    # In case NCCL is not automatically installed during cupy installation, please install it manually
-    python3 -m cupyx.tools.install_library --library nccl --cuda 11.1  # use your own CUDA version
+      .. code:: bash
+
+        python3 -c "from cupy.cuda import nccl"
+
+      If it prints nothing, then nccl is already installed.
+      Otherwise, follow the printed instructions to install nccl.
 
   - ILP Solver:
+      If you have sudo permission, use
 
-  .. code:: bash
+      .. code:: bash
+    
+        sudo apt install coinor-cbc
 
-    sudo apt install coinor-cbc glpk-utils
-    pip3 install pulp
+      Otherwise, please try to install via `binary <https://projects.coin-or.org/Cbc#DownloadandInstall>`_ or `conda <https://anaconda.org/conda-forge/coincbc>`_.
 
 3. Build and install jaxlib
 
@@ -67,7 +77,7 @@ To install alpa from source, we need to build these forks.
 6. Build XLA pipeline marker custom call
 
   .. code:: bash
-  
+
     cd alpa/alpa/pipeline_parallel/xla_custom_call_marker
     bash build.sh
 

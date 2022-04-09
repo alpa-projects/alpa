@@ -27,10 +27,9 @@ To install alpa from source, we need to build these forks.
 
   .. code:: bash
 
-    pip3 install cmake tqdm numpy scipy numba pybind11 ray[default] flax==0.4.0
+    pip3 install cmake tqdm numpy scipy numba pybind11 "ray[default]" flax==0.4.1
     pip3 install cupy-cuda111   # use your own CUDA version
 
-    # In case NCCL is not automatically installed during cupy installation, please install it manually
     python3 -m cupyx.tools.install_library --library nccl --cuda 11.1  # use your own CUDA version
 
   - ILP Solver:
@@ -39,6 +38,8 @@ To install alpa from source, we need to build these forks.
 
     sudo apt install coinor-cbc glpk-utils
     pip3 install pulp
+
+  If you do not have sudo permission, please try install via [binary](https://projects.coin-or.org/Cbc#DownloadandInstall) or [conda](https://anaconda.org/conda-forge/coincbc).
 
 3. Build and install jaxlib
 

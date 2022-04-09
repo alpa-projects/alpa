@@ -38,7 +38,7 @@ More Information
 
 Contributing
 ------------
-Please read the [contributor guide]() if you are interested in contributing to Alpa. 
+Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 
 Please connect to Alpa contributors via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).
 
 

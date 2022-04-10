@@ -45,7 +45,7 @@ paper_auto_moe_suite = {
 64: (get_auto_test_case("70B", [64], [8, 16, 32])),   # submesh_choices_mode: "small_power_of_two", max num_cpus = 20
 }
 
-test_auto_moe_suite = {
+tmp_auto_moe_suite = {
 1:  get_auto_test_case("380M", [64], [4]),
 2:  get_auto_test_case("690M", [64], [4]),
 4:  get_auto_test_case("1.3B", [64], [8]),

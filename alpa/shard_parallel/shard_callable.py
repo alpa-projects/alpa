@@ -9,7 +9,7 @@ import numpy as np
 from jax import linear_util as lu, disable_jit
 from jax._src.lib import xla_bridge as xb
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
-                      ShapedArray)
+                      ShapedArray, get_aval, raise_to_shaped)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_client as xc, xla_extension
@@ -419,10 +419,11 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     # Append eqns for gradient reduction
     for i in range(num_grads):
         tmp_var = old_invars[-(i + 1)]
+        literal_val = np.array(num_micro_batches, tmp_var.aval.dtype)
         combined_eqns.append(
             new_jaxpr_eqn([
                 tmp_var,
-                Literal(np.array(num_micro_batches, tmp_var.aval.dtype))
+                Literal(literal_val, raise_to_shaped(get_aval(literal_val))),
             ], [tmp_var], div_p, {}, None))
     # TODO(lmzheng): This breaks the SSA form of the combined_eqns
     # But I find jax can convert this non-SSA jaxpr to HLO correctly,

@@ -56,7 +56,8 @@ def eqn_flops(eqn: JaxprEqn) -> float:
         xla_computation = call_to_xla_computation(eqn)
     else:
         xla_computation = xla.primitive_subcomputation(
-            eqn.primitive, *map(lambda x: x.aval, eqn.invars), **eqn.params)
+            "gpu", xla.AxisEnv(1, (), ()), eqn.primitive,
+            *map(lambda x: x.aval, eqn.invars), **eqn.params)
     hlo_module = xla_computation.as_hlo_module()
     properties = xc._xla.hlo_module_cost_analysis(xb.get_backend("gpu"),
                                                   hlo_module)

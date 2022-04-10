@@ -8,18 +8,10 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
-import numpy as np
 import ray
 
 from alpa import DeviceCluster, MeshDriverDataLoader
-from alpa.testing import assert_allclose
-
-
-def input_iter_func(start, end, batch_size):
-    num_batches = (end - start) // batch_size
-    for i in range(num_batches):
-        yield (i * np.ones((batch_size, 32), dtype=np.float32), i * np.ones(
-            (batch_size,), dtype=np.int32))
+from alpa.testing import assert_allclose, data_loader_test_input_iter_func as input_iter_func
 
 
 class DataLoaderTest(unittest.TestCase):

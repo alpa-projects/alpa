@@ -1,4 +1,4 @@
-"""Test auto sharding with convoluton nets."""
+"""Test auto sharding with convolution nets."""
 
 import unittest
 from typing import Any

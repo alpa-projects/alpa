@@ -7,21 +7,21 @@ import numpy as np
 from alpa.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, GB
 
 from benchmark_2d_one_case import benchmark_one_case
-from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
-from paper_manual_moe_suite import fast_test_moe_suite, test_moe_suite, paper_moe_suite
-from benchmark_2d_one_case_wresnet import fast_test_wresnet_suite
+from suite_paper_manual_gpt import fast_perf_test_gpt_suite, tmp_gpt_suite, manual_tuning_gpt_suite
+from suite_paper_manual_moe import fast_perf_test_moe_suite, tmp_moe_suite, manual_tuning_moe_suite
+from suite_paper_wresnet import fast_perf_test_wresnet_suite
 
 
 benchmark_suites = {
-    "gpt.fast_test": fast_test_gpt_suite,
-    "gpt.test": test_gpt_suite,
-    "gpt.paper": paper_gpt_suite,
+    "gpt.tmp": tmp_gpt_suite,
+    "gpt.fast_perf_test": fast_perf_test_gpt_suite,
+    "gpt.manual_tuning": manual_tuning_gpt_suite,
 
-    "moe.fast_test": fast_test_moe_suite,
-    "moe.test": test_moe_suite,
-    "moe.paper": paper_moe_suite,
+    "moe.tmp": tmp_moe_suite,
+    "moe.fast_perf_test": fast_perf_test_moe_suite,
+    "moe.manual_tuning": manual_tuning_moe_suite,
 
-    "wresnet.fast_test": fast_test_wresnet_suite,
+    "wresnet.fast_perf_test": fast_perf_test_wresnet_suite,
 }
 
 

@@ -153,14 +153,15 @@ kernel_np = np.array(actual_state.params["params"]["Dense_0"]["kernel"])
 # We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
 # on a 8-GPU machine.
 
+state = actual_state  # We need this assignment because the original `state` is "donated" and freed.
 from alpa.util import benchmark_func
 
+# Benchmark serial execution with jax.jit
 jit_train_step = jax.jit(train_step, donate_argnums=(0,))
 
 def sync_func():
     jax.local_devices()[0].synchronize_all_activity()
 
-# Benchmark serial execution
 def serial_execution():
     global state
     state = jit_train_step(state, batch)

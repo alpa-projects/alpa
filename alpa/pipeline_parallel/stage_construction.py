@@ -627,7 +627,6 @@ def cluster_layers_and_slice_mesh(
 
             # Use DP to find the optimal solution.
             if cache_compute_cost is not None:
-                # FIXME(zhuohan): load max_n_succ_stages
                 cached_result = np.load(cache_compute_cost, allow_pickle=True)
             else:
                 cached_result = None
@@ -756,6 +755,101 @@ def cluster_layers_and_slice_mesh(
         if name in timers.timers:
             timers(name).stop()
     return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
+            autosharding_option_dicts)
+
+
+def cluster_layers_with_given_meshes(layers, physical_meshes, donation_mapping,
+                                     global_outvars, pipeline_stage_mode,
+                                     forward_stage_layer_ids,
+                                     logical_mesh_shapes,
+                                     autosharding_option_dicts):
+    timers("stage-construction").start()
+
+    # TODO(zhuohan): Support auto_gpipe and merge this function with
+    #   cluster_layers_and_slice_mesh.
+
+    if pipeline_stage_mode in ["manual_gpipe"]:
+        # Assume each forward layer corresponds to a backward layer
+        assert len(layers) % 2 == 0
+        num_layers = len(layers) // 2
+
+        if pipeline_stage_mode == "manual_gpipe":
+            # Manual-GPipe: use the user-provided solution
+            # Sanity check that the user-provided solution is valid
+            # Check forward_stage_layer_ids is a partition of range(num_layers)
+            assert forward_stage_layer_ids is not None
+            last_layer_id = 0
+            for stage_layer_ids in forward_stage_layer_ids:
+                for layer_id in stage_layer_ids:
+                    assert layer_id == last_layer_id
+                    last_layer_id += 1
+            assert last_layer_id == num_layers
+        else:
+            raise NotImplementedError("Unknown pipeline_stage_mode",
+                                      pipeline_stage_mode)
+
+        num_forward_stages = len(forward_stage_layer_ids)
+        backward_stage_layer_ids = [[
+            2 * num_layers - 1 - i for i in reversed(layer_ids)
+        ] for layer_ids in reversed(forward_stage_layer_ids)]
+        stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
+        stage_to_mesh = list(range(num_forward_stages)) + list(
+            reversed(range(num_forward_stages)))
+        stage_outvars = get_stage_outvars(layers, stage_layer_ids,
+                                          global_outvars)
+        merged_stages = []
+        for stage_id, layer_ids in enumerate(stage_layer_ids):
+            stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
+            stage_name = str(stage_id)
+            merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(
+                stage_layer_jaxprs,
+                stage_outvars[stage_id],
+                donation_mapping,
+                stage_name,
+                wrap_with_marker=True)
+            merged_stage = JaxPipelineComputation.from_closed_jaxpr(
+                stage_name, merged_stage_jaxpr)
+            merged_stages.append(merged_stage)
+        stages = merged_stages
+    elif pipeline_stage_mode == "uniform_layer_gpipe":
+        # This mode resembles Megatron in terms of the uniformity of mesh shapes.
+        num_acc_grad_stages = len(layers)
+        assert num_acc_grad_stages % 2 == 0
+
+        stage_to_mesh = {
+            i:
+            (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
+            for i, _ in enumerate(layers)
+        }
+        num_meshes = num_acc_grad_stages // 2
+        assert num_meshes == len(physical_meshes)
+        stages = layers
+    else:
+        raise ValueError(f"Unknown pipeline_stage_mode {pipeline_stage_mode}")
+
+    # Check logical mesh shapes or assign default logical mesh shapes
+    if logical_mesh_shapes is not None:
+        assert len(logical_mesh_shapes) == len(physical_meshes)
+        for logical_mesh_shape, submesh in zip(logical_mesh_shapes,
+                                               physical_meshes):
+            assert np.prod(logical_mesh_shape) == submesh.num_devices
+    else:
+        logical_mesh_shapes = [
+            submesh.get_default_logical_mesh().shape
+            for submesh in physical_meshes
+        ]
+    if autosharding_option_dicts is not None:
+        assert len(autosharding_option_dicts) == len(physical_meshes)
+    else:
+        autosharding_option_dicts = [{}] * len(physical_meshes)
+
+    for name in [
+            "stage-construction", "stage-construction-dp",
+            "stage-construction-compilation", "stage-construction-profiling"
+    ]:
+        if name in timers.timers:
+            timers(name).stop()
+    return (stages, stage_to_mesh, logical_mesh_shapes,
             autosharding_option_dicts)
 
 

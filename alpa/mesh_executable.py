@@ -219,6 +219,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.hlo_text = None  # will be fetched from the workers later
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
+
+            if physical_mesh.devices[0] is None:
+                # A fake physical mesh for generating HLO module only
+                return
+
             backend = xb.get_backend("gpu")
             self.compiled = run_backend_compilation(backend, hlo_module,
                                                     strategy_config,
@@ -342,6 +347,12 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_hlo_text(self):
         """Return the HLO IR in the text format."""
+        if self.hlo_text is not None:
+            return self.hlo_text
+        assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
+        self.hlo_text = ray.get(
+            self.physical_mesh.workers[0].get_exec_hlo_text.remote(
+                self.exec_uuid))
         return self.hlo_text
 
     def __del__(self):

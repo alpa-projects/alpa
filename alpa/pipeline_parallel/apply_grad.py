@@ -3,7 +3,8 @@ import logging
 from typing import Sequence, Dict, Tuple
 
 from jax._src.util import safe_map
-from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
+from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn,
+                      get_aval, raise_to_shaped)
 from jax.lax import add_p, div_p
 import numpy as np
 
@@ -391,11 +392,12 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
     outvar_set = OrderedSet(closed_jaxpr.jaxpr.outvars)
     for invar in gradients:
         div_out = gensym_fn(invar.aval)
+        literal_val = np.array(num_microbatch, invar.aval.dtype)
         new_eqns.append(
-            new_jaxpr_eqn(
-                [invar,
-                 Literal(np.array(num_microbatch, invar.aval.dtype))],
-                [div_out], div_p, {}))
+            new_jaxpr_eqn([
+                invar,
+                Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+            ], [div_out], div_p, {}))
         mapping[invar] = div_out
     replaced = replace_all_with(closed_jaxpr, mapping)
     final_invars = closed_jaxpr.jaxpr.invars

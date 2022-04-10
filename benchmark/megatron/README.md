@@ -31,19 +31,16 @@ python3 benchmark_mlp.py --nproc_per_node 4
 # Transfomer layer
 python3 benchmark_transformer_layer.py --nproc_per_node 4
 # GPT
-python3 benchmark_gpt_bert.py --model gpt --nproc_per_node 1
-python3 benchmark_gpt_bert.py --model gpt --nproc_per_node 8
-# BERT
-python3 benchmark_gpt_bert.py --model bert --nproc_per_node 1
-python3 benchmark_gpt_bert.py --model bert --nproc_per_node 8
+python3 benchmark_gpt_bert.py --nproc_per_node 1 --suite gpt.tmp
+python3 benchmark_gpt_bert.py --nproc_per_node 8 --suite gpt.tmp
 ```
 
 ### Multiple Nodes
 ```
 # on node 0
-python3 benchmark_gpt_bert.py --model gpt --nproc_per_node 8 --nnodes 2 --node_rank 0 --master_port 11000 --master_addr 172.31.16.139
+python3 benchmark_gpt_bert.py --suite gpt.tmp --nproc_per_node 8 --nnodes 2 --node_rank 0 --master_port 11000 --master_addr 172.31.16.139
 # on node 1
-python3 benchmark_gpt_bert.py --model gpt --nproc_per_node 8 --nnodes 2 --node_rank 1 --master_port 11000 --master_addr 172.31.16.139
+python3 benchmark_gpt_bert.py --suite gpt.tmp --nproc_per_node 8 --nnodes 2 --node_rank 1 --master_port 11000 --master_addr 172.31.16.139
 ```
 
 For other models, replace `benchmark_gpt_bert.py` with the corresponding filenames.

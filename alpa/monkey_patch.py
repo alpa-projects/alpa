@@ -5,9 +5,12 @@ import flax
 from flax.linen.module import compact, wrap_method_once
 import jax
 from jax import core, lax, numpy as jnp
-from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
-                                  wrap_name)
+from jax._src.lax.lax import _reduce_min, _reduce_max
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
+from jax.interpreters import partial_eval as pe
+from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
+                                  register_translation, wrap_name,
+                                  _backend_specific_translations)
 import numpy as np
 
 from alpa.global_env import global_config
@@ -60,13 +63,51 @@ jax.random.uniform = fast_uniform
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
-remat_using_while_backup = jax.xla._remat_using_while
+
+def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
+    """Lower remat to a single iteration while loop."""
+    c = ctx.builder
+    # Dummy subc for getting subcomp shapes.
+    dummy_inputs = xops.Tuple(c, in_nodes)
+    dummy_subc = xc.XlaBuilder("remat_dummy_subcomputation")
+    dummy_input_op = parameter(dummy_subc,
+                               0,
+                               c.get_shape(dummy_inputs),
+                               replicated=[])
+    dummy_args = xla_destructure(dummy_subc, dummy_input_op)
+    dummy_ctx = ctx.replace(builder=dummy_subc,
+                            name_stack=extend_name_stack(
+                                ctx.name_stack, wrap_name(name, 'remat')))
+    dummy_subcomp_outs = jaxpr_subcomp(dummy_ctx, call_jaxpr, (), *dummy_args)
+    out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
+
+    i_init = xops.Constant(c, np.array(0, dtype=np.int32))
+    zeros_like_outs = [_zeros(c, s) for s in out_node_shapes]
+    inputs = xops.Tuple(c, [i_init] + list(in_nodes) + zeros_like_outs)
+
+    cond_subc = xc.XlaBuilder("remat_cond_subcomputation")
+    input_op = parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
+    i = xops.GetTupleElement(input_op, 0)
+    rng = xops.RngUniform(xops.Constant(cond_subc, np.array(1, dtype=np.int32)),
+                          xops.Constant(cond_subc, np.array(2, dtype=np.int32)),
+                          xc.Shape.array_shape(xc.PrimitiveType.S32, []))
+    cond_subc = cond_subc.build(xops.Lt(i, rng))
+
+    body_subc = xc.XlaBuilder("remat_body_subcomputation")
+    input_op = parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
+    i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes) + 1]
+    i_next = xops.Add(i, xops.Constant(body_subc, np.array(1, dtype=np.int32)))
+    body_ctx = ctx.replace(builder=body_subc,
+                           name_stack=extend_name_stack(
+                               ctx.name_stack, wrap_name(name, 'remat')))
+    subcomp_outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
+    out_nodes = [i_next] + args + list(subcomp_outs)
+    body_subc = body_subc.build(xops.Tuple(body_subc, out_nodes))
+    outs = xops.While(cond_subc, body_subc, inputs)
+    return xla_destructure(c, outs)[len(in_nodes) + 1:]
 
 
 def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
-    if global_config.remat_using_while:
-        return remat_using_while_backup(ctx, in_nodes, name, call_jaxpr)
-
     c = ctx.builder
     args = xla_identity(c, *in_nodes, op_type="remat_begin")
     args = [xops.GetTupleElement(args, i) for i in range(len(in_nodes))]
@@ -79,7 +120,31 @@ def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
     return outs
 
 
-jax.xla._remat_using_while = _remat_using_identity
+def _remat_translation_rule(ctx,
+                            avals_in,
+                            avals_out,
+                            *in_nodes,
+                            name,
+                            call_jaxpr,
+                            prevent_cse,
+                            differentiated,
+                            concrete,
+                            policy,
+                            device=None):
+    del device, concrete, policy  # Unused.
+    if differentiated and prevent_cse:
+        if global_config.remat_using_while:
+            return _remat_using_while(ctx, in_nodes, name, call_jaxpr)
+        else:
+            return _remat_using_identity(ctx, in_nodes, name, call_jaxpr)
+    else:
+        return jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes)
+
+
+for dict_val in _backend_specific_translations.values():
+    if pe.remat_call_p in dict_val:
+        del dict_val[pe.remat_call_p]
+register_translation(pe.remat_call_p, _remat_translation_rule)
 
 
 # Use a special rule for argmin/argmax that does not require variadic reduce.
@@ -90,24 +155,25 @@ def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
     maxval = lax.broadcast(lax.tie_in(a, maxval), a.shape)
     maxvals = lax.expand_dims(op(a, (axis,)), (axis,))
     mask_idxs = lax.select(lax.eq(a, maxvals) | lax.ne(a, a), idxs, maxval)
-    return lax._reduce_min(mask_idxs, (axis,))
+    return _reduce_min(mask_idxs, (axis,))
 
 
 jax.xla.register_translation(lax.argmin_p,
                              jax.xla.lower_fun(partial(
-                                 _argminmax_gpu_translation_rule,
-                                 lax._reduce_min),
+                                 _argminmax_gpu_translation_rule, _reduce_min),
                                                multiple_results=False,
                                                new_style=True),
                              platform="gpu")
 
 jax.xla.register_translation(lax.argmax_p,
                              jax.xla.lower_fun(partial(
-                                 _argminmax_gpu_translation_rule,
-                                 lax._reduce_max),
+                                 _argminmax_gpu_translation_rule, _reduce_max),
                                                multiple_results=False,
                                                new_style=True),
                              platform="gpu")
+
+jax._src.tree_util.tree_multimap = jax._src.tree_util.tree_map
+jax.tree_multimap = jax._src.tree_util.tree_map
 
 ########################################
 ##### Monkey patch Flax
@@ -169,3 +235,7 @@ def init_dummy(self, *args, **kwargs):
 
 
 setattr(flax.linen.module.Module, "init_dummy", init_dummy)
+
+from flax.optim import dynamic_scale as dynamic_scale_lib
+
+setattr(flax.optim, "DynamicScale", dynamic_scale_lib.DynamicScale)

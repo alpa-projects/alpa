@@ -4,7 +4,7 @@ The compilation passes and status of an HloModule:
 
 UNOPTIMIZED
   |
-  |  pre_spmd_partitioner passes
+  |  spmd_simplification passes
   |
   |  auto_sharding pass
   V
@@ -14,7 +14,7 @@ SHARDING_ANNOTATED
   V
 SPMD_PARTITIONED
   |
-  |  post_spmd_partitioner passes
+  |  HLO optimization passes
   V
 FULLY_OPTIMIZED
 """
@@ -246,13 +246,6 @@ def run_auto_sharding_pass(
     grad_acc_num_micro_batches = None
 
     with XlaPassContext({
-            # Build options
-            "build_option::bypass_device_assignment_check": True,
-            "build_option::run_pre_spmd_partitioner_passes": True,
-            "build_option::run_auto_sharding": True,
-            "build_option::run_spmd_partitioner": True,
-            "build_option::run_post_spmd_partitioner_passes": False,
-
             # Auto-sharding solver options
             "auto_sharding::memory_budget_per_device": memory_budget_per_device,
             "auto_sharding::force_all_gather_cost": not allow_all_gather,
@@ -301,8 +294,7 @@ def run_auto_sharding_pass(
             "auto_sharding::force_strategy_inst_indices": [],
             "auto_sharding::force_strategy_stra_names": [],
     }):
-        compiled = xla.backend_compile(backend, xla_computation,
-                                       compile_options)
+        compiled_module = xe.run_auto_sharding(xla_computation, compile_options)
 
     if multiple_stages:
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
@@ -314,7 +306,7 @@ def run_auto_sharding_pass(
                                      last_objective)
 
     if return_mode == "single":
-        return compiled.hlo_modules()[0], strategy_config
+        return compiled_module, strategy_config
     elif return_mode == "stage_protos":
         return hlo_stage_names, hlo_stages, strategy_config
     elif return_mode == "stage_and_hook_protos":
@@ -352,20 +344,14 @@ def run_spmd_partitioner_pass(
                 ))))
 
     with XlaPassContext({
-            # Build options
-            "build_option::bypass_device_assignment_check": True,
-            "build_option::run_pre_spmd_partitioner_passes": False,
-            "build_option::run_auto_sharding": False,
-            "build_option::run_spmd_partitioner": True,
-            "build_option::run_post_spmd_partitioner_passes": False,
-
             # Gradient accumulation rewrite
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
             "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
     }):
-        compiled = backend.compile(xla_computation, compile_options)
+        compiled_module = xe.run_spmd_partitioner(xla_computation,
+                                                  compile_options)
 
-    return compiled.hlo_modules()[0]
+    return compiled_module
 
 
 def run_backend_compilation(backend: xe.Client,
@@ -387,7 +373,7 @@ def run_backend_compilation(backend: xe.Client,
         num_replicas=1,
         num_partitions=num_devices,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
+        use_spmd_partitioning=False,
         parameter_is_tupled_arguments=False,
         build_random_seed=strategy_config.build_random_seed)
 
@@ -402,10 +388,6 @@ def run_backend_compilation(backend: xe.Client,
     with XlaPassContext({
             # Build options
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
-            "build_option::run_pre_spmd_partitioner_passes": False,
-            "build_option::run_auto_sharding": False,
-            "build_option::run_spmd_partitioner": False,
-            "build_option::run_post_spmd_partitioner_passes": True,
 
             # Communication combiner options
             "combiner::all_gather_threshold":

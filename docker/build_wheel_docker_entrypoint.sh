@@ -43,6 +43,10 @@ pyenv local "$PY_VERSION"
 export BAZEL_LINKLIBS="-lstdc++"
 
 export JAX_CUDA_VERSION=$3
+
+# install cupy
+pip install cupy-cuda${JAX_CUDA_VERSION//.}
+
 case $2 in
   cuda)
     python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --tf_path=$TF_PATH

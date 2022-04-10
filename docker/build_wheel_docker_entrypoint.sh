@@ -43,9 +43,11 @@ pyenv local "$PY_VERSION"
 export BAZEL_LINKLIBS="-lstdc++"
 
 export JAX_CUDA_VERSION=$3
+export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
+python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
 
 case $2 in
   cuda)

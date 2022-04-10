@@ -3,7 +3,6 @@
 FROM gcr.io/tensorflow-testing/nosla-cuda10.0-cudnn7-ubuntu16.04-manylinux2010
 
 WORKDIR /
-# TODO(skyewm): delete the following line when no longer necessary.
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 RUN apt-get update
 RUN apt-get install libffi-dev
@@ -14,9 +13,9 @@ RUN /pyenv/bin/pyenv install 3.8.0
 RUN /pyenv/bin/pyenv install 3.9.0
 
 # We pin numpy to the minimum permitted version to avoid compatibility issues.
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.18.5 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.18.5 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.4 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.19.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.19.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.5 setuptools wheel six auditwheel
 
 # Change the CUDA version if it doesn't match the installed version in the base image
 # which is 10.0

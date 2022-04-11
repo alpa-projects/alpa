@@ -1,12 +1,11 @@
 import os
+import subprocess
 import sys
 
-import setuptools
 from setuptools import setup, find_packages
 
 
-SUPPORTED_PYTHONS = [(3, 6), (3, 7), (3, 8)]
-SUPPORTED_BAZEL = (3, 2, 0)
+SUPPORTED_PYTHONS = [(3, 7), (3, 8), (3, 9)]
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -24,7 +23,7 @@ install_require_list = [
     "numba",
     "pybind11",
     "ray[default]",
-    "flax==0.3.6",
+    "flax==0.4.1",
     f"cupy-cuda{get_cuda_version()}",
     "pulp",
     #"jax-alpa"
@@ -36,22 +35,40 @@ dev_require_list = [
 ]
 
 
-# TODO(Hao): figure out how to build jax-alpa
-def pip_run(build_ext):
-    # check python version
-    if tuple(sys.version_info[:2]) not in SUPPORTED_PYTHONS:
-        msg = ("Detected Python version {}, which is not supported. "
-               "Only Python {} are supported.").format(
-            ".".join(map(str, sys.version_info[:2])),
-            ", ".join(".".join(map(str, v)) for v in SUPPORTED_PYTHONS))
-        raise RuntimeError(msg)
+def build(build_ext):
+    """Build the custom pipeline marker API."""
+    # Check cuda version
+    build_command = []
+    if "CUDACXX" in os.environ and os.path.exists(os.environ["CUDACXX"]):
+        cudacxx_path = os.environ["CUDACXX"]
+    else:
+        # infer CUDACXX
+        cuda_version = get_cuda_version()
+        cudacxx_path = f"/usr/local/cuda-{cuda_version}/bin/nvcc"
+        if not os.path.exists(cudacxx_path):
+            raise ValueError("Cannot find CUDACXX compiler.")
+
+    build_command += [f"CUDACXX={cudacxx_path} "]
+
+    # Enter the folder and build
+    build_command += [f"cd {ROOT_DIR}/alpa/pipeline_parallel/xla_custom_call_marker; "]
+    build_command += [f"CUDACXX={cudacxx_path} ./build.sh"]
+    print(build_command)
+    if subprocess.call(build_command, shell=True) != 0:
+        exit(-1)
 
 
 if __name__ == "__main__":
+    import setuptools
     import setuptools.command.build_ext
+
     class build_ext(setuptools.command.build_ext.build_ext):
         def run(self):
-            return pip_run(self)
+            return build(self)
+
+    class BinaryDistribution(setuptools.Distribution):
+        def has_ext_modules(self):
+            return True
 
     with open(os.path.join(ROOT_DIR, "README.md"), encoding="utf-8") as f:
         long_description = f.read()
@@ -64,6 +81,7 @@ if __name__ == "__main__":
         descrption="Alpa automatically parallelizes large tensor computation graphs and "
                    "runs them on a distributed cluster.",
         long_description=long_description,
+        long_description_content_type="text/markdown",
         url="https://github.com/alpa-projects/alpa",
         classifiers=[
             'Programming Language :: Python :: 3',
@@ -72,10 +90,11 @@ if __name__ == "__main__":
         keywords=("alpa distributed parallel machine-learning model-parallelism"
                   "gpt-3 deep-learning language-model python"),
         packages=find_packages(exclude=["playground"]),
+        python_requires='>=3.7',
         cmdclass={"build_ext": build_ext},
+        distclass=BinaryDistribution,
         install_requires=install_require_list,
         extra_require={
             'dev': dev_require_list,
         },
-        python_requires='>=3.6',
     )

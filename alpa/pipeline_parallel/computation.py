@@ -651,7 +651,7 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         new_outvars = []
         removed_after_end_marker = set()
         for i, o in zip(previous_end.invars, previous_end.outvars):
-            if i in removed_outvars:
+            if i in removed_outvars and o not in layer_invars:
                 removed_after_end_marker.add(o)
                 mapping[i] = o
                 continue
@@ -704,7 +704,8 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
         backward_stage.invars.extend(new_invars)
         for eqn in offloaded_eqns:
             mapped_outvars = [
-                mapping[mapping[var]] if var in mapping else var
+                mapping[mapping[var]] if
+                (var in mapping and mapping[var] in mapping) else var
                 for var in eqn.outvars
             ]
             mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars,
@@ -717,6 +718,9 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
 
     num_layers = len(jax_pipeline_computations) // 2
     new_computations = [None] * len(jax_pipeline_computations)
+    layer_invars = set()
+    for layer in jax_pipeline_computations:
+        layer_invars.update(layer.invars)
     for i in range(num_layers):
         new_forward, new_backward = task_offloader(
             jax_pipeline_computations[i], jax_pipeline_computations[-i - 1])

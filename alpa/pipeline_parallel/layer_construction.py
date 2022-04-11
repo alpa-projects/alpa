@@ -283,8 +283,6 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
         ]
         solution.append(jaxpr.eqns[int((layer_num - 1) * per_layer_size):])
         log_layer_slicing_stats(jaxpr, solution)
-        for eqn in solution[-1]:
-            print(eqn)
         return solution, {"total_cost": None}
     non_trivial, input_sizes, compute_costs = costs
     compute_costs_avg = compute_costs.sum() / layer_num

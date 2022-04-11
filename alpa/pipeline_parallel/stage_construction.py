@@ -271,6 +271,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             if is_full_mesh and not (start == 0 and end == num_layers - 1):
                 continue
+            if end != start and global_config.ablation_equal_layer:
+                continue
             flops_ratio = (
                 layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
                 + layer_flops_prefix_sum[2 * num_layers - start] -

@@ -94,8 +94,18 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
-                   auto_layer=False, fine_grained_remat=False):
+def get_train_step(grad_func,
+                   num_layers,
+                   use_remat,
+                   pipeline_mp_size,
+                   dtype,
+                   auto_layer=False,
+                   fine_grained_remat=False,
+                   ablation_config={}):
+
+    layer_construction_kwargs = {}
+    if ablation_config.setdefault("use_equal_eqn", False):
+        layer_construction_kwargs["cost_criteria"] = "ablation_equal_eqn"
 
     add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size >= 1))
 
@@ -126,12 +136,17 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
         elif auto_layer:
             if fine_grained_remat:
                 if use_remat:
-                    loss_func = automatic_remat(loss_func, layer_num=num_layers)
-                loss_func = automatic_layer_construction(loss_func, layer_num=pipeline_mp_size)
+                    loss_func = automatic_remat(loss_func,
+                                                layer_num=num_layers,
+                                                **layer_construction_kwargs)
+                loss_func = automatic_layer_construction(
+                    loss_func, layer_num=pipeline_mp_size)
             else:
-                loss_func = automatic_layer_construction(loss_func,
-                                                         remat_layer=use_remat,
-                                                         layer_num=pipeline_mp_size)
+                loss_func = automatic_layer_construction(
+                    loss_func,
+                    remat_layer=use_remat,
+                    layer_num=pipeline_mp_size,
+                    **layer_construction_kwargs)
 
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
@@ -141,8 +156,13 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
     return train_step
 
 
-def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
-                                num_hosts, num_devices_per_host, aval_train_state=True):
+def benchmark_gpt_bert_internal(model_type,
+                                benchmark_case,
+                                niter,
+                                num_hosts,
+                                num_devices_per_host,
+                                aval_train_state=True,
+                                ablation_config={}):
     print_used_time(None)
 
     # Model configs
@@ -192,6 +212,11 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
 
     if isinstance(overwrite_global_config_dict, dict):
         global_config.update_with_dict(overwrite_global_config_dict)
+        if global_config.ablation_equal_layer:
+            fine_grained_remat = True
+            assert pipeline_mp_size == num_layers
+            assert pipeline_stage_mode == "auto_gpipe"
+            pipeline_mp_size = ablation_config["num_stages"]
 
     # Prepare input batch
     # Note: there will be an input conversion.
@@ -220,7 +245,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_construction_marker,
-        ), dtype=dtype)
+        ),
+                                          dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
             vocab_size=vocab_size,
@@ -233,7 +259,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             gradient_checkpointing=use_remat and not auto_layer,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_construction_marker,
-        ), dtype=dtype)
+        ),
+                                   dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
@@ -245,8 +272,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer,
-                                fine_grained_remat)
+    train_step = get_train_step(grad_func, num_layers, use_remat,
+                                pipeline_mp_size, dtype, auto_layer,
+                                fine_grained_remat, ablation_config)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

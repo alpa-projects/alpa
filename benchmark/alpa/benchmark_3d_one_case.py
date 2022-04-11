@@ -18,7 +18,8 @@ TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 def benchmark_one_case(model, case, niter,
                        num_hosts, num_devices_per_host,
                        use_separate_process=False,
-                       dump_result=False, disable_tqdm=False):
+                       dump_result=False, disable_tqdm=False,
+                       ablation_config={}):
     if disable_tqdm:
         disable_tqdm_globally()
 
@@ -34,11 +35,11 @@ def benchmark_one_case(model, case, niter,
 
         # Run benchmark
         if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts, num_devices_per_host)
+            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts, num_devices_per_host, ablation_config=ablation_config)
         elif model == "moe":
-            result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
+            result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host, ablation_config=ablation_config)
         elif model == "wresnet":
-            result = benchmark_wresnet_internal(case, niter, num_hosts, num_devices_per_host)
+            result = benchmark_wresnet_internal(case, niter, num_hosts, num_devices_per_host, ablation_config=ablation_config)
         else:
             raise ValueError(f"Invalid model: {model}")
 
@@ -53,6 +54,7 @@ def benchmark_one_case(model, case, niter,
                f'--case "{case}" '
                f"--num-hosts {num_hosts} "
                f"--num-devices-per-host {num_devices_per_host} "
+               f'--ablation-config "{ablation_config}" '
                f"--dump-result ")
         if disable_tqdm:
             cmd += "--disable-tqdm "
@@ -75,6 +77,7 @@ if __name__ == "__main__":
     parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)
+    parser.add_argument("--ablation-config", type=str)
     parser.add_argument("--dump-result", action="store_true",
         help="Dump results into a temporary pickle file")
     parser.add_argument("--disable-tqdm", action="store_true")
@@ -82,7 +85,12 @@ if __name__ == "__main__":
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
+    if args.ablation_config:
+        ablation_config = eval(args.ablation_config)
+    else:
+        ablation_config = {}
     benchmark_one_case(args.model, case, args.niter,
                        args.num_hosts, args.num_devices_per_host,
                        use_separate_process=False, dump_result=args.dump_result,
-                       disable_tqdm=args.disable_tqdm)
+                       disable_tqdm=args.disable_tqdm,
+                       ablation_config=ablation_config)

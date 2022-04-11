@@ -111,6 +111,7 @@ class GlobalConfig:
         # tensor creation and copy to reduce the initialization and copy time.
         # This will produce wrong results but is acceptable for
         # data-independent benchmarks.
+        self.ablation_equal_layer = False
         self.use_dummy_value_for_benchmarking = False
 
         ########## Options of logging ##########

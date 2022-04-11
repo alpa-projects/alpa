@@ -618,6 +618,7 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                 [v for v in eqn.outvars if not isinstance(v, DropVar)])
         return True
 
+    # TODO(yonghao): rewrite it to a general strength reduction.
     def task_offloader(forward_stage: JaxPipelineComputation,
                        backward_stage: JaxPipelineComputation):
 

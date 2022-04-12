@@ -295,6 +295,7 @@ class MeshHostWorker:
 
         tensor_shape = self.buffers[uuid].shape
         slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
+        is_bool = self.buffers[uuid].dtype == np.bool_
         if is_continuous_subset(indices_in_dst_tile, tensor_shape):
             to_recv = xla_buffer_to_cupy(self.buffers[uuid],
                                          take_ownership=True)
@@ -334,6 +335,8 @@ class MeshHostWorker:
                 xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+        if is_bool:
+            self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])
 
     def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx, peer_rank,
                               peer_gpu_idx, nccl_uid):
@@ -354,6 +357,7 @@ class MeshHostWorker:
         cupy_buffers = []
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         relative_idx = dict(zip(sorted(device_ids), range(len(device_ids))))
+        is_bool = self.buffers[uuids[0]].dtype == np.bool_
         nccl_util.groupStart()
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
@@ -370,7 +374,10 @@ class MeshHostWorker:
         nccl_util.groupEnd()
         for device_id, cupy_buffer in zip(device_ids, cupy_buffers):
             uuid = uuids[device_id]
-            self.buffers[uuid] = cupy_to_xla_buffer(cupy_buffer)
+            buf = cupy_to_xla_buffer(cupy_buffer)
+            if is_bool:
+                buf = _uint8_to_bool(buf)
+            self.buffers[uuid] = buf
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
@@ -1582,6 +1589,12 @@ def _shard_distributed_array(array,
     # Slow path: gather values to host and reshard
     return shard_arg_handlers[type(array._value)](array._value, device_mesh,
                                                   indices, num_batch, batch_dim)
+
+# in XLA pred(bool) and uint8 are different, but xla->dlpack->xla
+# turns a bool into uint8. This implementation is slow.
+def _uint8_to_bool(xla_buffer):
+    buf = xla_buffer_to_jax_tensor(xla_buffer).astype(np.bool_)
+    return jax_tensor_to_xla_buffer(buf)
 
 
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh

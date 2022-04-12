@@ -589,6 +589,86 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
     return new_computations
 
 
+def _offload_remat_forward_remove_outvars(forward_stage, offloaded_eqns,
+                                          gensym_func):
+    removed_outvars = set()
+    removed_marker_mapping = {}
+    for eqn in offloaded_eqns:
+        not_dropped = [
+            var for var in eqn.outvars if not isinstance(var, DropVar)
+        ]
+        removed_outvars.update(not_dropped)
+    previous_end = forward_stage.eqns[-1]
+    new_invars = []
+    new_outvars = []
+    for i, o in zip(previous_end.invars, previous_end.outvars):
+        if i in removed_outvars:
+            removed_marker_mapping[i] = o
+            continue
+        new_invars.append(i)
+        new_outvars.append(o)
+    add_dummy_dependency_var = (len(forward_stage.invars) != 0 or
+                                len(new_outvars) != 0)
+
+    # TODO(zhuohan): Here we add a dummy byte from forward stage to
+    #  backward stage to add a dependency link from the forward stage to
+    #  the backward stage. Should not need this once we fixed the stage
+    #  slicing in XLA.
+    new_eqns = list(forward_stage.eqns)
+    if add_dummy_dependency_var:
+        zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+        dummy_outvar = gensym_func(zero_literal.aval)
+        dummy_eqn = new_jaxpr_eqn([zero_literal, zero_literal], [dummy_outvar],
+                                  jax.lax.add_p, {})
+        new_eqns.insert(-1, dummy_eqn)
+        new_invars.append(dummy_outvar)
+        marked_dummy_outvar = gensym_func(dummy_outvar.aval)
+        new_outvars.append(marked_dummy_outvar)
+    else:
+        marked_dummy_outvar = None
+
+    new_eqns[-1] = mark_pipeline_jaxpreqn(new_invars, new_outvars,
+                                          previous_end.params["name"], "end")
+    new_forward = JaxPipelineComputation(forward_stage.name,
+                                         forward_stage.invars, new_outvars,
+                                         new_eqns, forward_stage.consts_dir)
+    return new_forward, removed_marker_mapping, marked_dummy_outvar
+
+
+def _offload_remat_add_eqns(stage: JaxPipelineComputation, offloaded_eqns,
+                            var_mapping, dummy_var, gensym_func):
+    removed_after_end_marker = set(var_mapping.values())
+    previous_start = stage.eqns[0]
+    new_invars = []
+    new_outvars = []
+    new_eqns = list(stage.eqns)
+    for i, o in zip(previous_start.invars, previous_start.outvars):
+        if i in removed_after_end_marker:
+            var_mapping[i] = o
+            continue
+        new_invars.append(i)
+        new_outvars.append(o)
+
+    if dummy_var:
+        new_invars.append(dummy_var)
+        new_outvars.append(gensym_func(dummy_var.aval))
+
+    new_eqns[0] = mark_pipeline_jaxpreqn(new_invars, new_outvars,
+                                         previous_start.params["name"], "start")
+    for eqn in offloaded_eqns:
+        mapped_outvars = [
+            var_mapping[var_mapping[var]] if
+            (var in var_mapping and var_mapping[var] in var_mapping) else var
+            for var in eqn.outvars
+        ]
+        mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars, eqn.primitive,
+                                   eqn.params, eqn.source_info)
+        new_eqns.insert(1, mapped_eqn)
+    new_stage = JaxPipelineComputation(stage.name, new_invars, stage.outvars,
+                                       new_eqns)
+    return new_stage
+
+
 def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                   gensym_func):
     """Offload remat call from forward to backward.
@@ -618,110 +698,48 @@ def offload_remat(jax_pipeline_computations: Sequence[JaxPipelineComputation],
                 [v for v in eqn.outvars if not isinstance(v, DropVar)])
         return True
 
-    def task_offloader(forward_stage: JaxPipelineComputation,
-                       backward_stage: JaxPipelineComputation):
-
-        def get_size(var):
+    def only_input_consts(eqn: JaxprEqn):
+        in_bytes = 0
+        for var in eqn.invars:
             if not isinstance(var, Var):
-                return 0
+                continue
             if isinstance(var, DropVar):
-                return 0
-            return np.prod(var.aval.shape) * np.dtype(var.aval.dtype).itemsize
+                continue
+            in_bytes += np.prod(var.aval.shape) * np.dtype(
+                var.aval.dtype).itemsize
+        return in_bytes == 0
 
+    num_layers = len(jax_pipeline_computations) // 2
+    new_computations = list(jax_pipeline_computations)
+    for i in range(num_layers):
+        forward_stage = new_computations[i]
         offloaded_eqns = []
-        mapping = {}
         for eqn in reversed(forward_stage.eqns):
             if eqn.primitive == pipeline_p:
                 continue
             if (eqn.primitive == remat_call_p and
-                    only_create_consts(eqn.params["call_jaxpr"])):
-                invar_shapes = sum([get_size(var) for var in eqn.invars])
-                if invar_shapes == 0:
-                    offloaded_eqns.append(eqn)
+                    only_create_consts(eqn.params["call_jaxpr"]) and
+                    only_input_consts(eqn)):
+                offloaded_eqns.append(eqn)
         # remove outvars from forward stage
         # assert len(offloaded_eqns)#, forward_stage.closed_jaxpr()
-        removed_outvars = set()
-        for eqn in offloaded_eqns:
-            not_dropped = [
-                var for var in eqn.outvars if not isinstance(var, DropVar)
-            ]
-            removed_outvars.update(not_dropped)
-        previous_end = forward_stage.eqns[-1]
-        new_invars = []
-        new_outvars = []
-        removed_after_end_marker = set()
-        for i, o in zip(previous_end.invars, previous_end.outvars):
-            if i in removed_outvars:
-                removed_after_end_marker.add(o)
-                mapping[i] = o
+        (new_forward, removed_var_mapping,
+         marked_dummy_outvar) = _offload_remat_forward_remove_outvars(
+             forward_stage, offloaded_eqns, gensym_func)
+        removed_var_post_marker = set(removed_var_mapping.values())
+        # remove invars and add eqn into backward stage
+        for stage_idx, stage in enumerate(new_computations):
+            if stage_idx == i:
                 continue
-            new_invars.append(i)
-            new_outvars.append(o)
-        add_dummy_dependency_var = (len(forward_stage.invars) != 0 or
-                                    len(new_outvars) != 0)
-
-        # TODO(zhuohan): Here we add a dummy byte from forward stage to
-        #  backward stage to add a dependency link from the forward stage to
-        #  the backward stage. Should not need this once we fixed the stage
-        #  slicing in XLA.
-        new_eqns = list(forward_stage.eqns)
-        if add_dummy_dependency_var:
-            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
-            dummy_outvar = gensym_func(zero_literal.aval)
-            dummy_eqn = new_jaxpr_eqn([zero_literal, zero_literal],
-                                      [dummy_outvar], jax.lax.add_p, {})
-            new_eqns.insert(-1, dummy_eqn)
-            new_invars.append(dummy_outvar)
-            marked_dummy_outvar = gensym_func(dummy_outvar.aval)
-            new_outvars.append(marked_dummy_outvar)
-
-        new_eqns[-1] = mark_pipeline_jaxpreqn(new_invars, new_outvars,
-                                              previous_end.params["name"],
-                                              "end")
-        new_forward = JaxPipelineComputation(forward_stage.name,
-                                             forward_stage.invars, new_outvars,
-                                             new_eqns, forward_stage.consts_dir)
-        # add invars and eqn into backward stage
-        previous_start = backward_stage.eqns[0]
-        new_invars = []
-        new_outvars = []
-        new_eqns = list(backward_stage.eqns)
-        for i, o in zip(previous_start.invars, previous_start.outvars):
-            if i in removed_after_end_marker:
-                mapping[i] = o
-                continue
-            new_invars.append(i)
-            new_outvars.append(o)
-
-        if add_dummy_dependency_var:
-            new_invars.append(marked_dummy_outvar)
-            new_outvars.append(gensym_func(marked_dummy_outvar.aval))
-
-        new_eqns[0] = mark_pipeline_jaxpreqn(new_invars, new_outvars,
-                                             previous_start.params["name"],
-                                             "start")
-        backward_stage.invars.clear()
-        backward_stage.invars.extend(new_invars)
-        for eqn in offloaded_eqns:
-            mapped_outvars = [
-                mapping[mapping[var]] if var in mapping else var
-                for var in eqn.outvars
-            ]
-            mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars,
-                                       eqn.primitive, eqn.params,
-                                       eqn.source_info)
-            new_eqns.insert(1, mapped_eqn)
-        new_backward = JaxPipelineComputation(backward_stage.name, new_invars,
-                                              backward_stage.outvars, new_eqns)
-        return new_forward, new_backward
-
-    num_layers = len(jax_pipeline_computations) // 2
-    new_computations = [None] * len(jax_pipeline_computations)
-    for i in range(num_layers):
-        new_forward, new_backward = task_offloader(
-            jax_pipeline_computations[i], jax_pipeline_computations[-i - 1])
+            stage_invars = set(stage.invars)
+            if stage_invars.intersection(removed_var_post_marker):
+                dummy_outvar = (marked_dummy_outvar if
+                                (stage_idx == num_layers * 2 - 1 - i) else None)
+                new_computations[stage_idx] = _offload_remat_add_eqns(
+                    stage, offloaded_eqns, removed_var_mapping, dummy_outvar,
+                    gensym_func)
         new_computations[i] = new_forward
-        new_computations[-i - 1] = new_backward
+
     return new_computations
 
 

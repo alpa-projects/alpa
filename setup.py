@@ -12,7 +12,7 @@ ROOT_DIR = os.path.dirname(__file__)
 
 # TODO(Hao): implement get_cuda_version
 def get_cuda_version():
-    return "111"
+    return "116"
 
 
 install_require_list = [
@@ -44,12 +44,14 @@ def build(build_ext):
     else:
         # infer CUDACXX
         cuda_version = get_cuda_version()
+        cuda_version = cuda_version[:-1] + "." + cuda_version[:-1]
+        print(f"CUDA version: {cuda_version}")
         cudacxx_path = f"/usr/local/cuda-{cuda_version}/bin/nvcc"
         if not os.path.exists(cudacxx_path):
             raise ValueError("Cannot find CUDACXX compiler.")
 
     build_command += [f"CUDACXX={cudacxx_path} "]
-
+    print(build_command)
     # Enter the folder and build
     build_command += [f"cd {ROOT_DIR}/alpa/pipeline_parallel/xla_custom_call_marker; "]
     build_command += [f"CUDACXX={cudacxx_path} ./build.sh"]
@@ -78,7 +80,7 @@ if __name__ == "__main__":
         version="0.0.0", # TODO(Hao): change to os.environ.get('VERSION')
         author="Alpa team",
         author_email="",
-        descrption="Alpa automatically parallelizes large tensor computation graphs and "
+        description="Alpa automatically parallelizes large tensor computation graphs and "
                    "runs them on a distributed cluster.",
         long_description=long_description,
         long_description_content_type="text/markdown",
@@ -94,7 +96,7 @@ if __name__ == "__main__":
         cmdclass={"build_ext": build_ext},
         distclass=BinaryDistribution,
         install_requires=install_require_list,
-        extra_require={
+        extra_requires={
             'dev': dev_require_list,
         },
     )

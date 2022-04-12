@@ -10,11 +10,11 @@ _ = None
 
 wresnet_specs = {
       #    I,  L,   C, W,  dtype,
-"250M": (224, 50, 160, 2,  "fp32"), 
-"500M": (224, 50, 224, 2,  "fp32"), 
-"1B":   (224, 50, 320, 2,  "fp32"), 
-"2B":   (224, 50, 448, 2,  "fp32"), 
-"4B":   (224, 50, 640, 2,  "fp32"), 
+"250M": (224, 50, 160, 2,  "fp32"),
+"500M": (224, 50, 224, 2,  "fp32"),
+"1B":   (224, 50, 320, 2,  "fp32"),
+"2B":   (224, 50, 448, 2,  "fp32"),
+"4B":   (224, 50, 640, 2,  "fp32"),
 "6.8B": (224, 50, 320, 16, "fp32"),
 "13B":  (224, 50, 320, 32, "fp32"),
 }
@@ -73,5 +73,5 @@ paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of case
     64: (get_auto_test_case("13B", [38], 1520) +
          get_auto_test_case("13B", [32, 48], 1536) +
          get_auto_test_case("13B", [42], 1512) +
-         (1520, 224, 101,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel")),
+         [(1520, 224, 101,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel")]),
 }

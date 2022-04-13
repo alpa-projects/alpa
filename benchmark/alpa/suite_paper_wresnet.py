@@ -19,7 +19,10 @@ wresnet_specs = {
 "13B":  (224, 50, 320, 32, "fp32"),
 }
 
-default_overwrite_dict = {}
+default_overwrite_dict = {
+    "auto_stage_construction_imbalance_tolerance": 0.25,
+    "submesh_choices_mode": "small_power_of_two",
+}
 
 _ = None
 
@@ -57,13 +60,13 @@ def get_auto_test_case(model_name,
     ]
 
 paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of cases
-    1: get_auto_test_case("250M", [24], 1536),
+    1: get_auto_test_case("250M", [24, 32], 1536),
 
-    2: get_auto_test_case("500M", [24], 1536),
+    2: get_auto_test_case("500M", [24, 32], 1536),
 
-    4 : get_auto_test_case("1B", [24], 1536),
+    4 : get_auto_test_case("1B", [24, 32], 1536),
 
-    8: get_auto_test_case("2B", [24], 1536),
+    8: get_auto_test_case("2B", [24, 32], 1536),
 
     16: get_auto_test_case("4B", [24, 32], 1536),
 
@@ -74,4 +77,12 @@ paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of case
          get_auto_test_case("13B", [32, 48], 1536) +
          get_auto_test_case("13B", [42], 1512) +
          [(1520, 224, 101,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel")]),
+}
+
+paper_ablation_wresnet_suite = {  # key = the number of gpus, value = a list of cases
+    8:  get_auto_test_case("2B", [24], 1536),
+
+    16: get_auto_test_case("4B", [24], 1536),
+
+    32: get_auto_test_case("6.8B", [38], 1520)
 }

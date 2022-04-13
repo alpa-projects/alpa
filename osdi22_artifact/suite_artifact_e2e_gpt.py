@@ -27,10 +27,9 @@ def get_auto_test_case(model_name, n_microbatches, num_layers,
 
 
 artifact_search_e2e_gpt_suite = {
-2: (get_auto_test_case("760M", [32, 64, 128, 256], [6]) +
-    get_auto_test_case("760M", [32, 64], [12])),
-4: (get_auto_test_case("1.3B", [32, 64, 128], [6]) +
-    get_auto_test_case("1.3B", [32, 64], [12])),
+1: (get_auto_test_case("350M", [512], [1])),
+2: (get_auto_test_case("760M", [64], [6])),
+4:  get_auto_test_case("1.3B", [128], [6]),
 8:  get_auto_test_case("2.6B", [128], [8]),
 16: get_auto_test_case("6.7B", [64], [8]),
 32: get_auto_test_case("15B", [128], [16]),
@@ -38,7 +37,7 @@ artifact_search_e2e_gpt_suite = {
 
 
 artifact_result_e2e_gpt_suite = {
-1: get_auto_test_case("350M", [64], [1], "manual_gpipe", {
+1: get_auto_test_case("350M", [512], [1], "manual_gpipe", {
     "forward_stage_layer_ids": [[0]],
     "sub_physical_mesh_shapes": [(1, 1)],
     "sub_logical_mesh_shapes": [(1, 1)],

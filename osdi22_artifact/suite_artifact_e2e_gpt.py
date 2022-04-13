@@ -38,19 +38,19 @@ artifact_search_e2e_gpt_suite = {
 
 
 artifact_result_e2e_gpt_suite = {
-1: get_auto_test_case("125M", [64], [1], "manual_gpipe", {
+1: get_auto_test_case("350M", [64], [1], "manual_gpipe", {
     "forward_stage_layer_ids": [[0]],
     "sub_physical_mesh_shapes": [(1, 1)],
     "sub_logical_mesh_shapes": [(1, 1)],
     "submesh_autosharding_option_dicts": [{}],
 }),
-2: get_auto_test_case("350M", [128], [6], "manual_gpipe", {
+2: get_auto_test_case("760M", [128], [6], "manual_gpipe", {
     "forward_stage_layer_ids": [[0, 1, 2], [3, 4, 5]],
     "sub_physical_mesh_shapes": [(1, 1)] * 2,
     "sub_logical_mesh_shapes": [(1, 1)] * 2,
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2,
 }),
-4: get_auto_test_case("760M", [128], [6], "manual_gpipe", {
+4: get_auto_test_case("1.3B", [128], [6], "manual_gpipe", {
     "forward_stage_layer_ids": [[0, 1, 2], [3, 4, 5]],
     "sub_physical_mesh_shapes": [(1, 2)] * 2,
     "sub_logical_mesh_shapes": [(2, 1)] * 2,

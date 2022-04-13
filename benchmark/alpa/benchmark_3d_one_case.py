@@ -1,6 +1,7 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 import argparse
 import pickle
+from multiprocessing import Process
 
 import jax
 import ray
@@ -47,20 +48,16 @@ def benchmark_one_case(model, case, niter,
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.
         run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        cmd = (f"python3 -u benchmark_3d_one_case.py "
-               f"--model {model} "
-               f"--niter {niter} "
-               f'--case "{case}" '
-               f"--num-hosts {num_hosts} "
-               f"--num-devices-per-host {num_devices_per_host} "
-               f"--dump-result ")
-        if disable_tqdm:
-            cmd += "--disable-tqdm "
-        ret = run_cmd(cmd)
-        if ret == 0:
+        p = Process(target=benchmark_one_case, args=(model, case, niter,
+                                                     num_hosts, num_devices_per_host,
+                                                     False, True, disable_tqdm))
+        p.start()
+        p.join()
+        if p.exitcode == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
             result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
+        p.terminate()
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

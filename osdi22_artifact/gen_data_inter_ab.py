@@ -14,13 +14,15 @@ from benchmark_3d import benchmark_suites
 def run_equal_eqn_one_case(model, case, niter, num_hosts, num_devices_per_host,
                            use_separate_process, disable_tqdm):
     ablation_config = {"use_equal_eqn": True}
+    case[-1]["use_hlo_cost_model"] = False
     return benchmark_one_case(model, case, niter, num_hosts,
                               num_devices_per_host, use_separate_process, True,
                               disable_tqdm, ablation_config)
 
 
 def run_equal_layer_one_case(model, case, niter, num_hosts,
-                             num_devices_per_host):
+                             num_devices_per_host, use_separate_process,
+                             disable_tqdm):
     optimal_result = [0] * 6
     num_stages = 1
     if model == "moe" or model == "gpt":
@@ -29,10 +31,13 @@ def run_equal_layer_one_case(model, case, niter, num_hosts,
         num_layers = case[2]
     while num_layers % num_stages == 0:
         ablation_config = {"num_stages": num_stages}
-        case[-1]["ablation_equal_layer"] = True
+        if case[-1]:
+            case[-1]["ablation_equal_layer"] = True
+        else:
+            case[-1] = {"ablation_equal_layer": True}
         result = benchmark_one_case(model, case, niter, num_hosts,
-                                    num_devices_per_host, True, True, True,
-                                    ablation_config)
+                                    num_devices_per_host, use_separate_process,
+                                    True, disable_tqdm, ablation_config)
         if result[5] > optimal_result[5]:
             optimal_result = result
         num_stages *= 2
@@ -118,7 +123,7 @@ if __name__ == "__main__":
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
-        result = run_equal_eqn_one_case(
+        result = run_equal_layer_one_case(
             model_type,
             benchmark_case,
             args.niter,
@@ -168,6 +173,6 @@ if __name__ == "__main__":
                 autosharding_option_dicts, overwrite_global_config_dict,
                 to_str_round(compilation_times, 2)
             ]
-            write_tsv(heads, values, output_name)
+            # write_tsv(heads, values, output_name)
 
         time.sleep(0.1)  # for ctrl+c to work

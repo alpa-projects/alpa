@@ -1,11 +1,10 @@
-"""The entry point of intra-op + inter-op parallelism benchmark."""
+import sys
+sys.path.append("../benchmark/alpa/")
+
 import argparse
-from datetime import datetime
 import time
 
-import numpy as np
-
-from alpa.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round, GB
+from alpa.util import write_tsv, run_cmd
 
 from benchmark.alpa.benchmark_3d_one_case import benchmark_one_case
 from suite_artifact_e2e_gpt import (artifact_search_e2e_gpt_suite, artifact_result_e2e_gpt_suite)
@@ -51,7 +50,7 @@ def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name, o
         # Write to file
         heads = ["exp_name", "instance", "num_hosts", "num_devices_per_host", "model_name", "method", "value", "time_stamp"]
         values = [exp_name, instance, num_hosts, num_devices_per_host, model_type, method_name[suite_name],
-                  str({"tflops": tflops_ckpt, "parameter_count": parameter_count}), time.time()]
+                  str({"tflops": tflops_ckpt, "parameter_count": parameter_count / (10 ** 9)}), time.time()]
         write_tsv(heads, values, output_name)
         time.sleep(0.1)  # for ctrl+c to work
 
@@ -71,7 +70,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cluster_sizes = [(4, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
-    output_name = f"result_{args.exp_name}.tsv"
+    output_name = f"results_{args.exp_name}.tsv"
 
     # GPT e2e results
     gpt_suite_name = "gpt.search" if args.search else "gpt.result"

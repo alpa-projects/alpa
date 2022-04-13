@@ -57,6 +57,7 @@ def benchmark_one_case(model, case, niter,
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
             result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
+        p.terminate()
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

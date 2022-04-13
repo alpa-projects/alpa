@@ -8,7 +8,7 @@ Alpa automatically parallelizes tensor computation graphs and runs them on a dis
 Quick Start
 -----------
 
-Use Alpa's single line API ``@parallelize`` to scale you single-node training code to distributed clusters, even though 
+Use Alpa's single line API ``@parallelize`` to scale your single-node training code to distributed clusters, even though 
 your model is much bigger than a single device memory.
 ```python
 import alpa

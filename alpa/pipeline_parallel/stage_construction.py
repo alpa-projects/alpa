@@ -139,6 +139,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
         if cost < best_cost:
             best_cost = cost
             best_solution = solution
+        last_max_stage_cost = max_stage_cost
     assert best_solution is not None, "no solution in auto stage construction."
 
     timers("stage-construction-dp").suspend()

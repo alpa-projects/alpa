@@ -82,12 +82,10 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
 def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers,
                    fine_grained_remat, pipeline_mp_size, ablation_config):
 
+    layer_num = resnet_layer_to_alpa_layer[num_layers]
     layer_construction_kwargs = {}
     if ablation_config.setdefault("use_equal_eqn", False):
         layer_construction_kwargs["cost_criteria"] = "ablation_equal_eqn"
-
-    if ablation_config.setdefault("use_equal_layer", False):
-        pass
 
     @parallelize
     def train_step(state, batch):
@@ -116,7 +114,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers,
         if fine_grained_remat:
             if use_remat:
                 loss_func = automatic_remat(loss_func,
-                                            layer_num=num_layers,
+                                            layer_num=layer_num,
                                             **layer_construction_kwargs)
             loss_func = automatic_layer_construction(loss_func,
                                                      layer_num=pipeline_mp_size)
@@ -124,7 +122,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers,
             loss_func = automatic_layer_construction(
                 loss_func,
                 remat_layer=use_remat,
-                layer_num=pipeline_mp_size,
+                layer_num=layer_num,
                 **layer_construction_kwargs)
 
         step = state.step

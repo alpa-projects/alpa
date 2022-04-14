@@ -1,5 +1,6 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 from functools import partial
+from alpa.pipeline_parallel.layer_construction import automatic_remat
 
 from flax import linen as nn, optim
 from flax.training import common_utils
@@ -78,15 +79,18 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
+def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers,
+                   fine_grained_remat, pipeline_mp_size, ablation_config):
+
+    layer_num = resnet_layer_to_alpa_layer[num_layers]
+    layer_construction_kwargs = {}
+    if ablation_config.setdefault("use_equal_eqn", False):
+        layer_construction_kwargs["cost_criteria"] = "ablation_equal_eqn"
 
     @parallelize
     def train_step(state, batch):
 
-        @partial(automatic_layer_construction,
-                 layer_num=resnet_layer_to_alpa_layer[num_layers],
-                 remat_layer=use_remat)
-        def loss_fn(params):
+        def loss_func(params):
             logits, new_model_state = state.apply_fn(
                 {
                     "params": params,
@@ -107,12 +111,26 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
             }
             return loss, (new_model_state, metrics)
 
+        if fine_grained_remat:
+            if use_remat:
+                loss_func = automatic_remat(loss_func,
+                                            layer_num=layer_num,
+                                            **layer_construction_kwargs)
+            loss_func = automatic_layer_construction(loss_func,
+                                                     layer_num=pipeline_mp_size)
+        else:
+            loss_func = automatic_layer_construction(
+                loss_func,
+                remat_layer=use_remat,
+                layer_num=layer_num,
+                **layer_construction_kwargs)
+
         step = state.step
         dynamic_scale = state.dynamic_scale
 
         if dynamic_scale:
             # TOOD(lmzheng): handle gradient accumulation for this
-            grad_fn = dynamic_scale.value_and_grad(loss_fn, has_aux=True)
+            grad_fn = dynamic_scale.value_and_grad(loss_func, has_aux=True)
             dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
             # dynamic loss takes care of averaging gradients across replicas
         else:
@@ -121,7 +139,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
             else:
                 get_grad_fn = jax.grad
 
-            grad_fn = get_grad_fn(loss_fn, has_aux=True)
+            grad_fn = get_grad_fn(loss_func, has_aux=True)
             grads, aux = grad_fn(state.params)
         new_model_state, metrics = aux
 
@@ -143,8 +161,11 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
     return train_step
 
 
-def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
-                               num_devices_per_host):
+def benchmark_wresnet_internal(benchmark_case,
+                               niter,
+                               num_hosts,
+                               num_devices_per_host,
+                               ablation_config={}):
     print_used_time(None)
 
     # Model configs
@@ -182,8 +203,15 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
                             logical_mesh_search_space=logical_mesh_search_space)
     global_config.auto_stage_construction_imbalance_tolerance = 0.25
 
+    fine_grained_remat = False
+    pipeline_mp_size = num_layers
     if isinstance(overwrite_global_config_dict, dict):
         global_config.update_with_dict(overwrite_global_config_dict)
+        if global_config.ablation_equal_layer:
+            fine_grained_remat = True
+            assert pipeline_mp_size == num_layers
+            assert pipeline_stage_mode == "auto_gpipe"
+            pipeline_mp_size = ablation_config["num_stages"]
 
     # Prepare input batch
     num_classes = 1024
@@ -205,7 +233,8 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
     train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat,
-                                num_layers)
+                                num_layers, fine_grained_remat,
+                                pipeline_mp_size, ablation_config)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 

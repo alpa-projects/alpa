@@ -1,10 +1,12 @@
 # Python cache
 __pycache__
 *.pyc
-build
 dist
 *.egg-info
 .cache
+
+# cmake cache
+alpa/pipeline_parallel/xla_custom_call_marker/build/
 
 # NFS temp files
 .nfs*

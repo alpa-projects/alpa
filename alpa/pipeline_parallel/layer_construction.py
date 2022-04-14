@@ -263,6 +263,8 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
         compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns],
                                  dtype=np.float64)
+    elif cost_criteria == "ablation_equal_eqn":
+        compute_costs = np.ones((len(jaxpr.eqns),), dtype=np.float64)
     else:
         raise ValueError(f"Unrecoginzed cost criteria {cost_criteria}")
     return nontrivial, input_sizes, compute_costs
@@ -273,7 +275,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     """Clusters the jaxpr by cost."""
     layer_num = int(layer_num)
     length = len(jaxpr.eqns)
-    if cost_criteria == "ablation_equal_layer":
+    if cost_criteria == "ablation_equal_eqn":
         per_layer_size = length / layer_num
         solution = [
             jaxpr.eqns[int(i * per_layer_size):int((i + 1) * per_layer_size)]

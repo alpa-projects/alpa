@@ -70,11 +70,13 @@ class PipelineSchedule(metaclass=ABCMeta):
                  dependency,
                  meshes,
                  apply_grad_placement,
-                 num_batch=1):
+                 num_batch=1,
+                 fwd_only=False):
         self.dependency = dependency
         self.meshes = meshes
         self.apply_grad_placement = apply_grad_placement
         self.num_batch = num_batch
+        self.fwd_only = fwd_only
 
         self._schedules: List[List[Tuple]] = self._generate_schedule()
 
@@ -210,11 +212,12 @@ class GpipeSchedule(PipelineSchedule):
                     # rev.append((task[0], 2 * n - 1 - task[1]))
             return rev
 
-        # backward schedules
-        # Note: large microbatch index is executed earlier in backward now.
-        for k in range(num_clock):
-            mapped_scheds = schedules[num_clock - k - 1]
-            schedules.append(reverse(mapped_scheds))
+        if not fwd_only:
+            # backward schedules
+            # Note: large microbatch index is executed earlier in backward now.
+            for k in range(num_clock):
+                mapped_scheds = schedules[num_clock - k - 1]
+                schedules.append(reverse(mapped_scheds))
 
         # apply_grad schedules
         scheds = [None] * n
@@ -263,17 +266,22 @@ class PipeDreamFlush(PipelineSchedule):
         n = self.num_mesh
 
         # equal to gpipe
-        num_clock = (m + n - 1) * 2
+        if not self.fwd_only:
+            num_clock = (m + n - 1) * 2
+        else:
+            num_clock = (m + n - 1)
         schedules = [[None] * n for k in range(num_clock)]
 
         num_warmup_microbatches = [min(n - i - 1, m) for i in range(n)]
         num_microbatches_remaining = [m - i for i in num_warmup_microbatches]
 
         next_fwd_mb_idx = [0 for _ in range(n)]
-        next_bwd_mb_idx = [0 for _ in range(n)]
+        if not self.fwd_only:
+            next_bwd_mb_idx = [0 for _ in range(n)]
         next_available_clock = list(range(n))
-        finished_bwd_batch_indices = np.zeros(shape=[num_clock, n],
-                                              dtype=np.int32)
+        if not self.fwd_only:
+            finished_bwd_batch_indices = np.zeros(shape=[num_clock, n],
+                                                  dtype=np.int32)
 
         # warm-up clocks
         for i in range(n):
@@ -291,45 +299,47 @@ class PipeDreamFlush(PipelineSchedule):
                 next_clock = next_available_clock[i]
                 schedules[next_clock][i] = (next_fwd_mb_idx[i], i)
                 next_fwd_mb_idx[i] = next_fwd_mb_idx[i] + 1
-                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
-                next_clock = next_clock + 1
+                if not self.fwd_only:
+                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                    next_clock = next_clock + 1
 
-                # backward
-                # first, offset the next available clock to the clock
-                # when the previous stage has just finished backward of the target mb.
-                if i + 1 < n:  # not the last device
-                    # find the next possible backward clock
+                    # backward
+                    # first, offset the next available clock to the clock
+                    # when the previous stage has just finished backward of the target mb.
+                    if i + 1 < n:  # not the last device
+                        # find the next possible backward clock
+                        while finished_bwd_batch_indices[next_clock][
+                                i + 1] <= next_bwd_mb_idx[i]:
+                            assert finished_bwd_batch_indices[
+                                next_clock - 1][i] == next_bwd_mb_idx[i]
+                            finished_bwd_batch_indices[next_clock][
+                                i] = finished_bwd_batch_indices[next_clock - 1][i]
+                            next_clock = next_clock + 1
+
+                    schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
+                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                    next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
+                next_available_clock[i] = next_clock + 1
+
+        if not self.fwd_only:
+            # run cooldown passes
+            for i in reversed(range(n)):
+                for _ in range(num_warmup_microbatches[i]):
+                    assert i + 1 < n
+                    next_clock = next_available_clock[i]
                     while finished_bwd_batch_indices[next_clock][
                             i + 1] <= next_bwd_mb_idx[i]:
-                        assert finished_bwd_batch_indices[
-                            next_clock - 1][i] == next_bwd_mb_idx[i]
-                        finished_bwd_batch_indices[next_clock][
-                            i] = finished_bwd_batch_indices[next_clock - 1][i]
+                        finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[
+                            i]
                         next_clock = next_clock + 1
-
-                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
-                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
-                next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
-                next_available_clock[i] = next_clock + 1
-
-        # run cooldown passes
-        for i in reversed(range(n)):
-            for _ in range(num_warmup_microbatches[i]):
-                assert i + 1 < n
-                next_clock = next_available_clock[i]
-                while finished_bwd_batch_indices[next_clock][
-                        i + 1] <= next_bwd_mb_idx[i]:
-                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[
-                        i]
-                    next_clock = next_clock + 1
-                schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
-                finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
-                next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
-                next_available_clock[i] = next_clock + 1
-            # update status matrix for the last worker
-            if i > 0:
-                finished_bwd_batch_indices[next_available_clock[i]:num_clock,
-                                           i] = m
+                    schedules[next_clock][i] = (next_bwd_mb_idx[i], 2 * n - 1 - i)
+                    finished_bwd_batch_indices[next_clock][i] = next_bwd_mb_idx[i]
+                    next_bwd_mb_idx[i] = next_bwd_mb_idx[i] + 1
+                    next_available_clock[i] = next_clock + 1
+                # update status matrix for the last worker
+                if i > 0:
+                    finished_bwd_batch_indices[next_available_clock[i]:num_clock,
+                                               i] = m
 
         # append apply_grad schedules
         scheds = [None] * n

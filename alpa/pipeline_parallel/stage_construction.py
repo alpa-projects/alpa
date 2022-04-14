@@ -251,14 +251,19 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 donation_mapping, global_outvars,
                                 apply_grad_layers, apply_grad_global_info,
                                 autosharding_configs, cluster_size,
-                                layer_flops_prefix_sum, mesh_cached_result):
+                                layer_flops_prefix_sum, mesh_cached_result, fwd_only):
     """TODO(zhuohan): docstring."""
     timers("stage-construction-compilation").start()
-    assert len(layers) % 2 == 0
-    num_layers = len(layers) // 2
-    tot_flops = layer_flops_prefix_sum[2 * num_layers]
+    if not fwd_only:
+        assert len(layers) % 2 == 0
+        num_layers = len(layers) // 2
+        tot_flops = layer_flops_prefix_sum[2 * num_layers]
+        indices = list(range(2 * num_layers))
+    else:
+        num_layers = len(layers)
+        tot_flops = layer_flops_prefix_sum[num_layers]
+        indices = list(range(num_layers))
     num_autosharding_configs = len(autosharding_configs)
-    indices = list(range(2 * num_layers))
     stages = []
     compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
@@ -271,20 +276,33 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             if is_full_mesh and not (start == 0 and end == num_layers - 1):
                 continue
-            flops_ratio = (
-                layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
-                + layer_flops_prefix_sum[2 * num_layers - start] -
-                layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
+            if fwd_only:
+                flops_ratio = (
+                    layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
+                    ) / tot_flops
+            else:
+                flops_ratio = (
+                    layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
+                    + layer_flops_prefix_sum[2 * num_layers - start] -
+                    layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
             if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
                 (computation_source_ratio < flops_ratio / (1 + tolerance))):
                 continue
-            layer_indices = (
-                indices[start:end + 1] +
-                indices[2 * num_layers - end - 1:2 * num_layers - start])
-            selected_apply_grad_layers = [
-                apply_grad_layers[idx] for idx in indices[start:end + 1]
-            ]
+            if fwd_only:
+                layer_indices = indices[start:end + 1]
+            else:
+                layer_indices = (
+                    indices[start:end + 1] +
+                    indices[2 * num_layers - end - 1:2 * num_layers - start])
             stage_name = f"stage_{start}_{end}"
+            if len(apply_grad_layers) > 0:
+                selected_apply_grad_layers = [
+                    apply_grad_layers[idx] for idx in indices[start:end + 1]
+                ]
+                apply_grad_info_arg = (selected_apply_grad_layers,
+                                       *apply_grad_global_info)
+            else:
+                apply_grad_info_arg = None
             (intermediate_vars, stage_config) = generate_stage_info(
                 layers,
                 layer_indices,
@@ -292,8 +310,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 global_outvars,
                 stage_name,
                 insert_hook_after=end - start,
-                apply_grad_info=(selected_apply_grad_layers,
-                                 *apply_grad_global_info))
+                apply_grad_info=apply_grad_info_arg)
             if is_full_mesh:
                 intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
@@ -345,7 +362,7 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
                      layers: Sequence[JaxPipelineComputation], donation_mapping,
                      global_outvars,
                      apply_grad_layers: Sequence[JaxPipelineComputation],
-                     apply_grad_global_info, cached_result):
+                     apply_grad_global_info, cached_result, fwd_only):
     """Get computation cost for each possible (stage, mesh) configuration.
 
     This function enumerates all given submesh choices, then profiles compute
@@ -380,8 +397,11 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
         max_n_succ_stages: The maximal number of succeeding stages. This
             is calculated based on memory constraints.
     """
-    assert len(layers) % 2 == 0
-    num_layers = len(layers) // 2
+    if not fwd_only:
+        assert len(layers) % 2 == 0
+        num_layers = len(layers) // 2
+    else:
+        num_layers = len(layers)
     num_submesh_choices = len(submesh_choices)
     num_autosharding_configs = len(autosharding_configs[0])
     cluster_size = virtual_mesh.num_devices
@@ -423,7 +443,7 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
              sliced_virtual_meshes, layers, donation_mapping, global_outvars,
              apply_grad_layers, apply_grad_global_info,
              autosharding_configs[mesh_id], cluster_size,
-             layer_flops_prefix_sum, mesh_cached_result)
+             layer_flops_prefix_sum, mesh_cached_result, fwd_only)
 
         compute_cost[:, :, mesh_id, :] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
@@ -585,7 +605,7 @@ def cluster_layers_and_slice_mesh(
         batch_size, jax_apply_layers, apply_grad_global_info,
         pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
-        autosharding_option_dicts):
+        autosharding_option_dicts, fwd_only):
     """
     Stage-mesh alignment.
 
@@ -612,9 +632,12 @@ def cluster_layers_and_slice_mesh(
     timers("stage-construction").start()
 
     if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
-        # Assume each forward layer corresponds to a backward layer
-        assert len(layers) % 2 == 0
-        num_layers = len(layers) // 2
+        if not fwd_only:
+            # Assume each forward layer corresponds to a backward layer
+            assert len(layers) % 2 == 0
+            num_layers = len(layers) // 2
+        else:
+            num_layers = len(layers)
         submesh_choices = get_submesh_choices(mesh)
 
         if pipeline_stage_mode == "auto_gpipe":
@@ -633,7 +656,7 @@ def cluster_layers_and_slice_mesh(
             compute_cost, max_n_succ_stages = get_compute_cost(
                 mesh, submesh_choices, autosharding_configs, layers,
                 donation_mapping, global_outvars, jax_apply_layers,
-                apply_grad_global_info, cached_result)
+                apply_grad_global_info, cached_result, fwd_only)
             _, solution = dp(num_layers, mesh.num_devices, num_micro_batches,
                              submesh_choices, num_autosharding_configs,
                              compute_cost, max_n_succ_stages)
@@ -690,10 +713,13 @@ def cluster_layers_and_slice_mesh(
 
         sliced_meshes = get_sliced_virtual_submeshes(mesh, submesh_shapes)
         num_forward_stages = len(forward_stage_layer_ids)
-        backward_stage_layer_ids = [[
-            2 * num_layers - 1 - i for i in reversed(layer_ids)
-        ] for layer_ids in reversed(forward_stage_layer_ids)]
-        stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
+        if fwd_only:
+            stage_layer_ids = forward_stage_layer_ids
+        else:
+            backward_stage_layer_ids = [[
+                2 * num_layers - 1 - i for i in reversed(layer_ids)
+            ] for layer_ids in reversed(forward_stage_layer_ids)]
+            stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
         stage_to_mesh = list(range(num_forward_stages)) + list(
             reversed(range(num_forward_stages)))
         stage_outvars = get_stage_outvars(layers, stage_layer_ids,

@@ -302,7 +302,7 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
 def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
                            num_micro_batches, num_meshes, global_invars,
-                           global_outvars, donated_invars):
+                           global_outvars, donated_invars, fwd_only=False):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
     # TODO(yonghao): the condition of creating RDA variable should be extended.
 
@@ -336,7 +336,7 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
 
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
                                                    gradvar_to_mesh, outvar_mesh,
-                                                   num_meshes, donation_mapping)
+                                                   num_meshes, donation_mapping, fwd_only=fwd_only)
     apply_deps, apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        mask,
@@ -418,7 +418,7 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                          outvar_mesh: Dict[Var, OrderedSet[int]], mesh_num,
-                         donation_mapping: Dict[Var, Var]):
+                         donation_mapping: Dict[Var, Var], fwd_only: bool = False):
     """
     Slice the apply gradient jaxpr based on mesh allocation information.
 
@@ -540,13 +540,16 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     for i in range(mesh_num):
         if not outvars[i]:
             continue
-        computation_idx = mesh_num * 2 + len(jaxprs)
+        if not fwd_only:
+            computation_idx = mesh_num * 2 + len(jaxprs)
+        else:
+            computation_idx = mesh_num + len(jaxprs)
         # assign the current computation into mesh i
         mesh_assignment[computation_idx] = i
         for v in invars[i]:
             if v in grad_mesh:
                 # Add dependency as (computation, compute grad computation)
-                deps.append((computation_idx, mesh_num * 2 - 1 - grad_mesh[v]))
+                deps.append((computation_idx, mesh_num * 2 - 1 - grad_mesh[v] if not fwd_only else grad_mesh[v]))
         jaxprs.append(
             ClosedJaxpr(
                 Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i]),

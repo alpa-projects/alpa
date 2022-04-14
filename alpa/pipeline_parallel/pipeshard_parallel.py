@@ -36,7 +36,7 @@ logger.setLevel(logging.INFO)
 @lu.cache
 def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                 donated_invars, batch_invars, devices,
-                                memory_budget_per_device, *avals):
+                                memory_budget_per_device, fwd_only, *avals):
     """3d parallel combining pipelining and 2d sharding."""
     if not (isinstance(devices, VirtualPhysicalMesh) or
             isinstance(devices, DistributedPhysicalDeviceMeshGroup)):
@@ -75,26 +75,35 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     assert (len(jax_pipeline_layers) == len(
         set(layer.name for layer in jax_pipeline_layers))
            ), "All layers must have unique names."
-    jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
+    if not fwd_only:
+        jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
+            jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
+    if not fwd_only:
+        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     donation_mapping = dict(grad_in_to_out) if have_apply_grad else {}
 
-    num_forward_layers = len(jax_pipeline_layers) // 2
-    layer_to_dummy_mesh = (list(range(num_forward_layers)) +
-                           list(reversed(range(num_forward_layers))))
+    if not fwd_only:
+        num_forward_layers = len(jax_pipeline_layers) // 2
+        layer_to_dummy_mesh = (list(range(num_forward_layers)) +
+                               list(reversed(range(num_forward_layers))))
+        num_meshes = len(jax_pipeline_layers) // 2
+    else:
+        num_forward_layers = len(jax_pipeline_layers)
+        layer_to_dummy_mesh = list(range(num_forward_layers))
+        num_meshes = len(jax_pipeline_layers)
+
     # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
     (jax_apply_layers, _, _, _, dummy_global_outvars,
      dummy_donated_invars) = process_apply_gradient(
          apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
          layer_to_dummy_mesh, gensym_func, num_micro_batches,
-         len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-         donated_invars)
+         num_meshes, global_invars, global_outvars,
+         donated_invars, fwd_only=fwd_only)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   dummy_donated_invars,
                                                   global_invars, global_outvars)
@@ -121,7 +130,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
              submesh_shapes=global_config.sub_physical_mesh_shapes,
              logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
              autosharding_option_dicts=global_config.
-             submesh_autosharding_option_dicts)
+             submesh_autosharding_option_dicts,
+             fwd_only=fwd_only)
         num_meshes = len(sliced_virtual_meshes)
         physical_meshes = None
     else:
@@ -149,7 +159,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
          global_outvars, donated_invars) = process_apply_gradient(
              apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
              stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
-             global_invars, global_outvars, donated_invars)
+             global_invars, global_outvars, donated_invars, fwd_only=fwd_only)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
     else:
         jax_all_stages = jax_pipeline_stages
@@ -167,12 +177,14 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         schedule = GpipeSchedule(dependency=dependency,
                                  meshes=sliced_virtual_meshes,
                                  apply_grad_placement=apply_grad_placement,
-                                 num_batch=num_micro_batches)
+                                 num_batch=num_micro_batches,
+                                 fwd_only=fwd_only)
     elif global_config.pipeline_parallel_schedule == "1f1b":
         schedule = PipeDreamFlush(dependency=dependency,
                                   meshes=sliced_virtual_meshes,
                                   apply_grad_placement=apply_grad_placement,
-                                  num_batch=num_micro_batches)
+                                  num_batch=num_micro_batches,
+                                  fwd_only=fwd_only)
     else:
         raise RuntimeError(f"Unrecognized pipeline parallel schedule. "
                            f"Got {global_config.pipeline_parallel_schedule}. "

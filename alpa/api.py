@@ -31,7 +31,8 @@ def parallelize(fun=None,
                 *,
                 static_argnums="auto",
                 donate_argnums="auto",
-                batch_argnums=(1,)):
+                batch_argnums=(1,),
+                fwd_only=False):
     """
     Automatically parallelize a jax function.
 
@@ -107,7 +108,7 @@ def parallelize(fun=None,
             compiled_func = parallelize_callable(
                 f, in_tree, out_tree_hashable, static_argnums, donated_invars,
                 batch_invars, devices, global_config.strategy,
-                global_config.memory_budget_per_device, *abstract_args)
+                global_config.memory_budget_per_device, fwd_only, *abstract_args)
 
             if return_value_mode == "normal":
                 # Execute the compiled func and return results
@@ -161,6 +162,7 @@ def parallelize_callable(
     devices,
     strategy: str,
     memory_budget_per_device: Optional[float],
+    fwd_only: bool,
     *avals: Sequence[AbstractValue],
 ):
     """Cached parallelized callable."""
@@ -179,7 +181,7 @@ def parallelize_callable(
     elif strategy == "pipeshard_parallel":
         return pipeshard_parallel_callable(fun, in_tree, out_tree_thunk,
                                            donated_invars, batch_invars,
-                                           devices, memory_budget_per_device,
+                                           devices, memory_budget_per_device, fwd_only,
                                            *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices, *avals)

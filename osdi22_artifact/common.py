@@ -1,5 +1,7 @@
 import argparse
 from collections import defaultdict
+import os
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -115,8 +117,8 @@ show_name_dict = {
     "parax.ppdp"          : "PP-DP",
     "parax.inter_only"    : "Inter-op only",
     "parax.intra_only"    : "Intra-op only",
-    "parax.manual"        : "Alpa (manual)",
-    "parax.auto"          : "Alpa (ours)",
+    "parax.manual"        : "Parax (manual)",
+    "parax.auto"          : "Parax (ours)",
 
     # intra op ablation
     "parax.auto_sharding" : "ILP (ours)",
@@ -167,6 +169,9 @@ def parse_tsv_file(filename, wanted_exp_name):
     data = defaultdict(lambda : defaultdict(lambda : defaultdict(lambda : defaultdict(lambda: -1))))
 
     # Parse string
+    if not os.path.exists(filename):
+        return data
+
     for line in open(filename):
         line = line.strip()
         if line.startswith("#") or len(line) < 1:
@@ -188,6 +193,14 @@ def parse_tsv_file(filename, wanted_exp_name):
 
 
     return data
+
+
+def fix_missing(data, data_ref):
+    for network_name in data_ref:
+        for num_gpus in data_ref[network_name]:
+            for method in data_ref[network_name][num_gpus]:
+                if method not in data[network_name][num_gpus]:
+                    data[network_name][num_gpus][method] = data_ref[network_name][num_gpus][method]
 
 
 def plot_scaling(raw_data, network, methods, num_gpus,

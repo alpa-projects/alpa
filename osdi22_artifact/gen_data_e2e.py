@@ -57,30 +57,29 @@ def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name, o
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str)
     parser.add_argument("--search", action="store_true")
     parser.add_argument("--niter", type=int, default=3,
         help="The number of benchmark iterations")
-    parser.add_argument("--no-separate-process", action='store_false',
-                        help="Do not launch separate processes for benchmark."
-                             "Errors in a single case will terminate this script.",
-                        dest='use_separate_process')
-    parser.add_argument("--instance", type=str, default="p3.16")
-    parser.add_argument("--exp-name", type=str, default="e2e")
-    parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     cluster_sizes = [(4, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
-    output_name = f"results_{args.exp_name}.tsv"
+    output_name = f"results_e2e.tsv"
 
-    # GPT e2e results
-    gpt_suite_name = "gpt.search" if args.search else "gpt.result"
-    for num_hosts, num_devices_per_host in cluster_sizes:
-        benchmark_one_suite(gpt_suite_name,
-                            num_hosts,
-                            num_devices_per_host,
-                            args.exp_name,
-                            output_name,
-                            instance=args.instance,
-                            niter=args.niter,
-                            use_separate_process=args.use_separate_process,
-                            disable_tqdm=args.disable_tqdm)
+    if args.model is None:
+        models = ["gpt", "moe", "wresnet"]
+    else:
+        models = [args.model]
+
+    if "gpt" in models:
+        gpt_suite_name = "gpt.search" if args.search else "gpt.result"
+        for num_hosts, num_devices_per_host in cluster_sizes:
+            benchmark_one_suite(gpt_suite_name,
+                                num_hosts,
+                                num_devices_per_host,
+                                "e2e",
+                                output_name,
+                                instance="p3.16",
+                                niter=args.niter,
+                                use_separate_process=True,
+                                disable_tqdm=False)

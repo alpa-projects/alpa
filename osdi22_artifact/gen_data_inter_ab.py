@@ -1,4 +1,8 @@
 """The entry point of intra-op + inter-op parallelism benchmark."""
+import sys
+
+sys.path.append("../benchmark/alpa/")
+
 import argparse
 from datetime import datetime
 import time
@@ -14,6 +18,11 @@ from suite_artifact_e2e_gpt import artifact_search_e2e_gpt_suite
 benchmark_suites = {
     "gpt.inter_op": artifact_search_e2e_gpt_suite,
     "wresnet.inter_op": paper_ablation_wresnet_suite,
+}
+
+cluster_sizes = {
+    "gpt.inter_op": [(2, 8)],
+    "wresnet.inter_op": [(1, 8), (2, 8), (4, 8)]
 }
 
 
@@ -68,7 +77,7 @@ def run_ablation_one_case(model, case, niter, num_hosts, num_devices_per_host,
 
 
 def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name,
-                        niter, use_separate_process, disable_tqdm):
+                        output_name, niter, use_separate_process, disable_tqdm):
     num_gpus = num_hosts * num_devices_per_host
     try:
         suite = benchmark_suites[suite_name][num_gpus]
@@ -82,11 +91,11 @@ def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name,
 
     model_type = suite_name.split(".")[0]
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
+    output_name = output_name or f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
 
     # Run all cases
     for benchmark_case in suite:
-        if model_type in ["gpt"]:
+        if model_type == "gpt":
             (batch_size, seq_len, hidden_size, num_layers, num_heads,
              vocab_size, l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
              num_micro_batches, force_batch_dim_mapping, use_remat,
@@ -97,10 +106,10 @@ def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name,
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor,
              dtype, num_micro_batches, force_batch_dim_mapping,
-             prefer_reduce_scatter, use_remat, _) = benchmark_case
+             prefer_reduce_scatter, use_remat, _,
+             overwrite_global_config_dict) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels,
                             width_factor)
-            overwrite_global_config_dict = {}
             pipeline_stage_mode = "auto_gpipe"
             pipeline_mp_size = 1
         else:
@@ -139,3 +148,37 @@ def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name,
             write_tsv(heads, values, output_name)
 
         time.sleep(0.1)  # for ctrl+c to work
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--suite",
+                        choices=list(benchmark_suites.keys()),
+                        type=str,
+                        required=True)
+    parser.add_argument("--niter",
+                        type=int,
+                        default=3,
+                        help="The number of benchmark iterations")
+    parser.add_argument("--no-separate-process",
+                        action='store_false',
+                        help="Do not launch separate processes for benchmark."
+                        "Errors in a single case will terminate this script.",
+                        dest='use_separate_process')
+    parser.add_argument("--instance", type=str, default="p3.16")
+    parser.add_argument("--exp-name", type=str, default="inter_ablation")
+    parser.add_argument("--disable-tqdm", action="store_true")
+    args = parser.parse_args()
+
+    output_name = f"results_{args.exp_name}.tsv"
+
+    # GPT e2e results
+    for num_hosts, num_devices_per_host in cluster_sizes[args.suite]:
+        benchmark_one_suite(args.suite,
+                            num_hosts,
+                            num_devices_per_host,
+                            args.exp_name,
+                            output_name,
+                            niter=args.niter,
+                            use_separate_process=args.use_separate_process,
+                            disable_tqdm=args.disable_tqdm)

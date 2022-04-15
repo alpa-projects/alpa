@@ -38,23 +38,26 @@ optimization procedures, but directly load the solutions found by our system and
 Optionally, if you want to run the profiling and optimization from scratch by yourself, follow the
 instructions in the section "Running the Search" below.
 
-### GPT
+### GPT (30 mins)
 ```
 python3 gen_data_e2e.py --model gpt
 python3 plot_e2e.py --model gpt
 ```
+This outputs Figure 8 (a).
 
-### MoE
+### MoE (30 mins)
 ```
 python3 gen_data_e2e.py --model moe
 python3 plot_e2e.py --model moe
 ```
+This outputs Figure 8 (b).
 
-### Wide-ResNet
+### Wide-ResNet (30 mins)
 ```
 python3 gen_data_e2e.py --model wresnet
 python3 plot_e2e.py --model wresnet
 ```
+This outputs Figure 8 (c).
 
 ## Intra-op Ablation Study (Figure. 9)
 
@@ -63,18 +66,21 @@ python3 plot_e2e.py --model wresnet
 python3 gen_data_intra_ab.py --model gpt
 python3 plot_intra_ab.py --model gpt
 ```
+This outputs Figure 9 (a).
 
-### MoE (30 mins)
+### MoE (45 mins)
 ```
 python3 gen_data_intra_ab.py --model moe
 python3 plot_intra_ab.py --model moe
 ```
+This outputs Figure 9 (b).
 
 ### Wide-ResNet (30 mins)
 ```
 python3 gen_data_intra_ab.py --model wresnet
 python3 plot_intra_ab.py --model wresnet
 ```
+This outputs Figure 9 (c).
 
 ## Inter-op Ablation Study (Figure. 10)
 

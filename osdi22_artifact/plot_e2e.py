@@ -19,7 +19,7 @@ if __name__ == "__main__":
     figure_size = (7, 3)
 
     if args.model is None:
-        plot_models = ["gpt", "moe", "wresne"]
+        plot_models = ["gpt", "moe", "wresnet"]
     else:
         plot_models = [args.model]
 

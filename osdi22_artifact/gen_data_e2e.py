@@ -8,15 +8,13 @@ from alpa.util import write_tsv, run_cmd
 
 from benchmark.alpa.benchmark_3d_one_case import benchmark_one_case
 from suite_artifact_e2e_gpt import (artifact_search_e2e_gpt_suite, artifact_result_e2e_gpt_suite)
+from suite_artifact_e2e_moe import (artifact_search_e2e_moe_suite, artifact_result_e2e_moe_suite)
 
 benchmark_suites = {
     "gpt.search": artifact_search_e2e_gpt_suite,
     "gpt.result": artifact_result_e2e_gpt_suite,
-}
-
-method_name = {
-    "gpt.search": "parax.auto",
-    "gpt.result": "parax.auto",
+    "moe.search": artifact_search_e2e_moe_suite,
+    "moe.result": artifact_result_e2e_moe_suite,
 }
 
 
@@ -49,7 +47,7 @@ def benchmark_one_suite(suite_name, num_hosts, num_devices_per_host, exp_name, o
 
         # Write to file
         heads = ["exp_name", "instance", "num_hosts", "num_devices_per_host", "model_name", "method", "value", "time_stamp"]
-        values = [exp_name, instance, num_hosts, num_devices_per_host, model_type, method_name[suite_name],
+        values = [exp_name, instance, num_hosts, num_devices_per_host, model_type, "parax.auto",
                   str({"tflops": tflops_ckpt, "parameter_count": parameter_count / (10 ** 9)}), time.time()]
         write_tsv(heads, values, output_name)
         time.sleep(0.1)  # for ctrl+c to work
@@ -71,10 +69,10 @@ if __name__ == "__main__":
     else:
         models = [args.model]
 
-    if "gpt" in models:
-        gpt_suite_name = "gpt.search" if args.search else "gpt.result"
+    for model in models:
+        suite_name = model + (".search" if args.search else ".result")
         for num_hosts, num_devices_per_host in cluster_sizes:
-            benchmark_one_suite(gpt_suite_name,
+            benchmark_one_suite(suite_name,
                                 num_hosts,
                                 num_devices_per_host,
                                 "e2e",

@@ -20,7 +20,7 @@ wresnet_specs = {
 }
 
 default_overwrite_dict = {
-    "auto_stage_construction_imbalance_tolerance": 0.25,
+    "auto_stage_construction_imbalance_tolerance": 0.4,
     "submesh_choices_mode": "small_power_of_two",
 }
 
@@ -80,9 +80,9 @@ paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of case
 }
 
 paper_ablation_wresnet_suite = {  # key = the number of gpus, value = a list of cases
-    8:  get_auto_test_case("2B", [24], 1536),
+    8:  get_auto_test_case("2B", [32], 1536),
 
-    16: get_auto_test_case("4B", [24], 1536),
+    16: get_auto_test_case("4B", [32], 1536),
 
-    32: get_auto_test_case("6.8B", [38], 1520)
+    32: get_auto_test_case("6.8B", [32], 1536)
 }

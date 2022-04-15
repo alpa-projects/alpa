@@ -48,3 +48,8 @@ docs/tutorials
 
 # Example temp files
 examples/imagenet/imagenet
+
+# OSDI'22 artifacts
+osdi22_artifact/deepspeed/data
+osdi22_artifact/deepspeed/hostfile*
+osdi22_artifact/ips

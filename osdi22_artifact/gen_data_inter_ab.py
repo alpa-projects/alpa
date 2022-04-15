@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 
-from alpa.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round, GB
+from alpa.util import write_tsv, run_cmd, to_str_round, GB
 
 from benchmark.alpa.benchmark_3d_one_case import benchmark_one_case
 from benchmark.alpa.suite_paper_wresnet import paper_ablation_wresnet_suite
@@ -29,8 +29,11 @@ cluster_sizes = {
 def run_equal_eqn_one_case(model, case, niter, num_hosts, num_devices_per_host,
                            use_separate_process, disable_tqdm):
     ablation_config = {"use_equal_eqn": True}
-    case[-1]["use_hlo_cost_model"] = False
-    return benchmark_one_case(model, case, niter, num_hosts,
+    new_case = list(case)
+    new_case[-1] = dict(case[-1])
+    new_case[-1]["use_hlo_cost_model"] = False
+    print("Equal operator ablation study")
+    return benchmark_one_case(model, new_case, niter, num_hosts,
                               num_devices_per_host, use_separate_process, True,
                               disable_tqdm, ablation_config)
 
@@ -38,19 +41,23 @@ def run_equal_eqn_one_case(model, case, niter, num_hosts, num_devices_per_host,
 def run_equal_layer_one_case(model, case, niter, num_hosts,
                              num_devices_per_host, use_separate_process,
                              disable_tqdm):
-    optimal_result = [0] * 6
+    optimal_result = [0] * 12
     num_stages = 1
     if model == "moe" or model == "gpt":
         num_layers = case[3]
     elif model == "wresnet":
-        num_layers = case[2]
+        resnet_layer_to_alpa_layer = {50: 16, 101: 33}
+        num_layers = resnet_layer_to_alpa_layer[case[2]]
     while num_layers % num_stages == 0:
         ablation_config = {"num_stages": num_stages}
+        new_case = list(case)
         if case[-1]:
-            case[-1]["ablation_equal_layer"] = True
+            new_case[-1] = dict(case[-1])
+            new_case[-1]["ablation_equal_layer"] = True
         else:
-            case[-1] = {"ablation_equal_layer": True}
-        result = benchmark_one_case(model, case, niter, num_hosts,
+            new_case[-1] = {"ablation_equal_layer": True}
+        print(f"Equal layer ablation study with num stages: {num_stages}")
+        result = benchmark_one_case(model, new_case, niter, num_hosts,
                                     num_devices_per_host, use_separate_process,
                                     True, disable_tqdm, ablation_config)
         if result[5] > optimal_result[5]:

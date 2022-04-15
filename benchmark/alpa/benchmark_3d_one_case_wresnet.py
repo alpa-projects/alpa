@@ -2,16 +2,14 @@
 from functools import partial
 from alpa.pipeline_parallel.layer_construction import automatic_remat
 
-from flax import linen as nn, optim
 from flax.training import common_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import ray
 
 import alpa
-from alpa import (parallelize, global_config, set_parallelize_options, testing,
+from alpa import (parallelize, global_config, set_parallelize_options,
                   DeviceCluster, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
@@ -83,6 +81,10 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers,
                    fine_grained_remat, pipeline_mp_size, ablation_config):
 
     layer_num = resnet_layer_to_alpa_layer[num_layers]
+    if global_config.forward_stage_layer_ids:
+        fwd_last_layer = global_config.forward_stage_layer_ids[-1][-1] + 1
+        if fwd_last_layer > layer_num:
+            layer_num = fwd_last_layer
     layer_construction_kwargs = {}
     if ablation_config.setdefault("use_equal_eqn", False):
         layer_construction_kwargs["cost_criteria"] = "ablation_equal_eqn"
@@ -111,7 +113,10 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers,
             }
             return loss, (new_model_state, metrics)
 
-        if fine_grained_remat:
+        if global_config.strategy == "shard_parallel":
+            if use_remat:
+                loss_func = automatic_remat(loss_func, layer_num=layer_num)
+        elif fine_grained_remat:
             if use_remat:
                 loss_func = automatic_remat(loss_func,
                                             layer_num=layer_num,

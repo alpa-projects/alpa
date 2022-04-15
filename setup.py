@@ -16,12 +16,9 @@ def get_cuda_version():
 
 
 install_require_list = [
-    "numpy",
-    "cmake",
     "tqdm",
     "scipy",
     "numba",
-    "pybind11",
     "ray[default]",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version()}",
@@ -44,7 +41,7 @@ def build(build_ext):
     else:
         # infer CUDACXX
         cuda_version = get_cuda_version()
-        cuda_version = cuda_version[:-1] + "." + cuda_version[:-1]
+        cuda_version = cuda_version[:-1] + "." + cuda_version[-1]
         print(f"CUDA version: {cuda_version}")
         cudacxx_path = f"/usr/local/cuda-{cuda_version}/bin/nvcc"
         if not os.path.exists(cudacxx_path):
@@ -96,7 +93,7 @@ if __name__ == "__main__":
         cmdclass={"build_ext": build_ext},
         distclass=BinaryDistribution,
         install_requires=install_require_list,
-        extra_requires={
+        extras_require={
             'dev': dev_require_list,
         },
     )

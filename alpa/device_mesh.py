@@ -1590,6 +1590,7 @@ def _shard_distributed_array(array,
     return shard_arg_handlers[type(array._value)](array._value, device_mesh,
                                                   indices, num_batch, batch_dim)
 
+
 # in XLA pred(bool) and uint8 are different, but xla->dlpack->xla
 # turns a bool into uint8. This implementation is slow.
 def _uint8_to_bool(xla_buffer):

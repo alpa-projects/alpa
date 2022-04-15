@@ -8,7 +8,9 @@ from jax.tree_util import tree_flatten, tree_unflatten
 
 from alpa.pipeline_parallel.xla_custom_call_marker import pipeline_marker, identity
 
-xc.register_custom_call_target(b'pipeline_marker', pipeline_marker(), platform='gpu')
+xc.register_custom_call_target(b'pipeline_marker',
+                               pipeline_marker(),
+                               platform='gpu')
 xc.register_custom_call_target(b'identity', identity(), platform='gpu')
 
 ########## Public APIs ##########
@@ -83,12 +85,11 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     op_metadata = xc.OpMetadata(op_type=op_type, op_name=op_name)
     c.set_op_metadata(op_metadata)
-    output_tuple = xc.ops.CustomCall(
-        c,
-        call_name,
-        operands=(input_params,),
-        shape=input_shape,
-        opaque=flattened_byte_sizes.tobytes())
+    output_tuple = xc.ops.CustomCall(c,
+                                     call_name,
+                                     operands=(input_params,),
+                                     shape=input_shape,
+                                     opaque=flattened_byte_sizes.tobytes())
     c.clear_op_metadata()
     return output_tuple
 
@@ -102,6 +103,7 @@ def xla_pipeline_marker(c, mark_type, name, *args):
 
 
 ########## Internal Registration ##########
+
 
 def _pipeline_impl(*args, **kwargs):
     # The pipeline marker acts as an identity function.

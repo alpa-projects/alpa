@@ -10,7 +10,7 @@ void identity(cudaStream_t stream, void **buffers, const char *opaque, size_t op
         const void *input = reinterpret_cast<const void *>(buffers[i]);
         void *output = reinterpret_cast<void *>(buffers[i + n_inputs]);
         if (input != output) {
-            printf("copy\n");
+            printf("WARNING: The inputs and outputs of idenity marker are not aliases\n");
             cudaMemcpy(output, input, sizes[i], cudaMemcpyDeviceToDevice);
         }
     }

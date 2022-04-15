@@ -6,12 +6,12 @@ We are going to reproduce the main results in the paper.
 Please use the provided instructions to log in to the AWS cluster set up by authors.
 Then go to this folder.
 
-### Check cluster status (5 min)
+### Check cluster status (5 mins)
 1. Run
   ```
-  python3 -c "import ray; ray.init(address='auto'); assert ray.cluster_resources()['GPU'] == 32"
+  python3 -c "import ray; ray.init(address='auto'); print('#GPU:', ray.cluster_resources()['GPU'])"
   ```
-  
+
   You should be able to see it outputs
   ```
   ...
@@ -32,11 +32,11 @@ Then go to this folder.
   ```
 
 ## End-to-end Performance (Figure. 8)
-The profiling and optimization for all data points in our paper takes more than 10 hours to run.
+The profiling and optimization for all data points in our paper take more than 10 hours to run.
 To make the artifact evaluation feasible in a reasonable amount of time, we skip some profiling and
-optimization precedures, but directly load the solutions found by our system and measure their throughputs.
-If you want to run the profling and optimization from scratch by yourself, follow the instructions in section
-"Running the Search".
+optimization procedures, but directly load the solutions found by our system and measure their throughputs.
+Optionally, if you want to run the profiling and optimization from scratch by yourself, follow the
+instructions in the section "Running the Search" below.
 
 ### GPT
 ```
@@ -83,5 +83,5 @@ python3 gen_data_inter_ab.py
 python3 plot_inter_ab.py
 ```
 
-## Running the Search
+## (Optional) Running the Search
 

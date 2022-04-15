@@ -443,7 +443,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
     elif op_info[0] == "create-communicator":
         replica_groups, = op_info[1]
         dtype = to_np_dtype("f32")
-        shapes = [((1,), dtype), ((1,), dtype)]
+        shapes = [((1024,), dtype), ((1024,), dtype)]
 
         def op_func(operands):
             channel_id = backend.create_channel_handle()
@@ -572,7 +572,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     try:
         for i, op_info in enumerate(op_infos):
             if op_info in cache_dict:
-                rank_0_print(host_id, f"Hit cache {op_info}...")
+                rank_0_print(host_id, f"Hit cache {op_info} ...")
                 results.append(cache_dict[op_info])
                 continue
 
@@ -791,9 +791,9 @@ def profile_all(device_cluster, cluster_key, comm_size_range, max_fail_retry,
             # Reboot physical mesh
             if not all_cache_hit:
                 print(f"Reboot physical mesh. fail_ct: {fail_ct}")
-                physical_mesh.shutdown(forced=True)
+                physical_mesh.shutdown(forced=fail_ct > 0)
                 physical_mesh = None
-                time.sleep(8)
+                time.sleep(10)
                 physical_mesh = tmp_mesh.get_physical_mesh()
 
         # Parse results

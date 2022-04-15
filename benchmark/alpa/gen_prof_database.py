@@ -40,7 +40,7 @@ if __name__ == "__main__":
     ray.init(address="auto")
     cluster = DeviceCluster()
 
-    # Must use an absolute efs filename because ray actors are on distributed workers.
+    # Must use an absolute efs filename because ray actors are on distributed nodes.
     prof_database = cluster.profile_all(
         args.cluster_key,
         comm_size_range=(0, args.comm_size_max + 1),

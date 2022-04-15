@@ -109,14 +109,14 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
 
 def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
     c = ctx.builder
-    args = xla_identity(c, *in_nodes, op_type="remat_begin")
+    args = xla_identity(c, "remat_begin", *in_nodes)
     args = [xops.GetTupleElement(args, i) for i in range(len(in_nodes))]
     body_ctx = ctx.replace(
         name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, "remat")))
     outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
     # TODO: using an identity at the end can reduce little memory on 1 GPU,
     # but there are still some bugs
-    # return xla_identity(c, *outs, op_type="remat_end")
+    # return xla_identity(c, op_type="remat_end", *outs)
     return outs
 
 

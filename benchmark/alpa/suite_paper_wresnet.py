@@ -20,7 +20,7 @@ wresnet_specs = {
 }
 
 default_overwrite_dict = {
-    "auto_stage_construction_imbalance_tolerance": 0.35,
+    "auto_stage_construction_imbalance_tolerance": 0.4,
     "submesh_choices_mode": "small_power_of_two",
 }
 

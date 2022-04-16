@@ -19,6 +19,7 @@ Run the following command on your local machine to install ray. We use ray and b
 ```
 pip install -U "ray[default]" boto3
 ```
+Follow [this page](https://docs.ray.io/en/latest/ray-overview/installation.html#m1-mac-apple-silicon-support) if you are using an M1 Mac.
 
 ### Start the cluster (3 min)
 Clone this repository to your local machine and go to `alpa/osdi22_artifact/`. Start the cluster with the following command:

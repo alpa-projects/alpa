@@ -3,11 +3,50 @@ This is the artifact for the paper "Alpa: Automating Inter- and Intra-Operator P
 We are going to reproduce the main results in the paper.
 
 ## Setting up the Environment
-Please use the provided instructions to log in to the AWS cluster set up by authors.
-Then go to this folder.
 
-### Check cluster status (5 mins)
-1. Run
+Please see the README file provided on hotcrp for the AWS credentials, and write the credentials to the file `~/.aws/credentials`:
+``` bash
+mkdir -p ~/.aws
+echo "[default]" > ~/.aws/credentials
+echo "aws_access_key_id = <AWS access key>" >> ~/.aws/credentials
+echo "aws_secret_access_key = <AWS secret key>" >> ~/.aws/credentials
+```
+Please replace the AWS access key and secret key with the provided credentials.
+
+### Install ray on the local environment
+
+Run the following command on your local machine to install ray. We use ray and boto3 to start the cluster.
+```
+pip install -U "ray[default]" boto3
+```
+
+### Start the cluster (3 min)
+Clone this repository to your local machine and go to `alpa/osdi22_artifact/`. Start the cluster with the following command:
+
+```
+ray up -y artifact-cluster.yaml
+```
+
+After the cluster is started, you can access the cluster with the following command:
+```
+ray attach artifact-cluster.yaml
+```
+
+To terminate the cluster, run the following command:
+```
+ray down -y artifact-cluster.yaml
+```
+
+### Check cluster status (5 min)
+1. Connect to the cluster with
+  ```
+  ray attach artifact-cluster.yaml
+  ```
+  and move to the following directory:
+  ```
+  cd efs/alpa/osdi22_artifact/
+  ```
+2. Run
   ```
   python3 -c "import ray; ray.init(address='auto'); print('#GPU:', ray.cluster_resources()['GPU'])"
   ```
@@ -18,7 +57,8 @@ Then go to this folder.
   #GPU: 32.0
   ```
 
-2. Run
+  If the number of GPUs is less than 32, wait couple minutes and check again for the cluster to be ready.
+3. Run
   ```
   python3 test_install.py
   ```
@@ -26,7 +66,7 @@ Then go to this folder.
   You should be able to see it outputs
   ```
   ...
-  Ran 2 tests in 54.444s
+  Ran 2 tests in 177.621s
 
   OK
   ```
@@ -38,21 +78,21 @@ optimization procedures, but directly load the solutions found by our system and
 Optionally, if you want to run the profiling and optimization from scratch by yourself, follow the
 instructions in the section "Running the Search" below.
 
-### GPT (30 mins)
+### GPT (30 min)
 ```
 python3 gen_data_e2e.py --model gpt
 python3 plot_e2e.py --model gpt
 ```
 This outputs Figure 8 (a).
 
-### MoE (30 mins)
+### MoE (30 min)
 ```
 python3 gen_data_e2e.py --model moe
 python3 plot_e2e.py --model moe
 ```
 This outputs Figure 8 (b).
 
-### Wide-ResNet (30 mins)
+### Wide-ResNet (30 min)
 ```
 python3 gen_data_e2e.py --model wresnet
 python3 plot_e2e.py --model wresnet
@@ -61,21 +101,21 @@ This outputs Figure 8 (c).
 
 ## Intra-op Ablation Study (Figure. 9)
 
-### GPT  (30 mins)
+### GPT  (30 min)
 ```
 python3 gen_data_intra_ab.py --model gpt
 python3 plot_intra_ab.py --model gpt
 ```
 This outputs Figure 9 (a).
 
-### MoE (45 mins)
+### MoE (45 min)
 ```
 python3 gen_data_intra_ab.py --model moe
 python3 plot_intra_ab.py --model moe
 ```
 This outputs Figure 9 (b).
 
-### Wide-ResNet (30 mins)
+### Wide-ResNet (30 min)
 ```
 python3 gen_data_intra_ab.py --model wresnet
 python3 plot_intra_ab.py --model wresnet
@@ -89,5 +129,9 @@ python3 gen_data_inter_ab.py
 python3 plot_inter_ab.py
 ```
 
-## (Optional) Running the Search
+After the experiments, please terminate the cluster with the following command on your local machine to reduce the cost of AWS charges:
+```
+ray down -y artifact-cluster.yaml
+```
 
+## (Optional) Running the Search

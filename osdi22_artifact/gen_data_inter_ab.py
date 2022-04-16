@@ -29,6 +29,7 @@ cluster_sizes = {
 def run_equal_eqn_one_case(model, case, niter, num_hosts, num_devices_per_host,
                            use_separate_process, disable_tqdm):
     ablation_config = {"use_equal_eqn": True}
+    case[-1] = dict(case[-1])
     case[-1]["use_hlo_cost_model"] = False
     return benchmark_one_case(model, case, niter, num_hosts,
                               num_devices_per_host, use_separate_process, True,
@@ -47,6 +48,7 @@ def run_equal_layer_one_case(model, case, niter, num_hosts,
     while num_layers % num_stages == 0:
         ablation_config = {"num_stages": num_stages}
         if case[-1]:
+            case[-1] = dict(case[-1])
             case[-1]["ablation_equal_layer"] = True
         else:
             case[-1] = {"ablation_equal_layer": True}

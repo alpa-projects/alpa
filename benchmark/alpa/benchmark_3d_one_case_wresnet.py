@@ -2,16 +2,14 @@
 from functools import partial
 from alpa.pipeline_parallel.layer_construction import automatic_remat
 
-from flax import linen as nn, optim
 from flax.training import common_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import ray
 
 import alpa
-from alpa import (parallelize, global_config, set_parallelize_options, testing,
+from alpa import (parallelize, global_config, set_parallelize_options,
                   DeviceCluster, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result

@@ -1,11 +1,5 @@
 import sys
-sys.path.append("../../benchmark/")
-sys.path.append("../../benchmark/deepspeed/")
 sys.path.append("../../")
-
-import time
-
-from datetime import datetime
 
 import argparse
 import os
@@ -31,7 +25,7 @@ moe_deepspeed_best_suite = {
     (1024,     *moe_specs["1.3B"],  8 * 1024 // 2,   4,    1,    1,    1,   1,    32,  True,   *fixed_params,     4),
 ],
 8: [
-    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     4),
+    (1024,     *moe_specs["2.4B"],  8 * 1024 // 2,   8,    1,    1,    1,   1,    16,  True,   *fixed_params,     2),
 ],
 16: [
     (1024,     *moe_specs["10B"],  8 * 1024 // 2,   16,    1,    1,    1,   1,    8,  True,   *fixed_params,     8),
@@ -63,10 +57,10 @@ def benchmark_all(args):
     except KeyError:
         print(f"No available benchmark suite for {args.suite} with {num_gpus} GPUs.")
         exit()
-    output_name = args.exp_name + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    output_name = f"results_e2e_{num_gpus}gpus.tsv"
 
-    warmup_iter = 2
-    bench_iter = 3
+    warmup_iter = 1
+    bench_iter = 2
 
     # MOE does not support stage 3
     config_file = "ds_zero_stage_2_moe_config.json"
@@ -115,13 +109,6 @@ def benchmark_all(args):
             f"--loss-scale 1.0 "
             f"--scattered-embeddings "
             f"--split-transformers "
-
-            # Disable fusion optimizations because this makes
-            # loading too slow.
-            #f"--scaled-upper-triang-masked-softmax-fusion "
-            #f"--scaled-masked-softmax-fusion "
-            #f"--bias-gelu-fusion "
-            #f"--bias-dropout-fusion "
         )
 
         if use_deepspeed:
@@ -135,12 +122,6 @@ def benchmark_all(args):
             gpt_options += "--checkpoint-activations "
             gpt_options += "--deepspeed-activation-checkpointing "
             gpt_options += "--checkpoint-num-layers 1 "
-
-            # Disable other checkpoint optimizations
-            # gpt_options += "--partition-activations "
-            # gpt_options += "--checkpoint-in-cpu "
-            # gpt_options += "--synchronize-each-layer "
-            # gpt_options += "--ontigious-checkpointing "
 
         if num_expert > 1:
             gpt_options += "--moe "
@@ -164,17 +145,12 @@ def benchmark_all(args):
                       f"--master_port {random.randint(30000, 40000)} "
                       f"--num_gpus {args.nproc_per_node} "
                       f"pretrain_gpt2_moe.py {gpt_options}")
-        print(">>>>>> Alpa benchmark: sleep for 30 seconds before starting the next case.", flush=True)
-        time.sleep(30)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="gpt")
     parser.add_argument("--nnodes", type=int, default=1)
     parser.add_argument("--nproc_per_node", type=int, required=True)
-    parser.add_argument("--suite", type=str, default="paper_gpt")
-    parser.add_argument("--exp_name", type=str, default="none")
     args = parser.parse_args()
 
     benchmark_all(args)

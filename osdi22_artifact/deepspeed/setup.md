@@ -22,5 +22,10 @@ The code modifications can be found under [benchmark/deepspeed/patch](../../benc
 
 ## Notes
 
-DeepSpeed MoE does not support ZeRO-3. It can support ZeRO-2 and ZeRO-1. We have tested both ZeRO-1 and ZeRO-2, 
-while the latter demonstrates better performance. Hence, in this artifact evaluation, we use ZeRO-2 by default. 
+### DeepSpeed prints inconsistent TFlops
+DeepSpeed's logger calculates the TFlops incorrectly. Please ignore the values it reported and observe the final value
+reported by Alpa benchmarking code.
+
+### Zero-1, Zero-2, and Zero-3?
+DeepSpeed MoE is not compatible with ZeRO-3. It, however, can support ZeRO-2 and ZeRO-1. We have tested both ZeRO-1 and ZeRO-2; 
+it turns out that ZeRO-2 demonstrates much better performance. Hence, in our artifact evaluation and the paper, we report the ZeRO-2 performance by default. 

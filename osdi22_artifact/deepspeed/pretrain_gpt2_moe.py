@@ -227,8 +227,11 @@ if __name__ == "__main__":
     args = get_args()
     rank = torch.distributed.get_rank()
     if rank == 0:
+        import sys
+        sys.path.append("../../")
         import numpy as np
-        from util import compute_moe_parameter_count, compute_moe_tflops, write_tsv
+        import time
+        from benchmark.util import compute_moe_parameter_count, compute_moe_tflops, write_tsv
         from megatron.training import step_latencies
         GB = 1 << 30
 
@@ -258,11 +261,7 @@ if __name__ == "__main__":
         expert_group_size = batch_size * seq_len // num_micro_batches \
                             // mpu.get_data_parallel_world_size()
 
-        tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
-                                    hidden_size, expert_group_size,
-                                    vocab_size, num_experts,
-                                    torch.distributed.get_world_size(),
-                                    np.mean(latencies), mlp_factor=mlp_factor)
+
         tflops_ckpt = compute_moe_tflops(batch_size, seq_len, num_layers,
                                          hidden_size, expert_group_size ,
                                          vocab_size, num_experts, torch.distributed.get_world_size(),
@@ -275,12 +274,21 @@ if __name__ == "__main__":
                            args.ep_world_size)
 
         # Log results
-        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
-                 "Peak Mem"]
-        values = ["MOE", str(model_config), str(parallel_config),
-                  "N/A", str(num_micro_batches), "N/A",
-                  str(args.checkpoint_activations), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
-                  f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                  f"{alloc_mem/GB:5.3f}G"]
+        # heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
+        #          "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
+        #          "Peak Mem"]
+        # values = ["MOE", str(model_config), str(parallel_config),
+        #           "N/A", str(num_micro_batches), "N/A",
+        #           str(args.checkpoint_activations), f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+        #           f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+        #           f"{alloc_mem/GB:5.3f}G"]
+
+        num_gpus = torch.distributed.get_world_size()
+        num_hosts = num_gpus // 8 + 1
+        num_devices_per_host = num_gpus % 8 if num_gpus <= 8 else 8
+
+        heads = ["exp_name", "instance", "num_hosts", "num_devices_per_host", "model_name", "method", "value", "time_stamp"]
+        values = ["e2e", "p3.16", num_hosts, num_devices_per_host, "moe", "deepspeed",
+                  str({"tflops": tflops_ckpt, "parameter_count": param_count / (10 ** 9)}), time.time()]
+
         write_tsv(heads, values,f"moe_deepspeed_{args.output_name}_rank{rank}.tsv")

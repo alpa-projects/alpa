@@ -38,8 +38,8 @@ num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpu
 for num_gpus in artifact_search_e2e_wresnet_suite
 }
 # Manually reduce the microbatch size to make it solvable.
-artifact_search_e2e_wresnet_ppdp_suite[4][6] = 32
-artifact_search_e2e_wresnet_ppdp_suite[8][6] = 32
+artifact_search_e2e_wresnet_ppdp_suite[4][0][6] = 32
+artifact_search_e2e_wresnet_ppdp_suite[8][0][6] = 32
 
 artifact_search_e2e_wresnet_intra_only_suite = {
 num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpus], "intra-only", num_gpus)
@@ -51,8 +51,8 @@ artifact_search_e2e_wresnet_inter_only_suite = {
 num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpus], "inter-only", num_gpus)
 for num_gpus in artifact_search_e2e_wresnet_suite
 }
-artifact_search_e2e_wresnet_inter_only_suite[4][6] = 64
-artifact_search_e2e_wresnet_inter_only_suite[8][6] = 96
+artifact_search_e2e_wresnet_inter_only_suite[4][0][6] = 64
+artifact_search_e2e_wresnet_inter_only_suite[8][0][6] = 96
 
 artifact_result_e2e_wresnet_suite = {
 1: get_auto_test_case("250M", [24], 1536, overwrite_global_config_dict={
@@ -122,7 +122,7 @@ artifact_result_e2e_wresnet_inter_only_suite = {
     "sub_logical_mesh_shapes": [(1, 1)] * 8,
     "submesh_autosharding_option_dicts": [{}] * 8
 }),
-# OOM, so manually design a case
+# OOM, so manually design a microbatch num
 16: get_auto_test_case("4B", [16], 16, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
     "forward_stage_layer_ids": [[i] for i in range(16)],
@@ -130,13 +130,13 @@ artifact_result_e2e_wresnet_inter_only_suite = {
     "sub_logical_mesh_shapes": [(1, 1)] * 16,
     "submesh_autosharding_option_dicts": [{}] * 16
 }),
-# OOM, so no suitable suite
-32: get_auto_test_case("6.8B", [32], 1536, overwrite_global_config_dict={
+# OOM even manually design a microbatch num
+32: get_auto_test_case("6.8B", [2], 2, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
-    "forward_stage_layer_ids": [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15]],
-    "sub_physical_mesh_shapes": [(1, 8), (1, 8), (1, 8), (1, 8)],
-    "sub_logical_mesh_shapes": [(8, 1), (8, 1), (8, 1), (8, 1)],
-    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4,
+    "forward_stage_layer_ids": [[i] for i in range(32)],
+    "sub_physical_mesh_shapes": [(1, 1)] * 32,
+    "sub_logical_mesh_shapes": [(1, 1)] * 32,
+    "submesh_autosharding_option_dicts": [{}] * 32
 }),
 }
 
@@ -158,7 +158,7 @@ artifact_result_e2e_wresnet_ppdp_suite = {
     "sub_logical_mesh_shapes": [(4, 1), (1, 1), (2, 1), (1, 1)],
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4
 }),
-# OOM, so manually design a case
+# OOM, so manually design a microbatch num
 16: get_auto_test_case("4B", [16], 16, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
     "forward_stage_layer_ids": [[i] for i in range(16)],
@@ -166,8 +166,8 @@ artifact_result_e2e_wresnet_ppdp_suite = {
     "sub_logical_mesh_shapes": [(1, 1)] * 16,
     "submesh_autosharding_option_dicts": [{}] * 16
 }),
-# OOM, so no suitable suite
-32: get_auto_test_case("6.8B", [1], 1, overwrite_global_config_dict={
+# OOM, so manually design a microbatch num
+32: get_auto_test_case("6.8B", [2], 2, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
     "forward_stage_layer_ids": [[i] for i in range(16)],
     "sub_physical_mesh_shapes": [(1, 2)] * 16,

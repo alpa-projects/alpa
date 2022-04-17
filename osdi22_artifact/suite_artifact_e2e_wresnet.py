@@ -1,7 +1,7 @@
 """Benchmark suite for auto wide-ResNet"""
 from benchmark.alpa.suite_paper_wresnet import get_auto_test_case
 
-def copy_cases_with_search_space(cases, search_space):
+def copy_cases_with_search_space(cases, search_space, num_gpu):
     new_cases = []
     for case in cases:
         case = list(case)
@@ -9,11 +9,20 @@ def copy_cases_with_search_space(cases, search_space):
         if search_space == "ppdp":
             overwrite_global_config["logical_mesh_search_space"] = "dp_only"
         elif search_space == "intra-only":
-            overwrite_global_config["strategy"] = "shard_parallel"
+            overwrite_global_config["fix_physical_mesh_shape"] = _num_gpu_to_mesh_shape(num_gpu)
         elif search_space == "inter-only":
-            overwrite_global_config["submesh_choices_mode"] = "inter_only"
+            overwrite_global_config["fix_physical_mesh_shape"] = (1, 1)
+        else:
+            raise RuntimeError("Unsupported search space: " + search_space)
         new_cases.append(case)
     return new_cases
+
+def _num_gpu_to_mesh_shape(num_gpu):
+    if num_gpu <= 8:
+        return (1, num_gpu)
+    assert num_gpu % 8 == 0
+    return (num_gpu // 8, 8)
+
 
 artifact_search_e2e_wresnet_suite = {  # key = the number of gpus, value = a list of cases
 1: get_auto_test_case("250M", [24], 1536),
@@ -26,19 +35,19 @@ artifact_search_e2e_wresnet_suite = {  # key = the number of gpus, value = a lis
 
 
 artifact_search_e2e_wresnet_ppdp_suite = {
-num_gpus: copy_cases_with_search_space(artifact_result_e2e_wresnet_suite[num_gpus], "ppdp") 
+num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpus], "ppdp", num_gpus)
 for num_gpus in artifact_search_e2e_wresnet_suite
 }
 
 
 artifact_search_e2e_wresnet_intra_only_suite = {
-num_gpus: copy_cases_with_search_space(artifact_result_e2e_wresnet_suite[num_gpus], "intra-only") 
+num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpus], "intra-only", num_gpus)
 for num_gpus in artifact_search_e2e_wresnet_suite
 }
 
 
 artifact_search_e2e_wresnet_inter_only_suite = {
-num_gpus: copy_cases_with_search_space(artifact_result_e2e_wresnet_suite[num_gpus], "inter-only") 
+num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpus], "inter-only", num_gpus)
 for num_gpus in artifact_search_e2e_wresnet_suite
 }
 
@@ -53,25 +62,37 @@ artifact_result_e2e_wresnet_suite = {
 4 : get_auto_test_case("1B", [24], 1536, overwrite_global_config_dict={
     "strategy": "shard_parallel"
 }),
-8: get_auto_test_case("2B", 24, 1536, overwrite_global_config_dict={
+8: get_auto_test_case("2B", [24], 1536, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
     "forward_stage_layer_ids": [[0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]],
     "sub_physical_mesh_shapes": [(1, 4), (1, 4)],
     "sub_logical_mesh_shapes": [(4, 1), (1, 4)],
     "submesh_autosharding_option_dicts": [{}, {'force_batch_dim_to_mesh_dim': 0}]
 }),
-16: get_auto_test_case("4B", 32, 1536, overwrite_global_config_dict={
+16: get_auto_test_case("4B", [32], 1536, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
     "forward_stage_layer_ids": [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12, 13, 14, 15]],
     "sub_physical_mesh_shapes": [(1, 4), (1, 4), (1, 8)],
     "sub_logical_mesh_shapes": [(4, 1), (4, 1), (8, 1)],
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}, {'force_batch_dim_to_mesh_dim': 0}, {}]
 }),
-32: get_auto_test_case("6.8B", 32, 1536, overwrite_global_config_dict={
+32: get_auto_test_case("6.8B", [32], 1536, overwrite_global_config_dict={
     "pipeline_stage_mode": "manual_gpipe",
     "forward_stage_layer_ids": [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15]],
     "sub_physical_mesh_shapes": [(1, 8), (1, 8), (1, 8), (1, 8)],
     "sub_logical_mesh_shapes": [(8, 1), (8, 1), (8, 1), (8, 1)],
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}, {}, {}, {}],
+}),
+}
+
+artifact_result_e2e_wresnet_suite_intra_only = {
+1: get_auto_test_case("250M", [24], 1536, overwrite_global_config_dict={
+    "strategy": "shard_parallel"
+}),
+2: get_auto_test_case("500M", [24], 1536, overwrite_global_config_dict={
+    "strategy": "shard_parallel"
+}),
+4 : get_auto_test_case("1B", [24], 1536, overwrite_global_config_dict={
+    "strategy": "shard_parallel"
 }),
 }

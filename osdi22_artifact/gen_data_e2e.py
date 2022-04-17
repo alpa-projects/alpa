@@ -12,7 +12,8 @@ from suite_artifact_e2e_gpt import (artifact_search_e2e_gpt_suite, artifact_resu
 from suite_artifact_e2e_moe import (artifact_search_e2e_moe_suite, artifact_result_e2e_moe_suite)
 from suite_artifact_e2e_wresnet import (artifact_search_e2e_wresnet_suite, artifact_result_e2e_wresnet_suite,
     artifact_search_e2e_wresnet_ppdp_suite, artifact_search_e2e_wresnet_intra_only_suite,
-    artifact_search_e2e_wresnet_inter_only_suite)
+    artifact_search_e2e_wresnet_inter_only_suite, artifact_result_e2e_wresnet_ppdp_suite,
+    artifact_result_e2e_wresnet_inter_only_suite, artifact_result_e2e_wresnet_intra_only_suite)
 
 benchmark_suites = {
     "gpt.search": artifact_search_e2e_gpt_suite,
@@ -23,7 +24,11 @@ benchmark_suites = {
     "wresnet.search.ppdp": artifact_search_e2e_wresnet_ppdp_suite,
     "wresnet.search.inter-only": artifact_search_e2e_wresnet_inter_only_suite,
     "wresnet.search.intra-only": artifact_search_e2e_wresnet_intra_only_suite,
-    "wresnet.result": artifact_result_e2e_wresnet_suite
+    "wresnet.result": artifact_result_e2e_wresnet_suite,
+    "wresnet.result.ppdp":
+    artifact_result_e2e_wresnet_ppdp_suite,
+    "wresnet.result.inter-only": artifact_result_e2e_wresnet_inter_only_suite,
+    "wresnet.result.intra-only": artifact_result_e2e_wresnet_intra_only_suite,
 }
 
 
@@ -71,7 +76,7 @@ if __name__ == "__main__":
         help="The number of benchmark iterations")
     args = parser.parse_args()
 
-    cluster_sizes = [(4, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
+    cluster_sizes = [(4, 8), (2, 8), (1, 8), (1, 4), (1, 1)]
     output_name = f"results_e2e.tsv"
 
     if args.model is None:

@@ -1,36 +1,41 @@
 # Setup Megatron-LM and benchmark it on GPT
+To run the Megatron-LM benchmarking, we assume you have set up the AWS cluster following the [setup guide](../README.md).  
 
-## Step 1: Check the Megatron-LM code
-Clone the Megatron-LM repository to ***your EFS*** filesystem following:
+
+## Step 1: Verify the Megatron-LM code
+Verify the Megatron-LM repository on EFS we have pre-cloned:
 ```python
-git clone -b alpa-osdi22-benchmark https://github.com/zhisbug/Megatron-LM.git
+cd ~/efs/Megatron-LM & git log
 ```
-Make sure all nodes in the cluster observe the same version of the repository on the EFS file system we provide.
-
-This is a fork from the official [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) at 
+You should be able to see the Megatron-LM as a fork from the official [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) at 
 [commit b31e1296354e979722627a6c4dedafe19b51fa97])(https://github.com/NVIDIA/Megatron-LM/tree/b31e1296354e979722627a6c4dedafe19b51fa97) dated at ***Oct 7, 2021***.
 
-We made a minor modification to this version: The only code difference between this version we used to produce baseline results and the original version is that we disable the `tie_embedding` option
-in Megatron-LM, because at the time of the OSDI submission, we had not figured out a clean implementation in Alpa to tie embedding variables efficiently 
-in a distributed environment.
+The only code difference between this version we used to produce baseline results and [commit b31e12](https://github.com/NVIDIA/Megatron-LM/tree/b31e1296354e979722627a6c4dedafe19b51fa97) 
+is that we disable the `tie_embedding` option in Megatron-LM, because at the time of the OSDI submission, we had not figured out an efficient implementation in Alpa to tie embedding variables.
 
-For fair comparisons, we disable the `tie_embedding` in Megatron-LM. Per our experiments, disabling this option in Megatron-LM has very little performance 
-impact on Megatron-LM fro the GPT benchmarking.
-
+For fair comparisons, we disable the `tie_embedding` in Megatron-LM. Per our experiments, disabling this option in has very little performance 
+impact on Megatron-LM on the GPT benchmarking.
 
 ## Step 2: Check the environment
-We have prepared a Python virtual environment which installs this Megatron-LM version at
-``python
+We have prepared a Python virtual environment at `~/efs/megatron-env` which installs this Megatron-LM version at
+```python
+conda deactivate
+# Switch to the Python environment for Megatron-LM
+source ~/efs/megatron-env/bin/activate
+```
 
-``
-
+Run the following command to check that the environment is working.
+```python
+python -c "import megatron; import apex"
+```
 
 ## Step 3: Benchmark
 Run the benchmarking using the provided bash script:
 ```python
+cd ~/efs/alpa/osdi22_artifact/megatron
+
 # Replace the [NUM_GPUS] with the number of gpus you want to benchmark with, e.g., 1, 4, 8, 16, 32.
 ./run_megatron_benchmark.sh [NUM_GPUS]
-
 # For example, benchmark Megatron on GPT on a 32-GPU cluster
 ./run_megatron_benchmark.sh 32
 ```

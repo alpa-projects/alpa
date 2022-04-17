@@ -1,5 +1,5 @@
 """Benchmark suite for auto wide-ResNet"""
-from benchmark.alpa.suite_paper_wresnet import get_auto_test_case
+from benchmark.alpa.suite_paper_wresnet import get_auto_test_case, wresnet_specs
 
 def copy_cases_with_search_space(cases, search_space, num_gpu):
     new_cases = []
@@ -8,8 +8,6 @@ def copy_cases_with_search_space(cases, search_space, num_gpu):
         overwrite_global_config = case[-1] = dict(case[-1])
         if search_space == "ppdp":
             overwrite_global_config["logical_mesh_search_space"] = "dp_only"
-        elif search_space == "intra-only":
-            overwrite_global_config["fix_physical_mesh_shape"] = _num_gpu_to_mesh_shape(num_gpu)
         elif search_space == "inter-only":
             overwrite_global_config["fix_physical_mesh_shape"] = (1, 1)
         else:
@@ -41,11 +39,6 @@ for num_gpus in artifact_search_e2e_wresnet_suite
 artifact_search_e2e_wresnet_ppdp_suite[4][0][6] = 32
 artifact_search_e2e_wresnet_ppdp_suite[8][0][6] = 32
 artifact_search_e2e_wresnet_ppdp_suite[16][0][6] = 384
-
-artifact_search_e2e_wresnet_intra_only_suite = {
-num_gpus: copy_cases_with_search_space(artifact_search_e2e_wresnet_suite[num_gpus], "intra-only", num_gpus)
-for num_gpus in artifact_search_e2e_wresnet_suite
-}
 
 
 artifact_search_e2e_wresnet_inter_only_suite = {
@@ -90,22 +83,13 @@ artifact_result_e2e_wresnet_suite = {
 }
 
 
-artifact_result_e2e_wresnet_intra_only_suite = {
-1: get_auto_test_case("250M", [24], 1536, overwrite_global_config_dict={
-    "strategy": "shard_parallel"
-}),
-4: get_auto_test_case("1B", [24], 1536, overwrite_global_config_dict={
-    "strategy": "shard_parallel"
-}),
-8: get_auto_test_case("1B", [24], 1536, overwrite_global_config_dict={
-    "strategy": "shard_parallel"
-}),
-16: get_auto_test_case("4B", [32], 1536, overwrite_global_config_dict={
-    "strategy": "shard_parallel"
-}),
-32: get_auto_test_case("6.8B", [32], 1536, overwrite_global_config_dict={
-    "strategy": "shard_parallel"
-}),
+artifact_e2e_wresnet_intra_only_suite = {
+1:  (1536, *wresnet_specs["250M"], 1,  1, 48, False, True, _, _),
+2:  (1536, *wresnet_specs["500M"], 2,  1, 32, False, True, _, _),
+4:  (1536, *wresnet_specs["1B"],   4,  1, 32, False, True, _, _),
+8:  (1536, *wresnet_specs["2B"],   8,  1, 48, False, True, _, _),
+16: (1536, *wresnet_specs["4B"],   2,  8, 64, False, True, _, _),
+32: (1536, *wresnet_specs["6.8B"], 4,  8, 48, False, True, _, _),
 }
 
 

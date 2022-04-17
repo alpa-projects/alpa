@@ -1,0 +1,58 @@
+# A unique identifier for the head node and workers of this cluster.
+cluster_name: artifact-cluster
+
+# The minimum, maximum and initial number of workers nodes to launch in addition
+# to the head node. For this project, we do not need the autoscaling, so we
+# always set these numbers the same.
+min_workers: 3
+initial_workers: 3
+max_workers: 3
+
+provider:
+    type: aws
+    region: us-east-1
+    availability_zone: us-east-1b,us-east-1c,us-east-1d,us-east-1f
+    cache_stopped_nodes: False
+
+auth:
+    ssh_user: ubuntu
+
+head_node:
+    InstanceType: p3.16xlarge
+    ImageId: ami-06c6575c0e4a07541 # artifact-1
+    SecurityGroupIds:
+        - "sg-08fe923867c376577"
+    BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+              VolumeSize: 300
+
+
+worker_nodes:
+    InstanceType: p3.16xlarge
+    ImageId: ami-06c6575c0e4a07541 # artifact-1
+    SecurityGroupIds:
+        - "sg-08fe923867c376577"
+    BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+              VolumeSize: 300
+
+setup_commands:
+    - sudo mount -t efs fs-0919e14440bada85d:/ efs
+    - sudo chmod 777 efs
+
+head_setup_commands: []
+
+worker_setup_commands: []
+
+# Command to start ray on the head node. You don't need to change this.
+head_start_ray_commands:
+    - ray stop
+    - "ulimit -n 65536; ray start --head --port=6379 --object-manager-port=8076 --autoscaling-config=~/ray_bootstrap_config.yaml --resources='{\"machine\": 1}'"
+
+# Command to start ray on worker nodes. You don't need to change this.
+worker_start_ray_commands:
+    - ray stop
+    - "ulimit -n 65536; ray start --address=$RAY_HEAD_IP:6379 --object-manager-port=8076 --resources='{\"machine\": 1}'"
+

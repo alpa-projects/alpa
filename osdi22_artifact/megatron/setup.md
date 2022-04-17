@@ -1,6 +1,6 @@
 # Setup Megatron-LM and benchmark it on GPT
 
-## Step 1: Setup Megatron-LM
+## Step 1: Check the Megatron-LM code
 Clone the Megatron-LM repository to ***your EFS*** filesystem following:
 ```python
 git clone -b alpa-osdi22-benchmark https://github.com/zhisbug/Megatron-LM.git
@@ -10,9 +10,7 @@ Make sure all nodes in the cluster observe the same version of the repository on
 This is a fork from the official [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) at 
 [commit b31e1296354e979722627a6c4dedafe19b51fa97])(https://github.com/NVIDIA/Megatron-LM/tree/b31e1296354e979722627a6c4dedafe19b51fa97) dated at ***Oct 7, 2021***.
 
-
-### Note
-The only code difference between this version we used to produce baseline results and the original version is that we disable the `tie_embedding` option
+We made a minor modification to this version: The only code difference between this version we used to produce baseline results and the original version is that we disable the `tie_embedding` option
 in Megatron-LM, because at the time of the OSDI submission, we had not figured out a clean implementation in Alpa to tie embedding variables efficiently 
 in a distributed environment.
 
@@ -20,31 +18,31 @@ For fair comparisons, we disable the `tie_embedding` in Megatron-LM. Per our exp
 impact on Megatron-LM fro the GPT benchmarking.
 
 
-## Step 2: Install Megatron-LM
-It is recommended to use a Python virtual environment to install Megatron-LM
-```
-pip install torch==1.8.2
-pip3 install ninja
+## Step 2: Check the environment
+We have prepared a Python virtual environment which installs this Megatron-LM version at
+``python
 
-# Install Megatron
-cd Megatron-LM
-pip3 install -r requirements.txt
-pip3 install -e .
-echo 'export PYTHONPATH=$PYTHONPATH:~/efs/Megatron-LM' >> ~/.bashrc   # use your own path
-source ~/.bashrc
-
-# Install Apex
-git clone https://github.com/NVIDIA/apex
-cd apex
-# Comment out the raised RuntimeError in setup.py if you get errors running the following command.
-pip3 install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
-```
+``
 
 
 ## Step 3: Benchmark
-Benchmark on 
+Run the benchmarking using the provided bash script:
+```python
+# Replace the [NUM_GPUS] with the number of gpus you want to benchmark with, e.g., 1, 4, 8, 16, 32.
+./run_megatron_benchmark.sh [NUM_GPUS]
 
+# For example, benchmark Megatron on GPT on a 32-GPU cluster
+./run_megatron_benchmark.sh 32
+```
 
+## Trouble Shooting
+### First run takes very long?
+This is normal. In the first run, Megatron-LM needs to compile several hand-written kernel implementations for SoftMax and GeLU, 
+which will take a few minutes. 
+
+### The program hangs somewhere at the startup?
+If the benchmark programs hang after launching the program, try to delete the compiled output in this folder `Megatron-LM/megatron/fused_kernels/build`, 
+and relaunch. This is a known issue related with Megatron-LM's customized kernel compilation.
 
 
 ## Other notes

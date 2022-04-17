@@ -131,31 +131,16 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
 
     # Print results
     if rank == 0:
-        peak_mem = torch.cuda.max_memory_allocated(0)
-        tflops = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
-                                    hidden_size, vocab_size,
-                                    torch.distributed.get_world_size(),
-                                    np.mean(costs))
         tflops_ckpt = compute_gpt_tflops(global_batch_size, seq_len, num_layers,
                                          hidden_size, vocab_size,
                                          torch.distributed.get_world_size(),
                                          np.mean(costs), True)
-        # heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-        #          "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
-        #          "Peak Mem"]
-        # values = [model_type, str(benchmark_case[1:6]),
-        #           str((dp_size, tensor_mp_size, pipeline_mp_size)),
-        #           "N/A", str(num_micro_batches), "N/A",
-        #           str(checkpoint_activations), f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
-        #           f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-        #           f"{peak_mem/GB:5.3f}"]
-
         num_hosts = num_gpus // 8 + 1
         num_devices_per_host = num_gpus % 8 if num_gpus <= 8 else 8
         heads = ["exp_name", "instance", "num_hosts", "num_devices_per_host", "model_name", "method", "value", "time_stamp"]
         values = ["e2e", "p3.16", num_hosts, num_devices_per_host, "gpt", "megatron",
                   str({"tflops": tflops_ckpt, "parameter_count": parameter_count / (10 ** 9)}), time.time()]
-        write_tsv(heads, values, f"{model_type}_megatron_{output_file_name}_rank{rank}.tsv")
+        write_tsv(heads, values, f"{output_file_name}.tsv")
 
 
 if __name__ == "__main__":

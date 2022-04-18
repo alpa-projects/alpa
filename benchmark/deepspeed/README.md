@@ -3,15 +3,18 @@
 ## Requirements
 1. Install dependencies
 ```
+# torch
 pip3 install torch==1.8.2+cu111 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
 pip3 install nltk pandas sentencepiece boto3 pybind11 python-config
-# for adafactor
+
+# Adafactor optimizer
 pip3 install torch-optimizer
+
+# pdsh
 sudo apt-get update
 sudo apt-get install pdsh
-```
 
-```
+# Apex
 git clone https://github.com/NVIDIA/apex
 cd apex
 # Comment out the raised RuntimeError in setup.py if you get errors running the following command.

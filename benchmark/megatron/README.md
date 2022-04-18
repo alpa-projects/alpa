@@ -2,17 +2,14 @@
 
 ## Requirements
 ```
-torch==1.8.2
-```
+# torch 1.8.0 and CUDA 11.1
+pip3 install torch==1.8.0+cu111 torchvision==0.9.0+cu111 torchaudio==0.8.0 -f https://download.pytorch.org/whl/torch_stable.html
 
-```
 pip3 install ninja
 
 # Install Megatron
 git clone https://github.com/NVIDIA/Megatron-LM.git
 cd Megatron-LM
-pip3 install -r requirements.txt
-pip3 install -e .
 echo 'export PYTHONPATH=$PYTHONPATH:~/efs/Megatron-LM' >> ~/.bashrc   # use your own path
 source ~/.bashrc
 

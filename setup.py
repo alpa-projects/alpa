@@ -11,12 +11,12 @@ IS_WINDOWS = sys.platform == "win32"
 
 
 def get_cuda_version(cuda_home):
-    """Locate the CUDA version"""
+    """Locate the CUDA version."""
     version_file = os.path.join(cuda_home, "version.txt")
     try:
         if os.path.isfile(version_file):
-            with open(version_file) as f:
-                version_str = f.readline().replace("\n", "").replace("\r", "")
+            with open(version_file, "r") as f_version:
+                version_str = f_version.readline().replace("\n", "").replace("\r", "")
                 return version_str.split(" ")[2][:4]
         else:
             version_str = subprocess.check_output(
@@ -24,13 +24,13 @@ def get_cuda_version(cuda_home):
             )
             version_str = str(version_str).replace("\n", "").replace("\r", "")
             idx = version_str.find("release")
-            return version_str[idx + len("release ") : idx + len("release ") + 4]
-    except:
+            return version_str[idx + len("release "):idx + len("release ") + 4]
+    except RuntimeError:
         raise RuntimeError("Cannot read cuda version file")
 
 
 def locate_cuda():
-    """Locate the CUDA environment on the system"""
+    """Locate the CUDA environment on the system."""
     # Guess #1
     cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
     if cuda_home is None:
@@ -107,7 +107,7 @@ def build():
     print(build_command)
     if subprocess.call(build_command, shell=True) != 0:
         print("Failed to build the pipeline markers")
-        exit(-1)
+        sys.exit()
 
 
 def move_file(target_dir, filename):
@@ -150,11 +150,11 @@ if __name__ == "__main__":
 
     setup(
         name="alpa",
-        version="0.0.0", # TODO(Hao): change to os.environ.get('VERSION')
+        version="0.1.0",  # TODO(Hao): get a GENVER
         author="Alpa team",
         author_email="",
         description="Alpa automatically parallelizes large tensor computation graphs and "
-                   "runs them on a distributed cluster.",
+                    "runs them on a distributed cluster.",
         long_description=long_description,
         long_description_content_type="text/markdown",
         url="https://github.com/alpa-projects/alpa",

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Create a report to help us improve Alpa
 title: ''
 labels: ''
 assignees: ''
@@ -12,13 +12,15 @@ assignees: ''
 **Please describe the expected behavior**
 
 **System information and environment**
-- OS Platform and Distribution (e.g., Linux Ubuntu 16.04):
+- OS Platform and Distribution (e.g., Linux Ubuntu 16.04, docker):
 - Python version:
 - CUDA version:
 - NCCL version:
 - cupy version:
 - GPU model and memory:
 - Alpa version:
+- TensorFlow version:
+- JAX version:
 
 **To Reproduce**
 Steps to reproduce the behavior:

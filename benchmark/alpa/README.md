@@ -12,15 +12,6 @@ ray start --head
 python3 benchmark_2d.py --suite gpt.fast_perf_test
 ```
 
-## Generate Profiling Database
-1. Start ray cluster.
-
-2. Run profiling to generate the database for the HLO instruction cost model.
-```
-python3 gen_prof_database.py
-```
-
-
 ## Santity Checks
 
 ```
@@ -44,4 +35,12 @@ Iteration 1
 Iteration 2
  - Benchmark: 17.36 s
 Type: gpt  Model Config: (32, 1024, 2560, 32, 32)  Parallel Config: (2, 2, 2)  P-mesh shape: (1, 4)  #Microbatch: 4  Force Mapping: False  Remat: True  Reduce-scatter: True  Mean Time: 2.465s  Std Time: 0.001  #Params: 2.649B  TFLOPs: 28.07  TFLOPs (ckpt): 37.00  Peak Mem: 8.745G  overwrite_global_config_dict: None
+```
+
+## Generate Profiling Database
+1. Start ray cluster.
+
+2. Run profiling to generate the database for the HLO instruction cost model.
+```
+python3 gen_prof_database.py
 ```

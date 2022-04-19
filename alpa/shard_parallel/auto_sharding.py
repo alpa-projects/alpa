@@ -843,9 +843,9 @@ def set_auto_sharded_hlo_stages(stages: Tuple[Sequence[str], Sequence[bytes]]):
     auto_sharded_hlo_stages = hlo_module_protos
 
 
-def set_hooked_sharding_protos(hlo_module_proto: bytes):
+def set_hooked_sharding_protos(protos: Sequence[bytes]):
     global hooked_sharding_protos
-    hooked_sharding_protos = hlo_module_proto
+    hooked_sharding_protos = protos
 
 
 def get_auto_sharded_hlo_stages() -> Sequence[bytes]:

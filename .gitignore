@@ -6,9 +6,6 @@ dist
 .cache
 *env
 
-# cmake cache
-alpa/pipeline_parallel/xla_custom_call_marker/build/
-
 # NFS temp files
 .nfs*
 
@@ -20,6 +17,11 @@ alpa/pipeline_parallel/xla_custom_call_marker/build/
 
 # vscode
 *vscode*
+
+# Build files
+alpa/pipeline_parallel/xla_custom_call_marker/build
+build/lib
+build/bdist*
 
 # Analysis temp files
 *.nvprof

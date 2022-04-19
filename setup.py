@@ -70,7 +70,7 @@ def get_cuda_version_str(no_comma=False):
     """Return the cuda version in the format of [x.x]."""
     ver = locate_cuda()[1]
     if no_comma:
-        ver = ver.replace(",", "")
+        ver = ver.replace(".", "")
     return ver
 
 

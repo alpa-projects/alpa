@@ -4,6 +4,7 @@ __pycache__
 dist
 *.egg-info
 .cache
+*env
 
 # NFS temp files
 .nfs*
@@ -19,6 +20,8 @@ dist
 
 # Build files
 alpa/pipeline_parallel/xla_custom_call_marker/build
+build/lib
+build/bdist*
 
 # Analysis temp files
 *.nvprof

@@ -66,10 +66,10 @@ def locate_cuda():
     return cudaconfig, version
 
 
-def get_cuda_version_str(no_comma=False):
+def get_cuda_version_str(no_dot=False):
     """Return the cuda version in the format of [x.x]."""
     ver = locate_cuda()[1]
-    if no_comma:
+    if no_dot:
         ver = ver.replace(".", "")
     return ver
 
@@ -80,7 +80,7 @@ install_require_list = [
     "numba",
     "ray[default]",
     "flax==0.4.1",
-    f"cupy-cuda{get_cuda_version_str(no_comma=True)}",
+    f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp"
 ]
 

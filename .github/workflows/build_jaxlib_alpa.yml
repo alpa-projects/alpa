@@ -17,6 +17,7 @@ jobs:
       - name: build image
         run: |
           cd build
+          whoami
           docker build . -t build-jaxlib-image
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec --rm -v $(pwd)/dist:/dist build-jaxlib-image 3.8.0 cuda

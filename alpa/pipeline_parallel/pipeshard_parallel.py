@@ -25,13 +25,110 @@ from alpa.pipeline_parallel.apply_grad import \
     (compute_grad_to_accumulate_grad, process_apply_gradient,
      split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
-    cluster_layers_and_slice_mesh)
+    cluster_layers_and_slice_mesh, cluster_layers_with_given_meshes, optimize_cost)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+
+def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
+                                donated_invars, batch_invars, devices,
+                                memory_budget_per_device, *avals):
+    """Optimize for the best microbatch size. """
+    best_cost, best_microbatch = float('inf'), 0
+    num_micro_batches = 1
+    orig_fun = fun
+    funs = []
+    while num_micro_batches <= global_config.num_micro_batches:
+        print("-----\nTesting num micro batches: ", num_micro_batches)
+        # print("Fun transforms: ", fun.transforms)
+        # print("Fun stores: ", fun.stores)
+        # for s in fun.stores:
+        #     if s:
+        #         print("Fun stores vals: ", s.val)
+        # Trace the function to get the jaxpr
+        # fun = lu.WrappedFun(orig_fun.f, orig_fun.transforms, lu.Store(), orig_fun.params)
+        for s in fun.stores:
+            s.reset()
+        closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
+            fun, batch_invars, num_micro_batches, avals)
+
+        # Split the jaxpr into compute_grad and apply_grad
+        gensym_func = gensym([closed_jaxpr.jaxpr])
+        closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
+            split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
+        have_apply_grad = barrier is not None
+
+        if have_apply_grad:
+            acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_grad_to_accumulate_grad(
+                compute_grad_jaxpr, gensym_func)
+        else:
+            acc_grad_jaxpr = compute_grad_jaxpr
+            acc_grad_dict = {}
+            grad_in_to_out = {}
+
+        # Slice the jaxpr into layers
+        acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
+        acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
+
+        jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
+            acc_grad_jaxpr)
+        assert (len(jax_pipeline_layers) == len(
+            set(layer.name for layer in jax_pipeline_layers))
+            ), "All layers must have unique names."
+        jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
+            jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
+        jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
+        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
+
+        # Initialize donation map
+        global_invars = closed_jaxpr.jaxpr.invars
+        global_outvars = closed_jaxpr.jaxpr.outvars
+        donation_mapping = dict(grad_in_to_out) if have_apply_grad else {}
+
+        num_forward_layers = len(jax_pipeline_layers) // 2
+        layer_to_dummy_mesh = (list(range(num_forward_layers)) +
+                            list(reversed(range(num_forward_layers))))
+        # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
+        (jax_apply_layers, _, _, _, dummy_global_outvars,
+        dummy_donated_invars) = process_apply_gradient(
+            apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
+            layer_to_dummy_mesh, gensym_func, num_micro_batches,
+            len(jax_pipeline_layers) // 2, global_invars, global_outvars,
+            donated_invars)
+        apply_grad_donation = create_donation_mapping(donation_mapping,
+                                                    dummy_donated_invars,
+                                                    global_invars, global_outvars)
+        apply_grad_global_info = apply_grad_donation, global_outvars
+
+        # Construct pipeline stages by merging layers
+        cost = optimize_cost(
+            jax_pipeline_layers,
+            devices,
+            donation_mapping,
+            acc_grad_outvars,
+            num_micro_batches,
+            batch_size,
+            jax_apply_layers=jax_apply_layers,
+            apply_grad_global_info=apply_grad_global_info,
+            pipeline_stage_mode=global_config.pipeline_stage_mode,
+            logical_mesh_search_space=global_config.logical_mesh_search_space,
+            cache_compute_cost=global_config.cache_compute_cost,
+            forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+            submesh_shapes=global_config.sub_physical_mesh_shapes,
+            logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+            autosharding_option_dicts=global_config.
+            submesh_autosharding_option_dicts)
+
+        if cost < best_cost:
+            best_cost = cost
+            best_microbatch = num_micro_batches
+        num_micro_batches *= 2
+        funs.append((num_micro_batches, fun))
+    # should I return other stuff so we can skip running the first half of pipeshard parallel callable?
+    return best_microbatch, best_cost
 
 @lu.cache
 def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
@@ -45,10 +142,18 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
-    num_micro_batches = global_config.num_micro_batches
-    if num_micro_batches is None:
-        logger.warning("num microbatch is unset. Use 1 by default.")
-        num_micro_batches = 1
+    num_micro_batches_op, _ = optimize_microbatch(fun, in_tree, out_tree_thunk, donated_invars, batch_invars, devices, memory_budget_per_device, *avals)
+    for s in fun.stores:
+        s.reset()
+    num_micro_batches = num_micro_batches_op
+    # num_micro_batches = global_config.num_micro_batches
+    # if num_micro_batches is None:
+    #     logger.warning("num microbatch is unset. Use 1 by default.")
+    #     num_micro_batches = 1
+    print("Global num micro batchs: ", global_config.num_micro_batches)
+    print("Num micro batchs op: ", num_micro_batches_op)
+    print("Pipeline stage mode: ", global_config.pipeline_stage_mode)
+    print("Avals: ", avals)
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, avals)
 

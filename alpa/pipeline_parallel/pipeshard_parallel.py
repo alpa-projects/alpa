@@ -39,19 +39,9 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     """Optimize for the best microbatch size. """
     best_cost, best_microbatch = float('inf'), 0
     num_micro_batches = 1
-    orig_fun = fun
-    funs = []
+    funs = {}
     while num_micro_batches <= global_config.num_micro_batches:
         print("-----\nTesting num micro batches: ", num_micro_batches)
-        # print("Fun transforms: ", fun.transforms)
-        # print("Fun stores: ", fun.stores)
-        # for s in fun.stores:
-        #     if s:
-        #         print("Fun stores vals: ", s.val)
-        # Trace the function to get the jaxpr
-        # fun = lu.WrappedFun(orig_fun.f, orig_fun.transforms, lu.Store(), orig_fun.params)
-        for s in fun.stores:
-            s.reset()
         closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
             fun, batch_invars, num_micro_batches, avals)
 
@@ -125,10 +115,15 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         if cost < best_cost:
             best_cost = cost
             best_microbatch = num_micro_batches
+        newStores = []
+        for s in fun.stores:
+            newStore = lu.Store()
+            newStore.store(s.val)
+            s.reset()
+            newStores.append(newStore)
+        funs[num_micro_batches] = (gensym_func, apply_grad_jaxpr, barrier, have_apply_grad, acc_grad_dict, acc_grad_outvars, global_invars, global_outvars, donation_mapping, newStores)
         num_micro_batches *= 2
-        funs.append((num_micro_batches, fun))
-    # should I return other stuff so we can skip running the first half of pipeshard parallel callable?
-    return best_microbatch, best_cost
+    return best_microbatch, best_cost, funs[best_microbatch]
 
 @lu.cache
 def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
@@ -142,18 +137,15 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
-    num_micro_batches_op, _ = optimize_microbatch(fun, in_tree, out_tree_thunk, donated_invars, batch_invars, devices, memory_budget_per_device, *avals)
-    for s in fun.stores:
-        s.reset()
+    num_micro_batches_op, _, additional_vars = optimize_microbatch(fun, in_tree, out_tree_thunk, donated_invars, batch_invars, devices, memory_budget_per_device, *avals)
     num_micro_batches = num_micro_batches_op
+    gensym_func, apply_grad_jaxpr, barrier, have_apply_grad, acc_grad_dict, acc_grad_outvars, global_invars, global_outvars, donation_mapping, newStores = additional_vars
+    # for i in range(len(newStores)):
+    #     fun.stores[i].store(newStores[i].val)
     # num_micro_batches = global_config.num_micro_batches
     # if num_micro_batches is None:
     #     logger.warning("num microbatch is unset. Use 1 by default.")
     #     num_micro_batches = 1
-    print("Global num micro batchs: ", global_config.num_micro_batches)
-    print("Num micro batchs op: ", num_micro_batches_op)
-    print("Pipeline stage mode: ", global_config.pipeline_stage_mode)
-    print("Avals: ", avals)
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, avals)
 

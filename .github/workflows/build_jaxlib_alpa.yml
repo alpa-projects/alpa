@@ -1,12 +1,19 @@
 name: Build Jaxlib and Jax
 
-on: workflow_dispatch
+#on: workflow_dispatch
+
+on:
+  pull_request:
+    branches: [main]
 
 jobs:
   build-image:
     name: Build JaxLib image
     runs-on: [self-hosted]
     steps:
+      # checkout repo
+      - uses: actions/checkout@v2
+
       - name: build image
         run: |
           cd build

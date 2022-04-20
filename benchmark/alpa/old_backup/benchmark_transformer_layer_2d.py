@@ -11,7 +11,7 @@ import numpy as np
 import ray
 
 from alpa import (parallelize, global_config, set_parallelize_options, testing,
-                   DeviceCluster, PhysicalDeviceMesh)
+                   DeviceCluster, LocalPhysicalDeviceMesh)
 from alpa.model.bert_model import BertConfig, FlaxBertAttention, FlaxBertLayerCollection
 from alpa.util import (run_cmd, write_tsv, benchmark_func, list_gpu_info,
                         count_communication_primitives)
@@ -52,7 +52,7 @@ def benchmark_transformer_one_case(benchmark_case, use_profiling):
 
     # Parallel configs
     if args.local:
-        physical_mesh = PhysicalDeviceMesh(jax.devices())
+        physical_mesh = LocalPhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
         physical_mesh = device_cluster.get_physical_mesh()

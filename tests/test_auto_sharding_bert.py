@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import optim, linen as nn
 
-from alpa import parallelize, set_parallelize_options, PhysicalDeviceMesh, global_config
+from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, global_config
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
                                    FlaxBertForMaskedLMModule)
 from alpa.util import count_communication_primitives
@@ -33,7 +33,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         as_option.restore(self.as_option_backup)
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = PhysicalDeviceMesh(self.devices)
+        device_mesh = LocalPhysicalDeviceMesh(self.devices)
         return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_bert_layers(self, batch_size, seq_len, num_layers, hidden_size,

@@ -8,25 +8,26 @@ import numpy as np
 from alpa.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, to_str_round, GB
 
 from benchmark_3d_one_case import benchmark_one_case
-from benchmark_3d_one_case_wresnet import paper_auto_wresnet_suite
-from paper_manual_gpt_suite import fast_test_gpt_suite, test_gpt_suite, paper_gpt_suite
-from paper_manual_moe_suite import fast_test_moe_suite, test_moe_suite, paper_moe_suite
-from paper_auto_gpt_suite import test_auto_gpt_suite, paper_auto_gpt_suite, result_auto_gpt_suite
-from paper_auto_moe_suite import test_auto_moe_suite, paper_auto_moe_suite
+from suite_paper_auto_gpt import tmp_auto_gpt_suite, paper_auto_gpt_suite
+from suite_paper_auto_moe import tmp_auto_moe_suite, paper_auto_moe_suite
+from suite_paper_manual_gpt import (fast_perf_test_gpt_suite, perf_test_gpt_suite,
+    tmp_gpt_suite, manual_tuning_gpt_suite)
+from suite_paper_manual_moe import fast_perf_test_moe_suite, tmp_moe_suite, manual_tuning_moe_suite
+from suite_paper_wresnet import paper_auto_wresnet_suite
 
 
 benchmark_suites = {
-    "gpt.fast_test": fast_test_gpt_suite,
-    "gpt.test": test_gpt_suite,
-    "gpt.paper": paper_gpt_suite,
-    "gpt.test_auto": test_auto_gpt_suite,
+    "gpt.tmp": tmp_gpt_suite,
+    "gpt.perf_test": perf_test_gpt_suite,
+    "gpt.fast_perf_test": fast_perf_test_gpt_suite,
+    "gpt.manual_tuning": manual_tuning_gpt_suite,
+    "gpt.tmp_auto": tmp_auto_gpt_suite,
     "gpt.paper_auto": paper_auto_gpt_suite,
-    "gpt.result_auto": result_auto_gpt_suite,
 
-    "moe.fast_test": fast_test_moe_suite,
-    "moe.test": test_moe_suite,
-    "moe.paper": paper_moe_suite,
-    "moe.test_auto": test_auto_moe_suite,
+    "moe.tmp": tmp_moe_suite,
+    "moe.fast_perf_test": fast_perf_test_moe_suite,
+    "moe.manual_tuning": manual_tuning_moe_suite,
+    "moe.tmp_auto": tmp_auto_moe_suite,
     "moe.paper_auto": paper_auto_moe_suite,
 
     "wresnet.paper_auto": paper_auto_wresnet_suite,

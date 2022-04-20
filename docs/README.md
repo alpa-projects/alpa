@@ -4,7 +4,7 @@
 
 ### Dependency
 ```
-pip3 install sphinx sphinx-rtd-theme sphinx-gallery
+pip3 install sphinx sphinx-rtd-theme sphinx-gallery matplotlib
 ```
 
 ### Build
@@ -15,7 +15,7 @@ make html
 The build process will execute all tutorial scripts to generate the gallery.
 This may cause failures if the build machine does not have necessary environment.
 This may also result in a very long build time.
-You can set `ALPA_TUTORIAL_EXEC_PATTERN` to only execute the files that matches the regular expression pattern.
+You can set `ALPA_TUTORIAL_EXEC_PATTERN` to only execute the files that match the regular expression pattern.
 For example, to build one specific file, do
 ```
 export ALPA_TUTORIAL_EXEC_PATTERN=filename.py

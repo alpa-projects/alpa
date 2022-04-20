@@ -22,6 +22,7 @@ from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.timer import timers
 from alpa.util import DisjointDict, OrderedSet, get_shard_shape
 
@@ -166,7 +167,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  global_invars: List[Var],
                  grad_dummy_invars,
                  global_outvars: List[Var],
-                 physical_meshes: List[PhysicalDeviceMesh],
+                 physical_meshes: DistributedPhysicalDeviceMeshGroup,
                  dependency: np.ndarray,
                  schedule: PipelineSchedule,
                  is_batch: List[bool],
@@ -1022,33 +1023,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def shutdown(self):
         """Shutdown the runtime and recycle resources."""
-        self._destroy_collective_groups()
-        if not self.physical_meshes:
-            raise RuntimeError("No physical meshes spawned yet in "
-                               "the runtime before shutting down.")
         self.reset_benchmark_timers()
-        for mesh in self.physical_meshes:
-            mesh.shutdown()
+        self.physical_meshes.shutdown()
 
     def _exception_shutdown(self):
         """In this shutdown, some actors might have died."""
-        # recycle collective group info
-        for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                if i < j and self._collective_groups[i][j]:
-                    group_name = self._collective_groups[i][j].group_name
-                    # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
-                    name = "info_" + group_name
-                    try:
-                        store = ray.get_actor(name)
-                        ray.kill(store)
-                    except ValueError:
-                        pass
-        # TODO(Hao): recycle the NCCLUniqueID named actor. Their name is MD5 hashed.
-        #            each of them will takes 1 CPU.
-        # recycle info actors
-        for mesh in self.physical_meshes:
-            mesh.shutdown(forced=True)
+        self.physical_meshes.exception_shutdown()
 
     def profile_all_executables(self):
         """Profile all executables in the runtime."""

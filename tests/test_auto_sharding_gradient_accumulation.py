@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import ray
 
 from alpa import (parallelize, set_parallelize_options, grad, global_config,
-                  PhysicalDeviceMesh, DeviceCluster)
+                  LocalPhysicalDeviceMesh, DeviceCluster)
 from alpa.util import count_communication_primitives
 from alpa.testing import assert_allclose
 
@@ -37,7 +37,7 @@ class GradAccumulationTest(unittest.TestCase):
             physical_mesh = device_cluster.get_physical_mesh()
             logical_mesh = physical_mesh.get_default_logical_mesh()
         else:
-            physical_mesh = PhysicalDeviceMesh(jax.local_devices()[:4])
+            physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
             if use_2d_mesh:
                 logical_mesh = physical_mesh.get_logical_mesh([2, 2], [1, 1],
                                                               [1, 1])

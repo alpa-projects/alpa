@@ -308,8 +308,8 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                         assert task_spec
                         task = EagerReshardingTask(
                             task_spec,
-                            self._collective_groups[src_mesh_idx][mesh_idx],
-                            self.physical_meshes[src_mesh_idx],
+                            self.physical_meshes.collective_groups[src_mesh_idx]
+                            [mesh_idx], self.physical_meshes[src_mesh_idx],
                             self.physical_meshes[mesh_idx])
                         resharded_val = task.do(val)
                     inputs_list.append(resharded_val)
@@ -344,16 +344,8 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
 
     def shutdown(self):
         """Shutdown the pipeline runtime."""
-        # Recycle the groups an Ray resources
-        self._destroy_collective_groups()
         # Recycle the recompiled runnables
         del self._runnables
-
-        # Destroy the Ray workers
-        if not self.physical_meshes:
-            raise RuntimeError("No physical meshes spawned yet in "
-                               "the runtime before shutting down.")
-        for mesh in self.physical_meshes:
-            mesh.shutdown()
         # reset all timers
         reset_pipeline_runtime_benchmark_timers()
+        self.physical_meshes.shutdown()

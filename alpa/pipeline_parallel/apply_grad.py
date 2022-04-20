@@ -3,7 +3,8 @@ import logging
 from typing import Sequence, Dict, Tuple
 
 from jax._src.util import safe_map
-from jax.core import Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn
+from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn,
+                      get_aval, raise_to_shaped)
 from jax.lax import add_p, div_p
 import numpy as np
 
@@ -138,7 +139,8 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
         logger.warning(
             "Missing barrier between compute and apply. Assume there is no "
             "apply gradient step. Hint: replace jax.grad by alpa.grad.")
-        return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
+        dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
+        return closed_jaxpr, closed_jaxpr, dummy_jaxpr, None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]
@@ -391,11 +393,12 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
     outvar_set = OrderedSet(closed_jaxpr.jaxpr.outvars)
     for invar in gradients:
         div_out = gensym_fn(invar.aval)
+        literal_val = np.array(num_microbatch, invar.aval.dtype)
         new_eqns.append(
-            new_jaxpr_eqn(
-                [invar,
-                 Literal(np.array(num_microbatch, invar.aval.dtype))],
-                [div_out], div_p, {}))
+            new_jaxpr_eqn([
+                invar,
+                Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+            ], [div_out], div_p, {}))
         mapping[invar] = div_out
     replaced = replace_all_with(closed_jaxpr, mapping)
     final_invars = closed_jaxpr.jaxpr.invars

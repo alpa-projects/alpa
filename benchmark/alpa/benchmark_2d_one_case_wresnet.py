@@ -12,32 +12,6 @@ from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.util import (map_to_shape, count_communication_primitives,
                         print_used_time, compute_param_number, GB)
 
-_ = None
-
-# B = batch_size, I = image_size,
-# L = num_layers, C = num_base_channels, W = width_factor, 
-# D0 = mesh_dimension_0, D1 = mesh_dimension_1,
-# NB = num_micro_batches, FM = force_batch_dim_mapping,
-# RS = prefer_reduce_scatter, Remat = use_rematerialization
-
-fast_test_wresnet_suite = {
-1: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
-    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False, _),
-],
-
-4 : [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
-    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False, _),
-],
-
-8: [
-    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
-    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False, _), 
-],
-}
-
-
 as_option = global_config.default_autosharding_option
 
 

@@ -6,10 +6,10 @@ from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from alpa.pipeline_parallel.xla_custom_call_marker import xla_pipeline_marker, identity
+from alpa.pipeline_parallel.xla_custom_call_marker import pipeline_marker, identity
 
-xc.register_custom_call_target(b'xla_pipeline_marker',
-                               xla_pipeline_marker(),
+xc.register_custom_call_target(b'pipeline_marker',
+                               pipeline_marker(),
                                platform='gpu')
 xc.register_custom_call_target(b'identity', identity(), platform='gpu')
 
@@ -63,38 +63,6 @@ def mark_hook_jaxpreqn(invars, outvars):
     })
 
 
-def xla_identity(c, *args, opaque=b'', op_type=None):
-    """TODO(zhuohan): docstring."""
-
-    def all_index(shape, cur):
-        out = []
-        if shape.is_tuple():
-            for i, subshape in enumerate(shape.tuple_shapes()):
-                out.extend(all_index(subshape, cur + [i]))
-        elif shape.is_array():
-            out.append(xc.ShapeIndex(cur))
-        return out
-
-    input_params = xc.ops.Tuple(c, args)
-    input_shape = c.get_shape(input_params)
-    aliasing = [(index, (0, index)) for index in all_index(input_shape, [])]
-    if op_type:
-        op_metadata = xc.OpMetadata(op_type=op_type)
-        c.set_op_metadata(op_metadata)
-    output_tuple = xc.ops.CustomCallWithOnlyAliasing(
-        c,
-        b'identity',
-        operands=(input_params,),
-        shape=input_shape,
-        output_operand_aliasing=aliasing,
-        opaque=opaque)
-    c.clear_op_metadata()
-    return output_tuple
-
-
-########## Internal Registration ##########
-
-
 def flatten_shape_byte_sizes(shape):
     """TODO(zhuohan): docstring."""
 
@@ -111,23 +79,30 @@ def flatten_shape_byte_sizes(shape):
     return np.array(res, dtype=np.int64)
 
 
-def mark_pipeline_xla(c, *args, **kwargs):
-    """TODO(zhuohan): docstring."""
+def xla_custom_call(c, call_name, op_type, op_name, *args):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
-    op_metadata = xc.OpMetadata(op_type=kwargs["mark_type"],
-                                op_name=kwargs.get("name", ""))
+    op_metadata = xc.OpMetadata(op_type=op_type, op_name=op_name)
     c.set_op_metadata(op_metadata)
-    output_tuple = xc.ops.CustomCallWithLayout(
-        c,
-        b'xla_pipeline_marker',
-        operands=(input_params,),
-        shape_with_layout=input_shape,
-        operand_shapes_with_layout=(input_shape,),
-        opaque=flattened_byte_sizes.tobytes())
+    output_tuple = xc.ops.CustomCall(c,
+                                     call_name,
+                                     operands=(input_params,),
+                                     shape=input_shape,
+                                     opaque=flattened_byte_sizes.tobytes())
     c.clear_op_metadata()
     return output_tuple
+
+
+def xla_identity(c, op_type, *args):
+    return xla_custom_call(c, b"identity", op_type, "", *args)
+
+
+def xla_pipeline_marker(c, mark_type, name, *args):
+    return xla_custom_call(c, b"pipeline_marker", mark_type, name, *args)
+
+
+########## Internal Registration ##########
 
 
 def _pipeline_impl(*args, **kwargs):
@@ -142,8 +117,8 @@ def _pipeline_abstract_eval(*args, **kwargs):
 def _pipeline_xla_translation(c, *args, **kwargs):
     # TODO(yonghao): separate identity and marker in JAX
     if kwargs["mark_type"] == "hook":
-        return xla_identity(c, *args, opaque=b"hook")
-    return mark_pipeline_xla(c, *args, **kwargs)
+        return xla_identity(c, "hook", *args)
+    return xla_pipeline_marker(c, kwargs["mark_type"], kwargs["name"], *args)
 
 
 def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):

@@ -8,8 +8,8 @@ import ray
 from alpa import DeviceCluster, global_config
 from alpa.util import write_tsv, to_str_round
 from benchmark_3d_one_case import benchmark_one_case
-from paper_manual_gpt_suite import gpt_specs
-from paper_manual_moe_suite import moe_specs
+from suite_paper_manual_gpt import gpt_specs
+from suite_paper_manual_moe import moe_specs
 
 benchmark_one_case_gpt = (lambda case, niter, num_host, num_devices_per_host:
     benchmark_one_case("gpt", case, niter, num_host, num_devices_per_host,

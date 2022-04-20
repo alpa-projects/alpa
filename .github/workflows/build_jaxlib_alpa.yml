@@ -1,0 +1,15 @@
+name: Build Jaxlib and Jax
+
+on: workflow_dispatch
+
+jobs:
+  build-image:
+    name: Build JaxLib image
+    runs-on: [self-hosted]
+    steps:
+      - name: build image
+        run: |
+          cd build
+          docker build . -t build-jaxlib-image
+          mkdir -p dist
+          docker run --gpus all --tmpfs /build:exec --rm -v $(pwd)/dist:/dist test-build-jaxlib-image 3.8.0 cuda

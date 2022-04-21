@@ -171,7 +171,6 @@ class AutoShardingBasicTest(unittest.TestCase):
         split(a)
 
         executable = split.get_executable(a)
-
         assert_close(executable.auto_sharding_objective, 0)
 
     def test_argmax(self):

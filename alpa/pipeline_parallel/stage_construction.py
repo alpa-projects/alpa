@@ -579,12 +579,13 @@ def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
             assert cur_device_index == 0, "unable to satisfy the mesh requirement."
     return output_meshes
 
-def optimize_cost(
-        layers, mesh, donation_mapping, global_outvars, num_micro_batches,
-        batch_size, jax_apply_layers, apply_grad_global_info,
-        pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
-        forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
-        autosharding_option_dicts):
+
+def optimize_cost(layers, mesh, donation_mapping, global_outvars,
+                  num_micro_batches, batch_size, jax_apply_layers,
+                  apply_grad_global_info, pipeline_stage_mode,
+                  logical_mesh_search_space, cache_compute_cost,
+                  forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
+                  autosharding_option_dicts):
 
     # Assume each forward layer corresponds to a backward layer
     assert len(layers) % 2 == 0
@@ -605,13 +606,13 @@ def optimize_cost(
     else:
         cached_result = None
     compute_cost, max_n_succ_stages = get_compute_cost(
-        mesh, submesh_choices, autosharding_configs, layers,
-        donation_mapping, global_outvars, jax_apply_layers,
-        apply_grad_global_info, cached_result)
+        mesh, submesh_choices, autosharding_configs, layers, donation_mapping,
+        global_outvars, jax_apply_layers, apply_grad_global_info, cached_result)
     best_cost, solution = dp(num_layers, mesh.num_devices, num_micro_batches,
-                        submesh_choices, num_autosharding_configs,
-                        compute_cost, max_n_succ_stages)
+                             submesh_choices, num_autosharding_configs,
+                             compute_cost, max_n_succ_stages)
     return best_cost
+
 
 # TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate
 # gradient part instead of the whole computation

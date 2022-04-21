@@ -1,0 +1,38 @@
+name: Build and test Alpa
+
+on:
+  workflow_run:
+    workflows: ["Build Jaxlib and Jax"]
+    types:
+      - completed
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build_and_test:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Python3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get install 
+          python -m pip install --upgrade pip
+          pip install prospector yapf
+
+      - name: Linting
+        run: |
+          prospector ./alpa
+
+      - name: Test
+        run: |
+          docker run --gpus all --tmpfs /build:exec --rm \
+          -v /data/alpa-dist:/alpa-dist \
+          --entrypoint build/test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8.0 11.1

@@ -1,0 +1,53 @@
+name: Build Jaxlib and Jax
+
+#on: workflow_dispatch
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build_jaxlib:
+    name: Build JaxLib wheels
+    runs-on: [self-hosted]
+    # change the following to build with
+    #   Python： 3.7, 3.8. 3.9
+    #   CUDA 11.1, 11.2, 11.3
+    # Using github matrix
+
+    steps:
+      # checkout repo
+      - uses: actions/checkout@v2
+
+      - name: build image
+        run: |
+          cd build
+          docker build . -t build-jaxlib-image
+
+      - name: Compile Alpa Jaxlib
+        run: |
+          mkdir -p dist
+          docker run --gpus all --tmpfs /build:exec --rm -v $(pwd)/dist:/dist build-jaxlib-image 3.8.0 cuda 11.1
+
+      # change this to publishing to pypi
+      - name: Publish
+        run: |
+          echo "Move the Jaxlib wheel"
+          move dist/*.whl /data/alpa-dist/jaxlib-alpa/jaxlib-alpa-latest.whl
+
+  build_jax:
+    name: Build Jax
+    runs-on: [self-hosted]
+
+    steps:
+      - uses: actions/checkout@master
+        with:
+          name: alpa-projects/jax-alpa
+          refs: main
+
+      - name: Jax source dist
+        run: |
+          cd jax-alpa
+          python setup.py sdist
+          echo "Move the JAX source"
+          move dist/*.tar.gz /data/alpa-dist/jax-alpa/jax-alpa-latest.tar.gz

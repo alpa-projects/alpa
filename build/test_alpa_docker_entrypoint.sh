@@ -9,7 +9,6 @@ fi
 
 export PYENV_ROOT="/pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
-export LLVM_CONFIG=/usr/bin/llvm-config-8
 eval "$(pyenv init -)"
 
 PY_VERSION="$1"
@@ -39,7 +38,9 @@ sudo apt install -y coinor-cbc
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
-LLVM_CONFIG=/usr/bin/llvm-config-8 pip install numba
+
+pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
+pip install /alpa-dist/jaxlib-alpa/jax-0.3.5.tar.gz
 
 pip install -e .
 ray start --head

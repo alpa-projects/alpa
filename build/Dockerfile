@@ -15,9 +15,9 @@ RUN /pyenv/bin/pyenv install 3.8.0
 RUN /pyenv/bin/pyenv install 3.9.0
 
 # We pin numpy to the minimum permitted version to avoid compatibility issues.
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.19.5 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.19.5 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
 
 # Change the CUDA version if it doesn't match the installed version in the base image
 # which is 10.0
@@ -33,7 +33,7 @@ WORKDIR /
 COPY build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
 COPY test_alpa_docker_entrypoint.sh /test_alpa_docker_entrypoint.sh
 RUN chmod +x /build_wheel_docker_entrypoint.sh
-RUN chmod +x /build_wheel_docker_entrypoint.sh
+RUN chmod +x /test_alpa_docker_entrypoint.sh
 
 WORKDIR /build
 ENV TEST_TMPDIR /build

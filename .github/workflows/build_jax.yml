@@ -33,7 +33,7 @@ jobs:
       - name: Publish to local
         run: |
           echo "Move the Jaxlib wheel"
-          mv dist/*.whl /data/alpa-dist/jaxlib-alpa/jaxlib-alpa-latest.whl
+          mv dist/*.whl /data/alpa-dist/jaxlib-alpa/*.whl
 
   build_jax:
     name: Build Jax
@@ -50,4 +50,4 @@ jobs:
           cd jax-alpa
           python setup.py sdist
           echo "Move the JAX source"
-          mv dist/*.tar.gz /data/alpa-dist/jax-alpa/jax-alpa-latest.tar.gz
+          mv dist/*.tar.gz /data/alpa-dist/jax-alpa/*.tar.gz

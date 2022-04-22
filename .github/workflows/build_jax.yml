@@ -30,10 +30,10 @@ jobs:
           docker run --gpus all --tmpfs /build:exec --rm -v $(pwd)/dist:/dist build-jaxlib-image 3.8.0 cuda 11.1
 
       # change this to publishing to pypi
-      - name: Publish
+      - name: Publish to local
         run: |
           echo "Move the Jaxlib wheel"
-          move dist/*.whl /data/alpa-dist/jaxlib-alpa/jaxlib-alpa-latest.whl
+          mv dist/*.whl /data/alpa-dist/jaxlib-alpa/jaxlib-alpa-latest.whl
 
   build_jax:
     name: Build Jax
@@ -50,4 +50,4 @@ jobs:
           cd jax-alpa
           python setup.py sdist
           echo "Move the JAX source"
-          move dist/*.tar.gz /data/alpa-dist/jax-alpa/jax-alpa-latest.tar.gz
+          mv dist/*.tar.gz /data/alpa-dist/jax-alpa/jax-alpa-latest.tar.gz

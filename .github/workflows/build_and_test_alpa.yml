@@ -23,9 +23,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install 
           python -m pip install --upgrade pip
-          pip install prospector yapf
+          pip install prospector
 
       - name: Linting
         run: |
@@ -33,6 +32,7 @@ jobs:
 
       - name: Test
         run: |
+          cd build
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
           --entrypoint build/test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8.0 11.1

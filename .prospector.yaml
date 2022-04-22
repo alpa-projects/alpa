@@ -1,7 +1,7 @@
 ---
 strictness: high
 test-warnings: true
-doc-warnings: true
+#doc-warnings: true
 member-warnings: false
 
 ignore-paths:

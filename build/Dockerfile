@@ -4,8 +4,14 @@ FROM gcr.io/tensorflow-testing/nosla-cuda10.0-cudnn7-ubuntu16.04-manylinux2010
 
 WORKDIR /
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
+
+RUN echo "deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial-8 main" >> /etc/apt/sources.list
+RUN echo "deb-src http://apt.llvm.org/xenial/ llvm-toolchain-xenial-8 main" >> /etc/apt/sources.list
 RUN apt-get update
-RUN apt-get install libffi-dev
+
+RUN apt-get install -y --no-install-recommends libedit-dev build-essential
+RUN apt-get install -y --no-install-recommends  llvm-8 llvm-8-dev
+RUN apt-get install libffi-dev libatlas-base-dev
 RUN git clone --branch v1.2.21 https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
 RUN /pyenv/bin/pyenv install 3.7.2

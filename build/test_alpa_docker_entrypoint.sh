@@ -9,6 +9,7 @@ fi
 
 export PYENV_ROOT="/pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
+export LLVM_CONFIG=/usr/bin/llvm-config-8
 eval "$(pyenv init -)"
 
 PY_VERSION="$1"
@@ -33,12 +34,11 @@ pyenv local "$PY_VERSION"
 export JAX_CUDA_VERSION=$2
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
+# install ILP solver
+sudo apt install -y coinor-cbc
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
-
-# install ILP solver
-sudo apt install coinor-cbc
 
 pip install -e .
 ray start --head

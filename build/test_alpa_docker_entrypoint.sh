@@ -38,11 +38,18 @@ sudo apt install -y coinor-cbc
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
+pip install coverage
 
 pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
-pip install /alpa-dist/jaxlib-alpa/jax-0.3.5.tar.gz
+pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
+cd /build/alpa/alpa/pipeline_parallel/xla_custom_call_marker
+./build.sh
+cd /build/alpa
 pip install -e .
 ray start --head
-cd tests
-python run_all.py
+coverage run -m unittest tests/test_*.py
+coverage report -m
+coverage html
+mkdir -p /alpa-dist/coverage
+coverage xml -o /alpa-dist/coverage/

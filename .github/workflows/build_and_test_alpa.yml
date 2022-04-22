@@ -35,4 +35,4 @@ jobs:
           cd build
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
-          --entrypoint build/test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8.0 11.1
+          --entrypoint /test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8.0 11.1

@@ -19,7 +19,7 @@ auth:
 
 head_node:
     InstanceType: p3.16xlarge
-    ImageId: ami-0787bc82020b08a49 # artifact-2
+    ImageId: ami-0f2b1ca96e43b481c # artifact-3
     SecurityGroupIds:
         - "sg-08fe923867c376577"
     BlockDeviceMappings:
@@ -30,7 +30,7 @@ head_node:
 
 worker_nodes:
     InstanceType: p3.16xlarge
-    ImageId: ami-0787bc82020b08a49 # artifact-2
+    ImageId: ami-0f2b1ca96e43b481c # artifact-3
     SecurityGroupIds:
         - "sg-08fe923867c376577"
     BlockDeviceMappings:

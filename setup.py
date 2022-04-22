@@ -88,7 +88,8 @@ dev_require_list = [
     "prospector",
     "yapf",
     "coverage",
-    "cmake"
+    "cmake",
+    "pybind11"
 ]
 
 

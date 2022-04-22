@@ -78,7 +78,7 @@ install_require_list = [
     "tqdm",
     "scipy",
     "numba",
-    "ray",
+    "ray==1.12.0",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp"

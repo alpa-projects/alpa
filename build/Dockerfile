@@ -7,7 +7,7 @@ RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 
 RUN apt-get update
 RUN apt-get install -y --no-install-recommends libedit-dev build-essential
-RUN apt-get install -y libffi-dev libatlas-base-dev
+RUN apt-get install -y libffi-dev libatlas-base-dev libjpeg-dev zlib1g-dev
 RUN git clone --branch v1.2.21 https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
 RUN /pyenv/bin/pyenv install 3.7.2

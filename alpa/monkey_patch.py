@@ -7,10 +7,12 @@ import jax
 from jax import core, lax, numpy as jnp
 from jax._src.lax.lax import _reduce_min, _reduce_max
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
+from jax._src.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   register_translation, wrap_name,
-                                  _backend_specific_translations)
+                                  _backend_specific_translations, parameter,
+                                  xla_destructure, pyval_to_ir_constant)
 import numpy as np
 
 from alpa.global_env import global_config
@@ -62,6 +64,16 @@ jax._src.random.uniform = fast_uniform
 jax.random.uniform = fast_uniform
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
+
+
+def _zeros(c, xla_shape):
+    if xla_shape.is_array():
+        shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+        zero = pyval_to_ir_constant(c, np.array(0, dtype=dtype))
+        return xops.Broadcast(zero, shape)
+    else:
+         # It is a token
+         return xops.CreateToken(c)
 
 
 def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
@@ -145,32 +157,6 @@ for dict_val in _backend_specific_translations.values():
     if pe.remat_call_p in dict_val:
         del dict_val[pe.remat_call_p]
 register_translation(pe.remat_call_p, _remat_translation_rule)
-
-
-# Use a special rule for argmin/argmax that does not require variadic reduce.
-def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
-    axis, = axes
-    idxs = lax.tie_in(a, lax.broadcasted_iota(index_dtype, a.shape, axis))
-    maxval = np.array(lax.dtypes.iinfo(index_dtype).max, dtype=index_dtype)
-    maxval = lax.broadcast(lax.tie_in(a, maxval), a.shape)
-    maxvals = lax.expand_dims(op(a, (axis,)), (axis,))
-    mask_idxs = lax.select(lax.eq(a, maxvals) | lax.ne(a, a), idxs, maxval)
-    return _reduce_min(mask_idxs, (axis,))
-
-
-jax.xla.register_translation(lax.argmin_p,
-                             jax.xla.lower_fun(partial(
-                                 _argminmax_gpu_translation_rule, _reduce_min),
-                                               multiple_results=False,
-                                               new_style=True),
-                             platform="gpu")
-
-jax.xla.register_translation(lax.argmax_p,
-                             jax.xla.lower_fun(partial(
-                                 _argminmax_gpu_translation_rule, _reduce_max),
-                                               multiple_results=False,
-                                               new_style=True),
-                             platform="gpu")
 
 jax._src.tree_util.tree_multimap = jax._src.tree_util.tree_map
 jax.tree_multimap = jax._src.tree_util.tree_map

@@ -15,7 +15,8 @@ PY_VERSION="$1"
 echo "Python version $PY_VERSION"
 
 git clone https://github.com/alpa-projects/alpa.git
-cd /build/alpa
+# TODO(Hao): remove this
+cd /build/alpa && git checkout hao-wheel-2
 
 usage() {
   echo "usage: ${0##*/} [3.7.2|3.8.0|3.9.0] [11.1|11.2|11.3]"

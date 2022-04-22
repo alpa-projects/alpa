@@ -39,6 +39,7 @@ sudo apt install -y coinor-cbc
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
+LLVM_CONFIG=/usr/bin/llvm-config-8 pip install numba
 
 pip install -e .
 ray start --head

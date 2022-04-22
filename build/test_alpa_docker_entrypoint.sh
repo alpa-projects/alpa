@@ -38,7 +38,7 @@ sudo apt install -y coinor-cbc
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
-pip install coverage
+pip install coverage cmake
 
 pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
 pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz

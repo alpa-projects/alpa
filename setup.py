@@ -87,7 +87,8 @@ install_require_list = [
 dev_require_list = [
     "prospector",
     "yapf",
-    "coverage"
+    "coverage",
+    "cmake"
 ]
 
 

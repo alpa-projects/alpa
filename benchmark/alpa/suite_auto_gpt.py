@@ -1,5 +1,5 @@
-"""Benchmark suite for auto gpt."""
-from suite_paper_manual_gpt import gpt_specs
+"""Benchmark suite for gpt."""
+from suite_manual_gpt import gpt_specs
 
 dummy_arguments = (0, 0, 0, 0) # LD0, LD1, PD0, PD1, not used for auto
 fixed_params = (False, True, True) # FM, Remat, RS

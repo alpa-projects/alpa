@@ -1,4 +1,4 @@
-"""Benchmark suite for gpt."""
+"""Benchmark suites for gpt with manual specifications."""
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
@@ -26,7 +26,7 @@ fixed_params = (True,  True, "uniform_layer_gpipe", None)
 max_global_batch_size = 1024
 
 # Temporary debug suite
-tmp_gpt_suite = {  # key = the number of gpus, value = a list of cases
+tmp_suite = {  # key = the number of gpus, value = a list of cases
     #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,    ...
 1: [
     (32,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   False, *fixed_params),
@@ -49,8 +49,9 @@ tmp_gpt_suite = {  # key = the number of gpus, value = a list of cases
 ],
 }
 
+
 # Fast performance test on models with fewer layers
-fast_perf_test_gpt_suite = {
+perf_test_fast_2d_suite = {
 1: [
     #B,   S,     H     L,  #head, V,     LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
     (8,  1024,  1024,  4,  32,    51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
@@ -66,7 +67,7 @@ fast_perf_test_gpt_suite = {
 
 
 # Performance test on normal models
-perf_test_gpt_suite = {
+perf_test_suite = {
     #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,    ...
 1: [
     (16,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   True,  *fixed_params),

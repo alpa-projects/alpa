@@ -21,7 +21,7 @@ wresnet_specs = {
 
 _ = None
 
-fast_perf_test_wresnet_suite = { # key = the number of gpus, value = a list of cases
+perf_test_2d = { # key = the number of gpus, value = a list of cases
     1: [
         #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
         (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False, _),

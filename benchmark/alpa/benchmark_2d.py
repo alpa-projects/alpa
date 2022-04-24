@@ -19,7 +19,8 @@ benchmark_suites = {
     "moe.tmp": suite_manual_moe.tmp_suite,
     "moe.perf_test_fast_2d": suite_manual_moe.perf_test_fast_2d_suite,
 
-    "wresnet.perf_test_2d": suite_wresnet.perf_test_2d,
+    "wresnet.tmp": suite_wresnet.tmp_suite,
+    "wresnet.perf_test_2d": suite_wresnet.perf_test_2d_suite,
 }
 
 

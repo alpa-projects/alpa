@@ -3,11 +3,11 @@ from datetime import datetime
 
 from util import run_cmd
 
-from benchmark.alpa.suite_paper_manual_gpt import manual_tuning_gpt_suite, tmp_gpt_suite
+from benchmark.alpa import suite_manual_gpt
 
 benchmark_suites = {
-    "gpt.tmp": tmp_gpt_suite,
-    "gpt.manual_tuning": manual_tuning_gpt_suite,
+    "gpt.tmp": suite_manual_gpt.tmp_suite,
+    "gpt.grid_search_manual": suite_manual_gpt.grid_search_manual,
 }
 
 def benchmark_all(args):

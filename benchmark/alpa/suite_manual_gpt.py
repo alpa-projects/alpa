@@ -1,4 +1,4 @@
-"""Suites for gpt benchmarking."""
+"""Benchmark suites for gpt with manual specifications."""
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
@@ -7,7 +7,7 @@
 # RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
 
 gpt_specs = {
-        #S，    H，     L,     head, V,
+        #S，    H，    L,     head, V,
 "125M": (1024,  768,   12,    12,   51200,),
 "350M": (1024,  1024,  24,    16,   51200,),
 "760M": (1024,  1536,  24,    16,   51200,),
@@ -17,20 +17,17 @@ gpt_specs = {
 "15B":  (1024,  5120,  48,    40,   51200,),
 "39B":  (1024,  8192,  48,    64,   51200,),
 "76B":  (1024,  10240, 60,    80,   51200,),
-
-# for debugging purpose
-"6.7B-half": (1024,  4096,  16,   32,   51200,),
-"2.6B-half": (1024,  2560,  4,    32,   51200,),
-"15B-":      (1024,  5120,  4,    40,   51200,),
 }
 
-              # Remat, RS,   pipeline_stage_mode,   overwrite_global_config_dict
+_ = None
+
+              # Remat, RS,   Stage,                 overwrite_global_config_dict
 fixed_params = (True,  True, "uniform_layer_gpipe", None)
 max_global_batch_size = 1024
 
-
-tmp_gpt_suite = {  # key = the number of gpus, value = a list of cases
-    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,  ...
+# Temporary debug suite
+tmp_suite = {  # key = the number of gpus, value = a list of cases
+    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,    ...
 1: [
     (32,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   False, *fixed_params),
 ],
@@ -40,7 +37,6 @@ tmp_gpt_suite = {  # key = the number of gpus, value = a list of cases
 ],
 
 8: [
-    # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.
     (32,  *gpt_specs["2.6B"],  2,   2,   1,   4,   2,  4,   False, *fixed_params),
 ],
 
@@ -53,10 +49,9 @@ tmp_gpt_suite = {  # key = the number of gpus, value = a list of cases
 ],
 }
 
-_ = None
 
 # Fast performance test on models with fewer layers
-fast_perf_test_gpt_suite = {
+perf_test_fast_2d_suite = {
 1: [
     #B,   S,     H     L,  #head, V,     LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
     (8,  1024,  1024,  4,  32,    51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
@@ -72,20 +67,20 @@ fast_perf_test_gpt_suite = {
 
 
 # Performance test on normal models
-perf_test_gpt_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,  ...
+perf_test_suite = {
+    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,    ...
 1: [
     (16,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   True,  *fixed_params),
 ],
 
 8: [
-    # 222 performance case. Ours: 37 TFLOPS. Megatron: 38 TFLOPS.  (p3.16xlarge)
     (32,  *gpt_specs["2.6B"],  2,   2,   1,   4,   2,  4,   False, *fixed_params),
 ],
 }
 
 
-manual_tuning_gpt_suite = {
+# Grid search on hyperparameters
+grid_search_manual = {
     #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
 1: [
     # 125M

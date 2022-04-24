@@ -5,7 +5,7 @@
 # On head node
 ray start --head
 
-# (Optional) : launch worker nodes and connect them to the head node
+# (Optional) : launch more worker nodes and connect them to the head node
 # ray start --address='172.31.31.37:6379' --redis-password='5241590000000000'
 ```
 

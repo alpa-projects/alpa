@@ -39,7 +39,14 @@ perf_test_2d = { # key = the number of gpus, value = a list of cases
 }
 
 
-paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of cases
+# Performance test with search solutions found for p3.16xlarge
+perf_test_auto_suite = {
+
+}
+
+
+# Grid search on hyperparameters
+grid_search_auto_suite = {  # key = the number of gpus, value = a list of cases
     1: [
         # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
         (1536, 224, 50,  160,  2,  "fp32", 24, False, False, True,  "single_node_model_parallel"),

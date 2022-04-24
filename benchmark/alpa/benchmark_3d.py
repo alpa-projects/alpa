@@ -12,6 +12,7 @@ import suite_auto_gpt
 import suite_auto_moe
 import suite_manual_gpt
 import suite_manual_moe
+import suite_wresnet
 
 
 benchmark_suites = {
@@ -27,8 +28,8 @@ benchmark_suites = {
     "moe.perf_test_auto": suite_auto_moe.perf_test_suite,
     "moe.grid_search_auto": suite_auto_moe.grid_search_suite,
 
-    #"wresnet.perf_test_auto": paper_auto_wresnet_suite,
-    #"wresnet.grid_search_auto": paper_auto_wresnet_suite,
+    "wresnet.perf_test_auto": suite_wresnet.perf_test_auto_suite,
+    "wresnet.grid_search_auto": suite_wresnet.grid_search_auto_suite,
 }
 
 

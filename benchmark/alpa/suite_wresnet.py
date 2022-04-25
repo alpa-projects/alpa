@@ -21,25 +21,41 @@ wresnet_specs = {
 
 _ = None
 
-fast_perf_test_wresnet_suite = { # key = the number of gpus, value = a list of cases
-    1: [
-        #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
-        (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False, _),
-    ],
+# Performance test with shard parallel
+tmp_suite = { # key = the number of gpus, value = a list of cases
+8: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, True,  False, _),
+],
+}
 
-    4 : [
-        #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
-        (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False, _),
-    ],
+# Performance test with shard parallel
+perf_test_2d_suite = { # key = the number of gpus, value = a list of cases
+1: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (16,   224, 50,  192, 2, "fp32", 1,  1,  1,  False, True,  False, _),
+],
 
-    8: [
-        #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
-        (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False, _),
-    ],
+4 : [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (32,   224, 50,  320, 2, "fp32", 1,  4,  1,  False, False, False, _),
+],
+
+8: [
+    #B,    I,   L,   C,   W, dtype,  D0, D1, NB, FM,    RS,    Remat, other
+    (64,   224, 50,  320, 2, "fp32", 1,  8,  1,  False, False, False, _),
+],
 }
 
 
-paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of cases
+# Performance test with search solutions found for p3.16xlarge
+perf_test_auto_suite = {
+
+}
+
+
+# Grid search on hyperparameters
+grid_search_auto_suite = {  # key = the number of gpus, value = a list of cases
     1: [
         # B,   I,   L,   C,    W,  dtype,  NB, FD,    RS,    Remat, LS
         (1536, 224, 50,  160,  2,  "fp32", 24, False, False, True,  "single_node_model_parallel"),

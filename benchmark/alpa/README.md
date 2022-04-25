@@ -4,37 +4,38 @@
 ```
 # On head node
 ray start --head
-# (Optional) : launch worker nodes
+
+# (Optional) : launch more worker nodes and connect them to the head node
+# ray start --address='172.31.31.37:6379' --redis-password='5241590000000000'
 ```
 
 2. Run benchmark.
 ```
-python3 benchmark_2d.py --suite gpt.fast_perf_test
+python3 benchmark_3d.py --suite gpt.perf_test_auto
 ```
 
-## Santity Checks
-
+## Sanity Check
 ```
-python3 benchmark_3d.py --suite gpt.perf_test
+python3 benchmark_3d.py --suite gpt.perf_test_manual
 ```
 
-Expected output on AWS p3.16 (Mar.25, 2022, commit: b789b35c667)
+Expected output on AWS p3.16 (April 24, 2022)
 ```
 mkdir -p tmp
 Working on case: (32, 1024, 2560, 32, 32, 51200, 2, 2, 1, 4, 2, 4, False, True, True, 'uniform_layer_gpipe', None)
 rm -rf /tmp/tmp_transfer.pkl
 python3 -u benchmark_3d_one_case.py --model gpt --niter 3 --case "(32, 1024, 2560, 32, 32, 51200, 2, 2, 1, 4, 2, 4, False, True, True, 'uniform_layer_gpipe', None)" --num-hosts 1 --num-devices-per-host 8 --dump-result
 mkdir -p tmp
-2022-03-25 10:21:19,889 INFO worker.py:840 -- Connecting to existing Ray cluster at address: 172.31.24.40:6379
- - Prepare input: 2.83 s
- - Create train state: 3.57 s
- - Compile (driver): 62.07 s
- - Compile (worker): 58.23 s
+2022-04-24 10:41:32,482 INFO worker.py:840 -- Connecting to existing Ray cluster at address: 172.31.24.40:6379
+ - Prepare input: 2.85 s
+ - Create train state: 3.03 s
+ - Compile (driver): 49.68 s
+ - Compile (worker): 58.72 s
 Iteration 0
 Iteration 1
 Iteration 2
- - Benchmark: 17.36 s
-Type: gpt  Model Config: (32, 1024, 2560, 32, 32)  Parallel Config: (2, 2, 2)  P-mesh shape: (1, 4)  #Microbatch: 4  Force Mapping: False  Remat: True  Reduce-scatter: True  Mean Time: 2.465s  Std Time: 0.001  #Params: 2.649B  TFLOPs: 28.07  TFLOPs (ckpt): 37.00  Peak Mem: 8.745G  overwrite_global_config_dict: None
+ - Benchmark: 18.85 s
+Type: gpt  Model Config: (32, 1024, 2560, 32, 32)  Parallel Config: (2, 2, 2)  P-mesh shape: (1, 4)  #Microbatch: 4  Force Mapping: False  Remat: True  Reduce-scatter: True  Mean Time: 2.425s  Std Time: 0.000  #Params: 2.649B  TFLOPs: 28.53  TFLOPs (ckpt): 37.60  Peak Mem: 8.745G  overwrite_global_config_dict: None
 ```
 
 ## Generate Profiling Database

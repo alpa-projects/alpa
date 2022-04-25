@@ -26,7 +26,7 @@ from alpa.pipeline_parallel.apply_grad import (
     process_apply_gradient,
     split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
-    cluster_layers_and_slice_mesh, cluster_layers_with_given_meshes)
+    cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
 

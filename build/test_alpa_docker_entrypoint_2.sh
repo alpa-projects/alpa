@@ -1,4 +1,3 @@
-#!/bin/bash
 # Adapted from https://github.com/alpa-projects/jax-alpa/blob/main/build/build_wheel_docker_entrypoint.sh
 set -xev
 if [ ! -d "/alpa-dist" ]
@@ -7,28 +6,15 @@ then
   exit 1
 fi
 
-export PYENV_ROOT="/pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
+apt-get install virtualenv
 
-PY_VERSION="$1"
-echo "Python version $PY_VERSION"
-
-
-usage() {
-  echo "usage: ${0##*/} [3.7.2|3.8.0|3.9.0] [11.1|11.2|11.3]"
-  exit 1
-}
-
-if [[ $# -lt 2 ]]
-then
-  usage
-fi
 
 # Builds and activates a specific Python version.
-pyenv local "$PY_VERSION"
+virtualenv --python=python3.8 python3.8-env
+source python3.8-env/bin/activate
+pip install --upgrade pip && pip3 install numpy==1.19.5 setuptools wheel six auditwheel
 
-export JAX_CUDA_VERSION=$2
+export JAX_CUDA_VERSION=11.1
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
 git clone https://github.com/alpa-projects/alpa.git
@@ -36,7 +22,7 @@ git clone https://github.com/alpa-projects/alpa.git
 cd /build/alpa && git checkout hao-wheel-2
 
 # install ILP solver
-sudo apt install -y coinor-cbc
+apt install -y coinor-cbc glpk-utils
 sudo apt install -y libsqlite3-dev
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
@@ -48,8 +34,4 @@ pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
 python setup.py install
 ray start --head
-coverage run -m unittest tests/test_*.py
-coverage report -m
-coverage html
-mkdir -p /alpa-dist/coverage
-coverage xml -o /alpa-dist/coverage/
+python -m unittest

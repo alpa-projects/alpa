@@ -2,14 +2,15 @@ import argparse
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 
-from common import parse_tsv_file, plot_scaling, plot_text
+from common import parse_tsv_file, plot_scaling, plot_text, fix_missing
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     args = parser.parse_args()
 
-    data_file = "results_inter_ablation.tsv"
-    data = parse_tsv_file(data_file, "inter_op_ablation")
+    data_ref = parse_tsv_file("results_inter_ablation_ref.tsv", "inter_op_ablation")
+    data = parse_tsv_file("results_inter_ablation.tsv", "inter_op_ablation")
+    fix_missing(data, data_ref)
 
     prefix = ""
     suffix = ".pdf"

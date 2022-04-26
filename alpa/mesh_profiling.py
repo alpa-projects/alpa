@@ -579,6 +579,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     """Profile a list of HLO operators on a worker."""
     results = []
     save_every = 15
+    barrier_every = 5
 
     if os.path.exists(cache_filename):
         rank_0_print(host_id,
@@ -603,6 +604,12 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 timeout=single_timeout)
             cache_dict[op_info] = mean_time
             results.append(mean_time)
+
+            if i % barrier_every == 0:
+                # Run barrier to reduce hanging/deadlock issues
+                run_with_timeout(profile_one_hlo_op,
+                    (backend, local_devices, host_id, num_devices, ('barrier',)),
+                    timeout=single_timeout)
 
             if host_id == 0 and (i + 1) % save_every == 0:
                 old_cache_len = len(cache_dict)
@@ -797,8 +804,13 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                 print(f"Reboot physical mesh. fail_ct: {fail_ct}")
                 physical_mesh.shutdown(forced=True)
                 physical_mesh = None
-                time.sleep(10)
-                physical_mesh = tmp_mesh.get_physical_mesh()
+                while physical_mesh is None:
+                    try:
+                        time.sleep(10)
+                        physical_mesh = tmp_mesh.get_physical_mesh()
+                    except RuntimeError as e:
+                        print("Physical mesh error", e)
+                        physical_mesh = None
 
         # Parse results
         all_gather_cost_dict = defaultdict(list)

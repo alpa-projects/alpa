@@ -74,7 +74,8 @@ class HloCostModelTest(unittest.TestCase):
     def test_cluster_profling(self):
         cluster = DeviceCluster()
         prof_database = cluster.profile_all("p3.16",
-                                            comm_size_range=(19, 20),
+                                            2,
+                                            2,
                                             max_fail_retry=5,
                                             cache_filename="tmp_cache.pkl")
         prof_database.save("tmp_prof_database.pkl")

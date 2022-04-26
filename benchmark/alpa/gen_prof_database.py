@@ -2,10 +2,10 @@
 
 Usage:
 AWS p3.16:
-python3 gen_prof_database.py --comm-size-max 30
+python3 gen_prof_database.py --max-comm-size-intra-node 32 --max-comm-size-inter-node 29
 
 AWS p4.24:
-python3 gen_prof_database.py --efa --comm-size-max 32
+python3 gen_prof_database.py --efa --max-comm-size-intra-node 33 --max-comm-size-intra-node 31
 """
 
 import ray
@@ -21,8 +21,11 @@ if __name__ == "__main__":
     parser.add_argument("--efa", action="store_true")
     parser.add_argument("--filename", type=str, default="prof_database.pkl",
         help="The filename of the output database")
-    parser.add_argument("--comm-size-max", type=int, required=True,
-        help="Run profiling for communication up to 2^x bytes, where x "
+    parser.add_argument("--max-comm-size-intra-node", type=int, required=True,
+        help="Run profiling for communication up to 2^x bytes within a node, where x "
+             "is this argument")
+    parser.add_argument("--max-comm-size-inter-node", type=int, required=True,
+        help="Run profiling for communication up to 2^x bytes cross nodes, where x "
              "is this argument")
     parser.add_argument("--cache-filename", type=str,
         default="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl",
@@ -50,7 +53,8 @@ if __name__ == "__main__":
 
     prof_database = cluster.profile_all(
         args.cluster_key,
-        comm_size_range=(0, args.comm_size_max + 1),
+        args.max_comm_size_intra_node,
+        args.max_comm_size_inter_node,
         max_fail_retry=args.max_fail_retry,
         cache_filename=args.cache_filename)
     prof_database.save(args.filename)

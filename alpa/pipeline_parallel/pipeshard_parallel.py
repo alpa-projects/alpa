@@ -59,7 +59,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Split the jaxpr into compute_grad and apply_grad
     closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
         split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
-    have_apply_grad = barrier is not None
+    have_apply_grad = (barrier is not None) and (len(apply_grad_jaxpr.eqns) > 0)
 
     if have_apply_grad:
         (acc_grad_jaxpr, acc_grad_dict,

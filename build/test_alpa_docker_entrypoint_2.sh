@@ -6,13 +6,13 @@ then
   exit 1
 fi
 
-apt-get install virtualenv
+apt-get install -y virtualenv
 
 
 # Builds and activates a specific Python version.
 virtualenv --python=python3.8 python3.8-env
 source python3.8-env/bin/activate
-pip install --upgrade pip && pip3 install numpy==1.19.5 setuptools wheel six auditwheel
+pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
 
 export JAX_CUDA_VERSION=11.1
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
@@ -23,7 +23,7 @@ cd /build/alpa && git checkout hao-wheel-2
 
 # install ILP solver
 apt install -y coinor-cbc glpk-utils
-sudo apt install -y libsqlite3-dev
+#sudo apt install -y libsqlite3-dev
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
@@ -34,4 +34,5 @@ pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
 python setup.py install
 ray start --head
+cd /build/alpa/tests
 python -m unittest

@@ -9,13 +9,9 @@ fi
 
 export CC=/dt7/usr/bin/gcc
 export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
-export PYENV_ROOT="/pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
 
 PY_VERSION="$1"
 echo "Python version $PY_VERSION"
-
 
 git clone https://github.com/alpa-projects/tensorflow-alpa.git /build/tensorflow-alpa
 git clone https://github.com/alpa-projects/jax-alpa.git /build/jax
@@ -27,7 +23,7 @@ export TMPDIR=/build/tmp
 export TF_PATH=/build/tensorflow-alpa
 
 usage() {
-  echo "usage: ${0##*/} [3.7.2|3.8.0|3.9.0] [cuda|nocuda] [11.1|11.2|11.3]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3]"
   exit 1
 }
 
@@ -37,7 +33,7 @@ then
 fi
 
 # Builds and activates a specific Python version.
-pyenv local "$PY_VERSION"
+source /python${PY_VERSION}-env/bin/activate
 
 # Workaround for https://github.com/bazelbuild/bazel/issues/9254
 export BAZEL_LINKLIBS="-lstdc++"

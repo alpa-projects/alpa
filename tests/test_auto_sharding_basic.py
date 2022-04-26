@@ -161,8 +161,6 @@ class AutoShardingBasicTest(unittest.TestCase):
         # TODO(lmzheng): Support the uneven partition of reshape.
         # But this seems too complicated.
 
-        set_parallelize_options(devices=jax.local_devices()[0:4])
-
         @parallelize
         def split(a):
             b = a.reshape((8, 18))
@@ -175,6 +173,30 @@ class AutoShardingBasicTest(unittest.TestCase):
         executable = split.get_executable(a)
         assert_close(executable.auto_sharding_objective, 0)
 
+    def test_argmax(self):
+        @parallelize
+        def split(a):
+            b = jnp.argmax(a, axis=0)
+            return b
+
+        a = jnp.ones((144, 144))
+
+        executable = split.get_executable(a)
+
+        assert_close(executable.auto_sharding_objective, 0)
+        hlo_ir = executable.get_hlo_text()
+        assert "(param: f32[144,36])" in hlo_ir
+
+    def test_sort(self):
+        @parallelize
+        def split(a):
+            b = jnp.argsort(a)
+            return b
+
+        a = jnp.ones((1024,), dtype=jnp.int32)
+
+        executable = split.get_executable(a)
+
 
 def suite():
     suite = unittest.TestSuite()
@@ -184,6 +206,8 @@ def suite():
     suite.addTest(AutoShardingBasicTest("test_gather"))
     suite.addTest(AutoShardingBasicTest("test_dropout"))
     suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
+    suite.addTest(AutoShardingBasicTest("test_argmax"))
+    suite.addTest(AutoShardingBasicTest("test_sort"))
     return suite
 
 

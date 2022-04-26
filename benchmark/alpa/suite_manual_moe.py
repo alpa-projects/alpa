@@ -1,5 +1,4 @@
-"""Suites for gpt benchmarking."""
-_ = None
+"""Benchmark suites for moe with manual specifications."""
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # head = num_heads, S_ = expert_group_size, E = expert_number,
@@ -20,35 +19,36 @@ moe_specs = {
 "140B":  (1024, 2048,   32,    16,      32000,   128,),
 }
 
-#               Remat, RS,   pipeline_stage_mode
+#               Remat, RS,   Stage
 fixed_params = (True,  True, "uniform_layer_gpipe")
 
+_ = None
 
-tmp_moe_suite = {  # key = the number of gpus, value = a list of cases
+# Temporary debug suite
+tmp_suite = {  # key = the number of gpus, value = a list of cases
 1: [
-    # B,      model,                          LD0, LD1, PD0, PD1, PP, NB, FM,    (Remat, RS, Stage), EP (deepspeed-only)
-    (8,  *moe_specs["380M"],  8 * 1024 // 2,  1,   1,   1,   1,   1,  1,  False, *fixed_params,  1),
+    # B,      model,                 LD0, LD1, PD0, PD1, PP, NB, FM,    ...,            EP (for deepspeed)
+    (8,  *moe_specs["380M"],  2048,  1,   1,   1,   1,   1,  1,  False, *fixed_params,  1),
 ],
 
 4: [
 ],
 
 8: [
-    (16, *moe_specs["1.3B"],  8 * 1024 // 2,   1,  4,   1,   4,   2,  1,  False, *fixed_params, 1),
-
+    (16, *moe_specs["1.3B"],  2048,  1,   4,   1,   4,   2,  1,  False, *fixed_params, 1),
 ],
 
 16: [
      # verify cost model vs. profiling
-     (1024, *moe_specs["10B"], 2048, 2,  8, 2, 8, 1, 32, True,  True, True, _, _),
+    (1024, *moe_specs["10B"], 2048,  2,   8,   2,   8,   1,  32, True,  True, True, _, _),
 ],
 
 32: [
 ],
 }
 
-
-fast_perf_test_moe_suite = {
+# Fast performance test on models with fewer layers
+perf_test_fast_2d_suite = {
 1: [
     #B,  S,    H     L,  #head, V,     E,  S_,   LD0, LD1, _, _,  PP,  NB, FM,    Remat, RS,    _, _
     (8,  1024, 1024, 8,  32,    25600, 8,  1024, 1,   1,   _, _,  1,   1,  True,  True,  True,  _, _),
@@ -65,26 +65,8 @@ fast_perf_test_moe_suite = {
 }
 
 
-bug_moe_suite = {
-8: [
-    (16, *moe_specs["1.3B"],  8 * 1024 // 2,   1,  4,   1,   4,   2,  1,  False, *fixed_params, 1),
-
-    # All-to-all error
-    #(16,     *moe_specs["1.3B"],  8 * 1024 // 2,   2,    2,    1,    4,   2,    1,  False,   *fixed_params, 1),
-],
-
-64: [
-    # bug: one worker hangs
-    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  128,  False, *fixed_params, 1),
-    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  256,  False, *fixed_params, 1),
-    # bug: invalid shardin spec after _rewrite_allgather_specs
-    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  512,  False, *fixed_params, 1),
-    #(1024, *moe_specs["70B"],  2048,   1,  8,   1,   8,   8,  1024, False, *fixed_params, 1),
-],
-}
-
-
-manual_tuning_moe_suite = {
+# Grid search on hyperparameters
+grid_search_manual = {
 1: [
     # B,      model,  LD0,  LD1,  PD0,  PD1,  PP,  NB,   FM,   (Remat, RS, Stage), _
     #1 GPUs, deepspeed max bs = 8, alpa = 16

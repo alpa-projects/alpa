@@ -139,7 +139,8 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
         logger.warning(
             "Missing barrier between compute and apply. Assume there is no "
             "apply gradient step. Hint: replace jax.grad by alpa.grad.")
-        return closed_jaxpr, ClosedJaxpr(Jaxpr([], [], [], []), []), None
+        dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
+        return closed_jaxpr, closed_jaxpr, dummy_jaxpr, None
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]

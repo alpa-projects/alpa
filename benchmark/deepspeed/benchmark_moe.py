@@ -7,7 +7,7 @@ import os
 import random
 
 from util import run_cmd
-from benchmark.alpa.suite_paper_manual_moe import tmp_moe_suite, manual_tuning_moe_suite
+from benchmark.alpa import suite_manual_moe
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # #head = num_heads, S_ = expert_group_size, E = expert_number,
@@ -18,8 +18,8 @@ from benchmark.alpa.suite_paper_manual_moe import tmp_moe_suite, manual_tuning_m
 
 
 benchmark_suites = {
-    "paper_moe": manual_tuning_moe_suite,
-    "test_moe": tmp_moe_suite,
+    "paper_moe": suite_manual_moe.grid_search_manual,
+    "test_moe": suite_manual_moe.tmp_suite,
 }
 
 

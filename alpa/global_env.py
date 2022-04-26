@@ -65,7 +65,9 @@ class GlobalConfig:
         self.xla_client_mem_fraction = 0.90
         self.xla_gpu_autotune_level = 4
         self.delete_remote_buffers_threshold = 500
-        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA", "").lower() in ["true", "1"]  # use AWS EFA network interface
+        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA", "").lower() in [
+            "true", "1"
+        ]  # use AWS EFA network interface
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_search_logical_mesh_shape = False

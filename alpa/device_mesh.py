@@ -100,7 +100,7 @@ class MeshHostWorker:
                                        take_ownership=True))
 
     ##### TensorStore Related Functions #####
-    def get_tensorstore_spec(self, ckpt_path: str):
+    def get_ts_spec(self, ckpt_path: str):
         spec = {
             'driver': 'zarr',
             'kvstore': {},
@@ -123,22 +123,23 @@ class MeshHostWorker:
             spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
         return spec
 
-    def load_buffers_from_ts_store(self, ckpt_dir: str, uuids: Sequence[int],
-                     shard_indices: Sequence[Index], device_ids: Sequence[int]):
-        ts_spec = self.get_tensorstore_spec(ckpt_dir)
+    def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                             shard_indices: Sequence[Index],
+                             device_ids: Sequence[int]):
+        ts_spec = self.get_ts_spec(ckpt_dir)
         t = ts.open(ts.Spec(ts_spec), open=True).result()
 
         for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
             data = t[index].read().result()
             self.put_buffer(uuid, device_id, data)
 
-    def save_buffers_to_ts_store(self, ckpt_dir: str, uuids: Sequence[int],
-                     shard_indices: Sequence[Index],
-                     global_shape: Sequence[int]):
+    def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                           shard_indices: Sequence[Index],
+                           global_shape: Sequence[int]):
         for uuid in uuids:
             assert uuid in self.buffers
 
-        ts_spec = self.get_tensorstore_spec(ckpt_dir)
+        ts_spec = self.get_ts_spec(ckpt_dir)
         dtype = self.buffers[uuids[0]].dtype
         if dtype == jnp.bfloat16:
             # Tensorstore uses 'bfloat16', not '<V2'.
@@ -163,7 +164,6 @@ class MeshHostWorker:
 
         for index, uuid in zip(shard_indices, uuids):
             t[index].write(self.buffers[uuid]).result()
-
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -1208,12 +1208,13 @@ class DistributedArray:
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             obj_refs.append(
-                self.device_mesh.workers[host_id].save_buffers_to_ts_store.remote(
+                self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
                     path, uuids, indices_per_host[host_id], self.shape))
         return ray.get(obj_refs)
 
     @classmethod
-    def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh, sharding_spec: ShardingSpec):
+    def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
+             sharding_spec: ShardingSpec):
         """Load the data from `path` distributedly with `aval` and return a new DistributedArray"""
         from alpa.mesh_executable import create_remote_buffer_refs
         buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, 1)
@@ -1229,12 +1230,12 @@ class DistributedArray:
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             obj_refs.append(
-                    device_mesh.workers[host_id].load_buffers_from_ts_store.remote(
+                device_mesh.workers[host_id].load_buffers_from_ts.remote(
                     path, uuids, indices_per_host[host_id],
                     device_ids_per_host[host_id]))
         ray.get(obj_refs)
-        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indice)
-
+        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
+                                indice)
 
     @property
     def one_replica_buffer_indices(self):

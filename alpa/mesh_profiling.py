@@ -248,8 +248,8 @@ def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups, channel_id):
     return ret
 
 
-def _compile_profiling_executable_while_loop(
-        backend, shapes, op_func, num_devices):
+def _compile_profiling_executable_while_loop(backend, shapes, op_func,
+                                             num_devices):
     """
     Compile an xla executable for benchmarking operators.
     It is a while loop that calls the operator for multiple times.
@@ -311,7 +311,7 @@ def _compile_profiling_executable_while_loop(
 
 def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
     """
-    Compile a xla executable for benchmarking operators.
+    Compile an xla executable for benchmarking operators.
     It runs the op only once.
     """
     in_tuple_shape = xc.Shape.tuple_shape(
@@ -363,8 +363,11 @@ def rank_0_print(host_id, msg):
     if host_id == 0:
         print(msg, flush=True)
 
+
+# A set containing all replica group patterns with nccl communicator created.
 global communicator_set
-communicator_set = set() 
+communicator_set = set()
+
 
 def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
                        num_devices_per_node, op_info):
@@ -538,7 +541,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
         for j, (shape, dtype) in enumerate(all_shapes):
             if j == 0:
                 device_inputs.append([
-                    backend.buffer_from_pyval(np.int32(warmup), local_devices[k])
+                    backend.buffer_from_pyval(np.int32(warmup),
+                                              local_devices[k])
                     for k in range(len(local_devices))
                 ])
             else:

@@ -174,6 +174,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert_close(executable.auto_sharding_objective, 0)
 
     def test_argmax(self):
+
         @parallelize
         def split(a):
             b = jnp.argmax(a, axis=0)
@@ -188,6 +189,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert "(param: f32[144,36])" in hlo_ir
 
     def test_sort(self):
+
         @parallelize
         def split(a):
             b = jnp.argsort(a)

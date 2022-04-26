@@ -128,12 +128,6 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
     return closed_jaxpr, [new_compute_eqns, [new_barrier], new_apply_eqns]
 
 
-def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
-    """Returns True if the jaxpr has apply_grad."""
-    return any(eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad'
-               for eqn in closed_jaxpr.eqns)
-
-
 def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     """Split the train_step jaxpr into two parts: compute_grad and apply_grad."""
     split_eqn = None

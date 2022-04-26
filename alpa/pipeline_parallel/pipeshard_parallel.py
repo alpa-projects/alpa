@@ -21,7 +21,6 @@ from alpa.pipeline_parallel.computation import (
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.apply_grad import (
-    jaxpr_have_apply_grad,
     compute_grad_to_accumulate_grad,
     process_apply_gradient,
     split_compute_grad_and_apply_grad)
@@ -52,11 +51,6 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         num_micro_batches = 1
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, avals)
-
-    have_apply_grad = jaxpr_have_apply_grad(closed_jaxpr)
-
-    if have_apply_grad:
-        pass
 
     gensym_func = gensym([closed_jaxpr.jaxpr])
 

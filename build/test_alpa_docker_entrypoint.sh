@@ -7,16 +7,8 @@ then
   exit 1
 fi
 
-export PYENV_ROOT="/pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
-
-PY_VERSION="$1"
-echo "Python version $PY_VERSION"
-
-
 usage() {
-  echo "usage: ${0##*/} [3.7.2|3.8.0|3.9.0] [11.1|11.2|11.3]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [11.1|11.2|11.3]"
   exit 1
 }
 
@@ -25,11 +17,13 @@ then
   usage
 fi
 
-# Builds and activates a specific Python version.
-pyenv local "$PY_VERSION"
-
+apt install -y coinor-cbc glpk-utils
 export JAX_CUDA_VERSION=$2
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
+
+# Enter python env
+source /python${PY_VERSION}-env/bin/activate
+
 
 git clone https://github.com/alpa-projects/alpa.git
 # TODO(Hao): remove this

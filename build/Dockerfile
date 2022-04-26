@@ -6,7 +6,6 @@ SHELL ["/bin/bash", "-c"]
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 RUN apt-get update
 RUN apt-get install -y python3-virtualenv
-
 RUN virtualenv --python=python3.7 python3.7-env
 RUN virtualenv --python=python3.8 python3.8-env
 RUN virtualenv --python=python3.9 python3.9-env

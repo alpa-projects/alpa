@@ -6,9 +6,9 @@ We are going to reproduce the main results in the paper.
 All experiments will be run on an AWS cluster. We provide credentials for you to launch and connect to the cluster.
 
 ### Install AWS Credentials (3 mins)
-Replace `<access key id>` and `<secrete access key>` in the following commands with the values provided on hotcrp.
-**NOTE**: The credentials in README file are wrong. Please use the credentials provided in the comments section.
-Please backup your old credentials before running the following commands if necessary.
+Replace `<access key id>` and `<secrete access key>` in the following commands with the values provided on hotcrp.  
+**NOTE**: The credentials in README file are wrong. Please use the credentials provided in the comments section.  
+Backup your old credentials before running the following commands if necessary.
 ```bash
 mkdir -p ~/.aws
 echo "[default]" > ~/.aws/credentials

@@ -651,6 +651,7 @@ def profile_dot(device_cluster, cache_filename):
             f"Matmul: {(n, m, k, dtype)}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}"
         )
 
+    physical_mesh.shutdown()
     return dot_cost_dict
 
 

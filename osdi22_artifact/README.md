@@ -6,8 +6,8 @@ We are going to reproduce the main results in the paper.
 All experiments will be run on an AWS cluster. We provide credentials for you to launch and connect to the cluster.
 
 ### Install AWS Credentials (3 mins)
-Replace `<access key id>` and `<secrete access key>` in the following commands with the
-values provided in the README file on hotcrp. 
+Replace `<access key id>` and `<secrete access key>` in the following commands with the values provided on hotcrp.
+**NOTE**: The credentials in README file are wrong. Please use the credentials provided in the comments section.
 Please backup your old credentials before running the following commands if necessary.
 ```bash
 mkdir -p ~/.aws
@@ -35,7 +35,7 @@ After the cluster is started, you can log in to the head node of the cluster by
 ray attach artifact-cluster.yaml
 ```
 
-You can use the following command to shutdown the cluster. DO NOT RUN IT NOW.
+You can use the following command to shutdown the cluster on your local machine. DO NOT RUN IT NOW.
 **Make sure to run it after your finish the artfact evaluation or want to pause.**
 The price of this AWS cluster is expensive: $100/hour paid by us.
 ```bash
@@ -83,7 +83,7 @@ python3 plot_e2e.py --model gpt
 This outputs `e2e_gpt.pdf`, or Figure 8 (a) in the paper.
 
 You can run `ray rsync-down artifact-cluster.yaml "~/efs/alpa/osdi22_artifact/*.pdf" .` **on your local machine**
-to copy the figures to your local machine for inspection.
+to copy the figures to your local machine for review.
 
 ### MoE (30 mins)
 ```bash

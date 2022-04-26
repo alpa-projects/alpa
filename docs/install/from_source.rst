@@ -28,7 +28,7 @@ To install alpa from source, we need to build these forks.
 
       .. code:: bash
     
-        pip3 install cmake tqdm pybind11 numba numpy scipy pulp ray flax==0.4.1
+        pip3 install cmake tqdm pybind11 numba numpy scipy pulp ray flax==0.4.1 tensorstore
         pip3 install cupy-cuda114  # use your own CUDA version. Here cuda-cuda114 means cuda 11.4.
 
   - NCCL:

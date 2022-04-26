@@ -454,7 +454,8 @@ def _check_cpu_tensors(tensors):
                            " Got {} != 1.".format(len(tensors)))
     d = gloo_util.get_tensor_device(tensors[0])
     if d != "cpu":
-        raise RuntimeError("Gloo only accept cpu tensor." " Got {}.".format(d))
+        raise RuntimeError("Gloo only accept cpu tensor."
+                           " Got {}.".format(d))
 
 
 def _flatten_for_scatter_gather(tensor_list, copy=False):

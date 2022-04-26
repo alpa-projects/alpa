@@ -43,5 +43,10 @@ Type: gpt  Model Config: (32, 1024, 2560, 32, 32)  Parallel Config: (2, 2, 2)  P
 
 2. Run profiling to generate the database for the HLO instruction cost model.
 ```
-python3 gen_prof_database.py
+# for AWS p3.16:
+python3 gen_prof_database.py --max-comm-size-intra-node 32 --max-comm-size-inter-node 29
+
+# for AWS p4.24:
+python3 gen_prof_database.py --efa --max-comm-size-intra-node 33 --max-comm-size-inter-node 30 --max-fail-retry 8
 ```
+

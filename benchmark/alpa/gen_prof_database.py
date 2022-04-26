@@ -5,7 +5,7 @@ AWS p3.16:
 python3 gen_prof_database.py --max-comm-size-intra-node 32 --max-comm-size-inter-node 29
 
 AWS p4.24:
-python3 gen_prof_database.py --efa --max-comm-size-intra-node 33 --max-comm-size-intra-node 31
+python3 gen_prof_database.py --efa --max-comm-size-intra-node 33 --max-comm-size-inter-node 30 --max-fail-retry 8
 """
 
 import ray

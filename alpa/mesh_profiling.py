@@ -578,7 +578,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                     cache_filename, single_timeout):
     """Profile a list of HLO operators on a worker."""
     results = []
-    save_every = 20
+    save_every = 15
 
     if os.path.exists(cache_filename):
         rank_0_print(host_id,
@@ -681,7 +681,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
         for replica_group in replica_groups:
             for dtype in ["f32", "f16"]:
                 # Debug filter
-                #if replica_group != (tuple(range(8)),) or dtype != "f32":
+                #if replica_group != (tuple(range(32)),) or dtype != "f32":
                 #    continue
 
                 if (max(replica_group[0]) - min(replica_group[0]) <
@@ -700,7 +700,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
     all_specs = list(all_specs)
     all_specs.sort(key=lambda k:
-                   (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).itemsize, k[2]))
+                   (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).itemsize, -k[2]))
     return list(all_specs)
 
 
@@ -775,7 +775,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                     batch_result = physical_mesh.profile_hlo_ops(
                         op_infos[s:s + batch_size],
                         cache_filename,
-                        single_timeout=bound(fail_ct * 100, 100, 500),
+                        single_timeout=bound(fail_ct * 100, 100, 400),
                         batch_timeout=batch_size * 100)
                 except ray.exceptions.RayError:
                     batch_result = None

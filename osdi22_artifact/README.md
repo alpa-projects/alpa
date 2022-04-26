@@ -2,6 +2,21 @@
 This is the artifact for the paper "Alpa: Automating Inter- and Intra-Operator Parallelism for Distributed Deep Learning".
 We are going to reproduce the main results in the paper.
 
+## ❗️❗️Update❗️❗️
+
+1. The original AWS access keys provided in hotcrp README is wrong. Please find the updated access keys in the comments section on hotcrp.
+2. We experienced some concurrency issues that many of you are trying to ray up or ray down at the same time, and connecting to the same cluster. Please modify [this line](artifact-cluster.yaml#L2) in [artifact-cluster.yaml](artifact-cluster.yaml) to a unique name as below. This is to make sure that each of you can get a unique cluster.
+    ```yaml
+    # Before modification
+    # A unique identifier for the head node and workers of this cluster.
+    cluster_name: artifact-cluster
+
+    # After modification example
+    # A unique identifier for the head node and workers of this cluster.
+    cluster_name: artifact-cluster-reviewer-A
+    ```
+   Note that even with this change, the underlying EFS (i.e. NFS on AWS) where we put our code and data is still shared among all the machines. We believe the chance you meet concurrency issue on EFS is small, but please let us know if you meet any.
+
 ## Setting up the Environment
 All experiments will be run on an AWS cluster. We provide credentials for you to launch and connect to the cluster.
 

@@ -217,6 +217,8 @@ def benchmark_wresnet_internal(benchmark_case,
             assert pipeline_mp_size == num_layers
             assert pipeline_stage_mode == "auto_gpipe"
             pipeline_mp_size = ablation_config["num_stages"]
+    if global_config.strategy == "shard_parallel":
+        global_config.devices = virtual_mesh.get_physical_mesh()
 
     # Prepare input batch
     num_classes = 1024
@@ -247,27 +249,32 @@ def benchmark_wresnet_internal(benchmark_case,
     executable = train_step.get_executable(state, batch)
     print_used_time("Compile (driver)")
 
-    compilation_times = {
-        k: timers(k).elapsed() for k in [
-            "stage-construction", "stage-construction-dp",
-            "stage-construction-compilation", "stage-construction-profiling"
-        ]
-    }
-    print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+    if global_config.strategy == "pipeshard_parallel":
+        compilation_times = {
+            k: timers(k).elapsed() for k in [
+                "stage-construction", "stage-construction-dp",
+                "stage-construction-compilation", "stage-construction-profiling"
+            ]
+        }
+        print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
 
-    # Dump hlo ir for debugging
-    stage_hlo_texts = executable.get_hlo_text()
-    for i in range(len(stage_hlo_texts)):
-        with open(f"tmp/stage_{i}.hlo", "w") as fout:
-            fout.write(stage_hlo_texts[i])
-    with open(f"tmp/resharding_tasks.txt", "w") as fout:
-        fout.write(executable.print_resharding_tasks())
+        # Dump hlo ir for debugging
+        stage_hlo_texts = executable.get_hlo_text()
+        for i in range(len(stage_hlo_texts)):
+            with open(f"tmp/stage_{i}.hlo", "w") as fout:
+                fout.write(stage_hlo_texts[i])
+        with open(f"tmp/resharding_tasks.txt", "w") as fout:
+            fout.write(executable.print_resharding_tasks())
 
-    executable.sync()
+        executable.sync()
+    elif global_config.strategy == "shard_parallel":
+        global_config.devices.sync_workers()
+        compilation_times = {}
     print_used_time("Compile (workers)")
 
     # Benchmark step time
     for i in range(niter):
+        print("Iteration", i)
         state, metrics = train_step(state, batch)
 
     # for timer_name in ["resharding_send", "resharding_recv", "compute"]:
@@ -280,8 +287,12 @@ def benchmark_wresnet_internal(benchmark_case,
     latencies = executable.get_execution_time_costs(warmup=2)
     print_used_time("Benchmark")
 
-    mem_allocated = executable.get_memory_allocated()
-    max_mem_allocated = executable.get_max_memory_allocated()
+    if global_config.strategy == "pipeshard_parallel":
+        mem_allocated = executable.get_memory_allocated()
+        max_mem_allocated = executable.get_max_memory_allocated()
+    elif global_config.strategy == "shard_parallel":
+        mem_allocated = executable.get_total_allocation_size()
+        max_mem_allocated = global_config.devices.get_max_memory_allocated()
 
     # Compute statistics
     num_gpus = virtual_mesh.num_devices
@@ -293,7 +304,10 @@ def benchmark_wresnet_internal(benchmark_case,
     #     for k in profiled:
     #         pstr += f"Exec {k}: {profiled[k][0]}s; "
     #     print(pstr)
-    executable.shutdown()
+    if global_config.strategy == "pipeshard_parallel":
+        executable.shutdown()
+    elif global_config.strategy == "shard_parallel":
+        global_config.devices.shutdown()
 
     return (parameter_count, mem_allocated, max_mem_allocated, latencies,
             tflops, tflops, compilation_times) + get_last_dp_result()

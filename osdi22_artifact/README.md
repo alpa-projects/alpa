@@ -80,21 +80,24 @@ instructions in the section "Running the Search" below.
 python3 gen_data_e2e.py --model gpt
 python3 plot_e2e.py --model gpt
 ```
-This outputs Figure 8 (a).
+This outputs `e2e_gpt.pdf`, or Figure 8 (a) in the paper.
+
+You can run `ray rsync-down artifact-cluster.yaml "~/efs/alpa/osdi22_artifact/*.pdf" .` **on your local machine**
+to copy the figures to your local machine for inspection.
 
 ### MoE (30 mins)
 ```bash
 python3 gen_data_e2e.py --model moe
 python3 plot_e2e.py --model moe
 ```
-This outputs Figure 8 (b).
+This outputs `e2e_moe.pdf`, or Figure 8 (b) in the paper.
 
-### Wide-ResNet (30 mins)
+### Wide-ResNet (60 mins)
 ```bash
 python3 gen_data_e2e.py --model wresnet
 python3 plot_e2e.py --model wresnet
 ```
-This outputs Figure 8 (c).
+This outputs `e2e_wresnet.pdf`, or Figure 8 (c) in the paper.
 
 ## Intra-op Ablation Study (Figure. 9)
 
@@ -103,28 +106,31 @@ This outputs Figure 8 (c).
 python3 gen_data_intra_ab.py --model gpt
 python3 plot_intra_ab.py --model gpt
 ```
-This outputs Figure 9 (a).
+This outputs `intra_ab_gpt.pdf`, or Figure 9 (a) in the paper.
 
 ### MoE (45 mins)
 ```bash
 python3 gen_data_intra_ab.py --model moe
 python3 plot_intra_ab.py --model moe
 ```
-This outputs Figure 9 (b).
+This outputs `intra_ab_moe.pdf`, or Figure 9 (b) in the paper.
 
 ### Wide-ResNet (30 mins)
 ```bash
 python3 gen_data_intra_ab.py --model wresnet
 python3 plot_intra_ab.py --model wresnet
 ```
-This outputs Figure 9 (c).
+This outputs `intra_ab_wresnet.pdf`, or Figure 9 (c) in the paper.
 
 ## Inter-op Ablation Study (Figure. 10)
 
+### GPT and Wide-ResNet (60 mins)
 ```bash
-python3 gen_data_inter_ab.py
+python3 gen_data_inter_ab.py --suite gpt.inter_op
+python3 gen_data_inter_ab.py --suite wresnet.inter_op
 python3 plot_inter_ab.py
 ```
+This outputs Figure 10 in the paper.
 
 ## (Optional) Running the Search
 To run the full search procedure, use the command below
@@ -144,9 +150,9 @@ loaded from our previous measurments in `results_e2e_ref.tsv`.
 The data is obtained as follows.
 
 ### Megatron-LM Performance on GPT (30 mins)
-Following the instructions in [megatron/README.md](megatron/README.md) to run Megatron-LM benchmarking.
+Follow the instructions in [megatron/README.md](megatron/README.md) to run Megatron-LM benchmarking.
 This generates data for the red bar corresponding to `Megatron-LM` in Figure 8 (a).
 
 ### DeepSpeed Performance on MoE (30 mins)
-Following the instructions in [deepspeed/README.md](deepspeed/README.md) to run DeepSpeed benchmarking.
+Follow the instructions in [deepspeed/README.md](deepspeed/README.md) to run DeepSpeed benchmarking.
 This generates data for the brown bar corresponding to `DeepSpeed` in Figure 8 (b).

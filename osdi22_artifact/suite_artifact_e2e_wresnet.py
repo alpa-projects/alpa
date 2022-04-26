@@ -1,6 +1,8 @@
 """Benchmark suite for auto wide-ResNet"""
 from benchmark.alpa.suite_paper_wresnet import get_auto_test_case, wresnet_specs
 
+_ = None
+
 def copy_cases_with_search_space(cases, search_space, num_gpu):
     new_cases = []
     for case in cases:
@@ -84,12 +86,12 @@ artifact_result_e2e_wresnet_suite = {
 
 
 artifact_e2e_wresnet_intra_only_suite = {
-1:  (1536, *wresnet_specs["250M"], 1,  1, 48, False, True, _, _),
-2:  (1536, *wresnet_specs["500M"], 2,  1, 32, False, True, _, _),
-4:  (1536, *wresnet_specs["1B"],   4,  1, 32, False, True, _, _),
-8:  (1536, *wresnet_specs["2B"],   8,  1, 48, False, True, _, _),
-16: (1536, *wresnet_specs["4B"],   2,  8, 64, False, True, _, _),
-32: (1536, *wresnet_specs["6.8B"], 4,  8, 48, False, True, _, _),
+1:  [(1536, *wresnet_specs["250M"], 1,  1, 48, False, True, _, _)],
+2:  [(1536, *wresnet_specs["500M"], 2,  1, 32, False, True, _, _)],
+4:  [(1536, *wresnet_specs["1B"],   4,  1, 32, False, True, _, _)],
+8:  [(1536, *wresnet_specs["2B"],   8,  1, 48, False, True, _, _)],
+16: [(1536, *wresnet_specs["4B"],   2,  8, 64, False, True, _, _)],
+32: [(1536, *wresnet_specs["6.8B"], 4,  8, 48, False, True, _, _)],
 }
 
 

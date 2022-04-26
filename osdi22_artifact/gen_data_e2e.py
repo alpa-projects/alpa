@@ -94,7 +94,7 @@ if __name__ == "__main__":
     for model in models:
         suite_name = model + (".search" if args.search else ".result")
         for num_hosts, num_devices_per_host in cluster_sizes:
-            if model == "wresnet":
+            if model == "wresnet" and False:
                 for search_space in ["ppdp", "inter-only", "intra-only"]:
                     suite_with_search_space = suite_name + ("." + search_space)
                     print("Running suite:", suite_with_search_space)

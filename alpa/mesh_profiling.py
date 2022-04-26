@@ -680,9 +680,9 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
         for replica_group in replica_groups:
             for dtype in ["f32", "f16"]:
-
-                if replica_group != (tuple(range(8)),) or dtype != "f32":
-                    continue
+                # Debug filter
+                #if replica_group != (tuple(range(8)),) or dtype != "f32":
+                #    continue
 
                 if (max(replica_group[0]) - min(replica_group[0]) <
                         num_devices_per_host):

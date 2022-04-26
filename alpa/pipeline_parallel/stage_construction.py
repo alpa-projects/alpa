@@ -14,7 +14,8 @@ from alpa.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
-from alpa.pipeline_parallel.device_mesh_group import (DistributedPhysicalDeviceMeshGroup)
+from alpa.pipeline_parallel.device_mesh_group import (
+    DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.layer_stats import eqn_flops
 from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                     compile_all, profile_all)
@@ -711,7 +712,8 @@ def cluster_layers_and_slice_mesh(
                 mesh.get_virtual_physical_mesh() for mesh in devices
             ]
         else:
-            sliced_meshes = get_sliced_virtual_submeshes(devices, submesh_shapes)
+            sliced_meshes = get_sliced_virtual_submeshes(
+                devices, submesh_shapes)
         num_forward_stages = len(forward_stage_layer_ids)
         backward_stage_layer_ids = [[
             2 * num_layers - 1 - i for i in reversed(layer_ids)
@@ -753,7 +755,8 @@ def cluster_layers_and_slice_mesh(
             ]
         else:
             if submesh_shapes is not None:
-                assert all(shape == submesh_shapes[0] for shape in submesh_shapes)
+                assert all(
+                    shape == submesh_shapes[0] for shape in submesh_shapes)
             sliced_meshes = uniform_slice_mesh(devices,
                                                num_meshes,
                                                submesh_shapes=submesh_shapes)

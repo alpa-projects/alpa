@@ -608,8 +608,9 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
             if i % barrier_every == 0:
                 # Run barrier to reduce hanging/deadlock issues
                 run_with_timeout(profile_one_hlo_op,
-                    (backend, local_devices, host_id, num_devices, ('barrier',)),
-                    timeout=single_timeout)
+                                 (backend, local_devices, host_id, num_devices,
+                                  ('barrier',)),
+                                 timeout=single_timeout)
 
             if host_id == 0 and (i + 1) % save_every == 0:
                 old_cache_len = len(cache_dict)
@@ -652,6 +653,7 @@ def profile_dot(device_cluster, cache_filename):
         )
 
     physical_mesh.shutdown()
+    time.sleep(2)
     return dot_cost_dict
 
 
@@ -707,8 +709,8 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                     all_specs.add((tuple(replica_group), dtype, 1 << i))
 
     all_specs = list(all_specs)
-    all_specs.sort(key=lambda k:
-                   (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).itemsize, -k[2]))
+    all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).
+                                  itemsize, -k[2]))
     return list(all_specs)
 
 

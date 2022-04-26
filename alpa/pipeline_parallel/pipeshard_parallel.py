@@ -62,8 +62,9 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     have_apply_grad = barrier is not None
 
     if have_apply_grad:
-        acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = (
-            compute_grad_to_accumulate_grad(compute_grad_jaxpr, gensym_func))
+        (acc_grad_jaxpr, acc_grad_dict,
+         grad_in_to_out) = compute_grad_to_accumulate_grad(
+             compute_grad_jaxpr, gensym_func, num_micro_batches)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
         acc_grad_dict = {}
@@ -95,7 +96,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     (jax_apply_layers, _, _, _, dummy_global_outvars,
      dummy_donated_invars) = process_apply_gradient(
          apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
-         layer_to_dummy_mesh, gensym_func, num_micro_batches,
+         layer_to_dummy_mesh, gensym_func,
          len(jax_pipeline_layers) // 2, global_invars, global_outvars,
          donated_invars)
     apply_grad_donation = create_donation_mapping(donation_mapping,
@@ -130,8 +131,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
          global_outvars, donated_invars) = process_apply_gradient(
              apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
-             stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
-             global_invars, global_outvars, donated_invars)
+             stage_to_mesh, gensym_func, num_meshes, global_invars,
+             global_outvars, donated_invars)
         jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
     else:
         jax_all_stages = jax_pipeline_stages

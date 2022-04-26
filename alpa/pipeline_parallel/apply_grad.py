@@ -157,8 +157,8 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
 
 
 def compute_grad_to_accumulate_grad(
-        compute_jaxpr: ClosedJaxpr,
-        gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
+        compute_jaxpr: ClosedJaxpr, gensym_fn,
+        num_microbatch) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
     """
     Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
 
@@ -254,8 +254,16 @@ def compute_grad_to_accumulate_grad(
                 new_eqns.extend(pipe_eqns)
                 # add acc grad(adds)
                 for gradient in to_acc:
+                    tmp_var = gensym_fn(gradient.aval)
+                    literal_val = np.array(num_microbatch, gradient.aval.dtype)
                     new_eqns.append(
-                        new_jaxpr_eqn([grad_in_after_pipe[gradient], gradient],
+                        new_jaxpr_eqn([
+                            gradient,
+                            Literal(literal_val,
+                                    raise_to_shaped(get_aval(literal_val)))
+                        ], [tmp_var], div_p, {}))
+                    new_eqns.append(
+                        new_jaxpr_eqn([grad_in_after_pipe[gradient], tmp_var],
                                       [grad_out_before_pipe[gradient]], add_p,
                                       {}))
                 # add grad created in this computation in pipeline end
@@ -302,8 +310,8 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
 
 def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
-                           num_micro_batches, num_meshes, global_invars,
-                           global_outvars, donated_invars):
+                           num_meshes, global_invars, global_outvars,
+                           donated_invars):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
     # TODO(yonghao): the condition of creating RDA variable should be extended.
 
@@ -319,9 +327,9 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                                       stage_to_mesh, mask)
     # FIXME (zhuohan): get_mean only works when we use jax.mean to
     #                  calculate loss. It will fail if we use sum.
-    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
-        apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
-        global_outvars)
+    # apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
+    #     apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
+    #     global_outvars)
 
     # update donation mapping
     donation_mapping = {}

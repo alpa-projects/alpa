@@ -18,9 +18,17 @@ from alpa.util import run_cmd
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cluster-key", type=str, default="default")
-    parser.add_argument("--filename", type=str, default="prof_database.pkl")
     parser.add_argument("--efa", action="store_true")
-    parser.add_argument("--comm-size-max", type=int, required=True)
+    parser.add_argument("--filename", type=str, default="prof_database.pkl",
+        help="The filename of the output database")
+    parser.add_argument("--comm-size-max", type=int, required=True,
+        help="Run profiling for communication up to 2^x bytes, where x "
+             "is this argument")
+    parser.add_argument("--cache-filename", type=str,
+        default="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl",
+        help="The filename of the temporary cache. This should be an "
+             "absolute path on a network file system that can be accessed by "
+             "ray workers on all nodes.")
     parser.add_argument("--max-fail-retry", type=int, default=5)
     args = parser.parse_args()
 
@@ -40,11 +48,10 @@ if __name__ == "__main__":
     ray.init(address="auto")
     cluster = DeviceCluster()
 
-    # Must use an absolute efs filename because ray actors are on distributed nodes.
     prof_database = cluster.profile_all(
         args.cluster_key,
         comm_size_range=(0, args.comm_size_max + 1),
         max_fail_retry=args.max_fail_retry,
-        cache_filename="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl")
+        cache_filename=args.cache_filename)
     prof_database.save(args.filename)
     print(f"Save profiling database to {args.filename}")

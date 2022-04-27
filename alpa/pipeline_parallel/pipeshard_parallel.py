@@ -3,7 +3,7 @@ import logging
 import threading
 
 from jax import linear_util as lu
-from jax.core import gensym
+from jax.core import gensym, new_jaxpr_eqn
 
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
@@ -59,7 +59,10 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     # Split the jaxpr into compute_grad and apply_grad
     closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
         split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
-    have_apply_grad = (barrier is not None) and (len(apply_grad_jaxpr.eqns) > 0)
+    if barrier.params['name'] == "" and num_micro_batches > 1:
+        barrier = new_jaxpr_eqn(list(compute_grad_jaxpr.jaxpr.outvars),
+                                list(compute_grad_jaxpr.jaxpr.outvars),
+                                barrier.primitive, barrier.params)
 
     if num_micro_batches > 1:
         (acc_grad_jaxpr, acc_grad_dict,
@@ -67,7 +70,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
              compute_grad_jaxpr, gensym_func, num_micro_batches)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
-        acc_grad_dict = {}
+        acc_grad_dict = {x: x for x in compute_grad_jaxpr.jaxpr.outvars}
         grad_in_to_out = {}
 
     # Slice the jaxpr into layers

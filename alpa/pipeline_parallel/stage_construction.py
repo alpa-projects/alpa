@@ -631,7 +631,7 @@ def cluster_layers_and_slice_mesh(
         num_layers = len(layers) // 2
 
         if pipeline_stage_mode == "auto_gpipe":
-            if not given_mesh:
+            if given_mesh:
                 # TODO(zhuohan): Implement the auto slicing with given mesh.
                 raise NotImplementedError("automatically slicing layers with "
                                           "existing physical meshes is not"

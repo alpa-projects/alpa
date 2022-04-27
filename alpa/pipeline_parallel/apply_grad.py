@@ -140,7 +140,11 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
             "Missing barrier between compute and apply. Assume there is no "
             "apply gradient step. Hint: replace jax.grad by alpa.grad.")
         dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
-        return closed_jaxpr, closed_jaxpr, dummy_jaxpr, None
+        dummy_barrier = new_jaxpr_eqn([], [], pipeline_p, {
+            'mark_type': 'grad',
+            'name': ''
+        })
+        return closed_jaxpr, closed_jaxpr, dummy_jaxpr, dummy_barrier
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]
@@ -157,8 +161,8 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
 
 
 def compute_grad_to_accumulate_grad(
-        compute_jaxpr: ClosedJaxpr,
-        gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
+        compute_jaxpr: ClosedJaxpr, gensym_fn,
+        num_microbatch) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
     """
     Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
 
@@ -254,8 +258,18 @@ def compute_grad_to_accumulate_grad(
                 new_eqns.extend(pipe_eqns)
                 # add acc grad(adds)
                 for gradient in to_acc:
+                    tmp_var = gensym_fn(gradient.aval)
+                    literal_val = np.array(num_microbatch, gradient.aval.dtype)
+                # FIXME (zhuohan): get_mean only works when we use jax.mean to
+                #                  calculate loss. It will fail if we use sum.
                     new_eqns.append(
-                        new_jaxpr_eqn([grad_in_after_pipe[gradient], gradient],
+                        new_jaxpr_eqn([
+                            gradient,
+                            Literal(literal_val,
+                                    raise_to_shaped(get_aval(literal_val)))
+                        ], [tmp_var], div_p, {}))
+                    new_eqns.append(
+                        new_jaxpr_eqn([grad_in_after_pipe[gradient], tmp_var],
                                       [grad_out_before_pipe[gradient]], add_p,
                                       {}))
                 # add grad created in this computation in pipeline end
@@ -302,29 +316,28 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
 
 def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
-                           num_micro_batches, num_meshes, global_invars,
-                           global_outvars, donated_invars):
+                           num_meshes, global_invars, global_outvars,
+                           donated_invars):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
     # TODO(yonghao): the condition of creating RDA variable should be extended.
 
     # Process apply gradient:
     # 1. change invars of apply grad to outvars of accumulate grad
     gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
+    assert len(gradients) == len(barrier.invars)
     mask = {
         outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
     }
-
-    # 2. Add compute mean and slice apply-grad stages
     gradvar_to_mesh = get_var_to_mesh(gradients, jax_pipeline_stages,
                                       stage_to_mesh, mask)
-    # FIXME (zhuohan): get_mean only works when we use jax.mean to
-    #                  calculate loss. It will fail if we use sum.
-    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
-        apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
-        global_outvars)
+
+    # 2. Slice apply-grad stages
 
     # update donation mapping
     donation_mapping = {}
+    # FIXME(yonghao): check whether a donated invar is donatable. auto mode
+    # set all parameters donate=True, but if output is not the new state, it is
+    # not donatable.
     for idx, invar in enumerate(global_invars):
         if donated_invars[idx]:
             donation_mapping[invar] = global_outvars[idx]
@@ -355,8 +368,6 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
         used_simultaneously.update(used.intersection(stage.invars))
         used.update(stage.invars)
 
-    donated_invars = list(donated_invars)
-
     return (sliced_apply_grad, n_stages, dependency, apply_grad_placement,
             global_outvars, donated_invars)
 
@@ -378,43 +389,6 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     new_jaxpr = clone_jaxpr(closed_jaxpr, new_glob_invars, new_glob_outvars,
                             new_eqns)
     return new_jaxpr
-
-
-def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
-                        global_outvars):
-    """
-    Get the mean of input (accumulated) gradients and run apply gradient.
-
-    If the input is output, after this transform it outputs the divided version.
-    """
-    mapping = {}
-    new_eqns = []
-    invar_set = OrderedSet(closed_jaxpr.jaxpr.invars)
-    outvar_set = OrderedSet(closed_jaxpr.jaxpr.outvars)
-    for invar in gradients:
-        div_out = gensym_fn(invar.aval)
-        literal_val = np.array(num_microbatch, invar.aval.dtype)
-        new_eqns.append(
-            new_jaxpr_eqn([
-                invar,
-                Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
-            ], [div_out], div_p, {}))
-        mapping[invar] = div_out
-    replaced = replace_all_with(closed_jaxpr, mapping)
-    final_invars = closed_jaxpr.jaxpr.invars
-    final_outvars = replaced.jaxpr.outvars
-    for invar in gradients:
-        if invar not in invar_set:
-            final_invars.append(invar)
-        if invar in global_outvars and invar not in outvar_set:
-            final_outvars.append(mapping[invar])
-    new_eqns.extend(replaced.jaxpr.eqns)
-    new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, final_invars, final_outvars,
-                      new_eqns)
-    new_jaxpr = clone_jaxpr(closed_jaxpr, final_invars, final_outvars, new_eqns)
-    global_outvars = list(
-        map(lambda x: get_var_mapping(mapping, x), global_outvars))
-    return new_jaxpr, global_outvars
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
@@ -613,6 +587,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
         else:
             new_jaxpr = clone_jaxpr(jaxpr, new_invars, new_outvars, new_eqns)
             results.append(new_jaxpr)
+    outvar_map.update(mask)
     return results, outvar_map
 
 

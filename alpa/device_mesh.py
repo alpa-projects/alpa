@@ -7,6 +7,7 @@ from itertools import chain
 import logging
 from operator import attrgetter
 import os
+import re
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
@@ -28,6 +29,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
+import tensorstore as ts
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -96,6 +98,72 @@ class MeshHostWorker:
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
                                        take_ownership=True))
+
+    ##### TensorStore Related Functions #####
+    def get_ts_spec(self, ckpt_path: str):
+        spec = {
+            'driver': 'zarr',
+            'kvstore': {},
+            'metadata_key': f".zarray{self.host_id}"
+        }
+        if ckpt_path.startswith('gs://'):
+            m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
+            if m is None:
+                raise ValueError(
+                    'The ckpt_path should contain the bucket name and the '
+                    f'file path inside the bucket. Got: {ckpt_path}')
+            gcs_bucket = m.group(1)
+            path_without_bucket = m.group(2)
+            spec['kvstore'] = {
+                'driver': 'gcs',
+                'bucket': gcs_bucket,
+                'path': path_without_bucket
+            }
+        else:
+            spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
+        return spec
+
+    def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                             shard_indices: Sequence[Index],
+                             device_ids: Sequence[int]):
+        ts_spec = self.get_ts_spec(ckpt_dir)
+        t = ts.open(ts.Spec(ts_spec), open=True).result()
+
+        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
+            data = t[index].read().result()
+            self.put_buffer(uuid, device_id, data)
+
+    def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                           shard_indices: Sequence[Index],
+                           global_shape: Sequence[int]):
+        for uuid in uuids:
+            assert uuid in self.buffers
+
+        ts_spec = self.get_ts_spec(ckpt_dir)
+        dtype = self.buffers[uuids[0]].dtype
+        if dtype == jnp.bfloat16:
+            # Tensorstore uses 'bfloat16', not '<V2'.
+            dtype = 'bfloat16'
+        else:
+            dtype = np.dtype(dtype).str
+        metadata = {
+            'compressor': {
+                'id': 'gzip'
+            },
+            'shape': global_shape,
+            'chunks': self.buffers[uuids[0]].shape,
+            'dtype': dtype,
+        }
+        ts_spec['metadata'] = metadata
+        t = ts.open(ts.Spec(ts_spec),
+                    create=True,
+                    open=True,
+                    context=ts.Context({'file_io_concurrency': {
+                        'limit': 128
+                    }})).result()
+
+        for index, uuid in zip(shard_indices, uuids):
+            t[index].write(self.buffers[uuid]).result()
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -1122,6 +1190,52 @@ class DistributedArray:
 
     def flush(self):
         self._npy_value = None
+
+    ##### distributed save/load #####
+    def save(self, path: str):
+        """Save one replica of the array to `path` distributedly."""
+        one_replica_buffers = [
+            self.remote_buffers[i] for i in self.one_replica_buffer_indices
+        ]
+        one_replica_indices = [
+            self.indices[i] for i in self.one_replica_buffer_indices
+        ]
+        buf_refs_per_host = {k: [] for k in self.device_mesh.host_ids}
+        indices_per_host = {k: [] for k in self.device_mesh.host_ids}
+        for buf_ref, indice in zip(one_replica_buffers, one_replica_indices):
+            buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
+            indices_per_host[buf_ref.host_id].append(indice)
+        obj_refs = []
+        for host_id, uuids in buf_refs_per_host.items():
+            obj_refs.append(
+                self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
+                    path, uuids, indices_per_host[host_id], self.shape))
+        return ray.get(obj_refs)
+
+    @classmethod
+    def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
+             sharding_spec: ShardingSpec):
+        """Load the data from `path` distributedly with `aval` and return a new DistributedArray"""
+        from alpa.mesh_executable import create_remote_buffer_refs
+        buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, 1)
+        indices = pxla.spec_to_indices(aval.shape, sharding_spec)
+
+        buf_refs_per_host = {k: [] for k in device_mesh.host_ids}
+        indices_per_host = {k: [] for k in device_mesh.host_ids}
+        device_ids_per_host = {k: [] for k in device_mesh.host_ids}
+        for buf_ref, indice in zip(buf_refs, indices):
+            buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
+            indices_per_host[buf_ref.host_id].append(indice)
+            device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
+        obj_refs = []
+        for host_id, uuids in buf_refs_per_host.items():
+            obj_refs.append(
+                device_mesh.workers[host_id].load_buffers_from_ts.remote(
+                    path, uuids, indices_per_host[host_id],
+                    device_ids_per_host[host_id]))
+        ray.get(obj_refs)
+        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
+                                indice)
 
     @property
     def one_replica_buffer_indices(self):

@@ -1,5 +1,6 @@
 """Profiling communication cost for device meshes."""
 from collections import defaultdict
+import math
 import os
 import pickle
 import time
@@ -248,9 +249,10 @@ def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups, channel_id):
     return ret
 
 
-def _compile_profiling_executable(backend, shapes, op_func, num_devices):
+def _compile_profiling_executable_while_loop(backend, shapes, op_func,
+                                             num_devices):
     """
-    Compile a xla executable for benchmarking operators.
+    Compile an xla executable for benchmarking operators.
     It is a while loop that calls the operator for multiple times.
     """
 
@@ -308,6 +310,41 @@ def _compile_profiling_executable(backend, shapes, op_func, num_devices):
     return shapes, backend.compile(loop_computation, compile_options)
 
 
+def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
+    """
+    Compile an xla executable for benchmarking operators.
+    It runs the op only once.
+    """
+    in_tuple_shape = xc.Shape.tuple_shape(
+        [xc.Shape.array_shape(dtype, shape) for shape, dtype in shapes])
+
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    sharding.tile_assignment_dimensions.extend([1])
+    sharding.tile_assignment_devices.extend([0])
+
+    body = xc.XlaBuilder("body")
+    operands = [
+        _op_parameter(body, i, shape, dtype)
+        for i, (shape, dtype) in enumerate(shapes)
+    ]
+    body.set_sharding(sharding)
+    op_func(operands)
+    body.clear_sharding()
+    ops.Tuple(body, operands)
+    for i in range(len(shapes)):
+        body.setup_alias((i,), i, ())
+    body_computation = body.Build()
+
+    compile_options = xb.get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+    )
+    return shapes, backend.compile(body_computation, compile_options)
+
+
 def bound(value, minimum, maximum):
     return max(min(value, maximum), minimum)
 
@@ -328,21 +365,17 @@ def rank_0_print(host_id, msg):
         print(msg, flush=True)
 
 
-def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
-                       num_devices_per_node, op_info):
+# A set containing all replica group patterns with nccl communicator created.
+global communicator_set
+communicator_set = set()
+
+
+def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
     """Profile one HLO operator."""
-
-    # p3.16
-    #dot_fp16_work = 50e12
-    #dot_fp32_work = 10e12
-    #comm_single_node_work = 1 << 33
-    #comm_multi_node_work = 1 << 31
-
-    # p4.24
     dot_fp16_work = 100e12
     dot_fp32_work = 50e12
-    comm_single_node_work = 1 << 34
-    comm_multi_node_work = 1 << 32
+    comm_work = 1 << 32
+    replica_groups = None
 
     if op_info[0] == "dot":
         n, m, k, dtype_str = op_info[1]
@@ -377,12 +410,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
             out = _op_all_gather(operands[0], replica_groups, channel_id)
             operands[-1] = out
 
-        if max(replica_groups[0]) - min(
-                replica_groups[0]) < num_devices_per_node:
-            work = comm_single_node_work
-        else:
-            work = comm_multi_node_work
-        number = bound(int(work / max(size * dtype.itemsize, 1)), 10, 1 << 13)
+        number = bound(int(comm_work / max(size * dtype.itemsize, 1)), 10,
+                       1 << 13)
     elif op_info[0] == "all-reduce":
         replica_groups, dtype, size = op_info[1]
         dtype = to_np_dtype(dtype)
@@ -394,12 +423,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
                                  channel_id)
             operands[-1] = out
 
-        if max(replica_groups[0]) - min(
-                replica_groups[0]) < num_devices_per_node:
-            work = comm_single_node_work / 2
-        else:
-            work = comm_multi_node_work / 2
-        number = bound(int(work / max(size * dtype.itemsize, 1)), 10, 1 << 13)
+        number = bound(int(comm_work / max(size * dtype.itemsize, 1)), 10,
+                       1 << 13)
     elif op_info[0] == "all-to-all":
         replica_groups, dtype, size = op_info[1]
         dtype = to_np_dtype(dtype)
@@ -414,12 +439,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
             out = _op_all_to_all(operands[0], replica_groups, channel_id)
             operands[-1] = out
 
-        if max(replica_groups[0]) - min(
-                replica_groups[0]) < num_devices_per_node:
-            work = comm_single_node_work
-        else:
-            work = comm_multi_node_work
-        number = bound(int(work / max(size * dtype.itemsize, 1)), 10, 1 << 13)
+        number = bound(int(comm_work / max(size * dtype.itemsize, 1)), 10,
+                       1 << 13)
     elif op_info[0] == "reduce-scatter":
         replica_groups, dtype, size = op_info[1]
         dtype = to_np_dtype(dtype)
@@ -434,12 +455,8 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
                                      channel_id)
             operands[-1] = out
 
-        if max(replica_groups[0]) - min(
-                replica_groups[0]) < num_devices_per_node:
-            work = comm_single_node_work
-        else:
-            work = comm_multi_node_work
-        number = bound(int(work / max(size * dtype.itemsize, 1)), 10, 1 << 13)
+        number = bound(int(comm_work / max(size * dtype.itemsize, 1)), 10,
+                       1 << 13)
     elif op_info[0] == "create-communicator":
         replica_groups, = op_info[1]
         dtype = to_np_dtype("f32")
@@ -450,8 +467,6 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
             out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
                                  channel_id)
             operands[-1] = out
-
-        work = number = 0
     elif op_info[0] == "barrier":
         replica_groups = (tuple(i for i in range(num_devices)),)
         dtype = to_np_dtype("f32")
@@ -462,64 +477,83 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices,
             out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
                                  channel_id)
             operands[-1] = out
-
-        work = number = 0
     else:
         raise NotImplementedError(f"Invalid op: {op_info[0]}")
 
-    if number == 0:
-        warmup = 1
-    else:
-        warmup = max(number // 10, 2)
-
     if op_info[0] in ["create-communicator", "barrier"]:
         rank_0_print(host_id, f"{op_info[0]}")
-    else:
-        rank_0_print(
-            host_id, f"Profiling {op_info}, work: {work}, number: {number}, "
-            f"time: {time.time():.0f}.")
 
-    # Compile
-    shapes, compiled = _compile_profiling_executable(backend, shapes, op_func,
-                                                     num_devices)
+        # Compile
+        all_shapes, compiled = _compile_profiling_executable_once(
+            backend, shapes, op_func, num_devices)
 
-    # Warm up
-    device_inputs = []
-    for j, (shape, dtype) in enumerate(shapes):
-        if j == 0:
+        # Run
+        device_inputs = []
+        for shape, dtype in all_shapes:
             device_inputs.append([
-                backend.buffer_from_pyval(np.int32(warmup), local_devices[k])
-                for k in range(len(local_devices))
-            ])
-        else:
-            device_inputs.append([
-                backend.buffer_from_pyval(np.empty(shape, dtype),
+                backend.buffer_from_pyval(np.ones(shape, dtype),
                                           local_devices[k])
                 for k in range(len(local_devices))
             ])
 
-    [d.synchronize_all_activity() for d in local_devices]
-    device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
-    [d.synchronize_all_activity() for d in local_devices]
+        [d.synchronize_all_activity() for d in local_devices]
+        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+        [d.synchronize_all_activity() for d in local_devices]
+        return 0
+    else:
+        # Create the nccl communicator
+        # This step is a workaround for some nccl/xla deadlock
+        if replica_groups and replica_groups not in communicator_set:
+            tmp_op_info = ("create-communicator", (op_info[1][0],))
+            profile_one_hlo_op(backend, local_devices, host_id, num_devices,
+                               tmp_op_info)
+            communicator_set.add(replica_groups)
 
-    if number == 0:
-        return -1.0
+        warmup = max(number // 10, 2)
 
-    # Run profiling
-    device_inputs[0] = [
-        backend.buffer_from_pyval(np.int32(number), local_devices[k])
-        for k in range(len(local_devices))
-    ]
+        rank_0_print(
+            host_id, f"Profiling {op_info}, number: {number}, "
+            f"timestamp: {time.time():.0f}.")
 
-    [d.synchronize_all_activity() for d in local_devices]
-    tic = time.time()
-    compiled.execute_sharded_on_local_devices(device_inputs)
-    [d.synchronize_all_activity() for d in local_devices]
-    toc = time.time()
+        # Compile
+        all_shapes, compiled = _compile_profiling_executable_while_loop(
+            backend, shapes, op_func, num_devices)
 
-    # Return
-    mean_time = (toc - tic) / number
-    return mean_time
+        # Warm up
+        device_inputs = []
+        for j, (shape, dtype) in enumerate(all_shapes):
+            if j == 0:
+                device_inputs.append([
+                    backend.buffer_from_pyval(np.int32(warmup),
+                                              local_devices[k])
+                    for k in range(len(local_devices))
+                ])
+            else:
+                device_inputs.append([
+                    backend.buffer_from_pyval(np.ones(shape, dtype),
+                                              local_devices[k])
+                    for k in range(len(local_devices))
+                ])
+
+        [d.synchronize_all_activity() for d in local_devices]
+        device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
+        [d.synchronize_all_activity() for d in local_devices]
+
+        # Run profiling
+        device_inputs[0] = [
+            backend.buffer_from_pyval(np.int32(number), local_devices[k])
+            for k in range(len(local_devices))
+        ]
+
+        [d.synchronize_all_activity() for d in local_devices]
+        tic = time.time()
+        compiled.execute_sharded_on_local_devices(device_inputs)
+        [d.synchronize_all_activity() for d in local_devices]
+        toc = time.time()
+
+        # Return
+        mean_time = (toc - tic) / number
+        return mean_time
 
 
 def run_with_timeout(func, args=(), kwargs={}, timeout=None):
@@ -544,9 +578,8 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                     cache_filename, single_timeout):
     """Profile a list of HLO operators on a worker."""
     results = []
-    num_devices_per_node = 8
     save_every = 15
-    barrier_timeout = 30
+    barrier_every = 5
 
     if os.path.exists(cache_filename):
         rank_0_print(host_id,
@@ -555,19 +588,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     else:
         cache_dict = {}
 
-    def barrier():
-        profile_one_hlo_op(backend, local_devices, host_id, num_devices,
-                           num_devices_per_node, ("barrier",))
-
     old_cache_len = len(cache_dict)
-    all_cache_hit = True
-    save_new = False
-    if op_infos[0][0] in [
-            "all-gather", "all-reduce", "all-to-all", "reduce-scatter"
-    ]:
-        run_barrier = True
-    else:
-        run_barrier = False
 
     try:
         for i, op_info in enumerate(op_infos):
@@ -576,46 +597,37 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 results.append(cache_dict[op_info])
                 continue
 
-            if all_cache_hit == True and run_barrier:
-                # First time, create the nccl communicator
-                run_with_timeout(barrier, timeout=barrier_timeout)
-                tmp_op_info = ("create-communicator", (op_info[1][0],))
-                mean_time = run_with_timeout(
-                    profile_one_hlo_op,
-                    (backend, local_devices, host_id, num_devices,
-                     num_devices_per_node, tmp_op_info),
-                    timeout=barrier_timeout)
-
             # Profile one op
-            all_cache_hit = False
-            if run_barrier:
-                run_with_timeout(barrier, timeout=barrier_timeout)
             mean_time = run_with_timeout(
                 profile_one_hlo_op,
-                (backend, local_devices, host_id, num_devices,
-                 num_devices_per_node, op_info),
+                (backend, local_devices, host_id, num_devices, op_info),
                 timeout=single_timeout)
             cache_dict[op_info] = mean_time
             results.append(mean_time)
+
+            if i % barrier_every == 0:
+                # Run barrier to reduce hanging/deadlock issues
+                run_with_timeout(profile_one_hlo_op,
+                                 (backend, local_devices, host_id, num_devices,
+                                  ('barrier',)),
+                                 timeout=single_timeout)
 
             if host_id == 0 and (i + 1) % save_every == 0:
                 old_cache_len = len(cache_dict)
                 rank_0_print(host_id, "Save cache...")
                 pickle.dump(cache_dict, open(cache_filename, "wb"))
-                save_new = True
     except TimeoutError:
         print(f"Worker {host_id} timeout error", flush=True)
-        return None, False, save_new
+        return None
     except RuntimeError:
         print(f"Worker {host_id} runtime error", flush=True)
-        return None, False, save_new
+        return None
 
     if host_id == 0 and len(cache_dict) > old_cache_len:
         rank_0_print(host_id, "Save cache...")
         pickle.dump(cache_dict, open(cache_filename, "wb"))
-        save_new = True
 
-    return np.array(results), all_cache_hit, save_new
+    return np.array(results)
 
 
 def profile_dot(device_cluster, cache_filename):
@@ -629,7 +641,7 @@ def profile_dot(device_cluster, cache_filename):
         for i in range(0, 64):
             n = 128 * i
             op_infos.append(("dot", (n, n, n, dtype)))
-    results, _, _ = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
+    results = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
 
     dot_cost_dict = defaultdict(list)
     for i in range(len(op_infos)):
@@ -640,11 +652,14 @@ def profile_dot(device_cluster, cache_filename):
             f"Matmul: {(n, m, k, dtype)}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}"
         )
 
+    physical_mesh.shutdown()
+    time.sleep(2)
     return dot_cost_dict
 
 
 def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
-                                  size_configs):
+                                  max_comm_size_intra_node,
+                                  max_comm_size_inter_node):
     """Enumerate all possible collective groups."""
     # Enumerate all possible logical meshes
     logical_mesh_shapes = []
@@ -674,16 +689,33 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
         replica_groups.append(tuple(tmp_group))
 
         for replica_group in replica_groups:
-            for size, dtype in size_configs:
-                all_specs.add((tuple(replica_group), dtype, size))
+            for dtype in ["f32", "f16"]:
+                # Debug filter
+                #if replica_group != (tuple(range(32)),) or dtype != "f32":
+                #    continue
+
+                if (max(replica_group[0]) - min(replica_group[0]) <
+                        num_devices_per_host):
+                    max_comm_size = max_comm_size_intra_node
+                else:
+                    max_comm_size = max_comm_size_inter_node
+
+                max_num_elem_log_2 = math.ceil(
+                    math.log2(
+                        (1 << max_comm_size) / to_np_dtype(dtype).itemsize))
+
+                all_specs.add((tuple(replica_group), dtype, 0))
+                for i in range(0, max_num_elem_log_2 + 1):
+                    all_specs.add((tuple(replica_group), dtype, 1 << i))
+
     all_specs = list(all_specs)
     all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).
                                   itemsize, -k[2]))
     return list(all_specs)
 
 
-def profile_all(device_cluster, cluster_key, comm_size_range, max_fail_retry,
-                cache_filename):
+def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
+                max_comm_size_inter_node, max_fail_retry, cache_filename):
     """Profile costs for all dot and communication primitives."""
     from alpa.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
@@ -693,14 +725,6 @@ def profile_all(device_cluster, cluster_key, comm_size_range, max_fail_retry,
     print_used_time("Profile dot")
 
     ##### Profile communication cost
-
-    # Enumerate all size configs
-    size_configs = [(0, "f32"), (0, "f16")]
-    for i in range(*comm_size_range):
-        size_configs.append((1 << i, "f32"))
-        size_configs.append((1 << i, "f16"))
-    size_configs.append((1 << (i + 1), "f16"))
-
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
     submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
 
@@ -722,25 +746,20 @@ def profile_all(device_cluster, cluster_key, comm_size_range, max_fail_retry,
                 (num_hosts, num_devices_per_host)))
         all_specs = enumerate_all_collective_spec(num_hosts,
                                                   num_devices_per_host,
-                                                  size_configs)
+                                                  max_comm_size_intra_node,
+                                                  max_comm_size_inter_node)
 
         op_infos = []
         for op_type in [
                 "all-reduce", "all-gather", "all-to-all", "reduce-scatter"
         ]:
             for spec in all_specs:
-                # Filter out invalid specs
-                #if (op_type == "all-to-all" and spec[0][0] == (0, 8, 16, 24)
-                #    and spec[2] > (1 << 30)):
-                #    continue
-
                 op_infos.append((op_type, spec))
 
         physical_mesh = tmp_mesh.get_physical_mesh()
         available_memory_per_device = physical_mesh.get_available_memory()
 
-        def get_op_info_key(op_info):
-            # return (op_type, replica_group)
+        def get_op_info_key(op_info):  # return (op_type, replica_group)
             return (op_info[0], op_info[1][0])
 
         # Profile operators in batch to resolve some deadlock issues
@@ -758,43 +777,43 @@ def profile_all(device_cluster, cluster_key, comm_size_range, max_fail_retry,
             print(f"Batch size: {batch_size}, key: {batch_key}")
 
             # Profile a batch
-            if batch_key not in failed_batch_keys:
+            if batch_key in failed_batch_keys:
+                # This batch is skipped due to too many errors
+                batch_result = [np.inf] * batch_size
+            else:
                 try:
-                    batch_result, all_cache_hit, save_new = physical_mesh.profile_hlo_ops(
+                    batch_result = physical_mesh.profile_hlo_ops(
                         op_infos[s:s + batch_size],
                         cache_filename,
-                        single_timeout=bound(fail_ct * 50, 50, 500),
-                        batch_timeout=batch_size * 20)
+                        single_timeout=bound(fail_ct * 100, 100, 400),
+                        batch_timeout=batch_size * 100)
                 except ray.exceptions.RayError:
                     batch_result = None
-                    all_cache_hit = save_new = False
-            else:
-                batch_result = [np.inf] * batch_size
-                all_cache_hit = True
-                save_new = False
 
             if batch_result is not None:
                 results.extend(batch_result)
                 s += batch_size
-
-            if save_new or all_cache_hit:
                 fail_ct = 0
             else:
                 fail_ct += 1
 
-            if fail_ct > max_fail_retry:  # Skip this batch if there are too many errors
-                print(f"Failed key: {batch_key}")
-                failed_batch_keys.add(batch_key)
-                pickle.dump(failed_batch_keys,
-                            open(failed_batch_keys_filename, "wb"))
+                if fail_ct > max_fail_retry:
+                    # Skip this batch if there are too many errors
+                    print(f"Failed key: {batch_key}")
+                    failed_batch_keys.add(batch_key)
+                    pickle.dump(failed_batch_keys,
+                                open(failed_batch_keys_filename, "wb"))
 
-            # Reboot physical mesh
-            if not all_cache_hit:
                 print(f"Reboot physical mesh. fail_ct: {fail_ct}")
-                physical_mesh.shutdown(forced=fail_ct > 0)
+                physical_mesh.shutdown(forced=True)
                 physical_mesh = None
-                time.sleep(10)
-                physical_mesh = tmp_mesh.get_physical_mesh()
+                while physical_mesh is None:
+                    try:
+                        time.sleep(10)
+                        physical_mesh = tmp_mesh.get_physical_mesh()
+                    except ray.exceptions.RayError as e:
+                        print("Physical mesh error", e)
+                        physical_mesh = None
 
         # Parse results
         all_gather_cost_dict = defaultdict(list)

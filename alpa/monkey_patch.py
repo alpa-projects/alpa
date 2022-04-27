@@ -72,8 +72,8 @@ def _zeros(c, xla_shape):
         zero = pyval_to_ir_constant(c, np.array(0, dtype=dtype))
         return xops.Broadcast(zero, shape)
     else:
-         # It is a token
-         return xops.CreateToken(c)
+        # It is a token
+        return xops.CreateToken(c)
 
 
 def _remat_using_while(ctx, in_nodes, name, call_jaxpr):

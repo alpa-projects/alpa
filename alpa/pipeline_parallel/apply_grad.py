@@ -318,13 +318,14 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     # Process apply gradient:
     # 1. change invars of apply grad to outvars of accumulate grad
     gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
+    assert len(gradients) == len(barrier.invars)
     mask = {
         outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
     }
-
-    # 2. Add compute mean and slice apply-grad stages
     gradvar_to_mesh = get_var_to_mesh(gradients, jax_pipeline_stages,
                                       stage_to_mesh, mask)
+
+    # 2. Add compute mean and slice apply-grad stages
     # FIXME (zhuohan): get_mean only works when we use jax.mean to
     #                  calculate loss. It will fail if we use sum.
     # apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
@@ -333,6 +334,9 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
 
     # update donation mapping
     donation_mapping = {}
+    # FIXME(yonghao): check whether a donated invar is donatable. auto mode
+    # set all parameters donate=True, but if output is not the new state, it is
+    # not donatable.
     for idx, invar in enumerate(global_invars):
         if donated_invars[idx]:
             donation_mapping[invar] = global_outvars[idx]
@@ -362,8 +366,6 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     for stage in sliced_apply_grad:
         used_simultaneously.update(used.intersection(stage.invars))
         used.update(stage.invars)
-
-    donated_invars = list(donated_invars)
 
     return (sliced_apply_grad, n_stages, dependency, apply_grad_placement,
             global_outvars, donated_invars)
@@ -621,6 +623,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
         else:
             new_jaxpr = clone_jaxpr(jaxpr, new_invars, new_outvars, new_eqns)
             results.append(new_jaxpr)
+    outvar_map.update(mask)
     return results, outvar_map
 
 

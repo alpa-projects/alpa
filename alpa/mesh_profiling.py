@@ -597,6 +597,13 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 results.append(cache_dict[op_info])
                 continue
 
+            if i % barrier_every == 0:
+                # Run barrier to reduce hanging/deadlock issues
+                run_with_timeout(profile_one_hlo_op,
+                                 (backend, local_devices, host_id, num_devices,
+                                  ('barrier',)),
+                                 timeout=single_timeout)
+
             # Profile one op
             mean_time = run_with_timeout(
                 profile_one_hlo_op,
@@ -604,13 +611,6 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 timeout=single_timeout)
             cache_dict[op_info] = mean_time
             results.append(mean_time)
-
-            if i % barrier_every == 0:
-                # Run barrier to reduce hanging/deadlock issues
-                run_with_timeout(profile_one_hlo_op,
-                                 (backend, local_devices, host_id, num_devices,
-                                  ('barrier',)),
-                                 timeout=single_timeout)
 
             if host_id == 0 and (i + 1) % save_every == 0:
                 old_cache_len = len(cache_dict)
@@ -709,8 +709,8 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                     all_specs.add((tuple(replica_group), dtype, 1 << i))
 
     all_specs = list(all_specs)
-    all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).
-                                  itemsize, -k[2]))
+    all_specs.sort(key=lambda k:
+                   (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).itemsize, k[2]))
     return list(all_specs)
 
 
@@ -795,6 +795,8 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                 s += batch_size
                 fail_ct = 0
             else:
+                op_infos[s:s + batch_size] = reversed(op_infos[s:s +
+                                                               batch_size])
                 fail_ct += 1
 
                 if fail_ct > max_fail_retry:
@@ -812,7 +814,8 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                         time.sleep(10)
                         physical_mesh = tmp_mesh.get_physical_mesh()
                     except ray.exceptions.RayError as e:
-                        print("Physical mesh error", e)
+                        ray.shutdown()
+                        ray.init(address="auto")
                         physical_mesh = None
 
         # Parse results

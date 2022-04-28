@@ -709,8 +709,8 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
                     all_specs.add((tuple(replica_group), dtype, 1 << i))
 
     all_specs = list(all_specs)
-    all_specs.sort(key=lambda k: (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).
-                                  itemsize, k[2]))
+    all_specs.sort(key=lambda k:
+                   (k[0][0][0] - k[0][0][-1], to_np_dtype(k[1]).itemsize, k[2]))
     return list(all_specs)
 
 
@@ -795,7 +795,8 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                 s += batch_size
                 fail_ct = 0
             else:
-                op_infos[s:s + batch_size] = reversed(op_infos[s:s + batch_size])
+                op_infos[s:s + batch_size] = reversed(op_infos[s:s +
+                                                               batch_size])
                 fail_ct += 1
 
                 if fail_ct > max_fail_retry:

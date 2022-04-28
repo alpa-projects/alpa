@@ -34,11 +34,14 @@ jobs:
         with:
           ref: '${{ env.ALPA_BRANCH }}'
 
+      - name: clean up images
+        run: |
+          docker image prune -f
+
       - name: build image
         run: |
           cd build
           docker build . -t build-jaxlib-image
-          docker rmi -f $(docker images -f "dangling=true" -q)
 
       - name: Compile Jaxlib
         run: |

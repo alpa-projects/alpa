@@ -63,16 +63,9 @@ jobs:
         with:
           repository: 'alpa-projects/jax-alpa'
           ref: 'main'
-          path: jax-alpa
-
-      - name: check
-        run: |
-          pwd
-          ls
 
       - name: Jax source dist
         run: |
-          cd jax-alpa
           python setup.py sdist
 
       - name: Move to local

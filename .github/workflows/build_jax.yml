@@ -57,13 +57,12 @@ jobs:
   build_jax:
     name: Build Jax
     runs-on: [self-hosted]
-    needs: build_jaxlib
 
     steps:
       - uses: actions/checkout@v3
         with:
           repository: 'alpa-projects/jax-alpa'
-          refs: 'main'
+          ref: 'main'
 
       - name: Jax source dist
         run: |

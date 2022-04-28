@@ -64,6 +64,11 @@ jobs:
           repository: 'alpa-projects/jax-alpa'
           ref: 'main'
 
+      - name: check
+        run: |
+          pwd
+          ls
+
       - name: Jax source dist
         run: |
           cd jax-alpa

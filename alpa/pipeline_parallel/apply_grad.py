@@ -152,7 +152,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     closed_jaxpr, sliced_eqns = _rewrite_cross_layer_grad(
         *sliced_eqns, gensym_fn, closed_jaxpr)
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
-    compute_grad, _, apply_grad = sliced_jaxprs
+    compute_grad, _, apply_grad = sliced_jaxprs  # pylint: disable=unbalanced-tuple-unpacking
     split_eqn = sliced_eqns[1][0]
     if len(apply_grad.eqns) == 0:
         logger.warning(
@@ -226,7 +226,6 @@ def compute_grad_to_accumulate_grad(
     # rewrite eqns
     new_eqns = []
     pipe_start = None
-    last_pipe_end = None
     pipe_eqns = []
     to_acc = []
     for eqn in compute_jaxpr.eqns:
@@ -279,7 +278,6 @@ def compute_grad_to_accumulate_grad(
                     eqn.outvars + map(lambda x: grad_outs[x], to_acc),
                     eqn.params['name'],
                     eqn.params['mark_type'])
-                last_pipe_end = new_pipe_end
                 new_eqns.append(new_pipe_end)
                 pipe_start = None
                 pipe_eqns = []

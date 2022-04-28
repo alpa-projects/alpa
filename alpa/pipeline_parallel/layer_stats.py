@@ -10,17 +10,16 @@ from alpa.util import OrderedSet
 
 def call_to_xla_computation(eqn: JaxprEqn):
     """Convert a jaxpr equation to a XLA computation for FLOP analysis.
-    
+
     Reference code: jax/jax/interpreters/xla.py::jaxpr_subcomp
     """
-    xe = xc._xla
     prim = eqn.primitive
     backend = xb.get_backend("gpu")
 
     c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
 
     def aval(v):
-        if type(v) is Literal:
+        if isinstance(v, Literal):
             return xla.abstractify(v.val)
         else:
             return v.aval
@@ -150,7 +149,7 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
 
 
 def global_invar_size(invars: Set[Var], eqn: JaxprEqn):
-    input_vars = set([v for v in eqn.invars if isinstance(v, Var)])
+    input_vars = {v for v in eqn.invars if isinstance(v, Var)}
     size = sum([(var.aval.size * var.aval.dtype.itemsize)
                 for var in invars.intersection(input_vars)])
     return size

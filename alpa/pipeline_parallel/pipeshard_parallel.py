@@ -13,7 +13,6 @@ from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                              gen_dependency_with_stages,
                                               PipeDreamFlush)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
@@ -22,10 +21,9 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
-                                               process_apply_gradient,
-                                               split_compute_grad_and_apply_grad
-                                              )
+from alpa.pipeline_parallel.apply_grad import \
+    (compute_grad_to_accumulate_grad, process_apply_gradient,
+     split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -40,8 +38,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                 donated_invars, batch_invars, devices,
                                 memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
-    if not (isinstance(devices, VirtualPhysicalMesh) or
-            isinstance(devices, DistributedPhysicalDeviceMeshGroup)):
+    if not (isinstance(devices, (DistributedPhysicalDeviceMeshGroup,
+                                 VirtualPhysicalMesh))):
         raise RuntimeError(
             f"Unrecognized type of `devices`, got: {type(devices)},"
             "expected type: `VirtualPhysicalMesh`.")
@@ -80,8 +78,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
     assert (len(jax_pipeline_layers) == len(
-        set(layer.name for layer in jax_pipeline_layers))
-           ), "All layers must have unique names."
+            set(layer.name for layer in jax_pipeline_layers))), \
+        "All layers must have unique names."
     jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
         jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
@@ -242,7 +240,6 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         virtual_mesh = virtual_meshes[mesh_idx]
         logical_mesh = virtual_mesh.get_logical_mesh(
             logical_mesh_shapes[mesh_idx])
-        logical_mesh_search_mode = "cost_model"
         autosharding_option = default_autosharding_option.deepcopy_and_update(
             autosharding_option_dicts[mesh_idx])
 
@@ -255,8 +252,6 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             donate_invars_dict[stage_idx]
             for stage_idx in stage_id_dict[mesh_idx]
         ]
-        search_task = None
-        record_file = None
         if global_config.pipeline_distributed_compile:
             proto, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)

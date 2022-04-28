@@ -3,20 +3,16 @@ import logging
 import time
 
 from abc import ABCMeta, abstractmethod
-from typing import List, Any
+from typing import List
 
 from jax.core import Var
 import ray
 
 from alpa.util import OrderedSet
-from alpa.device_mesh import PhysicalDeviceMesh
-from alpa.pipeline_parallel.cross_mesh_resharding import (CrossMeshCommunicator,
-                                                          CollectiveGroup,
-                                                          SymbolicReshardingTask
-                                                         )
+from alpa.pipeline_parallel.cross_mesh_resharding import \
+    (CrossMeshCommunicator, SymbolicReshardingTask)
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
-from alpa.global_env import global_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -161,7 +157,6 @@ class BaseDistributedRuntime(BaseRuntime):
         for stage_idx, stage in enumerate(self.stages):
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
             assert len(mesh_indices) == 1
-            mesh_idx = mesh_indices[0]
             stage.get_spmd_partitioned()
 
     def _establish_nccl_groups(self):

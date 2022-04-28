@@ -1,16 +1,18 @@
 """Utilities for testing."""
-from collections.abc import Iterable
 import time
 import unittest
+from collections.abc import Iterable
+from typing import Any
 
-from flax import linen as nn
-from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import jax
-from jax.experimental.maps import FrozenDict as FrozenDictJax
 import jax.numpy as jnp
+from jax.experimental.maps import FrozenDict as FrozenDictJax
 import numpy as np
 import optax
 import ray
+from flax import linen as nn
+from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
+
 
 from alpa.api import parallelize, grad, value_and_grad
 from alpa.device_mesh import DeviceCluster
@@ -72,6 +74,7 @@ class BertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
+    layers: Any = None
 
     def setup(self):
         self.layers = [
@@ -207,6 +210,7 @@ class PipelineBasicTest(unittest.TestCase):
                  namespace=get_ray_namespace_str(
                      prefix=global_config.unittest_ray_namespace_prefix))
 
+    # pylint: disable=no-self-use
     def tearDown(self):
         ray.shutdown()
         time.sleep(1)
@@ -280,6 +284,7 @@ class PipelineBasicTest(unittest.TestCase):
         executable.shutdown()
         return hlo_text
 
+    # pylint: disable=no-self-use
     def run_n_layer_bert(self,
                          n_layers,
                          manual_pipeline_layer=True,

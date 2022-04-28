@@ -1,7 +1,7 @@
 """Define a new Jax primitive pipeline_maker to mark the boundary of pipeline computations."""
 import numpy as np
 
-from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, DropVar, abstract_unit
+from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, DropVar
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten

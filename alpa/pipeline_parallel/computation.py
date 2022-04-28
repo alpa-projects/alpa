@@ -12,7 +12,7 @@ from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
                       ShapedArray, get_aval, raise_to_shaped)
-from jax.interpreters import xla, pxla
+from jax.interpreters import pxla
 from jax.interpreters.partial_eval import remat_call_p
 from jaxlib import xla_extension
 import numpy as np
@@ -29,7 +29,7 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
                        jaxpr_to_hlo_computation, setup_computation_alias,
-                       log_jaxpr, compile_dummy_zero_constant, get_var_mapping)
+                       compile_dummy_zero_constant, get_var_mapping)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -872,6 +872,7 @@ def generate_sharded_xla_computations(
     built = xc.XlaComputation(proto)
     in_avals, out_avals, donated_invars = jaxpr_args
 
+    #  pylint: disable=unbalanced-tuple-unpacking
     computation_names, computation_protos, strategy_config = run_auto_sharding_pass(
         built,
         in_avals,

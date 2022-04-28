@@ -23,6 +23,12 @@ jobs:
     # Using github matrix
 
     steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ secrets.PAT_TOKEN }}
+        if: ${{github.ref != 'refs/head/main'}}
+
       # checkout repo
       - uses: actions/checkout@v3
         with:
@@ -39,7 +45,7 @@ jobs:
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec \
           --rm -v $(pwd)/dist:/dist build-jaxlib-image \
-          3.8 cuda 11.1 ${TF_BRANCH##*/} $ALPA_BRANCH
+          3.8 cuda 11.1 ${TF_BRANCH##*/} ${ALPA_BRANCH##*/}
 
       # change this to publishing to pypi
       - name: Publish to local

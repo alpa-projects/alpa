@@ -8,15 +8,16 @@ then
 fi
 
 usage() {
-  echo "usage: ${0##*/} [3.7|3.8|3.9] [11.1|11.2|11.3]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [11.1|11.2|11.3] [alpa-branch]"
   exit 1
 }
 
-if [[ $# -lt 2 ]]
+if [[ $# -lt 3 ]]
 then
   usage
 fi
 
+ALPA_BRANCH="$3"
 apt install -y coinor-cbc glpk-utils
 export JAX_CUDA_VERSION=$2
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
@@ -25,22 +26,18 @@ export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 source /python${PY_VERSION}-env/bin/activate
 
 
-git clone https://github.com/alpa-projects/alpa.git
-# TODO(Hao): remove this
-cd /build/alpa && git checkout hao-wheel-2
+git clone -b ${ALPA_BRANCH##*/} https://github.com/alpa-projects/alpa.git
+cd /build/alpa
 
 # install ILP solver
 sudo apt install -y coinor-cbc
-sudo apt install -y libsqlite3-dev
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
-pip install coverage cmake pybind11 ray pysqlite3
-
 pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
 pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
-python setup.py install
+python install -e .[dev]
 ray start --head
 coverage run -m unittest tests/test_*.py
 coverage report -m

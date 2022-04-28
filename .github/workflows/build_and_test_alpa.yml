@@ -10,11 +10,16 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  ALPA_BRANCH: ${{ github.ref }}
+
 jobs:
-  build_and_test:
-    runs-on: [self-hosted]
+
+  linting:
+    runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: action/checkout@v3
 
       - name: Set up Python3.8
         uses: actions/setup-python@v2
@@ -29,6 +34,13 @@ jobs:
       - name: Linting
         run: |
           prospector ./alpa
+  
+
+  Unittest:
+    runs-on: [self-hosted]
+    needs: linting
+    steps:
+      - uses: actions/checkout@v3
 
       - name: Test
         run: |
@@ -36,4 +48,4 @@ jobs:
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
           --shm-size=10.24gb \
-          --entrypoint /test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8.0 11.1
+          --entrypoint /test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8 11.1 ${ALPA_BRANCH##*/}

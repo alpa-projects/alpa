@@ -63,6 +63,7 @@ jobs:
         with:
           repository: 'alpa-projects/jax-alpa'
           ref: 'main'
+          path: jax-alpa
 
       - name: check
         run: |

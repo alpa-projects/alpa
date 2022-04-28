@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tensorflow:
-        description: 'TensorFlow-alpa branch to test'
+        description: 'TensorFlow-alpa branch to build'
         required: true
         default: 'master'
 
+
 env:
   TF_BRANCH: ${{ github.event.inputs.tensorflow }}
-  ALPA_BRANCH: ${{ github.ref }}
 
 
 jobs:
@@ -31,8 +31,6 @@ jobs:
 
       # checkout repo
       - uses: actions/checkout@v3
-        with:
-          ref: '${{ env.ALPA_BRANCH }}'
 
       - name: clean up images
         run: |
@@ -48,7 +46,7 @@ jobs:
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec \
           --rm -v $(pwd)/dist:/dist build-jaxlib-image \
-          3.8 cuda 11.1 ${TF_BRANCH##*/} ${ALPA_BRANCH##*/}
+          3.8 cuda 11.1 ${TF_BRANCH##*/}
 
       # change this to publishing to pypi
       - name: Publish to local

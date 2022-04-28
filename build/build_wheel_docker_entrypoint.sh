@@ -11,11 +11,11 @@ export CC=/dt7/usr/bin/gcc
 export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
 
 usage() {
-  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name] [alpa branch name]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name]"
   exit 1
 }
 
-if [[ $# -lt 5 ]]
+if [[ $# -lt 4 ]]
 then
   usage
 fi
@@ -23,10 +23,9 @@ fi
 PY_VERSION="$1"
 echo "Python version $PY_VERSION"
 TF_BRANCH="$4"
-ALPA_BRANCH="$5"
 
 git clone -b $TF_BRANCH https://github.com/alpa-projects/tensorflow-alpa.git /build/tensorflow-alpa
-git clone -b $ALPA_BRANCH https://github.com/alpa-projects/jax-alpa.git /build/jax
+git clone https://github.com/alpa-projects/jax-alpa.git /build/jax
 cd /build/jax/build
 
 mkdir /build/tmp

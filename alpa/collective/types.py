@@ -26,7 +26,7 @@ def torch_available():
     return _TORCH_AVAILABLE
 
 
-class Backend(object):
+class Backend:
     """A class to represent different backends."""
     NCCL = "nccl"
     MPI = "mpi"
@@ -36,8 +36,8 @@ class Backend(object):
     def __new__(cls, name: str):
         backend = getattr(Backend, name.upper(), Backend.UNRECOGNIZED)
         if backend == Backend.UNRECOGNIZED:
-            raise ValueError("Unrecognized backend: '{}'. "
-                             "Only NCCL is supported".format(name))
+            raise ValueError(f"Unrecognized backend: '{name}'. "
+                             "Only NCCL is supported")
         if backend == Backend.MPI:
             raise RuntimeError("Ray does not support MPI backend.")
         return backend
@@ -55,7 +55,7 @@ unset_timeout_ms = timedelta(milliseconds=-1)
 
 @dataclass
 class AllReduceOptions:
-    reduceOp = ReduceOp.SUM
+    reduce_op = ReduceOp.SUM
     timeout_ms = unset_timeout_ms
 
 
@@ -66,7 +66,7 @@ class BarrierOptions:
 
 @dataclass
 class ReduceOptions:
-    reduceOp = ReduceOp.SUM
+    reduce_op = ReduceOp.SUM
     root_rank = 0
     root_tensor = 0  # index for multi-gpu reduce operations
     timeout_ms = unset_timeout_ms
@@ -93,7 +93,7 @@ class BroadcastOptions:
 
 @dataclass
 class ReduceScatterOptions:
-    reduceOp = ReduceOp.SUM
+    reduce_op = ReduceOp.SUM
     timeout_ms = unset_timeout_ms
 
 

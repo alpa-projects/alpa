@@ -4,10 +4,10 @@ import time
 import os
 import shutil
 
+import numpy
 import ray
 from ray import ray_constants
 import pygloo
-import numpy
 
 from alpa.collective.collective_group import gloo_util
 from alpa.collective.collective_group.base_collective_group import BaseGroup
@@ -40,9 +40,8 @@ class Rendezvous:
             ray.worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())
         logger.debug(
-            "Redis address: {}, port: {}, this actor address: {}.".format(
-                self._redis_ip_address, self._redis_port,
-                self._process_ip_address))
+            f"Redis address: {self._redis_ip_address}, port: {self._redis_port}, "
+            f"this actor address: {self._process_ip_address}.")
         self._store_type = store_type
         self._device_type = device_type
         self._store = None
@@ -52,11 +51,11 @@ class Rendezvous:
 
     def create_store(self, store_type):
         if store_type == "redis":
-            redisStore = pygloo.rendezvous.RedisStore(self._redis_ip_address,
-                                                      int(self._redis_port))
+            redis_store = pygloo.rendezvous.RedisStore(self._redis_ip_address,
+                                                       int(self._redis_port))
             redis_password = ray_constants.REDIS_DEFAULT_PASSWORD
-            redisStore.authorize(redis_password)
-            self._store = redisStore
+            redis_store.authorize(redis_password)
+            self._store = redis_store
         elif store_type == "file":
             store_name = get_store_name(self._group_name)
             store_path = gloo_util.get_gloo_store_path(store_name)
@@ -70,14 +69,14 @@ class Rendezvous:
                 while not os.path.exists(store_path):
                     time.sleep(0.1)
             # Note: multi-machines needs a shared NFS.
-            fileStore = pygloo.rendezvous.FileStore(store_path)
+            file_store = pygloo.rendezvous.FileStore(store_path)
             self._store = pygloo.rendezvous.PrefixStore(self._group_name,
-                                                        fileStore)
+                                                        file_store)
         elif store_type == "hash":
             raise NotImplementedError("No implementation for hash store.")
         else:
             raise RuntimeError(
-                "Unrecognized store type: {}.".format(store_type))
+                f"Unrecognized store type: {store_type}.")
 
     def create_device(self, device_type):
         if device_type == "tcp":
@@ -97,7 +96,7 @@ class Rendezvous:
         """
         if timeout_s <= 0:
             raise ValueError("The 'timeout' argument must be positive. "
-                             "Got '{}'.".format(timeout_s))
+                             f"Got '{timeout_s}'.")
 
         timeout_delta = datetime.timedelta(seconds=timeout_s)
         elapsed = datetime.timedelta(seconds=0)
@@ -113,7 +112,7 @@ class Rendezvous:
                 except ValueError:
                     if self._context.rank == 0:
                         if not q:
-                            ray.remote(gloo_util.glooQueue).options(
+                            ray.remote(gloo_util.GlooQueue).options(
                                 name="gloo_queue",
                                 lifetime="detached").remote(1000)
                         if not s:
@@ -181,7 +180,7 @@ class GLOOGroup(BaseGroup):
             device_type (str): The device type to transport.
                                Optional: "tcp", "uv".
         """
-        super(GLOOGroup, self).__init__(world_size, rank, group_name)
+        super().__init__(world_size, rank, group_name)
         self._gloo_context = gloo_util.create_gloo_context(
             self.rank, self.world_size)
         self._rendezvous = Rendezvous(self.group_name, self._gloo_context,
@@ -202,7 +201,7 @@ class GLOOGroup(BaseGroup):
             store_path = gloo_util.get_gloo_store_path(store_name)
             if os.path.exists(store_path):
                 shutil.rmtree(store_path)
-        super(GLOOGroup, self).destroy_group()
+        super().destroy_group()
 
     @classmethod
     def backend(cls):
@@ -225,7 +224,7 @@ class GLOOGroup(BaseGroup):
                 gloo_util.get_tensor_ptr(output_tensor),
                 gloo_util.get_tensor_n_elements(input_tensor),
                 gloo_util.get_gloo_tensor_dtype(input_tensor),
-                gloo_util.get_gloo_reduce_op(allreduce_options.reduceOp))
+                gloo_util.get_gloo_reduce_op(allreduce_options.reduce_op))
 
         self._collective(tensors, tensors, collective_fn)
 
@@ -259,7 +258,7 @@ class GLOOGroup(BaseGroup):
                           gloo_util.get_tensor_ptr(output_tensor),
                           gloo_util.get_tensor_n_elements(input_tensor),
                           gloo_util.get_gloo_tensor_dtype(input_tensor),
-                          gloo_util.get_gloo_reduce_op(reduce_options.reduceOp),
+                          gloo_util.get_gloo_reduce_op(reduce_options.reduce_op),
                           root_rank)
 
         self._collective(tensors, tensors, collective_fn)
@@ -348,7 +347,7 @@ class GLOOGroup(BaseGroup):
                 gloo_util.get_tensor_ptr(output_tensor), size,
                 [size // world_size for _ in range(world_size)],
                 gloo_util.get_gloo_tensor_dtype(output_tensor),
-                gloo_util.get_gloo_reduce_op(reducescatter_options.reduceOp))
+                gloo_util.get_gloo_reduce_op(reducescatter_options.reduce_op))
 
         _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists)
         input_flattened = [
@@ -451,11 +450,11 @@ def _check_cpu_tensors(tensors):
         raise RuntimeError("'tensors' must be a nonempty list.")
     if len(tensors) != 1:
         raise RuntimeError("Gloo only accept one tensor in the tensor list."
-                           " Got {} != 1.".format(len(tensors)))
+                           f" Got {len(tensors)} != 1.")
     d = gloo_util.get_tensor_device(tensors[0])
     if d != "cpu":
         raise RuntimeError("Gloo only accept cpu tensor."
-                           " Got {}.".format(d))
+                           f" Got {d}.")
 
 
 def _flatten_for_scatter_gather(tensor_list, copy=False):
@@ -492,7 +491,7 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
     if len(tensors) != 1:
         raise RuntimeError(
             "Gloo only accept one tensor in the first argument 'tensors'."
-            " Got {} != 1.".format(len(tensors)))
+            f" Got {len(tensors)} != 1.")
 
     if not tensor_lists or not isinstance(tensor_lists, list):
         raise RuntimeError("The second argument 'tensor_lists' "
@@ -501,7 +500,7 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
     if len(tensor_lists) != 1:
         raise RuntimeError("Gloo only accept one tensor list "
                            "in the second argument 'tensor_lists'."
-                           " Got {} != 1.".format(len(tensor_lists)))
+                           f" Got {len(tensor_lists)} != 1.")
 
     dtype = gloo_util.get_gloo_tensor_dtype(tensors[0])
     shape = gloo_util.get_tensor_shape(tensors[0])
@@ -512,10 +511,8 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
         dt = gloo_util.get_gloo_tensor_dtype(t)
         if dt != dtype:
             raise RuntimeError("All tensor operands to scatter/gather must "
-                               "have the same dtype. Got '{}' and '{}'.".format(
-                                   dt, dtype))
+                               f"have the same dtype. Got '{dt}' and '{dtype}'.")
         s = gloo_util.get_tensor_shape(t)
         if s != shape:
             raise RuntimeError("All tensor operands to scatter/gather must "
-                               "have the same shape. Got '{}' and '{}'.".format(
-                                   s, shape))
+                               f"have the same shape. Got '{s}' and '{shape}'.")

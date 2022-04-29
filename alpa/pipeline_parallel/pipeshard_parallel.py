@@ -115,7 +115,10 @@ def slice_and_cluster_jaxpr(fun: lu.WrappedFun, num_micro_batches, in_tree,
         autosharding_option_dicts=global_config.
         submesh_autosharding_option_dicts)
 
-    return cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info, batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out, acc_grad_outvars, global_invars, global_outvars, donation_mapping, jax_pipeline_layers, jax_apply_layers
+    return (cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info,
+            batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out,
+            acc_grad_outvars, global_invars, global_outvars, donation_mapping,
+            jax_pipeline_layers, jax_apply_layers)
 
 
 def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
@@ -130,9 +133,14 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         num_micro_batches = 1
         funs = {}
         while num_micro_batches <= get_batch_size(avals, batch_invars):
-            cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info, batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out, acc_grad_outvars, global_invars, global_outvars, donation_mapping, jax_pipeline_layers, jax_apply_layers = slice_and_cluster_jaxpr(
-                fun, num_micro_batches, in_tree, out_tree_thunk, donated_invars,
-                batch_invars, devices, memory_budget_per_device, *avals)
+            (cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info,
+             batch_size, barrier, have_apply_grad, acc_grad_dict,
+             grad_in_to_out, acc_grad_outvars, global_invars, global_outvars,
+             donation_mapping, jax_pipeline_layers,
+             jax_apply_layers) = slice_and_cluster_jaxpr(
+                 fun, num_micro_batches, in_tree, out_tree_thunk,
+                 donated_invars, batch_invars, devices,
+                 memory_budget_per_device, *avals)
             if cost < best_cost:
                 best_cost = cost
                 best_microbatch = num_micro_batches
@@ -158,9 +166,12 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         return best_microbatch, ret
     else:
         num_micro_batches = global_config.num_micro_batches
-        cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info, batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out, acc_grad_outvars, global_invars, global_outvars, donation_mapping, jax_pipeline_layers, jax_apply_layers = slice_and_cluster_jaxpr(
-            fun, num_micro_batches, in_tree, out_tree_thunk, donated_invars,
-            batch_invars, devices, memory_budget_per_device, *avals)
+        (cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info,
+         batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out,
+         acc_grad_outvars, global_invars, global_outvars, donation_mapping,
+         jax_pipeline_layers, jax_apply_layers) = slice_and_cluster_jaxpr(
+             fun, num_micro_batches, in_tree, out_tree_thunk, donated_invars,
+             batch_invars, devices, memory_budget_per_device, *avals)
         return num_micro_batches, (gensym_func, apply_grad_jaxpr,
                                    apply_grad_global_info, batch_size, barrier,
                                    have_apply_grad, acc_grad_dict,
@@ -190,62 +201,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                             fun, in_tree, out_tree_thunk, donated_invars,
                             batch_invars, devices, memory_budget_per_device,
                             *avals)
-    # num_micro_batches = global_config.num_micro_batches
-    # if num_micro_batches is None:
-    #     logger.warning("num microbatch is unset. Use 1 by default.")
-    #     num_micro_batches = 1
-    # closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
-    #     fun, batch_invars, num_micro_batches, avals)
 
-    # # Split the jaxpr into compute_grad and apply_grad
-    # gensym_func = gensym([closed_jaxpr.jaxpr])
-    # closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
-    #     split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
-    # have_apply_grad = barrier is not None
-
-    # if have_apply_grad:
-    #     acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_grad_to_accumulate_grad(
-    #         compute_grad_jaxpr, gensym_func)
-    # else:
-    #     acc_grad_jaxpr = compute_grad_jaxpr
-    #     acc_grad_dict = {}
-    #     grad_in_to_out = {}
-
-    # # Slice the jaxpr into layers
-    # acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
-    # acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
-
-    # jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
-    #     acc_grad_jaxpr)
-    # assert (len(jax_pipeline_layers) == len(
-    #     set(layer.name for layer in jax_pipeline_layers))
-    #        ), "All layers must have unique names."
-    # jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
-    #     jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
-    # jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    # jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
-
-    # # Initialize donation map
-    # global_invars = closed_jaxpr.jaxpr.invars
-    # global_outvars = closed_jaxpr.jaxpr.outvars
-    # donation_mapping = dict(grad_in_to_out) if have_apply_grad else {}
-
-    # num_forward_layers = len(jax_pipeline_layers) // 2
-    # layer_to_dummy_mesh = (list(range(num_forward_layers)) +
-    #                        list(reversed(range(num_forward_layers))))
-    # # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
-    # (jax_apply_layers, _, _, _, dummy_global_outvars,
-    #  dummy_donated_invars) = process_apply_gradient(
-    #      apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
-    #      layer_to_dummy_mesh, gensym_func, num_micro_batches,
-    #      len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-    #      donated_invars)
-    # apply_grad_donation = create_donation_mapping(donation_mapping,
-    #                                               dummy_donated_invars,
-    #                                               global_invars, global_outvars)
-    # apply_grad_global_info = apply_grad_donation, global_outvars
-
-    # # Construct pipeline stages by merging layers
+    # Construct pipeline stages by merging layers
     if isinstance(devices, VirtualPhysicalMesh):
         virtual_mesh = devices
         (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,

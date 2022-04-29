@@ -78,8 +78,13 @@ perf_test_suite = {
     "sub_logical_mesh_shapes": [(4, 1)] * 8,
     "submesh_autosharding_option_dicts": [{}] * 8,
 }),
+64: get_benchmark_cases("70B", [64], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[0], [1], [2], [3], [4], [5], [6], [7]],
+    "sub_physical_mesh_shapes": [(1, 8)] * 8,
+    "sub_logical_mesh_shapes": [(8, 1)] * 8,
+    "submesh_autosharding_option_dicts": [{}] * 8,
+}),
 }
-
 
 # Grid search on hyperparameters
 grid_search_suite = {

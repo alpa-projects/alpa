@@ -149,7 +149,7 @@ def set_parallelize_options(
         devices=None,
         strategy: str = "shard_parallel",
         memory_budget_per_device: Optional[float] = None,
-        num_micro_batches: Optional[int] = None,
+        num_micro_batches: Optional = None,
         # shard-parallel
         search_logical_mesh_shape: bool = False,
         mesh_shape_search_mode: str = "cost_model",

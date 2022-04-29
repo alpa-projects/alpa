@@ -132,7 +132,7 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         while num_micro_batches <= get_batch_size(avals, batch_invars):
             cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info, batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out, acc_grad_outvars, global_invars, global_outvars, donation_mapping, jax_pipeline_layers, jax_apply_layers = slice_and_cluster_jaxpr(
                 fun, num_micro_batches, in_tree, out_tree_thunk, donated_invars,
-                batch_invars, devices, memory_budget_per_device, avals)
+                batch_invars, devices, memory_budget_per_device, *avals)
             if cost < best_cost:
                 best_cost = cost
                 best_microbatch = num_micro_batches
@@ -151,21 +151,23 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                        donation_mapping, jax_pipeline_layers,
                                        jax_apply_layers, newStores)
             num_micro_batches *= 2
-        return best_microbatch, best_cost, funs[best_microbatch]
+        # Restoring the function's store value to the values corresponding to the best microbatch size
+        newStores, ret = funs[best_microbatch][-1], funs[best_microbatch][:-1]
+        for i in range(len(newStores)):
+            fun.stores[i].store(newStores[i].val)
+        return best_microbatch, ret
     else:
         num_micro_batches = global_config.num_micro_batches
         cost, gensym_func, apply_grad_jaxpr, apply_grad_global_info, batch_size, barrier, have_apply_grad, acc_grad_dict, grad_in_to_out, acc_grad_outvars, global_invars, global_outvars, donation_mapping, jax_pipeline_layers, jax_apply_layers = slice_and_cluster_jaxpr(
             fun, num_micro_batches, in_tree, out_tree_thunk, donated_invars,
-            batch_invars, devices, memory_budget_per_device, avals)
-        newStores = fun.stores
-        return num_micro_batches, cost, (gensym_func, apply_grad_jaxpr,
+            batch_invars, devices, memory_budget_per_device, *avals)
+        return num_micro_batches, (gensym_func, apply_grad_jaxpr,
                                          apply_grad_global_info, batch_size,
                                          barrier, have_apply_grad,
                                          acc_grad_dict, grad_in_to_out,
                                          acc_grad_outvars, global_invars,
                                          global_outvars, donation_mapping,
-                                         jax_pipeline_layers, jax_apply_layers,
-                                         newStores)
+                                         jax_pipeline_layers, jax_apply_layers)
 
 
 @lu.cache
@@ -180,17 +182,15 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
-    num_micro_batches, _, (gensym_func, apply_grad_jaxpr,
+    num_micro_batches, (gensym_func, apply_grad_jaxpr,
                            apply_grad_global_info, batch_size, barrier,
                            have_apply_grad, acc_grad_dict, grad_in_to_out,
                            acc_grad_outvars, global_invars, global_outvars,
                            donation_mapping, jax_pipeline_layers,
-                           jax_apply_layers, newStores) = optimize_microbatch(
+                           jax_apply_layers) = optimize_microbatch(
                                fun, in_tree, out_tree_thunk, donated_invars,
                                batch_invars, devices, memory_budget_per_device,
                                *avals)
-    for i in range(len(newStores)):
-        fun.stores[i].store(newStores[i].val)
     # num_micro_batches = global_config.num_micro_batches
     # if num_micro_batches is None:
     #     logger.warning("num microbatch is unset. Use 1 by default.")

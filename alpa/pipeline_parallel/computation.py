@@ -330,8 +330,10 @@ class XlaShardedPipelineComputation(PipelineComputation):
         self.spmd_partitioned_hlo_module = spmd_partitioned_hlo_module
         return spmd_partitioned_hlo_module
 
-    def get_runnable(self, mesh):
+    def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
+        if not mesh:
+            raise RuntimeError("`XlaShardedPipelineComputation` requires a mesh.")
         hlo_module = self.get_spmd_partitioned()
 
         avals = [var.aval for var in self.invars]

@@ -274,8 +274,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             not_batch_invars, var_at)
 
         worker_tmp_instructions = {}
+        all_workers = {}
         for mesh in self.physical_meshes:
             for worker in mesh.workers:
+                all_workers[worker] = []
                 worker_tmp_instructions[worker] = []
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
         worker_to_idx = {}
@@ -284,7 +286,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
-            for worker in worker_tmp_instructions:
+            for worker in all_workers:
                 worker_tmp_instructions[worker] = []
             for mesh_idx, task in enumerate(sched):
                 if not task:

@@ -14,6 +14,19 @@ from alpa.util import map_to_shape, count_communication_primitives, print_used_t
 as_option = global_config.default_autosharding_option
 
 
+def compute_gpt_parameter_count(num_layers, hidden_size, vocab_size):
+    return num_layers * (
+            # self-attention
+            hidden_size * (3 * hidden_size + 1) +
+            hidden_size * (hidden_size + 1) +
+            # mlp
+            hidden_size * (4 * hidden_size + 1) +
+            hidden_size * 4 * (hidden_size + 1) +
+            # layer norm
+            hidden_size * 4
+           ) + vocab_size * (hidden_size + 1)
+
+
 def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])
@@ -169,15 +182,13 @@ def benchmark_2d_one_case_gpt_bert(physical_mesh, model_type, benchmark_case):
     return executable
 
 
-
 if __name__ == "__main__":
+    global_config.xla_gpu_autotune_level = 0
     model_type = "gpt"
 
     num_nodes = 2
     num_devices_per_node = 8
     _ = None
-
-    # Define a model with 1.3B parameters
 
     # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
     # #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
@@ -189,19 +200,37 @@ if __name__ == "__main__":
         8,  1024,  2048,  2,  32,    51200, num_nodes, num_devices_per_node, 
         #_,_,  PP,  NB, FM,   Remat, RS,    _  _
         _, _,  1,   1,  True, False, False, _, _)
-
-    # Device a fake physical mesh
     num_devices = num_nodes * num_devices_per_node
+
+    #benchmark_case = (32,  *(1024,  5120,  48,    40,   51200,),
+    #                  32,   1,   32,   1,   1,  1,   True,
+    #                  True,  True, "zero-3", None)
+    #num_devices = 32
+
+    num_layers, hidden_size, vocab_size = (benchmark_case[3], benchmark_case[2],
+                                           benchmark_case[5])
+    param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
+    print(f"Param count: {param_count/1e9:.2f} B")
+
+    # Define a fake physical mesh
     physical_mesh = LocalPhysicalDeviceMesh(devices=[None] * num_devices)
 
     # Compile a mesh executable
     executable = benchmark_2d_one_case_gpt_bert(physical_mesh, "gpt", benchmark_case)
 
     # Write hlo ir to a file
-    print(type(executable.hlo_module))
-
     print("Write hlo module to files...")
-    with open("executable_hlo.txt", "w") as fout:
+    with open("optimized_hlo.txt", "w") as fout:
+        hlo_text = executable.get_hlo_text()
+        fout.write(hlo_text)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_text)
+        print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+              f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+              f"#all-to-all: {n_all_to_all}")
+        print(f"Allocation: {executable.get_total_allocation_size() / (1<<30):.2f} GB")
+
+    with open("after_spmd_partitioner_hlo.txt", "w") as fout:
         fout.write(executable.hlo_module.to_string())
 
     with open("executable_hlo.proto", "wb") as fout:

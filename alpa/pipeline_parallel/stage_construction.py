@@ -253,7 +253,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 donation_mapping, global_outvars,
                                 apply_grad_layers, apply_grad_global_info,
                                 autosharding_configs, cluster_size,
-                                layer_flops_prefix_sum, mesh_cached_result, num_micro_batches):
+                                layer_flops_prefix_sum, mesh_cached_result,
+                                num_micro_batches):
     """TODO(zhuohan): docstring."""
     timers("stage-construction-compilation").start()
     assert len(layers) % 2 == 0
@@ -607,7 +608,8 @@ def optimize_cost(layers, mesh, donation_mapping, global_outvars,
         cached_result = None
     compute_cost, max_n_succ_stages = get_compute_cost(
         mesh, submesh_choices, autosharding_configs, layers, donation_mapping,
-        global_outvars, jax_apply_layers, apply_grad_global_info, cached_result, num_micro_batches)
+        global_outvars, jax_apply_layers, apply_grad_global_info, cached_result,
+        num_micro_batches)
     best_cost, solution = dp(num_layers, mesh.num_devices, num_micro_batches,
                              submesh_choices, num_autosharding_configs,
                              compute_cost, max_n_succ_stages)

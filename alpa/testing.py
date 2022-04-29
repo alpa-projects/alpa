@@ -224,7 +224,7 @@ class PipelineBasicTest(unittest.TestCase):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
-                                pipeline_stage_mode=pipeline_stage_mode, 
+                                pipeline_stage_mode=pipeline_stage_mode,
                                 num_micro_batches=num_micro_batches)
 
         # Init model and optimizer

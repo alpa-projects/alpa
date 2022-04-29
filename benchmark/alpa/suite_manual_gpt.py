@@ -68,13 +68,17 @@ perf_test_fast_2d_suite = {
 
 # Performance test on normal models
 perf_test_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,    ...
+    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,   FM,    ...
 1: [
-    (16,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   True,  *fixed_params),
+    (16,   *gpt_specs["350M"], 1,   1,   1,   1,   1,  1,    True,  *fixed_params),
 ],
 
 8: [
-    (32,  *gpt_specs["2.6B"],  2,   2,   1,   4,   2,  4,   False, *fixed_params),
+    (32,   *gpt_specs["2.6B"], 2,   2,   1,   4,   2,  4,    True, *fixed_params),
+],
+
+64: [
+    (1024, *gpt_specs["39B"],  1,   4,   1,   4,   16, 1024, True, *fixed_params),
 ],
 }
 

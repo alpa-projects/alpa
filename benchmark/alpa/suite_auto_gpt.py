@@ -53,7 +53,6 @@ tmp_suite = {
 })
 }
 
-
 # Performance test with search solutions found for p3.16xlarge
 perf_test_suite = {
 1: get_benchmark_cases("350M", [512], [1], "manual_gpipe", {
@@ -72,7 +71,7 @@ perf_test_suite = {
     "forward_stage_layer_ids": [[0, 1, 2], [3, 4, 5]],
     "sub_physical_mesh_shapes": [(1, 2)] * 2,
     "sub_logical_mesh_shapes": [(2, 1)] * 2,
-    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(2)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2,
 }),
 8: get_benchmark_cases("2.6B", [128], [8], "manual_gpipe", {
     "forward_stage_layer_ids": [[0, 1], [2, 3], [4, 5, 6, 7]],
@@ -84,13 +83,19 @@ perf_test_suite = {
     "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7]],
     "sub_physical_mesh_shapes": [(1, 8)] * 2,
     "sub_logical_mesh_shapes": [(2, 4)] * 2,
-    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(2)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2,
 }),
 32: get_benchmark_cases("15B", [128], [16], "manual_gpipe", {
     "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
     "sub_physical_mesh_shapes": [(1, 8)] * 4,
     "sub_logical_mesh_shapes": [(2, 4)] * 4,
-    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(4)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4,
+}),
+64: get_benchmark_cases("39B", [1024], [16], "manual_gpipe", {
+    "forward_stage_layer_ids": [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10], [11], [12], [13], [14], [15]],
+    "sub_physical_mesh_shapes": [(1, 4)] * 16,
+    "sub_logical_mesh_shapes": [(1, 4)] * 16,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 16,
 }),
 }
 

@@ -1235,7 +1235,7 @@ class DistributedArray:
                     device_ids_per_host[host_id]))
         ray.get(obj_refs)
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
-                                indice)
+                                indices)
 
     @property
     def one_replica_buffer_indices(self):

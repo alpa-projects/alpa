@@ -1,6 +1,5 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 from functools import partial
-from alpa.pipeline_parallel.layer_construction import automatic_remat
 
 from flax.training import common_utils
 import jax
@@ -12,13 +11,12 @@ import alpa
 from alpa import (parallelize, global_config, set_parallelize_options,
                   DeviceCluster, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
+from alpa.pipeline_parallel.layer_construction import automatic_remat
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
 from alpa.util import print_used_time, compute_param_number, to_str_round
 
-
 resnet_layer_to_alpa_layer = {50: 16, 101: 33}
-
 
 as_option = global_config.default_autosharding_option
 
@@ -116,8 +114,8 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
                 loss_fn = automatic_remat(loss_fn, layer_num=layer_num)
         else:
             loss_fn = automatic_layer_construction(loss_fn,
-                                                     remat_layer=use_remat,
-                                                     layer_num=layer_num)
+                                                   remat_layer=use_remat,
+                                                   layer_num=layer_num)
 
         step = state.step
         dynamic_scale = state.dynamic_scale
@@ -155,8 +153,8 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers):
     return train_step
 
 
-def benchmark_wresnet_internal(benchmark_case, niter,
-                               num_hosts, num_devices_per_host):
+def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
+                               num_devices_per_host):
     print_used_time(None)
 
     # Model configs
@@ -218,7 +216,8 @@ def benchmark_wresnet_internal(benchmark_case, niter,
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_layers)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat,
+                                num_layers)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 

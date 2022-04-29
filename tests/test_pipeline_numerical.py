@@ -34,10 +34,10 @@ class AccumulateGradTest(PipelineBasicTest):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(AccumulateGradTest('test_mlp'))
-    # suite.addTest(AccumulateGradTest('test_2_layer_bert'))
-    # suite.addTest(AccumulateGradTest('test_8_layer_bert'))
-    # suite.addTest(
-    #     AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_8_layer_bert'))
+    suite.addTest(
+        AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))
     return suite
 
 

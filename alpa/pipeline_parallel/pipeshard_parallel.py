@@ -25,8 +25,7 @@ from alpa.pipeline_parallel.apply_grad import \
     (compute_grad_to_accumulate_grad, process_apply_gradient,
      split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
-    cluster_layers_and_slice_mesh, cluster_layers_with_given_meshes,
-    optimize_cost)
+    cluster_layers_and_slice_mesh, optimize_cost)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
 
@@ -201,47 +200,26 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                             *avals)
 
     # Construct pipeline stages by merging layers
-    if isinstance(devices, VirtualPhysicalMesh):
-        virtual_mesh = devices
-        (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
-         logical_mesh_shapes,
-         autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-             jax_pipeline_layers,
-             virtual_mesh,
-             donation_mapping,
-             acc_grad_outvars,
-             num_micro_batches,
-             batch_size,
-             jax_apply_layers=jax_apply_layers,
-             apply_grad_global_info=apply_grad_global_info,
-             pipeline_stage_mode=global_config.pipeline_stage_mode,
-             logical_mesh_search_space=global_config.logical_mesh_search_space,
-             cache_compute_cost=global_config.cache_compute_cost,
-             forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-             submesh_shapes=global_config.sub_physical_mesh_shapes,
-             logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-             autosharding_option_dicts=global_config.
-             submesh_autosharding_option_dicts)
-        num_meshes = len(sliced_virtual_meshes)
-        physical_meshes = None
-    else:
-        assert isinstance(devices, DistributedPhysicalDeviceMeshGroup)
-        physical_meshes = devices
-        (jax_pipeline_stages, stage_to_mesh, logical_mesh_shapes,
-         autosharding_option_dicts) = cluster_layers_with_given_meshes(
-             jax_pipeline_layers,
-             physical_meshes,
-             donation_mapping,
-             acc_grad_outvars,
-             pipeline_stage_mode=global_config.pipeline_stage_mode,
-             forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-             logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-             autosharding_option_dicts=global_config.
-             submesh_autosharding_option_dicts)
-        num_meshes = len(physical_meshes)
-        sliced_virtual_meshes = [
-            mesh.get_virtual_physical_mesh() for mesh in physical_meshes
-        ]
+    (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
+     logical_mesh_shapes,
+     autosharding_option_dicts) = cluster_layers_and_slice_mesh(
+         jax_pipeline_layers,
+         devices,
+         donation_mapping,
+         acc_grad_outvars,
+         num_micro_batches,
+         batch_size,
+         jax_apply_layers=jax_apply_layers,
+         apply_grad_global_info=apply_grad_global_info,
+         pipeline_stage_mode=global_config.pipeline_stage_mode,
+         logical_mesh_search_space=global_config.logical_mesh_search_space,
+         cache_compute_cost=global_config.cache_compute_cost,
+         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+         submesh_shapes=global_config.sub_physical_mesh_shapes,
+         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+         autosharding_option_dicts=global_config.
+         submesh_autosharding_option_dicts)
+    num_meshes = len(sliced_virtual_meshes)
 
     # Process apply_gradient and donation
     if have_apply_grad:

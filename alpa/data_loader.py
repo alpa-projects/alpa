@@ -4,12 +4,11 @@ import itertools
 
 import jax
 from jax.interpreters import pxla, xla
-from jax._src.abstract_arrays import ShapedArray
 import numpy as np
 import ray
 
-from alpa.device_mesh import LocalPhysicalDeviceMesh, DistributedArray, _shard_array
-from alpa.mesh_executable import next_remote_buffer_uuid, create_remote_buffer_refs
+from alpa.device_mesh import LocalPhysicalDeviceMesh, DistributedArray
+from alpa.mesh_executable import create_remote_buffer_refs
 
 
 class DataLoader:
@@ -32,6 +31,8 @@ class DataLoader:
 
         self.queue = collections.deque()
         self.first_iter = True
+        self.avals = None
+        self.indices = None
 
     def enqueue(self, num_batches):
         for batch in itertools.islice(self.input_iter, num_batches):
@@ -188,7 +189,7 @@ class MeshDriverDataLoader:
             w.data_loader_iter.remote(self.uuid)
 
         # Yield next batch
-        for i in range(self.num_batches):
+        for _ in range(self.num_batches):
             for w in self.physical_mesh.workers:
                 w.data_loader_next.remote(self.uuid)
             for a in self.output_arrays:

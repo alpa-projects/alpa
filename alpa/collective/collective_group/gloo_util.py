@@ -8,8 +8,8 @@ except ImportError as ie:
                       "Please run 'pip install pygloo' to install pygloo.") from ie
 
 import ray
-from alpa.collective.types import ReduceOp, torch_available
 from ray.util.queue import _QueueActor
+from alpa.collective.types import ReduceOp, torch_available
 
 GLOO_REDUCE_OP_MAP = {
     ReduceOp.SUM: pygloo.ReduceOp.SUM,

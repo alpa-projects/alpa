@@ -217,7 +217,7 @@ def value_and_grad(*args, **kwargs):
 
     def ret(*call_args, **call_kwargs):
         func = api.value_and_grad(*args, **kwargs)
-        val, grad = func(*call_args, **call_kwargs)
-        return mark_gradient((val, grad))
+        val, ggrad = func(*call_args, **call_kwargs)
+        return mark_gradient((val, ggrad))
 
     return ret

@@ -5,21 +5,18 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 """
-from collections.abc import Iterable
 import logging
+from typing import Callable, Sequence, Optional
 import os
-from typing import Callable, Sequence, Union, Optional
 
-import numpy as np
+import jax.numpy as jnp
 import ray
-
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax._src.util import partial
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.interpreters.xla import XlaExecutable
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
-import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
+import numpy as np
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh)
@@ -73,8 +70,8 @@ class RemoteBufferRef:
         self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
         self.is_deleted_on_workers = False
         logger.debug(
-            "RemoteBufferRef uuid: {} created on mesh with devices {}.".format(
-                self.uuid, self.device_mesh.device_strs))
+            f"RemoteBufferRef uuid: {self.uuid,} created on mesh "
+            f"with devices {self.device_mesh.device_strs}.")
 
     def set_deleted_on_workers(self):
         """
@@ -112,7 +109,7 @@ def create_remote_buffer_refs(device_mesh,
     refs = []
     for host_id in host_indices:
         for device_id in device_indices:
-            for batch_id in range(num_batches):
+            for _ in range(num_batches):
                 refs.append(
                     RemoteBufferRef(device_mesh, host_id, device_id,
                                     next(uuid_iter)))
@@ -207,6 +204,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.sync_func = get_sync_func_driver(physical_mesh)
         else:
             self.sync_func = None
+        self.hlo_text = None
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
@@ -307,11 +305,12 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         """Fast call without signature matching."""
         if self.static_argnums:
             dyn_args = [
-                args[i] for i in range(len(args)) if i not in static_argnums
+                args[i] for i in range(len(args))
+                if i not in self.static_argnums
             ]
         else:
             dyn_args = args
-        args_flat, in_tree = tree_flatten(dyn_args)
+        args_flat, _ = tree_flatten(dyn_args)
         out = self.launch_on_driver(*args_flat)
         return tree_unflatten(self.out_tree_thunk(), out)
 
@@ -502,8 +501,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         accumulate_grad_in_avals = [
             avals[i] for i in accumulate_grad_invar_indices
         ] + grad_avals
-        apply_grad_in_avals = [avals[i] for i in apply_grad_invar_indices
-                              ] + grad_avals
+        apply_grad_in_avals = \
+            [avals[i] for i in apply_grad_invar_indices] + grad_avals
         accumulate_grad_input_sharding_specs, grad_sharding_specs = (
             get_input_output_sharding_specs(accumulate_grad,
                                             accumulate_grad_in_avals,
@@ -900,9 +899,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                  out_acc_grad_indices: Sequence[int]):
         self.out_acc_grad_indices = out_acc_grad_indices
 
-        super(PartialGradAccMeshDriverExecutable,
-              self).__init__(physical_mesh, hlo_module, strategy_config, avals,
-                             out_avals, donated_invars)
+        super().__init__(physical_mesh, hlo_module, strategy_config, avals,
+                         out_avals, donated_invars)
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
@@ -936,8 +934,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         skip_grad_sync = kwargs["skip_grad_sync"]
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
-        return super(PartialGradAccMeshDriverExecutable,
-                     self).launch_on_driver(*args, **kwargs)
+        return super().launch_on_driver(*args, **kwargs)
 
 
 class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
@@ -948,13 +945,13 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
                  strategy_config: StrategyConfig, output_acc_grad_indices: str):
-        super(PartialGradAccMeshWorkerExecutable,
-              self).__init__(worker, uuid, hlo_proto, strategy_config)
+        super().__init__(worker, uuid, hlo_proto, strategy_config)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             self.compiled.hlo_modules()[0], output_acc_grad_indices)
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
+    # pylint: disable=arguments-differ
     def execute_on_worker(self,
                           input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
@@ -963,9 +960,7 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
-        return super(PartialGradAccMeshWorkerExecutable,
-                     self).execute_on_worker(input_uuids, output_uuids,
-                                             **kwargs)
+        return super().execute_on_worker(input_uuids, output_uuids, **kwargs)
 
     def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""

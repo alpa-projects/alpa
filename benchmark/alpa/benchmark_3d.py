@@ -107,23 +107,15 @@ if __name__ == "__main__":
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
                       f"{max_mem_allocated/GB:.3f}G"]
-            write_tsv(heads, values, output_name)
         else:
-            heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)",
-                     "#Microbatch", "Remat", "Reduce-scatter",
+            heads = ["Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
-                     "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
-                     "Layer->Stage Mapping", "Submesh Shapes",
-                     "Logical Mesh Shapes", "Autosharding Global Configs",
-                     "overwrite_global_config_dict", "compilation times"]
-            values = [model_type + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
-                      num_micro_batches, use_remat, prefer_reduce_scatter,
+                     "TFLOPs (ckpt)", "Peak Mem", "Compilation Time"]
+            values = [model_type, model_config, num_micro_batches, num_gpus, parallel_args,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                      f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
-                      forward_stage_layer_ids, submesh_shapes,
-                      logical_mesh_shapes, autosharding_option_dicts,
-                      overwrite_global_config_dict, to_str_round(compilation_times, 2)]
-            write_tsv(heads, values, output_name)
+                      f"{max_mem_allocated/GB:.3f}G", to_str_round(compilation_times, 2)]
+
+        write_tsv(heads, values, output_name)
 
         time.sleep(0.1)  # for ctrl+c to work

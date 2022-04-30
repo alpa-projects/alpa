@@ -23,13 +23,8 @@ def benchmark_one_case(model, case, niter,
         disable_tqdm_globally()
 
     if not use_separate_process:
-        if model == "wresnet":
-            global_config.xla_client_mem_fraction = 0.88
-            global_config.xla_gpu_autotune_level = 0
-
         ray.init(address="auto", ignore_reinit_error=True,
                  namespace=get_ray_namespace_str())
-        jax.config.update('jax_platform_name', 'cpu')
         global_config.use_dummy_value_for_benchmarking = True
 
         # Run benchmark
@@ -38,6 +33,8 @@ def benchmark_one_case(model, case, niter,
         elif model == "moe":
             result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
         elif model == "wresnet":
+            global_config.xla_client_mem_fraction = 0.88
+            global_config.xla_gpu_autotune_level = 0
             result = benchmark_wresnet_internal(case, niter, num_hosts, num_devices_per_host)
         else:
             raise ValueError(f"Invalid model: {model}")

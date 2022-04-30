@@ -69,8 +69,7 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         if model_type in ["gpt", "bert"]:
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-             use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         elif model_type == "moe":
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
@@ -78,7 +77,6 @@ if __name__ == "__main__":
              num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
              auto_pipeline, overwrite_global_config_dict) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
-            pipeline_stage_mode = "auto_gpipe" if auto_pipeline else "uniform_layer_gpipe"
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
              num_micro_batches, force_batch_dim_mapping,
@@ -86,15 +84,10 @@ if __name__ == "__main__":
              overwrite_global_config_dict) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
             pipeline_stage_mode = "auto_gpipe"
+            overwrite_global_config_dict = {}
             pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
-
-        if pipeline_mp_size <= 1 and pipeline_stage_mode == "uniform_layer_gpipe":
-            print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
-                  f"Please use `benchmark_2d.py` "
-                  f"since 3d runtime will have a small overhead.")
-            continue
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
@@ -106,17 +99,14 @@ if __name__ == "__main__":
          tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_option_dicts) = result
 
-        if pipeline_stage_mode == "uniform_layer_gpipe":
-            heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                     "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
+        if parallel_mode == "manual":
+            heads = ["Type", "Model Config", "#Microbatch", "Parallel Config",
                      "Mean Time", "Std Time", "#Params", "TFLOPs",
-                     "TFLOPs (ckpt)", "Peak Mem", "overwrite_global_config_dict"]
-            parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
-            values = [model_type, model_config, parallel_config, (p_dim0, p_dim1),
-                      num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
+                     "TFLOPs (ckpt)", "Peak Mem"]
+            values = [model_type, model_config, num_micro_batches, parallel_args,
                       f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                       f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                      f"{max_mem_allocated/GB:.3f}G", overwrite_global_config_dict]
+                      f"{max_mem_allocated/GB:.3f}G"]
             write_tsv(heads, values, output_name)
         else:
             heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)",

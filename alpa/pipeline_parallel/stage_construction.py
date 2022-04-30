@@ -684,7 +684,30 @@ def cluster_layers_and_slice_mesh(
         last_submesh_shapes = submesh_shapes
         last_logical_mesh_shapes = logical_mesh_shapes
         last_autosharding_option_dicts = autosharding_option_dicts
-    else pipeline_stage_mode = "manual_stage":
+    elif pipeline_stage_mode == "manual_stage":
+        # This mode resembles Megatron in terms of the uniformity of mesh shapes.
+        num_acc_grad_stages = len(layers)
+        assert num_acc_grad_stages % 2 == 0
+
+        stage_to_mesh = {
+            i:
+            (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
+            for i, _ in enumerate(layers)
+        }
+        num_meshes = num_acc_grad_stages // 2
+        stages = layers
+        if given_mesh:
+            sliced_meshes = [
+                mesh.get_virtual_physical_mesh() for mesh in devices
+            ]
+        else:
+            if submesh_shapes is not None:
+                assert all(
+                    shape == submesh_shapes[0] for shape in submesh_shapes)
+            sliced_meshes = uniform_slice_mesh(devices,
+                                               num_meshes,
+                                               submesh_shapes=submesh_shapes)
+    elif pipeline_stage_mode == "manual_stage":
         # Check forward_stage_layer_ids is a partition of range(num_layers)
         last_layer_id = 0
         for stage_layer_ids in forward_stage_layer_ids:
@@ -712,7 +735,10 @@ def cluster_layers_and_slice_mesh(
                                           global_outvars)
         merged_stages = []
         for stage_id, layer_ids in enumerate(stage_layer_ids):
-            # TOOD: a fast path for len(layer_ids) == 1
+            if len(layer_ids) == 1:
+                merged_stages.append(layers[layer_ids[0]])
+                continue
+
             stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
             stage_name = str(stage_id)
             merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(

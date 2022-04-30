@@ -97,7 +97,7 @@ def create_train_state_aval(rngkey, model, batch, dtype):
 def get_train_step(auto_layer,
                    num_manual_pipeline_stages=None,
                    num_auto_layers=None,
-                   auto_remat_mode=None
+                   auto_remat_mode=None,
                    num_auto_remat_layers=None):
 
     @parallelize
@@ -125,7 +125,7 @@ def get_train_step(auto_layer,
         if not auto_layer:
             loss_func = manual_layer_construction(loss_func)
         else:
-            if auto_remat_mode = "fine_grained":
+            if auto_remat_mode == "fine_grained":
                 loss_func = automatic_remat(loss_func, layer_num=num_auto_remat_layers)
                 loss_func = automatic_layer_construction(loss_func, layer_num=num_auto_layers)
             else:
@@ -133,10 +133,8 @@ def get_train_step(auto_layer,
                 loss_func = automatic_layer_construction(loss_func,
                                                          remat_layer=use_remat,
                                                          layer_num=num_auto_layers)
-        else:
-            raise ValueError("Invalid layer mode", )
 
-        grads = grad_func(loss_func)(state.params)
+        grads = alpa.grad(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
         return new_state
@@ -154,13 +152,19 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     dtype = jnp.float16
     tie_word_embeddings = False
 
+    # Connect to the cluster
+    device_cluster = DeviceCluster()
+    virtual_mesh = device_cluster.get_virtual_physical_mesh(
+        host_ids=list(range(num_hosts)),
+        num_devices_per_host=num_devices_per_host)
+
     # Parallel configs
     if parallel_mode == "search":
         prefer_reduce_scatter, use_remat, num_auto_layers, overwrite_global_config_dict = parallel_args
         auto_layer = True
-        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         auto_remat_mode = "coarse_grained" if use_remat else None
         num_auto_remat_layer = None
+        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
                                 pipeline_stage_mode="auto_stage",
@@ -171,9 +175,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
          sub_physical_mesh_shapes, sub_logical_mesh_shapes,
          submesh_autosharding_option_dicts) = parallel_args
         auto_layer = True
-        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         auto_remat_mode = "coarse_grained" if use_remat else None
         num_auto_remat_layer = None
+        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
                                 pipeline_stage_mode="manual_stage",
@@ -182,9 +186,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 sub_physical_mesh_shapes=sub_physical_mesh_shapes,
                                 sub_logical_mesh_shapes=sub_logical_mesh_shapes,
                                 submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
-    elif parallel_mode = "manual":
-        (prefer_reduce_scatter, use_remat, logical_mesh_shape,
-         pipeline_mp_size, force_batch_dim_mapping) = paralle_args
+    elif parallel_mode == "manual":
+        (prefer_reduce_scatter, use_remat, (dp, op, pp),
+            force_batch_dim_mapping) = parallel_args
         if force_batch_dim_mapping:
             as_option.force_batch_dim_to_mesh_dim = 0
         auto_layer = False
@@ -192,26 +196,24 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         add_manual_layer_marker = True
         add_manual_remat = use_remat
 
+        logical_mesh_shape = (dp, op)
+        num_manual_pipeline_stages = pp
         num_mesh_devices = np.prod(logical_mesh_shape)
         num_devices_per_host = 8
-        physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
-                               num_mesh_devices % num_devices_per_host)
+        physical_mesh_shape = (
+            (num_mesh_devices + num_devices_per_host - 1) // num_devices_per_host,
+            num_mesh_devices % num_devices_per_host)
+
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
                                 pipeline_stage_mode="manual_stage",
                                 num_micro_batches=num_micro_batches,
-                                forward_stage_layer_ids=[[i] for i in pipeline_mp_size],
-                                sub_physical_mesh_shapes=[physical_mesh_shape] * pipeline_mp_size,
-                                sub_logical_mesh_shapes=[logical_mesh_shape] * pipeline_mp_size,
-                                submesh_autosharding_option_dicts=[{}] * pipeline_mp_size)
+                                forward_stage_layer_ids=[[i] for i in range(pp)],
+                                sub_physical_mesh_shapes=[physical_mesh_shape] * pp,
+                                sub_logical_mesh_shapes=[logical_mesh_shape] * pp,
+                                submesh_autosharding_option_dicts=[{}] * pp)
 
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
-
-    # Connect to the cluster
-    device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_physical_mesh(
-        host_ids=list(range(num_hosts)),
-        num_devices_per_host=num_devices_per_host)
 
     # Prepare input batch
     input_dtype = jnp.int32
@@ -233,10 +235,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
-            pipeline_mp_size=pipeline_mp_size,
             gradient_checkpointing=add_manual_remat,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_marker,
+            pipeline_mp_size=num_manual_pipeline_stages,
         ), dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
@@ -246,10 +248,10 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
-            pipeline_mp_size=pipeline_mp_size,
             gradient_checkpointing=add_manual_remat,
             tie_word_embeddings=tie_word_embeddings,
             add_manual_pipeline_markers=add_manual_layer_marker,
+            pipeline_mp_size=num_manual_pipeline_stages,
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")

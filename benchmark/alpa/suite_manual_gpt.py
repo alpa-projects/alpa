@@ -45,15 +45,15 @@ tmp_suite = {  # key = the number of gpus, value = a list of cases
 # Fast performance test on models with fewer layers
 perf_test_fast_2d_suite = {
 1: [
-    #B,   S,     H     L,  #head, V,     NB,             RS,    Remat, 3D config,  FM
+    #B,  S,     H      L,  #head, V,     NB,             RS,    Remat, 3D config,  FM
     (8,  1024,  1024,  4,  32,    51200, 1,   "manual", (False, True,  (1, 1, 1),  True))
 ],
 
 8: [
     #B,   S,     H     L,  #head, V,     NB,             RS,    Remat, 3D Config,  FM
-    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (1, 8, 1),  True))
-    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (2, 4, 1),  True))
-    (16,  1024,  8192, 4,  32,    51200, 1,   "manual"  (True,  True,  (8, 1, 1),  True))
+    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (1, 8, 1),  True)),
+    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (2, 4, 1),  True)),
+    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (8, 1, 1),  True)),
 ],
 }
 

@@ -824,7 +824,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                     try:
                         time.sleep(10)
                         physical_mesh = tmp_mesh.get_physical_mesh()
-                    except ray.exceptions.RayError as e:
+                    except ray.exceptions.RayError:
                         ray.shutdown()
                         ray.init(address="auto")
                         physical_mesh = None

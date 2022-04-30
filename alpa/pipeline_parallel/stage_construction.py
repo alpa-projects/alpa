@@ -693,43 +693,44 @@ def cluster_layers_and_slice_mesh(
                 last_layer_id += 1
         assert last_layer_id == num_layers
 
-        if given_mesh:
-            sliced_meshes = [
-                mesh.get_virtual_physical_mesh() for mesh in devices
-            ]
-        else:
-            sliced_meshes = get_sliced_virtual_submeshes(
-                devices, submesh_shapes)
-
-        num_forward_stages = len(forward_stage_layer_ids)
-        backward_stage_layer_ids = [[
-            2 * num_layers - 1 - i for i in reversed(layer_ids)
-        ] for layer_ids in reversed(forward_stage_layer_ids)]
-        stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
-        stage_to_mesh = list(range(num_forward_stages)) + list(
-            reversed(range(num_forward_stages)))
-        stage_outvars = get_stage_outvars(layers, stage_layer_ids,
-                                          global_outvars)
-        merged_stages = []
-        for stage_id, layer_ids in enumerate(stage_layer_ids):
-            if len(layer_ids) == 1:
-                merged_stages.append(layers[layer_ids[0]])
-                continue
-
-            stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
-            stage_name = str(stage_id)
-            merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(
-                stage_layer_jaxprs,
-                stage_outvars[stage_id],
-                donation_mapping,
-                stage_name,
-                wrap_with_marker=True)
-            merged_stage = JaxPipelineComputation.from_closed_jaxpr(
-                stage_name, merged_stage_jaxpr)
-            merged_stages.append(merged_stage)
-        stages = merged_stages
     else:
         raise ValueError(f"Invalid pipeline stage mode: {pipeline_stage_mode}")
+
+    if given_mesh:
+        sliced_meshes = [
+            mesh.get_virtual_physical_mesh() for mesh in devices
+        ]
+    else:
+        sliced_meshes = get_sliced_virtual_submeshes(
+            devices, submesh_shapes)
+
+    num_forward_stages = len(forward_stage_layer_ids)
+    backward_stage_layer_ids = [[
+        2 * num_layers - 1 - i for i in reversed(layer_ids)
+    ] for layer_ids in reversed(forward_stage_layer_ids)]
+    stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
+    stage_to_mesh = list(range(num_forward_stages)) + list(
+        reversed(range(num_forward_stages)))
+    stage_outvars = get_stage_outvars(layers, stage_layer_ids,
+                                      global_outvars)
+    merged_stages = []
+    for stage_id, layer_ids in enumerate(stage_layer_ids):
+        if len(layer_ids) == 1:
+            merged_stages.append(layers[layer_ids[0]])
+            continue
+
+        stage_layer_jaxprs = [layers[i].closed_jaxpr() for i in layer_ids]
+        stage_name = str(stage_id)
+        merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(
+            stage_layer_jaxprs,
+            stage_outvars[stage_id],
+            donation_mapping,
+            stage_name,
+            wrap_with_marker=True)
+        merged_stage = JaxPipelineComputation.from_closed_jaxpr(
+            stage_name, merged_stage_jaxpr)
+        merged_stages.append(merged_stage)
+    stages = merged_stages
 
     # Check the validity of logical mesh shapes
     assert len(logical_mesh_shapes) == len(sliced_meshes)

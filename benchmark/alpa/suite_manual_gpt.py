@@ -25,7 +25,7 @@ _ = None
 tmp_suite = {  # key = the number of gpus, value = a list of cases
     #B,         model,         NB,              RS,    Remat, 3D Config,  FM
 1: [
-    (2,  *gpt_specs["350M"],  1,    "manual", (True,  True,  (1, 1, 1),  True))
+    (16,  *gpt_specs["350M"],  1,    "manual", (True,  True,  (1, 1, 1),  True))
 ],
 
 4: [

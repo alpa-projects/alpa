@@ -685,29 +685,6 @@ def cluster_layers_and_slice_mesh(
         last_logical_mesh_shapes = logical_mesh_shapes
         last_autosharding_option_dicts = autosharding_option_dicts
     elif pipeline_stage_mode == "manual_stage":
-        # This mode resembles Megatron in terms of the uniformity of mesh shapes.
-        num_acc_grad_stages = len(layers)
-        assert num_acc_grad_stages % 2 == 0
-
-        stage_to_mesh = {
-            i:
-            (i if i < num_acc_grad_stages / 2 else num_acc_grad_stages - i - 1)
-            for i, _ in enumerate(layers)
-        }
-        num_meshes = num_acc_grad_stages // 2
-        stages = layers
-        if given_mesh:
-            sliced_meshes = [
-                mesh.get_virtual_physical_mesh() for mesh in devices
-            ]
-        else:
-            if submesh_shapes is not None:
-                assert all(
-                    shape == submesh_shapes[0] for shape in submesh_shapes)
-            sliced_meshes = uniform_slice_mesh(devices,
-                                               num_meshes,
-                                               submesh_shapes=submesh_shapes)
-    elif pipeline_stage_mode == "manual_stage":
         # Check forward_stage_layer_ids is a partition of range(num_layers)
         last_layer_id = 0
         for stage_layer_ids in forward_stage_layer_ids:

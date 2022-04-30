@@ -163,7 +163,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         prefer_reduce_scatter, use_remat, num_auto_layers, overwrite_global_config_dict = parallel_args
         auto_layer = True
         auto_remat_mode = "coarse_grained" if use_remat else None
-        num_auto_remat_layer = None
+        num_auto_remat_layers = None
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
@@ -171,12 +171,12 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 num_micro_batches=num_micro_batches)
         global_config.update_with_dict(overwrite_global_config_dict)
     elif parallel_mode == "load_search_solution":
-        (prefer_reduce_scatter, use_reamt, num_auto_layers, forward_stage_layer_ids,
+        (prefer_reduce_scatter, use_remat, num_auto_layers, forward_stage_layer_ids,
          sub_physical_mesh_shapes, sub_logical_mesh_shapes,
          submesh_autosharding_option_dicts) = parallel_args
         auto_layer = True
         auto_remat_mode = "coarse_grained" if use_remat else None
-        num_auto_remat_layer = None
+        num_auto_remat_layers = None
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",

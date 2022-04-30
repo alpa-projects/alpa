@@ -94,17 +94,18 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
-                   auto_layer=False, fine_grained_remat=False):
-
-    add_pipeline_marker = ((not auto_layer) and (pipeline_mp_size >= 1))
+def get_train_step(auto_layer,
+                   num_manual_pipeline_stages=None,
+                   num_auto_layers=None,
+                   auto_remat_mode=None
+                   num_auto_remat_layers=None):
 
     @parallelize
     def train_step(state, batch, rng_key):
 
         def loss_func(params):
             rngs = {"dropout": rng_key}
-            if add_pipeline_marker:
+            if not auto_layer:
                 mark_pipeline(name="0", mark_type="start")
             logits = state.apply_fn(params,
                                     batch["input_ids"],
@@ -117,21 +118,23 @@ def get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype,
             labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
             loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
-            if add_pipeline_marker:
-                mark_pipeline(name=str(pipeline_mp_size - 1), mark_type="end")
+            if not auto_layer:
+                mark_pipeline(name=str(num_manual_pipeline_stages - 1), mark_type="end")
             return loss
 
-        if add_pipeline_marker:
+        if not auto_layer:
             loss_func = manual_layer_construction(loss_func)
-        elif auto_layer:
-            if fine_grained_remat:
-                if use_remat:
-                    loss_func = automatic_remat(loss_func, layer_num=num_layers)
-                loss_func = automatic_layer_construction(loss_func, layer_num=pipeline_mp_size)
+        else:
+            if auto_remat_mode = "fine_grained":
+                loss_func = automatic_remat(loss_func, layer_num=num_auto_remat_layers)
+                loss_func = automatic_layer_construction(loss_func, layer_num=num_auto_layers)
             else:
+                use_remat = True if auto_remat_mode is "coarse_grained" else False
                 loss_func = automatic_layer_construction(loss_func,
                                                          remat_layer=use_remat,
-                                                         layer_num=pipeline_mp_size)
+                                                         layer_num=num_auto_layers)
+        else:
+            raise ValueError("Invalid layer mode", )
 
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
@@ -146,55 +149,71 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time(None)
 
     # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
-
+    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_micro_batches,
+     parallel_mode, parallel_args) = benchmark_case
     dtype = jnp.float16
     tie_word_embeddings = False
 
     # Parallel configs
-    fine_grained_remat = False
-    if pipeline_stage_mode in ["auto_gpipe", "manual_gpipe"]:
+    if parallel_mode == "search":
+        prefer_reduce_scatter, use_remat, num_auto_layers, overwrite_global_config_dict = parallel_args
         auto_layer = True
-    else:
-        assert pipeline_stage_mode == "uniform_layer_gpipe"
-        if num_layers % pipeline_mp_size == 0:
-            auto_layer = False
-        else:
-            print("Use auto-layer because #layer is not divisible by pipeline mp size.")
-            auto_layer = True
-            fine_grained_remat = num_layers > pipeline_mp_size
+        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
+        auto_remat_mode = "coarse_grained" if use_remat else None
+        num_auto_remat_layer = None
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="pipeshard_parallel",
+                                pipeline_stage_mode="auto_stage",
+                                num_micro_batches=num_micro_batches)
+        global_config.update_with_dict(overwrite_global_config_dict)
+    elif parallel_mode == "load_search_solution":
+        (prefer_reduce_scatter, use_reamt, num_auto_layers, forward_stage_layer_ids,
+         sub_physical_mesh_shapes, sub_logical_mesh_shapes,
+         submesh_autosharding_option_dicts) = parallel_args
+        auto_layer = True
+        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
+        auto_remat_mode = "coarse_grained" if use_remat else None
+        num_auto_remat_layer = None
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="pipeshard_parallel",
+                                pipeline_stage_mode="manual_stage",
+                                num_micro_batches=num_micro_batches,
+                                forward_stage_layer_ids=forward_stage_layer_ids,
+                                sub_physical_mesh_shapes=sub_physical_mesh_shapes,
+                                sub_logical_mesh_shapes=sub_logical_mesh_shapes,
+                                submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
+    elif parallel_mode = "manual":
+        (prefer_reduce_scatter, use_remat, logical_mesh_shape,
+         pipeline_mp_size, force_batch_dim_mapping) = paralle_args
+        if force_batch_dim_mapping:
+            as_option.force_batch_dim_to_mesh_dim = 0
+        auto_layer = False
+        num_auto_layers = auto_remat_mode = num_auto_remat_layers = None
+        add_manual_layer_marker = True
+        add_manual_remat = use_remat
 
-    grad_func = alpa.grad
+        num_mesh_devices = np.prod(logical_mesh_shape)
+        num_devices_per_host = 8
+        physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
+                               num_mesh_devices % num_devices_per_host)
+        set_parallelize_options(devices=virtual_mesh,
+                                strategy="pipeshard_parallel",
+                                pipeline_stage_mode="manual_stage",
+                                num_micro_batches=num_micro_batches,
+                                forward_stage_layer_ids=[[i] for i in pipeline_mp_size],
+                                sub_physical_mesh_shapes=[physical_mesh_shape] * pipeline_mp_size,
+                                sub_logical_mesh_shapes=[logical_mesh_shape] * pipeline_mp_size,
+                                submesh_autosharding_option_dicts=[{}] * pipeline_mp_size)
 
-    if force_batch_dim_mapping:
-        as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
 
+    # Connect to the cluster
     device_cluster = DeviceCluster()
     virtual_mesh = device_cluster.get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
 
-    if pipeline_stage_mode == "uniform_layer_gpipe":
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                num_micro_batches=num_micro_batches,
-                                sub_physical_mesh_shapes=[(p_dim0, p_dim1)] * pipeline_mp_size,
-                                sub_logical_mesh_shapes=[(l_dim0, l_dim1)] * pipeline_mp_size,
-                                pipeline_parallel_schedule="1f1b")
-    else:
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode=pipeline_stage_mode,
-                                num_micro_batches=num_micro_batches)
-
-    if isinstance(overwrite_global_config_dict, dict):
-        global_config.update_with_dict(overwrite_global_config_dict)
-
     # Prepare input batch
-    # Note: there will be an input conversion.
     input_dtype = jnp.int32
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
@@ -206,8 +225,6 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Prepare input")
 
     # Init train state
-    add_manual_layer_construction_marker = ((not auto_layer) and (pipeline_mp_size > 1))
-
     if model_type == "bert":
         model = FlaxBertForMaskedLMModule(BertConfig(
             vocab_size=vocab_size,
@@ -217,9 +234,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat and not auto_layer,
+            gradient_checkpointing=add_manual_remat,
             tie_word_embeddings=tie_word_embeddings,
-            add_manual_pipeline_markers=add_manual_layer_construction_marker,
+            add_manual_pipeline_markers=add_manual_layer_marker,
         ), dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
@@ -230,9 +247,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
             pipeline_mp_size=pipeline_mp_size,
-            gradient_checkpointing=use_remat and not auto_layer,
+            gradient_checkpointing=add_manual_remat,
             tie_word_embeddings=tie_word_embeddings,
-            add_manual_pipeline_markers=add_manual_layer_construction_marker,
+            add_manual_pipeline_markers=add_manual_layer_marker,
         ), dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
@@ -245,12 +262,12 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, use_remat, pipeline_mp_size, dtype, auto_layer,
-                                fine_grained_remat)
+    train_step = get_train_step(auto_layer, num_manual_pipeline_stages, num_auto_layers,
+                                auto_remat_mode, num_auto_remat_layers)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
-    if pipeline_stage_mode == "auto_gpipe":
+    if parallel_mode == "search":
         compilation_times = {k : timers(k).elapsed() for k in
                 ["stage-construction", "stage-construction-dp",
                  "stage-construction-compilation", "stage-construction-profiling"]}

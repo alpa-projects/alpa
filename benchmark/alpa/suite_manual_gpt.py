@@ -1,10 +1,10 @@
 """Benchmark suites for gpt with manual specifications."""
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-# head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
-# PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
-# NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-# RS = prefer_reduce_scatter, Stage = pipeline_stage_mode
+# head = num_heads, 3D config = 3D parallel config (Data, Operator, Pipeline)
+# PP = Pipeline parallel size, NB = num_micro_batches,
+# FM = force_batch_dim_mapping, Remat = use_rematerialization
+# RS = prefer_reduce_scatter,
 
 gpt_specs = {
         #S，    H，    L,     head, V,
@@ -21,31 +21,23 @@ gpt_specs = {
 
 _ = None
 
-              # Remat, RS,   Stage,                 overwrite_global_config_dict
-fixed_params = (True,  True, "uniform_layer_gpipe", None)
-max_global_batch_size = 1024
-
 # Temporary debug suite
 tmp_suite = {  # key = the number of gpus, value = a list of cases
-    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,  FM,    ...
+    #B,         model,         NB,              RS,    Remat, 3D Config,  FM
 1: [
-    (32,  *gpt_specs["350M"],  1,   1,   1,   1,   1,  1,   False, *fixed_params),
+    (32,  *gpt_specs["350M"],  1,    "manual", (True,  True,  (1, 1, 1),  True))
 ],
 
 4: [
-    (256,  *gpt_specs["760M"], 4,   1,   1,   4,   1,  32,  True,  *fixed_params),
 ],
 
 8: [
-    (32,  *gpt_specs["2.6B"],  2,   2,   1,   4,   2,  4,   False, *fixed_params),
 ],
 
 16: [
-    (1024, *gpt_specs["6.7B"], 2,   1,   1,   2,   8,  256, True,  *fixed_params),
 ],
 
 32: [
-    (16,  *gpt_specs["15B"],   4,   8,   4,   8,   1,  1,   True,  *fixed_params),
 ],
 }
 
@@ -53,37 +45,41 @@ tmp_suite = {  # key = the number of gpus, value = a list of cases
 # Fast performance test on models with fewer layers
 perf_test_fast_2d_suite = {
 1: [
-    #B,   S,     H     L,  #head, V,     LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-    (8,  1024,  1024,  4,  32,    51200, 1,   1,   _, _,  1,   1,  True, True,  False, _, _),
+    #B,   S,     H     L,  #head, V,     NB,             RS,    Remat, 3D config,  FM
+    (8,  1024,  1024,  4,  32,    51200, 1,   "manual", (False, True,  (1, 1, 1),  True))
 ],
 
 8: [
-    #B,   S,     H     L,  #head, V,     LD0, LD1, _, _,  PP,  NB, FM,   Remat, RS,    _  _
-    (16,  1024,  8192,  4,  32,   51200, 1,   8,   _, _,  1,   1,  True, True,  True,  _, _),
-    (16,  1024,  8192,  4,  32,   51200, 2,   4,   _, _,  1,   1,  True, True,  True,  _, _),
-    (16,  1024,  8192,  4,  32,   51200, 8,   1,   _, _,  1,   1,  True, True,  True,  _, _),
+    #B,   S,     H     L,  #head, V,     NB,             RS,    Remat, 3D Config,  FM
+    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (1, 8, 1),  True))
+    (16,  1024,  8192, 4,  32,    51200, 1,   "manual", (True,  True,  (2, 4, 1),  True))
+    (16,  1024,  8192, 4,  32,    51200, 1,   "manual"  (True,  True,  (8, 1, 1),  True))
 ],
 }
-
 
 # Performance test on normal models
 perf_test_suite = {
-    #B,         model,         LD0, LD1, PD0, PD1, PP, NB,   FM,    ...
+    #B,         model,         NB,              RS,    Remat, 3D Config,  FM
 1: [
-    (16,   *gpt_specs["350M"], 1,   1,   1,   1,   1,  1,    True,  *fixed_params),
+    (16,  *gpt_specs["350M"],  1,    "manual", (True,  True,  (1, 1, 1),  True))
 ],
 
 8: [
-    (32,   *gpt_specs["2.6B"], 2,   2,   1,   4,   2,  4,    True, *fixed_params),
+    (32,  *gpt_specs["2.6B"],  4,    "manual", (True,  True,  (2, 2, 2),  True))
+
 ],
 
 64: [
-    (1024, *gpt_specs["39B"],  1,   4,   1,   4,   16, 1024, True, *fixed_params),
+    (1024, *gpt_specs["39B"],  1024, "manual", (True,  True,  (1, 4, 16), True))
 ],
 }
 
 
-# Grid search on hyperparameters
+# Grid search on hyperparameters (Deprecated)
+"""
+              # Remat, RS,   Stage,                 overwrite_global_config_dict
+fixed_params = (True,  True, "uniform_layer_gpipe", None)
+
 grid_search_manual = {
     #B,         model,         LD0, LD1, PD0, PD1,  PP,  NB, FM, ...
 1: [
@@ -842,3 +838,4 @@ grid_search_manual = {
 
 ]
 }
+"""

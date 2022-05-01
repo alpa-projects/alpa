@@ -38,7 +38,7 @@ class BaseGroup(metaclass=ABCMeta):
 
     def destroy_group(self):
         """GC the communicators."""
-        raise NotImplementedError()
+        return
 
     @classmethod
     def backend(cls):

@@ -32,6 +32,7 @@ tmp_suite = {  # key = the number of gpus, value = a list of cases
 ],
 
 8: [
+    (32,  *gpt_specs["2.6B"],  4,    "manual", (True,  True,  (2, 2, 2),  True))
 ],
 
 16: [

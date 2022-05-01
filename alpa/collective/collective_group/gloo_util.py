@@ -1,15 +1,15 @@
 """Code to wrap some GLOO API calls."""
-import numpy
 import asyncio
+import numpy
 try:
     import pygloo
-except ImportError:
+except ImportError as ie:
     raise ImportError("Can not import pygloo."
-                      "Please run 'pip install pygloo' to install pygloo.")
+                      "Please run 'pip install pygloo' to install pygloo.") from ie
 
 import ray
-from alpa.collective.types import ReduceOp, torch_available
 from ray.util.queue import _QueueActor
+from alpa.collective.types import ReduceOp, torch_available
 
 GLOO_REDUCE_OP_MAP = {
     ReduceOp.SUM: pygloo.ReduceOp.SUM,
@@ -96,7 +96,7 @@ def get_gloo_reduce_op(reduce_op):
     """
     if reduce_op not in GLOO_REDUCE_OP_MAP:
         raise RuntimeError(
-            "Gloo does not support reduce op: '{}'.".format(reduce_op))
+            f"Gloo does not support reduce op: '{reduce_op}'.")
     return GLOO_REDUCE_OP_MAP[reduce_op]
 
 
@@ -110,9 +110,9 @@ def get_gloo_tensor_dtype(tensor):
                 return TORCH_GLOO_DTYPE_MAP[tensor.dtype]
             else:
                 raise ValueError("Expect torch CPU tensor. "
-                                 "Got {}.".format(tensor.device))
+                                 f"Got {tensor.device}.")
     raise ValueError("Unsupported tensor type. "
-                     "Got: {}.".format(type(tensor)))
+                     f"Got: {type(tensor)}.")
 
 
 def get_numpy_tensor_dtype(tensor):
@@ -122,9 +122,9 @@ def get_numpy_tensor_dtype(tensor):
     if torch_available():
         if isinstance(tensor, torch.Tensor):
             return TORCH_NUMPY_DTYPE_MAP[tensor.dtype]
-    raise ValueError("Unsupported tensor type. Got: {}. Supported "
-                     "CPU tensor types are: torch.Tensor, "
-                     "numpy.ndarray.".format(type(tensor)))
+    raise ValueError(f"Unsupported tensor type. Got: {type(tensor)}. "
+                     "Supported CPU tensor types are: torch.Tensor, "
+                     "numpy.ndarray.")
 
 
 def get_tensor_ptr(tensor):
@@ -137,9 +137,9 @@ def get_tensor_ptr(tensor):
                 raise RuntimeError("Torch tensor must be on CPU "
                                    "when using GLOO collectives.")
             return tensor.data_ptr()
-    raise ValueError("Unsupported tensor type. Got: {}. Supported "
-                     "CPU tensor types are: torch.Tensor, "
-                     "numpy.ndarray.".format(type(tensor)))
+    raise ValueError(f"Unsupported tensor type. Got: {type(tensor)}. "
+                     "Supported CPU tensor types are: torch.Tensor, "
+                     "numpy.ndarray.")
 
 
 def get_tensor_n_elements(tensor):
@@ -150,11 +150,11 @@ def get_tensor_n_elements(tensor):
         if isinstance(tensor, torch.Tensor):
             return torch.numel(tensor)
     raise ValueError("Unsupported tensor type. "
-                     "Got: {}.".format(type(tensor)))
+                     f"Got: {type(tensor)}.")
 
 
 def get_gloo_store_path(store_name):
-    from ray._private.utils import get_ray_temp_dir
+    from ray._private.utils import get_ray_temp_dir  # pylint: disable=import-outside-toplevel
     store_path = f"{get_ray_temp_dir()}_collective/gloo/{store_name}"
     return store_path
 
@@ -169,7 +169,7 @@ def get_tensor_device(tensor):
             return "cuda"
     else:
         raise RuntimeError("Unrecognized tensor type: "
-                           "'{}'.".format(type(tensor)))
+                           f"'{type(tensor)}'.")
 
 
 def get_tensor_shape(tensor):
@@ -179,9 +179,9 @@ def get_tensor_shape(tensor):
     if torch_available():
         if isinstance(tensor, torch.Tensor):
             return list(tensor.size())
-    raise ValueError("Unsupported tensor type. Got: {}. Supported "
-                     "CPU tensor types are: torch.Tensor, "
-                     "numpy.ndarray.".format(type(tensor)))
+    raise ValueError(f"Unsupported tensor type. Got: {type(tensor)}. "
+                     "Supported CPU tensor types are: torch.Tensor, "
+                     "numpy.ndarray.")
 
 
 def copy_tensor(dst_tensor, src_tensor):
@@ -216,14 +216,13 @@ def copy_tensor(dst_tensor, src_tensor):
         copied = False
     if not copied:
         raise ValueError(
-            "Unsupported tensor type. Got: {} and {}. Supported "
-            "CPU tensor types are: torch.Tensor, numpy.ndarray.".format(
-                type(dst_tensor), type(src_tensor)))
+            f"Unsupported tensor type. Got: {type(dst_tensor)} and {type(src_tensor)}. "
+            "Supported CPU tensor types are: torch.Tensor, numpy.ndarray.")
 
 
 # Note(Hao): this requires Ray >= 1.2.0,
 # otherwise _QueueActor is an actor class.
-class glooQueue(_QueueActor):
+class GlooQueue(_QueueActor):
 
     def index(self, group_name):
         try:

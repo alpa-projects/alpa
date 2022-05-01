@@ -58,11 +58,12 @@ class StrategyConfig:
     @staticmethod
     def from_jsonable(value):
         (build_random_seed, logical_mesh_shape, all_gather_threshold,
-         all_reduce_threshold, auto_sharding_solution_vector) = value
+         all_reduce_threshold, auto_sharding_solution_vector,
+         auto_sharding_objective) = value
         return StrategyConfig(build_random_seed, logical_mesh_shape,
                               all_gather_threshold, all_reduce_threshold,
                               np.array(auto_sharding_solution_vector),
-                              self.auto_sharding_objective)
+                              auto_sharding_objective)
 
 
 class MeasureInput(namedtuple("MeasureInput", ["task", "config"])):
@@ -101,7 +102,7 @@ def save_to_file(inputs, results, filename, protocol="json"):
     """
     assert protocol == "json"
 
-    with open(filename, "a") as fout:
+    with open(filename, "a", encoding="utf-8") as fout:
         for inp, res in zip(inputs, results):
             obj = (inp.task.to_jsonable(), inp.config.to_jsonable(),
                    res.time_costs, res.estimated_cost, res.error_no,
@@ -126,10 +127,11 @@ def load_from_file(filename, protocol="json"):
     if not os.path.exists(filename):
         return
 
-    for line in open(filename, "r"):
-        obj = json.loads(line)
-        (task_jsonable, config_jsonable, time_costs, estimated_cost, error_no,
-         timestamp, _) = obj
+    with open(filename, "r", encoding="utf-8") as f:
+        for line in f:
+            obj = json.loads(line)
+            (task_jsonable, config_jsonable, time_costs, estimated_cost, error_no,
+             timestamp, _) = obj
 
         inp = MeasureInput(SearchTask.from_jsonable(task_jsonable),
                            StrategyConfig.from_jsonable(config_jsonable))

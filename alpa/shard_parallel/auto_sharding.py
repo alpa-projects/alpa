@@ -18,24 +18,21 @@ SPMD_PARTITIONED
   V
 FULLY_OPTIMIZED
 """
-import copy
-import enum
 import logging
 import multiprocessing
 import time
 import traceback
-from typing import Sequence, Optional, Union, Tuple
 import warnings
+from typing import Sequence, Optional, Union, Tuple
 
 import numpy as np
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax._src.lib import xla_client as xc, xla_extension as xe
 from jax.core import ShapedArray
-from jax.interpreters import xla, pxla
+from jax.interpreters import pxla
 
 from alpa.global_env import global_config, AutoShardingOption
-from alpa.measure_record import (MeasureInput, MeasureResult, StrategyConfig,
-                                 save_to_file, SearchTask)
-from alpa.util import check_arithmetic_sequence, get_compile_options, to_int_tuple, XlaPassContext
+from alpa.measure_record import (StrategyConfig)
+from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -161,19 +158,11 @@ def run_auto_sharding_pass(
       rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
       memory_budget_per_device: The memory budget per device in bytes.
     """
-    global last_s_val
-    global last_objective
-
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
 
-    if return_mode in ["stage_protos", "stage_and_hook_protos"]:
-        multiple_stages = True
-    else:
-        multiple_stages = False
-
-    backend = xb.get_backend("gpu")
+    multiple_stages = return_mode in ["stage_protos", "stage_and_hook_protos"]
     num_devices = logical_mesh.num_devices
     build_random_seed = global_config.build_random_seed
     compile_options = get_compile_options(
@@ -230,10 +219,7 @@ def run_auto_sharding_pass(
             force_batch_dim_to_mesh_dim = as_option.force_batch_dim_to_mesh_dim
 
     # Set configs for reduce-scatter
-    if num_micro_batches is not None and num_micro_batches > 1:
-        reduce_scatter_grad_acc_friendly = True
-    else:
-        reduce_scatter_grad_acc_friendly = False
+    reduce_scatter_grad_acc_friendly = (num_micro_batches is not None and num_micro_batches > 1)
 
     # Set configs for gradient accumulation rewrite pass
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
@@ -252,31 +238,23 @@ def run_auto_sharding_pass(
             "auto_sharding::all_gather_cost": INFINITY_COST,
             "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
             "auto_sharding::all_to_all_cost": INFINITY_COST,
-            "auto_sharding::allow_replicated_parameters":
-                as_option.allow_replicated_parameters,
+            "auto_sharding::allow_replicated_parameters": as_option.allow_replicated_parameters,
             "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
             "auto_sharding::reduce_scatter_grad_acc_friendly": reduce_scatter_grad_acc_friendly,
             "auto_sharding::reduce_scatter_aggressive_partition": reduce_scatter_aggressive_partition,
             "auto_sharding::batch_matmul_always_split_batch": True,
-            "auto_sharding::allow_recompute_heavy_op":
-                as_option.allow_recompute_heavy_op,
-            "auto_sharding::allow_mixed_mesh_shape":
-                as_option.allow_mixed_mesh_shape,
-            "auto_sharding::grad_acc_num_micro_batches":
-                grad_acc_num_micro_batches or 1,
+            "auto_sharding::allow_recompute_heavy_op": as_option.allow_recompute_heavy_op,
+            "auto_sharding::allow_mixed_mesh_shape": as_option.allow_mixed_mesh_shape,
+            "auto_sharding::grad_acc_num_micro_batches": grad_acc_num_micro_batches or 1,
             "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
-            "auto_sharding::force_simple_heuristic":
-                as_option.force_simple_heuristic,
+            "auto_sharding::force_simple_heuristic": as_option.force_simple_heuristic,
 
             # Device mesh
             "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
             "auto_sharding::device_mesh_shape": tuple(logical_mesh.shape),
-            "auto_sharding::device_mesh_alpha": tuple(
-                float(x) for x in logical_mesh.mesh_alpha),
-            "auto_sharding::device_mesh_beta": tuple(
-                float(x) for x in logical_mesh.mesh_beta),
-            "auto_sharding::device_mesh_prof_result": getattr(
-                logical_mesh.physical_mesh, "prof_result", None),
+            "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
+            "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
+            "auto_sharding::device_mesh_prof_result": getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # Gradient accumulation rewrite
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
@@ -328,7 +306,6 @@ def run_spmd_partitioner_pass(
       rewrite_for_grad_acc: Whether to do rewriting for gradient accumulation.
       rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
     """
-    backend = xb.get_backend("gpu")
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -390,10 +367,8 @@ def run_backend_compilation(backend: xe.Client,
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
 
             # Communication combiner options
-            "combiner::all_gather_threshold":
-                strategy_config.all_gather_threshold,
-            "combiner::all_reduce_threshold":
-                strategy_config.all_reduce_threshold,
+            "combiner::all_gather_threshold": strategy_config.all_gather_threshold,
+            "combiner::all_reduce_threshold": strategy_config.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,
     }):
         compiled = backend.compile(xla_computation, compile_options)
@@ -542,6 +517,7 @@ def make_replicated_spec(
 
 def call_solver_serialized_args(*args):
     """Call the solver with serialized arguments and handle python errors."""
+    info = ""
     try:
         ret = _call_solver_serialized_args(*args)
     except AssertionError:
@@ -565,14 +541,15 @@ last_objective = None
 
 
 # pylint: disable=import-outside-toplevel
+# noqa
 def _call_solver_serialized_args(
-        N,
+        N,  # noqa
         M,
         s_len_np,
         s_follow_np,
         E_np,
         A_np,
-        L_np,  # noqa
+        L_np,
         c_np,
         d_np,
         m_np,
@@ -612,7 +589,7 @@ def _call_solver_serialized_args(
     s_len = s_len_np
     s_follow = s_follow_np
 
-    E = E_np.reshape((-1, 2))
+    E = E_np.reshape((-1, 2))  # noqa
     r = []
     pt = 0
     edge_set = set()
@@ -627,7 +604,7 @@ def _call_solver_serialized_args(
         pt += prod_length
     assert pt == len(r_np)
 
-    A = A_np.reshape((-1, 2))
+    A = A_np.reshape((-1, 2))  # noqa
     v = []
     pt = 0
     for (i, j) in A:
@@ -636,7 +613,7 @@ def _call_solver_serialized_args(
         pt += prod_length
     assert pt == len(v_np)
 
-    L = []
+    L = []  # noqa
     pt = N
     for i in range(N):
         length = L_np[i]
@@ -746,22 +723,22 @@ def _call_solver_serialized_args(
 
         # (f)
         for row in range(len(s[i])):
-            C = len(s[j])
+            C = len(s[j])  # noqa
             prob += lpSum(
                 e[idx][row * C + col] for col in range(0, C)) <= s[i][row]
 
         # (g)
         for col in range(len(s[j])):
-            R = len(s[i])
-            C = len(s[j])
+            R = len(s[i])  # noqa
+            C = len(s[j])  # noqa
             prob += lpSum(
                 e[idx][row * C + col] for row in range(0, R)) <= s[j][col]
 
     # (h)
     alias_set = set()
     for (idx, (i, j)) in enumerate(A):
-        R = len(s[i])
-        C = len(s[j])
+        R = len(s[i])  # noqa
+        C = len(s[j])  # noqa
         if (i, j) in alias_set:
             raise ValueError(f"Duplicated edges: {(i, j)}")
 

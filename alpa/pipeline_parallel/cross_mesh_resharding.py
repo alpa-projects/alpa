@@ -3,8 +3,8 @@ import logging
 from typing import List, Any
 
 import numpy as np
-import ray
 from jax.interpreters import pxla
+import ray
 
 import alpa.collective as col
 from alpa.device_mesh import (DistributedArray, ReshardingAllGatherSpec,
@@ -114,11 +114,9 @@ class EagerReshardingTask(ReshardingTask):
             receiver]
         receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
             receiver]
-        dtype = src_array.remote_buffers[0].dtype
         result_buf = RemoteBufferRef(self.dst_mesh,
                                      receiver_host_id,
-                                     receiver_device_id,
-                                     dtype=dtype)
+                                     receiver_device_id)
         # Put an empty buffer first.
         ray.get(
             receiver_worker.put_non_zero_buffer.remote(result_buf.uuid,
@@ -361,7 +359,7 @@ class SymbolicReshardingTask(ReshardingTask):
         """Compile allgather tasks on destination mesh."""
         # is a worker -> ((device_ids), (device_strs), (slices))
         relative_indices = self.task_spec.dst_indices[0]
-        for flatten_id, indices in enumerate(self.task_spec.dst_indices):
+        for flatten_id, _ in enumerate(self.task_spec.dst_indices):
             receiver = self.dst_mesh.device_strs[flatten_id]
             participant_worker = self.collective_group.device_str_to_mesh_worker_map[
                 receiver]
@@ -386,7 +384,6 @@ class SymbolicReshardingTask(ReshardingTask):
         bufs: List[Any] = [None] * len(self.task_spec.dst_indices)
         device_str_to_buf_map = {}
 
-        dtype = self.task_spec.src.aval.dtype
         for receiver in self.receiver_uuid_plan:
             receiver_host_id = self.collective_group.device_str_to_host_id_map[
                 receiver]
@@ -396,8 +393,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 receiver]
             result_buf = RemoteBufferRef(self.dst_mesh,
                                          receiver_host_id,
-                                         receiver_device_id,
-                                         dtype=dtype)
+                                         receiver_device_id)
             recv_buf_uuids[receiver_worker].append(result_buf.uuid)
             device_str_to_buf_map[receiver] = result_buf
 

@@ -34,6 +34,7 @@ class StreamPool:
         self._pool = [None] * NCCL_STREAM_POOL_SIZE
         self._counter = 0
         self._pool_lock = threading.Lock()
+        self._init_flag = False
 
     def get_stream(self):
         """Get an available stream from the pool.
@@ -46,16 +47,14 @@ class StreamPool:
         """
 
         # check the flag
-        self._initialized_lock.acquire()
-        if not self._initialized:
-            self._init_once()
-        self._initialized_lock.release()
+        with self._initialized_lock:
+            if not self._initialized:
+                self._init_once()
 
         # Get the stream from the pool.
-        self._pool_lock.acquire()
-        stream = self._pool[self._counter]
-        self._counter = (self._counter + 1) % NCCL_STREAM_POOL_SIZE
-        self._pool_lock.release()
+        with self._pool_lock:
+            stream = self._pool[self._counter]
+            self._counter = (self._counter + 1) % NCCL_STREAM_POOL_SIZE
         return stream
 
     def _init_once(self):
@@ -75,11 +74,10 @@ class StreamPool:
 
 # This is a map from GPU index to its stream pool.
 # It is supposed to be READ-ONLY out of this file
-_device_stream_pool_map = dict()
+_device_stream_pool_map = {}
 
 
 def _init_stream_pool():
-    global _device_stream_pool_map
     for i in range(MAX_GPU_PER_ACTOR):
         _device_stream_pool_map[i] = StreamPool(i)
 
@@ -88,8 +86,7 @@ def get_stream_pool(device_idx):
     """Get the CUDA stream pool of a GPU device."""
     # In case there will be multiple threads writing to the pool.
     lock = threading.Lock()
-    lock.acquire()
-    if not _device_stream_pool_map:
-        _init_stream_pool()
-    lock.release()
+    with lock:
+        if not _device_stream_pool_map:
+            _init_stream_pool()
     return _device_stream_pool_map[device_idx]

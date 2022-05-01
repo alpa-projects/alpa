@@ -114,8 +114,8 @@ def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, group_size,
 def compute_gpt_parameter_count(num_layers, hidden_size, vocab_size):
     return num_layers * (
             # self-attention
-            hidden_size * (3 * hidden_size + 1) + 
-            hidden_size * (hidden_size + 1) + 
+            hidden_size * (3 * hidden_size + 1) +
+            hidden_size * (hidden_size + 1) +
             # mlp
             hidden_size * (4 * hidden_size + 1) +
             hidden_size * 4 * (hidden_size + 1) +

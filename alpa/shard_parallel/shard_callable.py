@@ -5,8 +5,7 @@ import time
 from typing import Callable, Sequence, Optional
 
 import numpy as np
-
-from jax import linear_util as lu, disable_jit
+from jax import linear_util as lu
 from jax._src.lib import xla_bridge as xb
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
                       ShapedArray, get_aval, raise_to_shaped)
@@ -21,9 +20,9 @@ from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
+from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass)
-from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.util import (jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch,
                        setup_computation_alias, OrderedSet)
 
@@ -223,7 +222,7 @@ def shard_parallel_internal_gradient_accumulation(
     """Compile a gradient accumulation callable with auto-sharding pass."""
     # Split the batch dimension
     num_micro_batches = global_config.num_micro_batches
-    closed_jaxpr, avals, batch_size = trace_jaxpr_with_micro_batch(
+    closed_jaxpr, avals, _ = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, raw_avals)
 
     closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads = (
@@ -242,6 +241,7 @@ def shard_parallel_internal_gradient_accumulation(
         built.as_hlo_module())
     flop_count *= num_micro_batches
 
+    # pylint: disable=unbalanced-tuple-unpacking
     hlo_proto_names, hlo_protos, strategy_config = run_auto_sharding_pass(
         built,
         avals,
@@ -347,9 +347,11 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     # This separator partitions orginal_jaxpr into two part:
     # compute_grad and apply_grad
     marker_eqn = None
-    for marker_pos, eqn in enumerate(raw_jaxpr.jaxpr.eqns):
+    marker_pos = 0
+    for pos, eqn in enumerate(raw_jaxpr.jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
             marker_eqn = eqn
+            marker_pos = pos
             break
     assert marker_eqn is not None, "Must have exactly one gradient marker"
     compute_grad_eqns = raw_jaxpr.jaxpr.eqns[:marker_pos]

@@ -1,8 +1,6 @@
 """Monkey patch other python libraries."""
-import flax
-import jax
 import numpy as np
-from flax.linen.module import compact, wrap_method_once
+import jax
 from jax import core, lax, numpy as jnp
 from jax._src.lib import xla_client as xc
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
@@ -11,6 +9,8 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   register_translation, wrap_name,
                                   _backend_specific_translations, parameter,
                                   xla_destructure, pyval_to_ir_constant)
+import flax
+from flax.linen.module import compact, wrap_method_once
 
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.primitive_def import xla_identity

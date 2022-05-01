@@ -161,7 +161,6 @@ class NCCLGroup(BaseGroup):
         self._barrier_tensor = None
         self._dev_comm_map = None
         self._dev_streams_map = None
-        super().destroy_group()
 
     @classmethod
     def backend(cls):

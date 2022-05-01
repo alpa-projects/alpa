@@ -1,7 +1,7 @@
 ---
 strictness: high
 test-warnings: true
-doc-warnings: true
+#doc-warnings: true
 member-warnings: false
 
 ignore-paths:
@@ -43,6 +43,7 @@ pylint:
     - unused-argument
     - useless-suppression
     - wrong-import-error
+    - c-extension-no-member
   options:
     max-line-length: 120
     ignored-argument-names: arg|args|kwargs

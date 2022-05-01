@@ -36,7 +36,7 @@ def gloo_available():
     return _GLOO_AVAILABLE
 
 
-class GroupManager(object):
+class GroupManager:
     """Use this class to manage the collective groups we created so far.
 
     Each process will have an instance of `GroupManager`. Each process
@@ -57,8 +57,8 @@ class GroupManager(object):
         backend = types.Backend(backend)
         if backend == types.Backend.MPI:
             raise RuntimeError("Ray does not support MPI.")
-        elif backend == types.Backend.GLOO:
-            logger.debug("Creating GLOO group: '{}'...".format(group_name))
+        if backend == types.Backend.GLOO:
+            logger.debug(f"Creating GLOO group: '{group_name}'...")
             g = GLOOGroup(world_size,
                           rank,
                           group_name,
@@ -66,8 +66,8 @@ class GroupManager(object):
                           device_type="tcp")
             self._name_group_map[group_name] = g
             self._group_name_map[g] = group_name
-        elif backend == types.Backend.NCCL:
-            logger.debug("Creating NCCL group: '{}'...".format(group_name))
+        if backend == types.Backend.NCCL:
+            logger.debug(f"Creating NCCL group: '{group_name}'...")
             g = NCCLGroup(world_size, rank, group_name)
             self._name_group_map[group_name] = g
             self._group_name_map[g] = group_name
@@ -80,14 +80,14 @@ class GroupManager(object):
         """Get the collective group handle by its name."""
         if not self.is_group_exist(group_name):
             logger.warning(
-                "The group '{}' is not initialized.".format(group_name))
+                f"The group '{group_name}' is not initialized.")
             return None
         return self._name_group_map[group_name]
 
     def destroy_collective_group(self, group_name):
         """Group destructor."""
         if not self.is_group_exist(group_name):
-            logger.warning("The group '{}' does not exist.".format(group_name))
+            logger.warning(f"The group '{group_name}' does not exist.")
             return
 
         # release the collective group resource
@@ -133,18 +133,17 @@ def init_collective_group(world_size: int,
     _check_inside_actor()
     backend = types.Backend(backend)
     _check_backend_availability(backend)
-    global _group_mgr
     # TODO(Hao): implement a group auto-counter.
     if not group_name:
         raise ValueError(
-            "group_name '{}' needs to be a string.".format(group_name))
+            f"group_name '{group_name}' needs to be a string.")
 
     if _group_mgr.is_group_exist(group_name):
         raise RuntimeError("Trying to initialize a group twice.")
 
-    assert (world_size > 0)
-    assert (rank >= 0)
-    assert (rank < world_size)
+    assert world_size > 0
+    assert rank >= 0
+    assert rank < world_size
     _group_mgr.create_collective_group(backend, world_size, rank, group_name)
 
 
@@ -178,25 +177,25 @@ def create_collective_group(actors,
         pass
 
     if len(ranks) != len(actors):
-        raise RuntimeError("Each actor should correspond to one rank. Got '{}' "
-                           "ranks but '{}' actors".format(
-                               len(ranks), len(actors)))
+        raise RuntimeError(f"Each actor should correspond to one rank. Got '{len(ranks)}' "
+                           f"ranks but '{len(actors)}' actors")
 
     if set(ranks) != set(range(len(ranks))):
+        got_ranks = "".join([str(r) for r in ranks])
         raise RuntimeError(
-            "Ranks must be a permutation from 0 to '{}'. Got '{}'.".format(
-                len(ranks), "".join([str(r) for r in ranks])))
+            f"Ranks must be a permutation from 0 to '{len(ranks)}'. "
+            f"Got '{got_ranks}'.")
 
     if world_size <= 0:
         raise RuntimeError("World size must be greater than zero. "
-                           "Got '{}'.".format(world_size))
+                           f"Got '{world_size}'.")
     if not all(ranks) >= 0:
         raise RuntimeError("Ranks must be non-negative.")
     if not all(ranks) < world_size:
         raise RuntimeError("Ranks cannot be greater than world_size.")
 
     # avoid a circular dependency
-    from alpa.collective.util import Info
+    from alpa.collective.util import Info  # pylint: disable=import-outside-toplevel
     # store the information into a NamedActor that can be accessed later.
     name = "info_" + group_name
     actors_id = [a._ray_actor_id for a in actors]
@@ -209,7 +208,6 @@ def create_collective_group(actors,
 def destroy_collective_group(group_name: str = "default") -> None:
     """Destroy a collective group given its group name."""
     _check_inside_actor()
-    global _group_mgr
     _group_mgr.destroy_collective_group(group_name)
 
 
@@ -262,7 +260,7 @@ def allreduce(tensor, group_name: str = "default", op=types.ReduceOp.SUM):
     _check_single_tensor_input(tensor)
     g = _check_and_get_group(group_name)
     opts = types.AllReduceOptions
-    opts.reduceOp = op
+    opts.reduce_op = op
     g.allreduce([tensor], opts)
 
 
@@ -284,7 +282,7 @@ def allreduce_multigpu(tensor_list: list,
     _check_tensor_list_input(tensor_list)
     g = _check_and_get_group(group_name)
     opts = types.AllReduceOptions
-    opts.reduceOp = op
+    opts.reduce_op = op
     g.allreduce(tensor_list, opts)
 
 
@@ -322,7 +320,7 @@ def reduce(tensor,
     # check dst rank
     _check_rank_valid(g, dst_rank)
     opts = types.ReduceOptions()
-    opts.reduceOp = op
+    opts.reduce_op = op
     opts.root_rank = dst_rank
     opts.root_tensor = 0
     g.reduce([tensor], opts)
@@ -356,7 +354,7 @@ def reduce_multigpu(tensor_list: list,
     _check_rank_valid(g, dst_rank)
     _check_root_tensor_valid(len(tensor_list), dst_tensor)
     opts = types.ReduceOptions()
-    opts.reduceOp = op
+    opts.reduce_op = op
     opts.root_rank = dst_rank
     opts.root_tensor = dst_tensor
     g.reduce(tensor_list, opts)
@@ -487,7 +485,7 @@ def reducescatter(tensor,
             "The length of the tensor list operands to reducescatter "
             "must not be equal to world_size.")
     opts = types.ReduceScatterOptions()
-    opts.reduceOp = op
+    opts.reduce_op = op
     g.reducescatter([tensor], [tensor_list], opts)
 
 
@@ -514,7 +512,7 @@ def reducescatter_multigpu(output_tensor_list,
     _check_tensor_list_input(output_tensor_list)
     g = _check_and_get_group(group_name)
     opts = types.ReduceScatterOptions()
-    opts.reduceOp = op
+    opts.reduce_op = op
     g.reducescatter(output_tensor_list, input_tensor_lists, opts)
 
 
@@ -534,7 +532,7 @@ def send(tensor, dst_rank: int, group_name: str = "default"):
     _check_rank_valid(g, dst_rank)
     if dst_rank == g.rank:
         raise RuntimeError(
-            "The destination rank '{}' is self.".format(dst_rank))
+            f"The destination rank '{dst_rank}' is self.")
     opts = types.SendOptions()
     opts.dst_rank = dst_rank
     g.send([tensor], opts)
@@ -567,11 +565,11 @@ def send_multigpu(tensor,
     g = _check_and_get_group(group_name)
     _check_rank_valid(g, dst_rank)
     if dst_rank == g.rank:
-        raise RuntimeError("The dst_rank '{}' is self. Considering "
-                           "doing GPU to GPU memcpy instead?".format(dst_rank))
+        raise RuntimeError(f"The dst_rank '{dst_rank}' is self. Considering "
+                           "doing GPU to GPU memcpy instead?")
     if n_elements < 0:
         raise RuntimeError(
-            "The n_elements '{}' should >= 0.".format(n_elements))
+            f"The n_elements '{n_elements}' should >= 0.")
     opts = types.SendOptions()
     opts.dst_rank = dst_rank
     opts.dst_gpu_index = dst_gpu_index
@@ -595,7 +593,7 @@ def recv(tensor, src_rank: int, group_name: str = "default"):
     _check_rank_valid(g, src_rank)
     if src_rank == g.rank:
         raise RuntimeError(
-            "The destination rank '{}' is self.".format(src_rank))
+            f"The destination rank '{src_rank}' is self.")
     opts = types.RecvOptions()
     opts.src_rank = src_rank
     g.recv([tensor], opts)
@@ -626,11 +624,11 @@ def recv_multigpu(tensor,
     g = _check_and_get_group(group_name)
     _check_rank_valid(g, src_rank)
     if src_rank == g.rank:
-        raise RuntimeError("The dst_rank '{}' is self. Considering "
-                           "doing GPU to GPU memcpy instead?".format(src_rank))
+        raise RuntimeError(f"The dst_rank '{src_rank}' is self. Considering "
+                           "doing GPU to GPU memcpy instead?")
     if n_elements < 0:
         raise RuntimeError(
-            "The n_elements '{}' should be >= 0.".format(n_elements))
+            f"The n_elements '{n_elements}' should be >= 0.")
     opts = types.RecvOptions()
     opts.src_rank = src_rank
     opts.src_gpu_index = src_gpu_index
@@ -649,14 +647,13 @@ def synchronize(gpu_id: int):
     """
     if not types.cupy_available():
         raise RuntimeError("synchronize call requires CUDA and NCCL.")
-    import cupy as cp
+    import cupy as cp  # pylint: disable=import-outside-toplevel
     cp.cuda.Device(gpu_id).synchronize()
 
 
 def _check_and_get_group(group_name):
     """Check the existence and return the group handle."""
     _check_inside_actor()
-    global _group_mgr
     if not is_group_initialized(group_name):
         # try loading from remote info store
         try:
@@ -690,8 +687,8 @@ def _check_and_get_group(group_name):
                                                    group_name)
             else:
                 raise RuntimeError(
-                    "The collective group '{}' is not "
-                    "initialized in the process.".format(group_name)) from exc
+                    f"The collective group '{group_name}' is not "
+                    "initialized in the process.") from exc
     g = _group_mgr.get_group_by_name(group_name)
     return g
 
@@ -709,9 +706,9 @@ def _check_single_tensor_input(tensor):
     if types.torch_available():
         if isinstance(tensor, types.th.Tensor):
             return
-    raise RuntimeError("Unrecognized tensor type '{}'. Supported types are: "
-                       "np.ndarray, torch.Tensor, cupy.ndarray.".format(
-                           type(tensor)))
+    raise RuntimeError(f"Unrecognized tensor type '{type(tensor)}'. "
+                       "Supported types are: np.ndarray, torch.Tensor, "
+                       "cupy.ndarray.")
 
 
 def _check_backend_availability(backend: types.Backend):
@@ -737,17 +734,17 @@ def _check_inside_actor():
 def _check_rank_valid(g, rank: int):
     """Check the rank: 0 <= rank < world_size."""
     if rank < 0:
-        raise ValueError("rank '{}' is negative.".format(rank))
+        raise ValueError(f"rank '{rank}' is negative.")
     if rank >= g.world_size:
-        raise ValueError("rank '{}' must be less than world size "
-                         "'{}'".format(rank, g.world_size))
+        raise ValueError(f"rank '{rank}' must be less than world size "
+                         f"'{g.world_size}'")
 
 
 def _check_tensor_list_input(tensor_list):
     """Check if the input is a list of supported tensor types."""
     if not isinstance(tensor_list, list):
         raise RuntimeError("The input must be a list of tensors. "
-                           "Got '{}'.".format(type(tensor_list)))
+                           f"Got '{type(tensor_list)}'.")
     if not tensor_list:
         raise RuntimeError("Got an empty list of tensors.")
     for t in tensor_list:
@@ -758,7 +755,7 @@ def _check_tensor_lists_input(tensor_lists):
     """Check if the input is a list of lists of supported tensor types."""
     if not isinstance(tensor_lists, list):
         raise RuntimeError("The input must be a list of lists of tensors. "
-                           "Got '{}'.".format(type(tensor_lists)))
+                           f"Got '{type(tensor_lists)}'.")
     if not tensor_lists:
         raise RuntimeError(f"Did not receive tensors. Got: {tensor_lists}")
     for t in tensor_lists:
@@ -768,7 +765,7 @@ def _check_tensor_lists_input(tensor_lists):
 def _check_root_tensor_valid(length, root_tensor):
     """Check the root_tensor device is 0 <= root_tensor < length"""
     if root_tensor < 0:
-        raise ValueError("root_tensor '{}' is negative.".format(root_tensor))
+        raise ValueError(f"root_tensor '{root_tensor}' is negative.")
     if root_tensor >= length:
-        raise ValueError("root_tensor '{}' is greater than the number of GPUs: "
-                         "'{}'".format(root_tensor, length))
+        raise ValueError(f"root_tensor '{root_tensor}' is greater than the number of GPUs: "
+                         f"'{length}'")

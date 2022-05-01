@@ -104,7 +104,8 @@ class MeshProfilingResult:
             self._estimate_internal(group, 0, dtype, self.all_reduce_cost_dict))
         return ret
 
-    def _estimate_internal(self, group, size, dtype, cost_dict):
+    @staticmethod
+    def _estimate_internal(group, size, dtype, cost_dict):
         key = (group, dtype)
         cost_list = cost_dict[key]
         assert cost_list, f"Cannot find records for {(group, dtype)}"
@@ -180,10 +181,12 @@ class ProfilingResultDatabase:
         self.data[key] = self.data[src_key]
 
     def save(self, filename):
-        pickle.dump(self.data, open(filename, "wb"))
+        with open(filename, "wb") as f:
+            pickle.dump(self.data, f)
 
     def load(self, filename):
-        new_data = pickle.load(open(filename, "rb"))
+        with open(filename, "rb") as f:
+            new_data = pickle.load(f)
         self.update(ProfilingResultDatabase(new_data))
 
     def __str__(self):
@@ -315,8 +318,6 @@ def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
     Compile an xla executable for benchmarking operators.
     It runs the op only once.
     """
-    in_tuple_shape = xc.Shape.tuple_shape(
-        [xc.Shape.array_shape(dtype, shape) for shape, dtype in shapes])
 
     sharding = xc.OpSharding()
     sharding.type = sharding.type.REPLICATED
@@ -366,7 +367,6 @@ def rank_0_print(host_id, msg):
 
 
 # A set containing all replica group patterns with nccl communicator created.
-global communicator_set
 communicator_set = set()
 
 
@@ -496,9 +496,11 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
                 for k in range(len(local_devices))
             ])
 
-        [d.synchronize_all_activity() for d in local_devices]
+        for d in local_devices:
+            d.synchronize_all_activity()
         device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
-        [d.synchronize_all_activity() for d in local_devices]
+        for d in local_devices:
+            d.synchronize_all_activity()
         return 0
     else:
         # Create the nccl communicator
@@ -535,9 +537,11 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
                     for k in range(len(local_devices))
                 ])
 
-        [d.synchronize_all_activity() for d in local_devices]
+        for d in local_devices:
+            d.synchronize_all_activity()
         device_inputs = compiled.execute_sharded_on_local_devices(device_inputs)
-        [d.synchronize_all_activity() for d in local_devices]
+        for d in local_devices:
+            d.synchronize_all_activity()
 
         # Run profiling
         device_inputs[0] = [
@@ -545,10 +549,12 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
             for k in range(len(local_devices))
         ]
 
-        [d.synchronize_all_activity() for d in local_devices]
+        for d in local_devices:
+            d.synchronize_all_activity()
         tic = time.time()
         compiled.execute_sharded_on_local_devices(device_inputs)
-        [d.synchronize_all_activity() for d in local_devices]
+        for d in local_devices:
+            d.synchronize_all_activity()
         toc = time.time()
 
         # Return
@@ -556,7 +562,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         return mean_time
 
 
-def run_with_timeout(func, args=(), kwargs={}, timeout=None):
+def run_with_timeout(func, args=(), kwargs=None, timeout=None):
     ret_value = []
 
     def _target_func():
@@ -584,7 +590,8 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     if os.path.exists(cache_filename):
         rank_0_print(host_id,
                      f"Load cached hlo op cost dict from {cache_filename}...")
-        cache_dict = pickle.load(open(cache_filename, "rb"))
+        with open(cache_filename, "rb") as cf:
+            cache_dict = pickle.load(cf)
     else:
         cache_dict = {}
 
@@ -615,7 +622,8 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
             if host_id == 0 and (i + 1) % save_every == 0:
                 old_cache_len = len(cache_dict)
                 rank_0_print(host_id, "Save cache...")
-                pickle.dump(cache_dict, open(cache_filename, "wb"))
+                with open(cache_filename, "wb") as cf:
+                    pickle.dump(cache_dict, cf)
     except TimeoutError:
         print(f"Worker {host_id} timeout error", flush=True)
         return None
@@ -625,7 +633,8 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
 
     if host_id == 0 and len(cache_dict) > old_cache_len:
         rank_0_print(host_id, "Save cache...")
-        pickle.dump(cache_dict, open(cache_filename, "wb"))
+        with open(cache_filename, "wb") as cf:
+            pickle.dump(cache_dict, cf)
 
     return np.array(results)
 
@@ -717,6 +726,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                 max_comm_size_inter_node, max_fail_retry, cache_filename):
     """Profile costs for all dot and communication primitives."""
+    #  pylint: disable=import-outside-toplevel
     from alpa.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
@@ -731,7 +741,8 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
     # Load failed batch keys
     failed_batch_keys_filename = "tmp/failed_batch_keys.pkl"
     if os.path.exists(failed_batch_keys_filename):
-        failed_batch_keys = pickle.load(open(failed_batch_keys_filename, "rb"))
+        with open(failed_batch_keys_filename, "rb") as fbkf:
+            failed_batch_keys = pickle.load(fbkf)
     else:
         failed_batch_keys = set()
 
@@ -803,8 +814,8 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                     # Skip this batch if there are too many errors
                     print(f"Failed key: {batch_key}")
                     failed_batch_keys.add(batch_key)
-                    pickle.dump(failed_batch_keys,
-                                open(failed_batch_keys_filename, "wb"))
+                    with open(failed_batch_keys_filename, "wb") as fbkf:
+                        pickle.dump(failed_batch_keys, fbkf)
 
                 print(f"Reboot physical mesh. fail_ct: {fail_ct}")
                 physical_mesh.shutdown(forced=True)
@@ -813,7 +824,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                     try:
                         time.sleep(10)
                         physical_mesh = tmp_mesh.get_physical_mesh()
-                    except ray.exceptions.RayError as e:
+                    except ray.exceptions.RayError:
                         ray.shutdown()
                         ray.init(address="auto")
                         physical_mesh = None
@@ -823,7 +834,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
         all_reduce_cost_dict = defaultdict(list)
         all_to_all_cost_dict = defaultdict(list)
         reduce_scatter_cost_dict = defaultdict(list)
-        for i in range(len(op_infos)):
+        for _ in range(len(op_infos)):
             op_type, (replica_groups, dtype, size) = op_infos[i]
             array_size = size * to_np_dtype(dtype).itemsize
             num_devices = len(replica_groups[0])

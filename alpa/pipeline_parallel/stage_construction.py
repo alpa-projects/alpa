@@ -5,8 +5,8 @@ from datetime import datetime
 from time import time
 from typing import Sequence, List, Tuple
 
-import numba
 import numpy as np
+import numba
 from ray.exceptions import RayActorError
 import tqdm
 
@@ -211,10 +211,9 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
             if num_devices % mp_size == 0:
                 dp_size = num_devices // mp_size
                 if batch_size % dp_size == 0:
-                    results.append((virtual_submesh.get_logical_mesh(
-                        (dp_size, mp_size)), {
-                            "force_batch_dim_to_mesh_dim": 0
-                        }))
+                    results.append(
+                        (virtual_submesh.get_logical_mesh((dp_size, mp_size)),
+                         {"force_batch_dim_to_mesh_dim": 0}))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
@@ -279,7 +278,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 + layer_flops_prefix_sum[2 * num_layers - start] -
                 layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
             if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
-                (computation_source_ratio < flops_ratio / (1 + tolerance))):
+                    (computation_source_ratio < flops_ratio / (1 + tolerance))):
                 continue
             layer_indices = (
                 indices[start:end + 1] +
@@ -613,8 +612,7 @@ def cluster_layers_and_slice_mesh(
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
     timers("stage-construction").start()
-    assert (isinstance(devices, VirtualPhysicalMesh) or
-            isinstance(devices, DistributedPhysicalDeviceMeshGroup))
+    assert isinstance(devices, (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))
     if isinstance(devices, VirtualPhysicalMesh):
         given_mesh = False
         submesh_choices = get_submesh_choices(devices)

@@ -54,19 +54,18 @@ class Rendezvous:
         """
         if timeout_s <= 0:
             raise ValueError("The 'timeout' argument must be positive. "
-                             "Got '{}'.".format(timeout_s))
+                             f"Got '{timeout_s}'.")
         self._store_name = get_store_name(self._store_key)
         timeout_delta = datetime.timedelta(seconds=timeout_s)
         elapsed = datetime.timedelta(seconds=0)
         start_time = datetime.datetime.now()
         while elapsed < timeout_delta:
             try:
-                logger.debug("Trying to meet at the store '{}'".format(
-                    self._store_name))
+                logger.debug(f"Trying to meet at the store '{self._store_name}'")
                 self._store = ray.get_actor(self._store_name)
             except ValueError:
-                logger.debug("Failed to meet at the store '{}'."
-                             "Trying again...".format(self._store_name))
+                logger.debug(f"Failed to meet at the store '{self._store_name}'. "
+                             "Trying again...")
                 time.sleep(1)
                 elapsed = datetime.datetime.now() - start_time
                 continue
@@ -122,10 +121,11 @@ class NCCLGroup(BaseGroup):
 
     def __init__(self, world_size, rank, group_name):
         """Init an NCCL collective group."""
-        super(NCCLGroup, self).__init__(world_size, rank, group_name)
+        super().__init__(world_size, rank, group_name)
 
         # communicator and stream cache.
         # TODO (Hao): we need a lock here...
+        self._barrier_tensor = None
         self._dev_comm_map = {}
         self._dev_streams_map = {}
 
@@ -161,7 +161,7 @@ class NCCLGroup(BaseGroup):
         self._barrier_tensor = None
         self._dev_comm_map = None
         self._dev_streams_map = None
-        super(NCCLGroup, self).destroy_group()
+        super().destroy_group()
 
     @classmethod
     def backend(cls):
@@ -185,7 +185,7 @@ class NCCLGroup(BaseGroup):
                 nccl_util.get_tensor_ptr(output_tensor),
                 nccl_util.get_tensor_n_elements(input_tensor),
                 nccl_util.get_nccl_tensor_dtype(input_tensor),
-                nccl_util.get_nccl_reduce_op(allreduce_options.reduceOp),
+                nccl_util.get_nccl_reduce_op(allreduce_options.reduce_op),
                 stream.ptr)
 
         self._collective(tensors, tensors, collective_fn)
@@ -229,7 +229,7 @@ class NCCLGroup(BaseGroup):
                         nccl_util.get_tensor_ptr(output_tensor),
                         nccl_util.get_tensor_n_elements(input_tensor),
                         nccl_util.get_nccl_tensor_dtype(input_tensor),
-                        nccl_util.get_nccl_reduce_op(reduce_options.reduceOp),
+                        nccl_util.get_nccl_reduce_op(reduce_options.reduce_op),
                         root_rank, stream.ptr)
 
         self._collective(tensors, tensors, collective_fn)
@@ -319,7 +319,7 @@ class NCCLGroup(BaseGroup):
                 nccl_util.get_tensor_ptr(output_tensor),
                 nccl_util.get_tensor_n_elements(output_tensor),
                 nccl_util.get_nccl_tensor_dtype(output_tensor),
-                nccl_util.get_nccl_reduce_op(reducescatter_options.reduceOp),
+                nccl_util.get_nccl_reduce_op(reducescatter_options.reduce_op),
                 stream.ptr)
 
         _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists)
@@ -552,14 +552,15 @@ class NCCLGroup(BaseGroup):
             ray.kill(store)
         except ValueError:
             logger.info(
-                "The store with name {} has been destroyed somewhere else.")
-            pass
+                f"The store with name {store_name} has been destroyed somewhere else.")
 
-    def generate_nccl_uid(self):
+    @staticmethod
+    def generate_nccl_uid():
         group_uid = nccl_util.get_nccl_unique_id()
         return group_uid
 
-    def _generate_nccl_uid(self, key):
+    @staticmethod
+    def _generate_nccl_uid(key):
         """Generate an NCCL unique ID for initializing communicators.
 
         The method will also create a KV store using Ray named actor and store
@@ -575,7 +576,7 @@ class NCCLGroup(BaseGroup):
         group_uid = nccl_util.get_nccl_unique_id()
         store_name = get_store_name(key)
         # Avoid a potential circular dependency in ray/actor.py
-        from alpa.collective.util import NCCLUniqueIDStore
+        from alpa.collective.util import NCCLUniqueIDStore  # pylint: disable=import-outside-toplevel
         store = NCCLUniqueIDStore.options(
             name=store_name, lifetime="detached").remote(store_name)
         ray.get([store.set_id.remote(group_uid)])
@@ -665,8 +666,7 @@ class NCCLGroup(BaseGroup):
         # check send/recv availability.
         if nccl_util.get_nccl_runtime_version() < 2704:
             raise RuntimeError("P2p send/recv requires NCCL >= 2.7.4. "
-                               "Got '{}'.".format(
-                                   nccl_util.get_nccl_runtime_version()))
+                               f"Got '{nccl_util.get_nccl_runtime_version()}'.")
         _check_gpu_tensors(tensors)
 
         # we currently only support single device to single device send/recv.
@@ -684,7 +684,7 @@ class NCCLGroup(BaseGroup):
 
         # We have made sure that self.rank != peer_rank during API check.
         peer_p2p_rank = 0 if self.rank > peer_rank else 1
-        for i, tensor in enumerate(tensors):
+        for i, _ in enumerate(tensors):
             p2p_fn(tensors[i], comms[i], streams[i], peer_p2p_rank)
 
 
@@ -723,21 +723,19 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
                            "expects a list of tensor list.")
     dtype = nccl_util.get_nccl_tensor_dtype(tensors[0])
     shape = nccl_util.get_tensor_shape(tensors[0])
-    for i, tensor_list in enumerate(tensor_lists):
+    for i, _ in enumerate(tensor_lists):
         # check all tensor in `tensors` match.
         dt = nccl_util.get_nccl_tensor_dtype(tensors[i])
         if dt != dtype:
             raise RuntimeError("All tensor operands to scatter/gather must "
-                               "have the same dtype. Got '{}' and '{}'.".format(
-                                   dt, dtype))
+                               f"have the same dtype. Got '{dt}' and '{dtype}'.")
         # Note: typically CCL libraries only requires they have the same
         # number of elements; Here we make it more strict -- we require
         # exact shape match.
         s = nccl_util.get_tensor_shape(tensors[i])
         if s != shape:
             raise RuntimeError("All tensor operands to scatter/gather must "
-                               "have the same shape. Got '{}' and '{}'.".format(
-                                   s, shape))
+                               f"have the same shape. Got '{s}' and '{shape}'.")
         # check all tensors in `tensor_lists` match.
         for t in tensor_lists[i]:
             # check dtype
@@ -745,12 +743,12 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
             if dt != dtype:
                 raise RuntimeError(
                     "All tensor operands to scatter/gather must "
-                    "have the same dtype. Got '{}' and '{}'.".format(dt, dtype))
+                    f"have the same dtype. Got '{dt}' and '{dtype}'.")
             s = nccl_util.get_tensor_shape(t)
             if s != shape:
                 raise RuntimeError(
                     "All tensor operands to scatter/gather must "
-                    "have the same shape. Got '{}' and '{}'.".format(s, shape))
+                    f"have the same shape. Got '{s}' and '{shape}'.")
 
 
 def _check_gpu_tensors(tensors):
@@ -759,8 +757,8 @@ def _check_gpu_tensors(tensors):
         raise RuntimeError("'tensors' must be a nonempty list.")
     if len(tensors) > nccl_util.get_num_gpus():
         raise RuntimeError("Tensor list cannot be larger than the number"
-                           "of available GPUs. Got {} > {}.".format(
-                               len(tensors), nccl_util.get_num_gpus()))
+                           f"of available GPUs. Got {len(tensors)} > "
+                           f"{nccl_util.get_num_gpus()}.")
     t0 = tensors[0]
     dt = nccl_util.get_nccl_tensor_dtype(t0)
     s = nccl_util.get_tensor_shape(t0)
@@ -776,11 +774,11 @@ def _check_gpu_tensors(tensors):
         dtype = nccl_util.get_nccl_tensor_dtype(t)
         if dt != dtype:
             raise RuntimeError(
-                "Tensors must have identical dtype. Got: '{}'.".format(dtype))
+                f"Tensors must have identical dtype. Got: '{dtype}'.")
         shape = nccl_util.get_tensor_shape(t)
         if s != shape:
             raise RuntimeError(
-                "Tensor must have identical shape. Got: '{}'.".format(shape))
+                f"Tensor must have identical shape. Got: '{shape}'.")
         device = nccl_util.get_tensor_device(t)
         if device == d:
             raise RuntimeError("Tensor must be on distinct GPUs.")

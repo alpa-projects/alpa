@@ -1,22 +1,21 @@
 """Cluster small ops into layers and rematerialize at layer boundary."""
-from functools import partial, wraps
 import logging
+from functools import partial, wraps
 from typing import Callable, Union, Sequence
 
-from jax._src.api import _check_callable
-from jax._src.tree_util import tree_unflatten
+import numpy as np
 from jax import tree_flatten
+from jax._src.api import _check_callable
 from jax._src.api import make_jaxpr
+from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       new_jaxpr_eqn, gensym)
 from jax.interpreters.partial_eval import remat_call_p
 import numba
-import numpy as np
 
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,
-                                                heavy_count,
-                                                log_layer_slicing_stats)
+                                                heavy_count)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
@@ -92,7 +91,7 @@ def transform_pipeline_forward(fn: Callable,
         #log_layer_slicing_stats(origin_jaxpr, sliced_eqns)
         new_jaxpr = transform_fn(origin_jaxpr, sliced_eqns)
         flatten_args, _ = tree_flatten(args)
-        ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)
+        ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)  # pylint: disable=not-callable
         _, out_tree = tree_flatten(out_shape_tree)
         return tree_unflatten(out_tree, ans)
 
@@ -119,7 +118,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                     layer_pipeline_invars[i].add(var)
                     if var_layer_dict[var] == -1:
                         continue  # TODO(yonghao): remove below
-                        var_layer_dict[var] = i
+                        # var_layer_dict[var] = i
                     layer_pipeline_outvars[var_layer_dict[var]].add(var)
             for var in eqn.outvars:
                 if not isinstance(var, DropVar):
@@ -251,14 +250,12 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         compute_costs = np.array([
             eqn_flops(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ],
-                                 dtype=np.float64)
+        ], dtype=np.float64)
     elif cost_criteria == "count":
         compute_costs = np.array([
             heavy_count(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ],
-                                 dtype=np.float64)
+        ], dtype=np.float64)
     elif cost_criteria == "input_memory":
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
         compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns],
@@ -275,7 +272,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     length = len(jaxpr.eqns)
     non_trivial, input_sizes, compute_costs = costs
     compute_costs_avg = compute_costs.sum() / layer_num
-    if cost_criteria == "flops" or cost_criteria == "input_memory":
+    if cost_criteria in ("flops", "input_memory"):
         compute_costs_bound = compute_costs_avg * (1 + eps)
     elif cost_criteria == "count":
         compute_costs_bound = max(compute_costs_avg * (1 + eps),
@@ -460,7 +457,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
             jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
 
         flatten_args, _ = tree_flatten(args)
-        ans = jaxpr_as_fun(jaxpr)(*flatten_args)
+        ans = jaxpr_as_fun(jaxpr)(*flatten_args)  # pylint: disable=not-callable
         _, out_tree = tree_flatten(out_shape_tree)
         return tree_unflatten(out_tree, ans)
 

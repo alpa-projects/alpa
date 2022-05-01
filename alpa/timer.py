@@ -77,7 +77,7 @@ class _Timer:
         string = "time (ms)"
 
         elapsed = self.elapsed(mode) * 1000.0 / normalizer
-        string += ' | {}: {:.2f}'.format(self.name, elapsed)
+        string += f' | {self.name}: {elapsed:.2f}'
         print(string, flush=True)
 
 
@@ -101,7 +101,7 @@ class Timers:
         string = 'time (ms)'
         for name in names:
             elapsed_time = self.timers[name].elapsed() * 1000.0 / normalizer
-            string += ' | {}: {:.2f}'.format(name, elapsed_time)
+            string += f' | {name}: {elapsed_time:.2f}'
         print(string, flush=True)
 
 

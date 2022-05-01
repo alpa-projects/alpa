@@ -4,7 +4,6 @@ import os
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
-from jax._src.lib import xla_bridge as xb
 
 
 class AutoShardingOption:
@@ -200,7 +199,7 @@ def set_parallelize_options(
       use_hlo_cost_model: Whether to use the Hlo instruction cost model for pipeline profiling.
       profiling_database_filename: The filename of profiling result database.
     """
-    global global_config
+    global global_config  # pylint: disable=global-variable-not-assigned
 
     global_config.devices = devices
     global_config.strategy = strategy

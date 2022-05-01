@@ -73,7 +73,7 @@ class MeshHostWorker:
                 server_address, host_id))
         logger.debug(
             f"{host_id}: Trying to connect to xla runtime at {server_address}")
-        status = self.distributed_client.connect()
+        self.distributed_client.connect()
         logger.debug(
             f"{host_id}: Success to connect to xla runtime at {server_address}")
         self.backend = xla_client.make_gpu_client(self.distributed_client,
@@ -97,7 +97,7 @@ class MeshHostWorker:
                 self.signal_tensors.append(
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
-                                       take_ownership=True))
+                        take_ownership=True))
 
     ##### TensorStore Related Functions #####
     def get_ts_spec(self, ckpt_path: str):
@@ -272,6 +272,7 @@ class MeshHostWorker:
 
     ##### Data loader Related Functions #####
     def put_data_loader(self, uuid: int, *args):
+        # pylint: disable=import-outside-toplevel
         from alpa.data_loader import MeshWorkerDataLoader
         self.data_loaders[uuid] = MeshWorkerDataLoader(self, *args)
 
@@ -406,7 +407,8 @@ class MeshHostWorker:
         if is_bool:
             self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])
 
-    def init_p2p_communicator(self, group_name, my_rank, my_gpu_idx, peer_rank,
+    @staticmethod
+    def init_p2p_communicator(group_name, my_rank, my_gpu_idx, peer_rank,
                               peer_gpu_idx, nccl_uid):
         """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
@@ -414,7 +416,8 @@ class MeshHostWorker:
         g = col.check_and_get_group(group_name)
         g.create_p2p_communicator(my_gpu_idx, peer_rank, peer_gpu_idx, nccl_uid)
 
-    def generate_nccl_uid(self, group_name):
+    @staticmethod
+    def generate_nccl_uid(group_name):
         """Generate the NCCL unique ID in advance."""
         g = col.check_and_get_group(group_name)
         uid = g.generate_nccl_uid()
@@ -494,7 +497,8 @@ class MeshHostWorker:
             self.allgather(buffer_uuids, allgather_spec.device_ids,
                            allgather_spec.tensor_slices)
 
-    def destroy_collective_group(self, group_name: str = "default"):
+    @staticmethod
+    def destroy_collective_group(group_name: str = "default"):
         col.destroy_collective_group(group_name)
 
     ##### Data Loader Related Functions #####
@@ -522,7 +526,8 @@ class MeshHostWorker:
                                      number=3,
                                      sync=False):
         # TODO(yonghao): the sync function should be carefully reconsidered
-        run_fn = lambda: self.run_resharding_send_task(uuid, buf_uuids)
+        def run_fn():
+            self.run_resharding_send_task(uuid, buf_uuids)
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
@@ -545,10 +550,12 @@ class MeshHostWorker:
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
 
-    def get_timer(self, name: str):
+    @staticmethod
+    def get_timer(name: str):
         return timers(name)
 
-    def reset_timer(self, name: str):
+    @staticmethod
+    def reset_timer(name: str):
         timers(name).reset()
 
     ##### Other Functions #####
@@ -818,7 +825,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
     """Convert device id (int) to a canonical device string."""
-    return "{}:{}:{}".format(host_ip, device_type, str(device_id))
+    return f"{host_ip}:{device_type}:{device_id}"
 
 
 # Used ports for XLA distributed runtime servers.
@@ -843,6 +850,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.num_devices_per_host = num_devices_per_host
         self.workers = None
         self.launched = False
+        self.service_server = None
 
         if devices is not None:
             if len(devices) != len(host_ids):
@@ -876,7 +884,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         used_port_set.add(port)
 
         self.server_address = f"{self.head_ip}:{port}"
-        self.service_server = None
         logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
@@ -1125,8 +1132,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def get_max_memory_allocated(self):
         self.sync_workers()
         return max(
-            ray.get([w.get_max_memory_allocated.remote() for w in self.workers
-                    ]))
+            ray.get([w.get_max_memory_allocated.remote()
+                     for w in self.workers]))
 
     def get_available_memory(self):
         return min(
@@ -1177,6 +1184,7 @@ class DistributedArray:
         self._npy_value = None
         self._one_replica_buffer_indices = None
         self._fetched_np_buffers = None
+        self.device_buffers = None
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
@@ -1216,8 +1224,9 @@ class DistributedArray:
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
              sharding_spec: ShardingSpec):
         """Load the data from `path` distributedly with `aval` and return a new DistributedArray"""
+        # pylint: disable=import-outside-toplevel
         from alpa.mesh_executable import create_remote_buffer_refs
-        buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, 1)
+        buf_refs, _ = create_remote_buffer_refs(device_mesh, 1)
         indices = pxla.spec_to_indices(aval.shape, sharding_spec)
 
         buf_refs_per_host = {k: [] for k in device_mesh.host_ids}
@@ -1316,8 +1325,8 @@ class ReplicatedDistributedArray:
 
     def __init__(self, device_meshes: Sequence[PhysicalDeviceMesh],
                  arrays: Sequence[DistributedArray]):
-        self._mesh_array_map = dict()
-        self._array_mesh_map = dict()
+        self._mesh_array_map = {}
+        self._array_mesh_map = {}
         for mesh, array in zip(device_meshes, arrays):
             self._mesh_array_map[mesh] = array
             self._array_mesh_map[array] = mesh
@@ -1523,9 +1532,10 @@ class DeviceCluster:
         from ray.worker import _global_node as ray_global_node
         try:
             self.head_info = ray_global_node.address_info
-        except AttributeError:
+        except AttributeError as ae:
             raise RuntimeError(
-                "Cannot access ray global node. Did you call ray.init?")
+                "Cannot access ray global node. Did you call ray.init?") \
+                from ae
         self.head_ip = self.head_info["node_ip_address"]
 
         # Gather host ids
@@ -1613,6 +1623,7 @@ class DeviceCluster:
 # Register ShardArg Handler
 ########################################
 def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
+    # pylint: disable=import-outside-toplevel
     from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     device_ids = np.arange(device_mesh.num_devices_per_host)
@@ -1627,6 +1638,7 @@ def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
 
 
 def _device_mesh_put_dummy(array, device_mesh, indices, num_batch):
+    # pylint: disable=import-outside-toplevel
     from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     step = device_mesh.num_devices_per_host * num_batch
@@ -1713,8 +1725,8 @@ def _uint8_to_bool(xla_buffer):
 
 
 shard_arg_handlers = {}  # Shard an argument to a distributed device mesh
-for t in array_types:
-    shard_arg_handlers[t] = _shard_array
+for a in array_types:
+    shard_arg_handlers[a] = _shard_array
 shard_arg_handlers[ShapedArray] = _shard_abstract_array
 shard_arg_handlers[ShapeDtypeStruct] = _shard_abstract_array
 shard_arg_handlers[xla._DeviceArray] = _shard_device_array

@@ -1,19 +1,16 @@
 """Monkey patch other python libraries."""
-from functools import partial
-
 import flax
-from flax.linen.module import compact, wrap_method_once
 import jax
+import numpy as np
+from flax.linen.module import compact, wrap_method_once
 from jax import core, lax, numpy as jnp
-from jax._src.lax.lax import _reduce_min, _reduce_max
+from jax._src.lib import xla_client as xc
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
-from jax._src.lib import xla_bridge as xb, xla_client as xc
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   register_translation, wrap_name,
                                   _backend_specific_translations, parameter,
                                   xla_destructure, pyval_to_ir_constant)
-import numpy as np
 
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.primitive_def import xla_identity
@@ -33,7 +30,6 @@ def set_override_backend(backend):
 
 def override_get_backend(*args, **kwargs):
     """Override the `get_backend` in JAX to use PJRT backend managed by Alpa."""
-    global override_backend
     if override_backend is not None:
         return override_backend
     return default_get_backend(*args, **kwargs)
@@ -222,6 +218,6 @@ def init_dummy(self, *args, **kwargs):
 
 setattr(flax.linen.module.Module, "init_dummy", init_dummy)
 
-from flax.optim import dynamic_scale as dynamic_scale_lib
+from flax.optim import dynamic_scale as dynamic_scale_lib  # noqa
 
 setattr(flax.optim, "DynamicScale", dynamic_scale_lib.DynamicScale)

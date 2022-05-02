@@ -13,7 +13,6 @@ import ray
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
-
 from alpa.api import parallelize, grad, value_and_grad
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
@@ -74,7 +73,6 @@ class BertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
-    layers: Any = None
 
     def setup(self):
         self.layers = [
@@ -218,7 +216,7 @@ class PipelineBasicTest(unittest.TestCase):
     def run_mlp(self,
                 manual_pipeline_layer=True,
                 test_remat=False,
-                pipeline_stage_mode="uniform_layer_gpipe",
+                pipeline_stage_mode="uniform_stage",
                 do_numerical_test=True,
                 return_value=False):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
@@ -289,7 +287,7 @@ class PipelineBasicTest(unittest.TestCase):
                          n_layers,
                          manual_pipeline_layer=True,
                          test_remat=False,
-                         pipeline_stage_mode="uniform_layer_gpipe",
+                         pipeline_stage_mode="uniform_stage",
                          cache_compute_cost=None,
                          forward_stage_layer_ids=None,
                          batch_size=16,

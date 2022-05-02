@@ -69,32 +69,19 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         if model_type in ["gpt", "bert"]:
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-             use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         elif model_type == "moe":
-            (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
-             num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
-             auto_pipeline, overwrite_global_config_dict) = benchmark_case
+            (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+             num_experts, expert_group_size, num_micro_batches,
+             parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
-            pipeline_stage_mode = "auto_gpipe" if auto_pipeline else "uniform_layer_gpipe"
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-             num_micro_batches, force_batch_dim_mapping,
-             prefer_reduce_scatter, use_remat, logical_mesh_search_space,
-             overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
-            pipeline_stage_mode = "auto_gpipe"
-            pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
-
-        if pipeline_mp_size <= 1 and pipeline_stage_mode == "uniform_layer_gpipe":
-            print(f"Skip the case: {str(benchmark_case)}, because PP <= 1. "
-                  f"Please use `benchmark_2d.py` "
-                  f"since 3d runtime will have a small overhead.")
-            continue
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
@@ -102,38 +89,17 @@ if __name__ == "__main__":
                                     num_hosts, num_devices_per_host,
                                     use_separate_process=args.use_separate_process,
                                     disable_tqdm=args.disable_tqdm)
-        (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
+        (parameter_count, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_option_dicts) = result
 
-        if pipeline_stage_mode == "uniform_layer_gpipe":
-            heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                     "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
-                     "Mean Time", "Std Time", "#Params", "TFLOPs",
-                     "TFLOPs (ckpt)", "Peak Mem", "overwrite_global_config_dict"]
-            parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
-            values = [model_type, model_config, parallel_config, (p_dim0, p_dim1),
-                      num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
-                      f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
-                      f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                      f"{max_mem_allocated/GB:.3f}G", overwrite_global_config_dict]
-            write_tsv(heads, values, output_name)
-        else:
-            heads = ["Type", "Model Config", "#GPUs", "#Layers (for Auto-Layer)",
-                     "#Microbatch", "Remat", "Reduce-scatter",
-                     "Mean Time", "Std Time", "#Params", "TFLOPs",
-                     "TFLOPs (ckpt)", "Peak Mem", "Compute Cost File",
-                     "Layer->Stage Mapping", "Submesh Shapes",
-                     "Logical Mesh Shapes", "Autosharding Global Configs",
-                     "overwrite_global_config_dict", "compilation times"]
-            values = [model_type + "-" + pipeline_stage_mode, model_config, num_gpus, pipeline_mp_size,
-                      num_micro_batches, use_remat, prefer_reduce_scatter,
-                      f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
-                      f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                      f"{max_mem_allocated/GB:.3f}G", compute_cost_file_name,
-                      forward_stage_layer_ids, submesh_shapes,
-                      logical_mesh_shapes, autosharding_option_dicts,
-                      overwrite_global_config_dict, to_str_round(compilation_times, 2)]
-            write_tsv(heads, values, output_name)
+        heads = ["Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
+                 "Mean Time", "Std Time", "#Params", "TFLOPs",
+                 "TFLOPs (ckpt)", "Peak Mem", "Compilation Time"]
+        values = [model_type, model_config, num_micro_batches, num_gpus, parallel_args,
+                  f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
+                  f"{parameter_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
+                  f"{max_mem_allocated/GB:.3f}G", to_str_round(compilation_times, 2)]
+        write_tsv(heads, values, output_name)
 
         time.sleep(0.1)  # for ctrl+c to work

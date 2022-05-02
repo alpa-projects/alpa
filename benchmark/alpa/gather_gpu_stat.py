@@ -1,3 +1,5 @@
+"""Gather gpu utilization from all nodes."""
+
 import os
 import tempfile
 

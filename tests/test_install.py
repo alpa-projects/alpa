@@ -87,7 +87,7 @@ class InstallationTest(unittest.TestCase):
         device_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=device_mesh,
                                 strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_layer_gpipe")
+                                pipeline_stage_mode="uniform_stage")
 
         layer_num = min(device_mesh.num_devices, 2)
         state, batch = create_train_state_and_batch()

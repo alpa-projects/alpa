@@ -195,6 +195,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             out_avals, self.output_sharding_specs)
 
         # Send the executable to workers
+        self.hlo_text = None
         self.exec_uuid = next_mesh_executable_uuid()
         self.set_executable(physical_mesh, hlo_module, strategy_config)
 
@@ -204,7 +205,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.sync_func = get_sync_func_driver(physical_mesh)
         else:
             self.sync_func = None
-        self.hlo_text = None
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
@@ -357,6 +357,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.physical_mesh.workers[0].get_exec_hlo_text.remote(
                 self.exec_uuid))
         return self.hlo_text
+
+    def sync(self):
+        self.physical_mesh.sync_workers()
 
     def __del__(self):
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
@@ -765,6 +768,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.remote(
                 self.exec_uuid))
         return self.hlo_text
+
+    def sync(self):
+        self.physical_mesh.sync_workers()
 
     def __del__(self):
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):

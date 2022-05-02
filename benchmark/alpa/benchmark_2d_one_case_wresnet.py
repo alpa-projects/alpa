@@ -138,9 +138,8 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
 
     # Model configs
     model_type = "wresnet"
-    batch_size, image_size, num_layers, num_channels, width_factor, dtype,\
-        mesh_dim0, mesh_dim1, num_micro_batches, force_batch_dim_mapping,\
-        prefer_reduce_scatter, use_remat, other = benchmark_case
+    (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
+     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
     if dtype == "fp32":
         dtype = jnp.float32
     elif dtype == "fp16":
@@ -149,6 +148,9 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         raise ValueError(f"Invalid dtype: {dtype}")
 
     # Parallel configs
+    (prefer_reduce_scatter, use_remat, logical_mesh_shape,
+     force_batch_dim_mapping) = parallel_args
+
     if num_micro_batches > 1:
         use_grad_acc = True
     else:
@@ -160,13 +162,13 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
-    if other == "zero-3":
+    if parallel_mode == "zero-3":
         as_option.force_zero_stage_3 = True
-    elif other in ["shard-largest"]:
+    elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
-    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
+    logical_mesh = physical_mesh.get_logical_mesh(logical_mesh_shape,
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
@@ -232,7 +234,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Benchmark")
 
     # Compute statistics
-    num_gpus = mesh_dim0 * mesh_dim1
+    num_gpus = physical_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 

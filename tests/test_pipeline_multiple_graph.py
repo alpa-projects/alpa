@@ -14,7 +14,7 @@ class MultipleGraphRuntimeTest(PipelineBasicTest):
     def run_2_mlp(self,
                   manual_pipeline_layer=True,
                   test_remat=False,
-                  pipeline_stage_mode="uniform_layer_gpipe",
+                  pipeline_stage_mode="uniform_stage",
                   do_numerical_test=True,
                   return_value=False):
 

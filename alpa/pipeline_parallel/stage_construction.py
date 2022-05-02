@@ -602,7 +602,7 @@ def cluster_layers_and_slice_mesh(
         donation_mapping: The donation_mapping for the layers.
         global_outvars: Global outvars of the layers.
         num_micro_batches: Number of microbatches for GPipe.
-        pipeline_stage_mode (str): one of "auto_stage", "mannual_gpipe", "uniform_stage".
+        pipeline_stage_mode (str): one of "auto_stage", "manual_stage", "uniform_stage".
         cache_compute_cost (Optional): Override the profiling results.
         forward_stage_layer_ids: hand-written layer-stage assignments.
         submesh_shapes (List): a list of allowed 2D mesh shapes.

@@ -709,7 +709,7 @@ def cluster_layers_and_slice_mesh(
 
             submesh_shape = (
                 (num_devices_per_mesh + devices.num_devices_per_host - 1) // devices.num_devices_per_host,
-                 num_devices_per_mesh % devices.num_devices_per_host)
+                num_devices_per_mesh % devices.num_devices_per_host)
             submesh_shapes = [submesh_shape] * num_stages
             logical_mesh_shapes = [submesh_shape] * num_stages
 

@@ -144,7 +144,7 @@ global_config = GlobalConfig()
 
 
 def set_parallelize_options(
-        devices = None,
+        devices=None,
         strategy: str = "shard_parallel",
         memory_budget_per_device: Optional[float] = None,
         num_micro_batches: Optional[int] = None,

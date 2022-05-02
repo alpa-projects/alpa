@@ -747,7 +747,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
         failed_batch_keys = set()
 
     prof_database = ProfilingResultDatabase()
-    for i, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
+    for _, (num_hosts, num_devices_per_host) in enumerate(submesh_choices):
         print(f"Mesh shape: {(num_hosts, num_devices_per_host)}")
 
         # Slice a mesh

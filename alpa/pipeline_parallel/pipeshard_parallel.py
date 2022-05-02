@@ -13,7 +13,7 @@ from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                              PipeDreamFlush)
+                                              PipeDreamFlush, gen_dependency_with_stages)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,

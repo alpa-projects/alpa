@@ -1,6 +1,7 @@
 """The entry point of intra-op parallelism only benchmark."""
 import argparse
 from datetime import datetime
+import time
 
 import numpy as np
 
@@ -60,30 +61,18 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         if model_type in ["gpt", "bert"]:
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-             use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         elif model_type == "moe":
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
-             num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
-             auto_pipeline, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-             l_dim0, l_dim1, num_micro_batches, force_batch_dim_mapping,
-             prefer_reduce_scatter, use_remat, other) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
-            pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
-
-        parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
-
-        if pipeline_mp_size > 1:
-            print(f"Skipping the case: {str(benchmark_case)}, because PP > 1. "
-                  f"Please use `benchmark_gpt_bert_3d.py`.")
-            continue
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
@@ -95,13 +84,13 @@ if __name__ == "__main__":
             tflops = -1
 
         # Log results
-        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                 "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
+        heads = ["Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
                  "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
-        values = [model_type, model_config, parallel_config, "N/A",
-                  num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
+        values = [model_type, model_config, num_micro_batches, num_gpus, parallel_args,
                   f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",
                   f"{peak_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]
         write_tsv(heads, values, output_name)
+
+        time.sleep(0.1)  # for ctrl+c to work

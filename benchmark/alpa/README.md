@@ -22,9 +22,9 @@ python3 benchmark_3d.py --suite gpt.perf_test_manual
 Expected output on AWS p3.16 (April 24, 2022)
 ```
 mkdir -p tmp
-Working on case: (32, 1024, 2560, 32, 32, 51200, 2, 2, 1, 4, 2, 4, False, True, True, 'uniform_layer_gpipe', None)
+Working on case: (32, 1024, 2560, 32, 32, 51200, 2, 2, 1, 4, 2, 4, False, True, True, 'uniform_stage', None)
 rm -rf /tmp/tmp_transfer.pkl
-python3 -u benchmark_3d_one_case.py --model gpt --niter 3 --case "(32, 1024, 2560, 32, 32, 51200, 2, 2, 1, 4, 2, 4, False, True, True, 'uniform_layer_gpipe', None)" --num-hosts 1 --num-devices-per-host 8 --dump-result
+python3 -u benchmark_3d_one_case.py --model gpt --niter 3 --case "(32, 1024, 2560, 32, 32, 51200, 2, 2, 1, 4, 2, 4, False, True, True, 'uniform_stage', None)" --num-hosts 1 --num-devices-per-host 8 --dump-result
 mkdir -p tmp
 2022-04-24 10:41:32,482 INFO worker.py:840 -- Connecting to existing Ray cluster at address: 172.31.24.40:6379
  - Prepare input: 2.85 s

@@ -566,7 +566,7 @@ def run_with_timeout(func, args=(), kwargs=None, timeout=None):
     ret_value = []
 
     def _target_func():
-        ret_value.append(func(*args, **kwargs))
+        ret_value.append(func(*args, **(kwargs or {})))
 
     t = threading.Thread(target=_target_func)
     t.start()
@@ -834,7 +834,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
         all_reduce_cost_dict = defaultdict(list)
         all_to_all_cost_dict = defaultdict(list)
         reduce_scatter_cost_dict = defaultdict(list)
-        for _ in range(len(op_infos)):
+        for i in range(len(op_infos)):
             op_type, (replica_groups, dtype, size) = op_infos[i]
             array_size = size * to_np_dtype(dtype).itemsize
             num_devices = len(replica_groups[0])

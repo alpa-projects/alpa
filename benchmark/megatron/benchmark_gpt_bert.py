@@ -7,7 +7,7 @@ from benchmark.alpa import suite_manual_gpt
 
 benchmark_suites = {
     "gpt.tmp": suite_manual_gpt.tmp_suite,
-    "gpt.grid_search_manual": suite_manual_gpt.grid_search_manual,
+    #"gpt.grid_search_manual": suite_manual_gpt.grid_search_manual,
 }
 
 def benchmark_all(args):

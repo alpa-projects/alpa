@@ -692,7 +692,22 @@ def cluster_layers_and_slice_mesh(
                 assert layer_id == last_layer_id
                 last_layer_id += 1
         assert last_layer_id == num_layers
+    elif pipeline_stage_mode == "uniform_stage":
+        num_devices = devices.num_devices
+        num_stages = num_layers
 
+        assert num_devices >= num_stages, "No enough devices"
+        assert num_devices % num_stages == 0
+        num_devices_per_mesh = num_devices // num_stages
+
+        submesh_shape = (
+            (num_devices_per_mesh + devices.num_devices_per_host - 1) // devices.num_devices_per_host,
+             num_devices_per_mesh % devices.num_devices_per_host)
+
+        forward_stage_layer_ids = [[i] for i in range(num_layers)]
+        submesh_shapes = [submesh_shape] * num_stages
+        logical_mesh_shapes = [submesh_shape] * num_stages
+        autosharding_option_dicts = [{}] * num_stages
     else:
         raise ValueError(f"Invalid pipeline stage mode: {pipeline_stage_mode}")
 

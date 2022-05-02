@@ -80,6 +80,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     dtype = jnp.float16
 
     # Parallel configs
+    assert pp == 1, "Do not support pipeline parallelism"
     if num_micro_batches > 1:
         grad_func = alpa.grad
     else:

@@ -20,6 +20,10 @@ wresnet_specs = {
 }
 
 
+prefer_reduce_scatter = True
+use_remat = True
+
+
 search_global_config_dict = {
     "auto_stage_construction_imbalance_tolerance": 0.25,
     "submesh_choices_mode": "small_power_of_two",
@@ -32,8 +36,7 @@ def get_search_cases(model_name, max_global_batch_size,
     return [(max_global_batch_size, *wresnet_specs[model_name],
              num_micro_batches, "search",
              (prefer_reduce_scatter, use_remat, search_global_config_dict))
-            for num_micro_batches in num_micro_batches_list
-            for num_auto_layers in num_auto_layers_list]
+            for num_micro_batches in num_micro_batches_list]
 
 
 def get_solution_case(model_name, max_global_batch_size,
@@ -56,11 +59,15 @@ tmp_suite = { # key = the number of gpus, value = a list of cases
 perf_test_2d_suite = { # key = the number of gpus, value = a list of cases
 1: [
     #B,    I,   L,   C,   W, dtype,  NB, PM,          RS,    Remat, L_shape, FM
-    (16,   224, 50,  192, 2, "fp32", 1,  "2d_shard", (False, False, (1, 1),  False)),
+    (32,   224, 50,  160, 2, "fp32", 1,  "2d_shard", (False, False, (1, 1),  False)),
+    (1536, 224, 50,  160, 2, "fp32", 48, "2d_shard", (False, False, (1, 1),  False)),
 ],
 
 4 : [
     (32,   224, 50,  320, 2, "fp32", 1,  "2d_shard", (False, False, (4, 1),  False)),
+    (1536, 224, 50,  320, 2, "fp32", 48, "2d_shard", (False, False, (4, 1),  False)),
+    (64,   224, 50,  320, 2, "fp32", 1,  "2d_shard", (False, False, (4, 1),  False)),
+    (1536, 224, 50,  320, 2, "fp32", 24, "2d_shard", (False, False, (4, 1),  False)),
 ],
 
 8: [
@@ -79,7 +86,7 @@ perf_test_auto_suite = {
                      [list(range(16))],
                      [(1, 2)], [(1, 2)],
                      [{}]),
-4:: get_solution_case("1B", 1536, 24,
+4: get_solution_case("1B", 1536, 24,
                       [list(range(16))],
                       [(1, 4)], [(1, 4)],
                       [{}]),

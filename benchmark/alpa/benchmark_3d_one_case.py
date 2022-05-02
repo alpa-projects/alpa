@@ -34,6 +34,8 @@ def benchmark_one_case(model, case, niter,
             result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
         elif model == "wresnet":
             global_config.xla_client_mem_fraction = 0.88
+            # Due to legacy issues, we turn off auto-tuning. Although the performance
+            # will be much better if we turn it on
             global_config.xla_gpu_autotune_level = 0
             result = benchmark_wresnet_internal(case, niter, num_hosts, num_devices_per_host)
         else:
@@ -57,7 +59,7 @@ def benchmark_one_case(model, case, niter,
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
         else:
-            result = -1, -1, -1, [-1], -1, -1, None, None, None, None, None, None
+            result = -1, -1, [-1], -1, -1, None, None, None, None, None, None
 
     if dump_result:
         pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))

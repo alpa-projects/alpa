@@ -69,7 +69,7 @@ if __name__ == "__main__":
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-             num_micro-batches, parallel_mode, parallel_args) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
         else:
             raise ValueError(f"Invalid model: {model_type}")

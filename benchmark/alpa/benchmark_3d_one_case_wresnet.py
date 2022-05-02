@@ -178,27 +178,27 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         (prefer_reduce_scatter, use_remat, forward_stage_layer_ids,
          sub_physical_mesh_shapes, sub_logical_mesh_shapes,
          submesh_autosharding_option_dicts) = parallel_args
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="manual_stage",
-                                num_micro_batches=num_micro_batches,
-                                forward_stage_layer_ids=forward_stage_layer_ids,
-                                sub_physical_mesh_shapes=sub_physical_mesh_shapes,
-                                sub_logical_mesh_shapes=sub_logical_mesh_shapes,
-                                submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
-    elif parallel_mode == "2d_shard":
-        (prefer_reduce_scatter, use_remat, logical_mesh_shape,
-         force_batch_dim_mapping) = parallel_args
-        if force_batch_dim_mapping:
-            as_option.force_batch_dim_to_mesh_dim = 0
-        logical_mesh = virtual_mesh.get_physical_mesh().get_logical_mesh(logical_mesh_shape)
-        set_parallelize_options(devices=logical_mesh,
-                                strategy="shard_parallel",
-                                num_micro_batches=num_micro_batches)
+
+        if len(forward_stage_layer_ids) > 1:
+            set_parallelize_options(devices=virtual_mesh,
+                                    strategy="pipeshard_parallel",
+                                    pipeline_stage_mode="manual_stage",
+                                    num_micro_batches=num_micro_batches,
+                                    forward_stage_layer_ids=forward_stage_layer_ids,
+                                    sub_physical_mesh_shapes=sub_physical_mesh_shapes,
+                                    sub_logical_mesh_shapes=sub_logical_mesh_shapes,
+                                    submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
+        else:
+            logical_mesh_shape = sub_logical_mesh_shapes[0]
+            physical_mesh = virtual_mesh.get_physical_mesh()
+            logical_mesh = physical_mesh.get_logical_mesh(logical_mesh_shape)
+            set_parallelize_options(devices=logical_mesh,
+                                    strategy="shard_parallel",
+                                    num_micro_batches=num_micro_batches)
 
     if num_layers == 50:
         num_auto_layers = 16   # number of residual blocks
-    elif num_layers = 101:
+    elif num_layers == 101:
         num_auto_layers = 33
 
     if num_micro_batches > 1:
@@ -252,12 +252,11 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         with open(f"tmp/resharding_tasks.txt", "w") as fout:
             fout.write(executable.print_resharding_tasks())
 
-        executable.sync()
     elif global_config.strategy == "shard_parallel":
         hlo_text = executable.get_hlo_text()
         with open("tmp/last_2d.hlo", "w") as fout:
             fout.write(hlo_text)
-        global_config.devices.sync_workers()
+    executable.sync()
     print_used_time("Compile (workers)")
 
     # Benchmark step time
@@ -270,7 +269,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     if global_config.strategy == "pipeshard_parallel":
         max_mem_allocated = executable.get_max_memory_allocated()
     elif global_config.strategy == "shard_parallel":
-        max_mem_allocated = global_config.devices.get_max_memory_allocated()
+        max_mem_allocated = physical_mesh.get_max_memory_allocated()
     print_used_time("Benchmark")
 
     # Profile submesh executables
@@ -288,7 +287,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     if global_config.strategy == "pipeshard_parallel":
         executable.shutdown()
     elif global_config.strategy == "shard_parallel":
-        global_config.devices.shutdown()
+        physical_mesh.shutdown()
 
     return (parameter_count, max_mem_allocated, latencies,
             tflops, tflops, compilation_times) + get_last_dp_result()

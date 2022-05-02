@@ -162,9 +162,9 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
-    if paralel_mode == "zero-3":
+    if parallel_mode == "zero-3":
         as_option.force_zero_stage_3 = True
-    elif paralel_mode in ["shard-largest"]:
+    elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
@@ -234,7 +234,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Benchmark")
 
     # Compute statistics
-    num_gpus = mesh_dim0 * mesh_dim1
+    num_gpus = physical_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 

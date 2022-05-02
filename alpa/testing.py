@@ -74,7 +74,6 @@ class BertLayerModel(nn.Module):
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
-    layers: Any = None
 
     def setup(self):
         self.layers = [

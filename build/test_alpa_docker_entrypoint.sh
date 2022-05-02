@@ -25,8 +25,12 @@ export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
 # Enter python env
 source /python${PY_VERSION}-env/bin/activate
-git clone -b ${ALPA_BRANCH##*/} https://github.com/alpa-projects/alpa.git
+
+# switch to the merge commit
+git clone https://github.com/alpa-projects/alpa.git
 cd /build/alpa
+git fetch origin
+git checkout ${ALPA_BRANCH##*/}
 
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}

@@ -42,10 +42,19 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: clean up images
+        run: |
+          docker image prune -f
+
+      - name: build test image
+        run: |
+          cd build
+          docker build . -t test-alpa-image
+
       - name: Test
         run: |
           cd build
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
           --shm-size=10.24gb \
-          --entrypoint /test_alpa_docker_entrypoint.sh build-jaxlib-image 3.8 11.1 ${ALPA_BRANCH##*/}
+          --entrypoint /test_alpa_docker_entrypoint.sh test-alpa-image 3.8 11.1 ${ALPA_BRANCH##*/}

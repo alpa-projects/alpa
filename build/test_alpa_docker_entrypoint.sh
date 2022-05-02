@@ -19,18 +19,15 @@ fi
 
 ALPA_BRANCH="$3"
 apt install -y coinor-cbc glpk-utils
+export PY_VERSION=$1
 export JAX_CUDA_VERSION=$2
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
 # Enter python env
 source /python${PY_VERSION}-env/bin/activate
-
-
 git clone -b ${ALPA_BRANCH##*/} https://github.com/alpa-projects/alpa.git
 cd /build/alpa
 
-# install ILP solver
-sudo apt install -y coinor-cbc
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION

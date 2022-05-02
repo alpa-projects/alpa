@@ -170,7 +170,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 pipeline_stage_mode="auto_stage",
                                 num_micro_batches=num_micro_batches)
         global_config.update_with_dict(overwrite_global_config_dict)
-    elif parallel_mode == "load_search_solution":
+    elif parallel_mode == "load_solution":
         (prefer_reduce_scatter, use_remat, num_auto_layers, forward_stage_layer_ids,
          sub_physical_mesh_shapes, sub_logical_mesh_shapes,
          submesh_autosharding_option_dicts) = parallel_args
@@ -212,6 +212,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                 sub_physical_mesh_shapes=[physical_mesh_shape] * pp,
                                 sub_logical_mesh_shapes=[logical_mesh_shape] * pp,
                                 submesh_autosharding_option_dicts=[{}] * pp)
+    else:
+        raise ValueError(f"Invalid model: {parallel_mode}")
 
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
 

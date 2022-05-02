@@ -45,7 +45,7 @@ tmp_suite = {
 # Performance test with search solutions found for p3.16xlarge
 perf_test_suite = {
 1: get_solution_case("380M", 512,
-    1, [0],
+    1, [[0]],
     [(1, 1)], [(1, 1)],
     [{}]),
 2: get_solution_case("690M", 32,

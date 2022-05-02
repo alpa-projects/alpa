@@ -53,7 +53,7 @@ jobs:
         run: |
           cd build
           if [ "${{github.event_name}}" == "pull_request"]; then
-            ALPA_BRANCH=${{ github.base_ref }}
+            ALPA_BRANCH=${{ github.event.pull_request.head.sha }}
           else
             ALPA_BRANCH=${{ github.ref }}
           fi

@@ -11,9 +11,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  ALPA_BRANCH: ${{ github.ref }}
-
 jobs:
 
   linting:

@@ -13,7 +13,6 @@ import ray
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
-
 from alpa.api import parallelize, grad, value_and_grad
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config

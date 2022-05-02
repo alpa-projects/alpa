@@ -78,13 +78,8 @@ if __name__ == "__main__":
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-             num_micro_batches, force_batch_dim_mapping,
-             prefer_reduce_scatter, use_remat, logical_mesh_search_space,
-             overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
-            pipeline_stage_mode = "auto_gpipe"
-            overwrite_global_config_dict = {}
-            pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
 
@@ -94,7 +89,7 @@ if __name__ == "__main__":
                                     num_hosts, num_devices_per_host,
                                     use_separate_process=args.use_separate_process,
                                     disable_tqdm=args.disable_tqdm)
-        (parameter_count, mem_allocated, max_mem_allocated, latencies, tflops,
+        (parameter_count, max_mem_allocated, latencies, tflops,
          tflops_ckpt, compilation_times, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes, autosharding_option_dicts) = result
 

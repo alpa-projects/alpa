@@ -178,16 +178,15 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     executable.sync()
     print_used_time("Compile (worker)")
 
+    # Benchmark step time
     for i in range(niter):
         print(f"Iteration: {i}....")
         state = train_step(state, batch, rngkey)
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
-    print_used_time("Benchmark")
-
-    mem_allocated = executable.get_memory_allocated()
     max_mem_allocated = executable.get_max_memory_allocated()
+    print_used_time("Benchmark")
 
     # Compute statistics
     tflops = compute_moe_tflops(batch_size, seq_len, num_layers,
@@ -201,5 +200,5 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
                                                   mlp_factor=8)
 
     executable.shutdown()
-    return (parameter_count, mem_allocated, max_mem_allocated, latencies,
+    return (parameter_count, max_mem_allocated, latencies,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()

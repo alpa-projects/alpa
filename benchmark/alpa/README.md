@@ -1,11 +1,11 @@
 # Benchmark
 To achieve the best performance with Alpa, one needs to run a full auto-parallelization search for the target model on a target cluster.
-The search precedure can take a significant amount of time.
-To make the benchmark feasible in a short amout of time. This documentation provides:
-- Instructions for benchmarking the solutions found on an AWS p3.16xlarge cluster.
+The search procedure can take a significant amount of time.
+To make the benchmark feasible in a short amount of time, this documentation provides:
+- Instructions for benchmarking the solutions found on an AWS p3.16xlarge cluster.  
   You can use these to quickly run Alpa, see how Alpa works, and get an estimation of the performance.
   The performance may not be the best if your cluster is not an AWS p3.16xlarge cluster.
-- Instructions for running the full search.
+- Instructions for running the full search.  
   You can use these to fully benchmark the auto-parallelization ability of Alpa.
 
 ## Benchmark Pre-found Solutions
@@ -15,21 +15,21 @@ Alpa uses Ray as the distributed compute framework.
 Here, we provide instructions for manually launching a ray cluster.
 You can also refer to the Ray [documentation](https://docs.ray.io/en/latest/cluster/quickstart.html#) for more methods on launching and managing ray clusters. 
 
-1. Start the head node
-  ```
-  ray start --head
-  ```
-2. For all other nodes, conect them to the head node following the instructions printed by the previous command. Skip this step if you only have one node
-  ```
-  # The command should look like this, but with the ip address and password printed by the previous command. 
-  ray start --address='172.31.31.37:6379' --redis-password='5241590000000000'
-  ```
+1. Pick one node as the head node and run the command below on it
+    ```
+    ray start --head
+    ```
+2. For all other nodes, connect them to the head node following the instructions printed by the previous command. Skip this step if you only have one node.
+    ```
+    # The command should look like this, but with the ip address and password printed by the previous command. 
+    ray start --address='172.31.31.37:6379' --redis-password='5241590000000000'
+    ```
 
 You can check the cluster status by 
 ```
 ray status
 ```
-You should be able to see the number of CPUs and GPUs avaiable on your cluster.
+You should be able to see the number of CPUs and GPUs available on your cluster.
 All nodes should have alpa installed.
 
 ### GPT-3
@@ -38,7 +38,7 @@ Run the benchmark with all GPUs in your cluster.
 python3 benchmark_3d.py --suite gpt.perf_test_auto
 ```
 
-You can also specify the number of hosts and number of devices per host.
+You can also specify the number of hosts and the number of devices per host.
 ```
 python3 benchmark_3d.py --suite gpt.perf_test_auto --num-hosts 2 --num-devices-per-host 8
 ```
@@ -64,7 +64,7 @@ We can generate a profiling database with the following commands, which profiles
 Note that this procedure is very slow and can take hours, but you only need to do it once for your cluster.
 
 1. Start a Ray cluster
-2. Generate the profilng database
+2. Generate the profiling database
   ```
   # for AWS p3.16:
   python3 gen_prof_database.py --max-comm-size-intra-node 32 --max-comm-size-inter-node 29
@@ -80,7 +80,7 @@ python3 benchmark_3d.py --suite gpt.grid_search_auto
 
 ## A Quick Performance Test
 This is a quick test for checking performance regressions.
-Developers should at least run this test to make sure their modifications does not introduce performance regressions.
+Developers should at least run this test to make sure their modifications do not introduce performance regressions.
 
 ```
 python3 benchmark_3d.py --suite gpt.perf_test_manual

@@ -51,7 +51,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     tie_word_embeddings = False
 
     rang_factor = 1
-    expected_expert_group_size = min(expert_group_size, batch_size * seq_len // num_micro_batches // l_dim0 // rang_factor)
+    expected_expert_group_size = min(expert_group_size, batch_size * seq_len // num_micro_batches // 1 // rang_factor)
     if expected_expert_group_size != expert_group_size:
         print("- Expected expert group size should be {}, but got {}. Will reset it".
               format(expected_expert_group_size, expert_group_size))

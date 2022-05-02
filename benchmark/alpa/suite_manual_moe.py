@@ -48,16 +48,16 @@ tmp_suite = {  # key = the number of gpus, value = a list of cases
 perf_test_fast_2d_suite = {
 1: [
     #B,  S,    H     L,  #head, V,     E,  S_,   NB,           Remat, RS,    3D Config,  FM
-    (8,  1024, 1024, 8,  32,    25600, 8,  1024, 1, "manual", (True,  True,  (1, 1, 1),  True))
+    (8,  1024, 1024, 8,  32,    25600, 8,  1024, 1, "manual", (True,  True,  (1, 1, 1),  True)),
 ],
 
 8: [
     #B,  S,    H     L,  #head, V,     E,  S_,   NB,           Remat, RS,    3D Config,  FM
 
     # DEBUG: #all-to-all should be the same for the following mixed logical mesh shape cases
-    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 1, "manual", (False, True,  (8, 1, 1),  False))
-    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 1, "manual", (False, True,  (4, 2, 1),  False))
-    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 1, "manual", (False, True,  (2, 4, 1),  False))
+    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 1, "manual", (False, True,  (8, 1, 1),  False)),
+    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 1, "manual", (False, True,  (4, 2, 1),  False)),
+    (16, 1024, 1024, 4,  32,    25600, 32, 1024, 1, "manual", (False, True,  (2, 4, 1),  False)),
 ],
 }
 

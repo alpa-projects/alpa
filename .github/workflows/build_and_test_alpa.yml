@@ -33,7 +33,7 @@ jobs:
 
       - name: Linting
         run: |
-          prospector ./alpa -i ./alpa/model/
+          prospector alpa -i alpa/model/
   
 
   Unittest:

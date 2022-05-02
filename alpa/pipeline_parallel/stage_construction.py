@@ -696,6 +696,7 @@ def cluster_layers_and_slice_mesh(
             logical_mesh_shapes = submesh_shapes
     elif pipeline_stage_mode == "uniform_stage":
         if given_mesh:
+            num_stages = num_layers
             submesh_shapes = [x.shape for x in devices.meshes]
             logical_mesh_shapes = submesh_shapes
         else:

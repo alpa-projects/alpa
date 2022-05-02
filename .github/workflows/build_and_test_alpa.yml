@@ -2,9 +2,10 @@ name: Build and test Alpa
 
 on:
   workflow_run:
-    workflows: ["Build Jaxlib and Jax"]
+    workflows: [Build Jaxlib and Jax]
     types:
       - completed
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -54,7 +55,12 @@ jobs:
       - name: Test
         run: |
           cd build
-          docker run --gpus all --tmpfs /build:exec --rm \
-          -v /data/alpa-dist:/alpa-dist \
-          --shm-size=10.24gb \
-          --entrypoint /test_alpa_docker_entrypoint.sh test-alpa-image 3.8 11.1 ${ALPA_BRANCH##*/}
+          if [ "${{github.event_name}}" == "pull_request"]; then
+            ALPA_BRANCH=${{ github.base_ref }}
+          else
+            ALPA_BRANCH=${{ github.ref }}
+          fi
+            docker run --gpus all --tmpfs /build:exec --rm \
+            -v /data/alpa-dist:/alpa-dist \
+            --shm-size=10.24gb \
+            --entrypoint /test_alpa_docker_entrypoint.sh test-alpa-image 3.8 11.1 ${ALPA_BRANCH##*/}

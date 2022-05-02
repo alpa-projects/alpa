@@ -201,7 +201,6 @@ class GLOOGroup(BaseGroup):
             store_path = gloo_util.get_gloo_store_path(store_name)
             if os.path.exists(store_path):
                 shutil.rmtree(store_path)
-        super().destroy_group()
 
     @classmethod
     def backend(cls):

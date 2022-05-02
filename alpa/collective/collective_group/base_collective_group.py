@@ -36,10 +36,6 @@ class BaseGroup(metaclass=ABCMeta):
         """Return the group name of this group."""
         return self._group_name
 
-    def destroy_group(self):
-        """GC the communicators."""
-        raise NotImplementedError()
-
     @classmethod
     def backend(cls):
         """The backend of this collective group."""

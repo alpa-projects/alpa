@@ -767,5 +767,5 @@ def _check_root_tensor_valid(length, root_tensor):
     if root_tensor < 0:
         raise ValueError(f"root_tensor '{root_tensor}' is negative.")
     if root_tensor >= length:
-        raise ValueError(f"root_tensor '{root_tensor}' is greater than the number of GPUs: "
-                         f"'{length}'")
+        raise ValueError(f"root_tensor '{root_tensor}' is greater "
+                         f"than the number of GPUs: '{length}'")

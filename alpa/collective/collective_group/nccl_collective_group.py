@@ -161,7 +161,6 @@ class NCCLGroup(BaseGroup):
         self._barrier_tensor = None
         self._dev_comm_map = None
         self._dev_streams_map = None
-        super().destroy_group()
 
     @classmethod
     def backend(cls):
@@ -774,11 +773,11 @@ def _check_gpu_tensors(tensors):
         dtype = nccl_util.get_nccl_tensor_dtype(t)
         if dt != dtype:
             raise RuntimeError(
-                f"Tensors must have identical dtype. Got: '{dtype}'.")
+                f"Tensors must have identical dtypes. Got: '{dtype}'.")
         shape = nccl_util.get_tensor_shape(t)
         if s != shape:
             raise RuntimeError(
-                f"Tensor must have identical shape. Got: '{shape}'.")
+                f"Tensors must have identical shapes. Got: '{shape}'.")
         device = nccl_util.get_tensor_device(t)
         if device == d:
             raise RuntimeError("Tensor must be on distinct GPUs.")

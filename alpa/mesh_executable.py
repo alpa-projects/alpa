@@ -70,7 +70,7 @@ class RemoteBufferRef:
         self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
         self.is_deleted_on_workers = False
         logger.debug(
-            f"RemoteBufferRef uuid: {self.uuid,} created on mesh "
+            f"RemoteBufferRef uuid: {self.uuid} created on mesh "
             f"with devices {self.device_mesh.device_strs}.")
 
     def set_deleted_on_workers(self):

@@ -80,8 +80,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
          sub_physical_mesh_shapes, sub_logical_mesh_shapes,
          submesh_autosharding_option_dicts) = parallel_args
         auto_layer = True
-        auto_remat_mode = "coarse_grained" if use_remat else None
-        num_auto_remat_layers = None
+        auto_remat_mode = "fine_grained" if use_remat else None
+        num_auto_remat_layers = num_layers
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",

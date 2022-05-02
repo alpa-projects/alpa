@@ -32,7 +32,7 @@ class SaveLoadTest(unittest.TestCase):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_layer_gpipe")
+                                pipeline_stage_mode="uniform_stage")
 
         # Init model and optimizer
         batch_size = 64

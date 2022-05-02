@@ -75,7 +75,7 @@ class GlobalConfig:
         self.shard_parallel_sync_for_timer = False
 
         ########## Options of pipeline_parallel ##########
-        self.pipeline_stage_mode = "uniform_layer_gpipe"
+        self.pipeline_stage_mode = "uniform_stage"
         self.profile_with_whole_ray_cluster = True
         self.cache_compute_cost = None  # The path to the file containing the compute cost profile
         self.forward_stage_layer_ids = None
@@ -149,7 +149,7 @@ def set_parallelize_options(
         mesh_shape_search_mode: str = "cost_model",
         mesh_shape_search_log_file: Optional[str] = None,
         # pipeline-parallel
-        pipeline_stage_mode: str = "uniform_layer_gpipe",
+        pipeline_stage_mode: str = "uniform_stage",
         cache_compute_cost: Optional[str] = None,
         forward_stage_layer_ids: Optional[Sequence[Sequence[int]]] = None,
         sub_physical_mesh_shapes: Optional[Sequence[Tuple[int, int]]] = None,
@@ -182,19 +182,19 @@ def set_parallelize_options(
         stages. Possible choices: {"auto_stage", "manual_stage",
         "uniform_stage"}
       cache_compute_cost: The file name of the cached compute
-        cost. Only used for "auto_gpipe".
+        cost. Only used for "auto_stage".
       forward_stage_layer_ids: Layer IDs of each
         forward stage. Used for "manual_stage".
       sub_physical_mesh_shapes: The shapes of submeshes
-        for each stage. Used for "uniform_layer_gpipe" and "manual_stage".
+        for each stage. Used for "uniform_stage" and "manual_stage".
       sub_logical_mesh_shapes: The logical shapes of
-        submeshes for each stage. Used for "uniform_layer_gpipe" and "manual_stage".
+        submeshes for each stage. Used for "uniform_stage" and "manual_stage".
       submesh_autosharding_option_dicts: The auto-sharding options of each stage.
-        Used for "uniform_layer_gpipe" and "manual_stage".
+        Used for "uniform_stage" and "manual_stage".
       logical_mesh_search_space: The search space for the logical mesh
         shape. Possible choices: {"default", "all", "single_node_model_parallel"}.
       auto_stage_construction_imbalance_tolerance: The tolerance of
-        imbalance in the auto-stage construction. Only used for "auto_gpipe".
+        imbalance in the auto-stage construction. Only used for "auto_stage".
       pipeline_parallel_schedule: The pipeline schedule. Possible choices: {"gpipe", "1f1b"}.
       use_hlo_cost_model: Whether to use the Hlo instruction cost model for pipeline profiling.
       profiling_database_filename: The filename of profiling result database.

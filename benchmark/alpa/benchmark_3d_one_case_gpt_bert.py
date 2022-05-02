@@ -216,13 +216,12 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
 
     # Prepare input batch
-    input_dtype = jnp.int32
     batch = {
-        "input_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=input_dtype),
-        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
-        "position_ids": jnp.ones((batch_size, seq_len), dtype=input_dtype),
-        "labels": jnp.ones((batch_size, seq_len), dtype=input_dtype),
+        "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
 
@@ -235,8 +234,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
-            gradient_checkpointing=add_manual_remat,
             tie_word_embeddings=tie_word_embeddings,
+            gradient_checkpointing=add_manual_remat,
             add_manual_pipeline_markers=add_manual_layer_marker,
             pipeline_mp_size=num_manual_pipeline_stages,
         ), dtype=dtype)
@@ -248,8 +247,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             intermediate_size=hidden_size * 4,
             num_hidden_layers=num_layers,
             type_vocab_size=0,
-            gradient_checkpointing=add_manual_remat,
             tie_word_embeddings=tie_word_embeddings,
+            gradient_checkpointing=add_manual_remat,
             add_manual_pipeline_markers=add_manual_layer_marker,
             pipeline_mp_size=num_manual_pipeline_stages,
         ), dtype=dtype)
@@ -292,6 +291,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     for i in range(niter):
         print(f"Iteration {i}")
         state = train_step(state, batch, rngkey)
+        executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
     print_used_time("Benchmark")

@@ -15,6 +15,7 @@ search_global_config_dict = {
 prefer_reduce_scatter = True
 use_remat = True
 
+
 def get_search_cases(model_name, num_micro_batches_list, num_auto_layers_list):
     return [(max_global_batch_size, *gpt_specs[model_name],
             num_micro_batches, "search",
@@ -29,7 +30,8 @@ def get_solution_case(model_name, num_micro_batches, num_auto_layers,
                       submesh_autosharding_option_dicts):
     return [(max_global_batch_size, *gpt_specs[model_name],
             num_micro_batches, "load_search_solution",
-            (prefer_reduce_scatter, use_remat, num_auto_layers, forward_stage_layer_ids,
+            (prefer_reduce_scatter, use_remat, num_auto_layers,
+             forward_stage_layer_ids,
              sub_physical_mesh_shapes, sub_logical_mesh_shapes,
              submesh_autosharding_option_dicts))]
 

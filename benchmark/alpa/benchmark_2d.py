@@ -65,16 +65,12 @@ if __name__ == "__main__":
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         elif model_type == "moe":
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
-             num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
-             auto_pipeline, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-             l_dim0, l_dim1, num_micro_batches, force_batch_dim_mapping,
-             prefer_reduce_scatter, use_remat, other) = benchmark_case
+             num_micro-batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
-            pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
 

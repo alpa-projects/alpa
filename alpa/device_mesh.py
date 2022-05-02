@@ -11,8 +11,6 @@ import re
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
-import cupy
-from cupy.cuda import nccl
 import jax
 from jax import core, jit, xla, device_put
 from jax._src.api import ShapeDtypeStruct
@@ -28,6 +26,8 @@ from jax.interpreters.pxla import (ShardingSpec, _as_slice_indices,
 from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
+import cupy
+from cupy.cuda import nccl
 import ray
 import tensorstore as ts
 

@@ -217,7 +217,7 @@ class PipelineBasicTest(unittest.TestCase):
     def run_mlp(self,
                 manual_pipeline_layer=True,
                 test_remat=False,
-                pipeline_stage_mode="uniform_layer_gpipe",
+                pipeline_stage_mode="uniform_stage",
                 do_numerical_test=True,
                 return_value=False):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
@@ -288,7 +288,7 @@ class PipelineBasicTest(unittest.TestCase):
                          n_layers,
                          manual_pipeline_layer=True,
                          test_remat=False,
-                         pipeline_stage_mode="uniform_layer_gpipe",
+                         pipeline_stage_mode="uniform_stage",
                          cache_compute_cost=None,
                          forward_stage_layer_ids=None,
                          batch_size=16,

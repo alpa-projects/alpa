@@ -179,18 +179,18 @@ def set_parallelize_options(
       mesh_shape_search_log_file: Only used for shard_parallel.
         The file to store measurement records of logical mesh shape search.
       pipeline_stage_mode: The algorithm used to construct pipeline
-        stages. Possible choices: {"uniform_layer_gpipe", "auto_gpipe",
-        "manual_gpipe"}
+        stages. Possible choices: {"auto_stage", "manual_stage",
+        "uniform_stage"}
       cache_compute_cost: The file name of the cached compute
         cost. Only used for "auto_gpipe".
       forward_stage_layer_ids: Layer IDs of each
-        forward stage. Used for "manual_gpipe".
+        forward stage. Used for "manual_stage".
       sub_physical_mesh_shapes: The shapes of submeshes
-        for each stage. Used for "uniform_layer_gpipe" and "manual_gpipe".
+        for each stage. Used for "uniform_layer_gpipe" and "manual_stage".
       sub_logical_mesh_shapes: The logical shapes of
-        submeshes for each stage. Used for "uniform_layer_gpipe" and "manual_gpipe".
+        submeshes for each stage. Used for "uniform_layer_gpipe" and "manual_stage".
       submesh_autosharding_option_dicts: The auto-sharding options of each stage.
-        Used for "uniform_layer_gpipe" and "manual_gpipe".
+        Used for "uniform_layer_gpipe" and "manual_stage".
       logical_mesh_search_space: The search space for the logical mesh
         shape. Possible choices: {"default", "all", "single_node_model_parallel"}.
       auto_stage_construction_imbalance_tolerance: The tolerance of

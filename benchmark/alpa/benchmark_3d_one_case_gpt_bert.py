@@ -296,10 +296,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
-    print_used_time("Benchmark")
-
-    mem_allocated = executable.get_memory_allocated()
     max_mem_allocated = executable.get_max_memory_allocated()
+    print_used_time("Benchmark")
 
     # Compute statistics
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
@@ -313,5 +311,5 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
     #report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
     executable.shutdown()
-    return (parameter_count, mem_allocated, max_mem_allocated, latencies,
+    return (parameter_count, max_mem_allocated, latencies,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()

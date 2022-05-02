@@ -358,6 +358,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                 self.exec_uuid))
         return self.hlo_text
 
+    def sync(self):
+        self.physical_mesh.sync()
+
     def __del__(self):
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             self.physical_mesh.delete_remote_executable(self)
@@ -765,6 +768,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.remote(
                 self.exec_uuid))
         return self.hlo_text
+
+    def sync(self):
+        self.physical_mesh.sync()
 
     def __del__(self):
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):

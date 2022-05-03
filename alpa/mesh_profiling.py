@@ -639,7 +639,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
     return np.array(results)
 
 
-def profile_dot(device_cluster, cache_filename):
+def profile_dot(dot_range, device_cluster, cache_filename):
     """Profile the compute cost of dot."""
     physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
@@ -647,7 +647,7 @@ def profile_dot(device_cluster, cache_filename):
     # Profile dot
     op_infos = []
     for dtype in ["f16", "f32"]:
-        for i in range(0, 64):
+        for i in dot_range:
             n = 128 * i
             op_infos.append(("dot", (n, n, n, dtype)))
     results = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
@@ -724,14 +724,15 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
 
 def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
-                max_comm_size_inter_node, max_fail_retry, cache_filename):
+                max_comm_size_inter_node, max_fail_retry, cache_filename,
+                dot_range=(0, 64)):
     """Profile costs for all dot and communication primitives."""
     #  pylint: disable=import-outside-toplevel
     from alpa.pipeline_parallel.stage_construction import get_submesh_choices
     print_used_time(None)
 
     ##### Profile compute cost
-    dot_cost_dict = profile_dot(device_cluster, cache_filename)
+    dot_cost_dict = profile_dot(dot_range, device_cluster, cache_filename)
     print_used_time("Profile dot")
 
     ##### Profile communication cost

@@ -13,7 +13,8 @@ class StageConstructionTest(PipelineBasicTest):
                      pipeline_stage_mode="auto_stage")
 
     def test_2_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(n_layers=2, pipeline_stage_mode="auto_stage")
+        self.run_n_layer_bert(n_layers=2,
+                              pipeline_stage_mode="auto_stage")
 
     def test_2_layer_bert_layer_and_stage(self):
         self.run_n_layer_bert(n_layers=2,

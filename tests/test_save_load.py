@@ -22,13 +22,12 @@ class SaveLoadTest(unittest.TestCase):
         ray.init(address="auto",
                  namespace=get_ray_namespace_str(
                      prefix=global_config.unittest_ray_namespace_prefix))
-        jax.config.update('jax_platform_name', 'cpu')
 
     def tearDown(self):
         ray.shutdown()
         time.sleep(1)
 
-    def mlp_state_load(self):
+    def test_mlp_state_load(self):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
@@ -94,7 +93,7 @@ class SaveLoadTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(SaveLoadTest('mlp_state_load'))
+    suite.addTest(SaveLoadTest('test_mlp_state_load'))
     return suite
 
 

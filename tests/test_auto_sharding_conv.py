@@ -274,19 +274,18 @@ class AutoShardingConvTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh_mixed_shape"))
+    def add(name):
+        suite.addTest(AutoShardingConvTest(name))
 
-    suite.addTest(
-        AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingConvTest(
-            "test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter"))
+    add("test_n_layer_conv_data_parallel")
+    add("test_n_layer_conv_model_parallel")
+    add("test_n_layer_conv_2d_mesh")
+    add("test_n_layer_conv_2d_mesh_mixed_shape")
 
-    suite.addTest(
-        AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
+    add("test_n_layer_conv_data_parallel_reduce_scatter")
+    add("test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter")
+
+    add("test_n_layer_depthwise_conv_model_parallel")
 
     return suite
 

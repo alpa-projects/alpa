@@ -4,7 +4,7 @@ Alpa
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
 
-[![Docs](https://github.com/alpa-projects/alpa/actions/workflows/docs.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/docs.yml)
+[//]: # ([![Docs]&#40;https://github.com/alpa-projects/alpa/actions/workflows/docs.yml/badge.svg&#41;]&#40;https://github.com/alpa-projects/alpa/actions/workflows/docs.yml&#41;)
 
 Alpa automatically parallelizes tensor computation graphs and runs them on a distributed cluster.
 

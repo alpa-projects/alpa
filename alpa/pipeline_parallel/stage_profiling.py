@@ -677,6 +677,10 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
         merged, is_donated = merge_unmarked_with_call([merged, merged_apply],
                                                       names, all_outvars,
                                                       donation_map)
+    else:
+        merged, is_donated = merge_unmarked_with_call([merged], ["merged"],
+                                                      new_outvars,
+                                                      selected_donation_mapping)
 
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
@@ -813,6 +817,9 @@ def compute_apply_grad_invar_size(input_sharding_protos,
     These parameters are never used in compute gradient period but stored on
     the GPU, so they take memory and influence max_n_succ_stages.
     """
+    if config.invars is None:
+        assert config.apply_grad_only_invars is None
+        return 0
     avals = [v.aval for v in config.invars]
     if np.prod(logical_mesh_shape) == 1:
         selected_sharding_specs = None

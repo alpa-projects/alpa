@@ -13,10 +13,10 @@ class MultipleGraphRuntimeTest(PipelineBasicTest):
 
     def run_2_mlp(self,
                   manual_pipeline_layer=True,
-                  test_remat=False,
+                  use_remat=False,
+                  use_value_and_grad=False,
                   pipeline_stage_mode="uniform_stage",
-                  do_numerical_test=True,
-                  return_value=False):
+                  do_numerical_test=True):
 
         def test_one_mlp():
             # Init model and optimizer
@@ -38,11 +38,11 @@ class MultipleGraphRuntimeTest(PipelineBasicTest):
             serial_train_step = get_mlp_train_step(False,
                                                    None,
                                                    None,
-                                                   return_value=return_value)
+                                                   use_value_and_grad)
             parallel_train_step = get_mlp_train_step(True,
                                                      manual_pipeline_layer,
-                                                     test_remat,
-                                                     return_value=return_value)
+                                                     use_remat,
+                                                     use_value_and_grad)
             executable = parallel_train_step.get_executable(state, batch)
 
             # Run correctnesss test
@@ -52,26 +52,17 @@ class MultipleGraphRuntimeTest(PipelineBasicTest):
                 for i in range(3):
                     if i > 0:
                         state = expected_new_state
-                    if return_value:
-                        expected_new_state, expected_val = serial_train_step(
-                            state, batch)
-                    else:
-                        expected_new_state, expected_val = serial_train_step(
-                            state, batch), 0
+                    expected_new_state, expected_val = serial_train_step(
+                        state, batch)
 
                     if i > 0:
                         state = actual_new_state
-                    if return_value:
-                        actual_new_state, actual_val = parallel_train_step(
-                            state, batch)
-                    else:
-                        actual_new_state, actual_val = parallel_train_step(
-                            state, batch), 0
+                    actual_new_state, actual_val = parallel_train_step(
+                        state, batch)
 
                     assert_allclose(expected_new_state.params,
                                     actual_new_state.params, 1e-3, 1e-3)
-                    if return_value:
-                        assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
+                    assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
             return executable
 

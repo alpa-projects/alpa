@@ -119,6 +119,8 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
     new_global_outvars = list(closed_jaxpr.jaxpr.outvars)
     for idx in range(len(new_global_outvars)):
         var = new_global_outvars[idx]
+        if isinstance(var, Literal):
+            continue
         if var in rewrite_invars:
             new_global_outvars[idx] = barrier_map[var]
     closed_jaxpr = clone_jaxpr(closed_jaxpr,

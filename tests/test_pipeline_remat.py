@@ -6,24 +6,22 @@ from alpa.testing import PipelineBasicTest
 
 class PipelineRematTest(PipelineBasicTest):
 
-    # FIXME
-    @unittest.skip("Flaky because of layer slicing")
     def test_mlp_remat(self):
-        self.run_mlp(test_remat=True)
+        self.run_mlp(use_remat=True)
 
     def test_2_layer_bert_remat(self):
-        self.run_n_layer_bert(n_layers=2, test_remat=True)
+        self.run_n_layer_bert(n_layers=2, use_remat=True)
 
     def test_2_layer_bert_auto_layer_slicing_remat(self):
         self.run_n_layer_bert(n_layers=2,
                               manual_pipeline_layer=False,
-                              test_remat=True)
+                              use_remat=True)
 
     @unittest.skipIf(jax.local_device_count("gpu") < 8, "no enough device")
     def test_8_layer_bert_auto_layer_slicing_remat(self):
         self.run_n_layer_bert(n_layers=8,
                               manual_pipeline_layer=False,
-                              test_remat=True)
+                              use_remat=True)
 
 
 def suite():

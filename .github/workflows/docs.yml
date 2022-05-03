@@ -34,6 +34,8 @@ jobs:
       - name: Build docs
         run: |
           echo ${GITHUB_WORKSPACE}
+          ls ${GITHUB_WORKSPACE}
+          
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
           -v ${GITHUB_WORKSPACE}/alpa:/alpa \

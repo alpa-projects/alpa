@@ -27,9 +27,14 @@ jobs:
         run: |
           pip install matplotlib sphinx sphinx-rtd-theme sphinx-gallery
 
+      - name: Install Alpa
+        run: |
+          pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
+          pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
+          pip install -e .
+
       - name: Build docs
         run: |
-          export ALPA_TUTORIAL_EXEC_PATTERN=none
           cd docs && make html
 
       - name: Deploy
@@ -37,5 +42,5 @@ jobs:
         with:
           personal_token: ${{ secrets.PAT_TOKEN }}
           external_repository: alpa-projects/alpa-projects.github.io
-          publish_branch: test
+          publish_branch: master
           publish_dir: ./docs/_build/html

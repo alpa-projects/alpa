@@ -82,7 +82,6 @@ class InstallationTest(unittest.TestCase):
 
     def test_2_pipeline_parallel(self):
         ray.init(address="auto")
-        jax.config.update('jax_platform_name', 'cpu')
 
         device_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=device_mesh,

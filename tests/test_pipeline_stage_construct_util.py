@@ -59,7 +59,7 @@ class StageConstructUtilTest(unittest.TestCase):
                                             seq_len=256,
                                             hidden_size=512,
                                             num_heads=512 // 64,
-                                            test_remat=True):
+                                            use_remat=True):
         manual_pipeline_layer = True
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
@@ -79,8 +79,9 @@ class StageConstructUtilTest(unittest.TestCase):
         # Compile
         train_step = get_bert_layer_train_step(False,
                                                manual_pipeline_layer,
-                                               test_remat,
+                                               use_remat,
                                                n_layers,
+                                               False,
                                                decorate=True)
         closed_jaxpr, output_tree = make_jaxpr(train_step,
                                                return_shape=True)(state, batch)

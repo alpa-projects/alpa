@@ -48,7 +48,7 @@ class PipelineBERTTest(unittest.TestCase):
 
         batch_size = 16
         seq_len = 8
-        hidden_size = 512
+        hidden_size = 128
         num_heads = 8
         dtype = jnp.float32
 

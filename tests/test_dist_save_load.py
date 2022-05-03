@@ -1,4 +1,4 @@
-"""Test distributed mulit-host device mesh."""
+"""Test save and load of distributed arrays."""
 
 import subprocess
 import tempfile

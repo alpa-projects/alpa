@@ -48,7 +48,7 @@ class PipelineReduceScatterTest(PipelineBasicTest):
     def test_bert_grad_acc_friendly(self):
         as_option.force_data_parallel = True
         as_option.prefer_reduce_scatter = True
-        hlo_text = self.run_n_layer_bert(n_layers=2, do_numerical_test=False)
+        hlo_text = self.run_n_layer_bert(n_layers=2, do_numerical_test=True)
 
         # Check numbers of communication primitives
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (

@@ -61,12 +61,14 @@ class GlobalConfig:
         self.default_autosharding_option = AutoShardingOption()
 
         ########## Options of device mesh ##########
-        self.xla_client_mem_fraction = 0.90
+        self.xla_client_mem_fraction = float(
+            os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
         self.xla_gpu_autotune_level = 4
         self.delete_remote_buffers_threshold = 500
+        # use AWS EFA network interface
         self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA", "").lower() in [
             "true", "1"
-        ]  # use AWS EFA network interface
+        ]
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_search_logical_mesh_shape = False
@@ -95,7 +97,7 @@ class GlobalConfig:
         self.debug_with_local_runtime = False
         self.profile_timeout = 500
         self.profile_maximum_retry = 2
-        self.fix_physical_mesh_shape = None
+        self.overwrite_submesh_choices = None
 
         ########## Options of pipeline runtime ##########
         self.pipeline_runtime_mode = "paper"  # or "production"

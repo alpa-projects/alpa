@@ -1,4 +1,4 @@
-"""Test auto sharding with MLP."""
+"""Test auto sharding with MoE."""
 
 import unittest
 
@@ -390,20 +390,21 @@ class AutoShardingMoETest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingMoETest("test_moe_layer"))
-    suite.addTest(AutoShardingMoETest("test_moe_layer_2d"))
-    suite.addTest(AutoShardingMoETest("test_moe_layer_2d_reduce_scatter"))
+    def add(name):
+        suite.addTest(AutoShardingMoETest(name))
 
-    suite.addTest(AutoShardingMoETest("test_moe_lm"))
-    suite.addTest(AutoShardingMoETest("test_moe_lm_2d"))
-    suite.addTest(AutoShardingMoETest("test_moe_lm_data_parallel"))
+    add("test_moe_layer")
+    add("test_moe_layer_2d")
+    add("test_moe_layer_2d_reduce_scatter")
 
-    suite.addTest(AutoShardingMoETest("test_moe_lm_reduce_scatter"))
-    suite.addTest(AutoShardingMoETest("test_moe_lm_2d_reduce_scatter"))
-    suite.addTest(
-        AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingMoETest("test_moe_lm_data_parallel_reduce_scatter_zero_3"))
+    add("test_moe_lm")
+    add("test_moe_lm_2d")
+    add("test_moe_lm_data_parallel")
+
+    add("test_moe_lm_reduce_scatter")
+    add("test_moe_lm_2d_reduce_scatter")
+    add("test_moe_lm_data_parallel_reduce_scatter")
+    add("test_moe_lm_data_parallel_reduce_scatter_zero_3")
 
     return suite
 

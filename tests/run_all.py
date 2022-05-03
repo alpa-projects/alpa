@@ -10,19 +10,27 @@ python3 run_all.py --filter auto_sharding
 import argparse
 import glob
 import multiprocessing
+import os
 import time
 from typing import Sequence
 import unittest
 
 
+slow_testcases = set([
+    "test_pipeline_stage_construction.py",
+])
+
+
 def run_unittest_files(files, args):
     """Run unit test files one by one in separates processes."""
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(args.xla_client_mem_fraction)
+
     for filename in files:
         if not filename.startswith("test"):
             continue
         if args.filter is not None and args.filter not in filename:
             continue
-        if not args.enable_slow_tests and "stage_construction" in filename:
+        if not args.enable_slow_tests and filename in slow_testcases:
             continue
 
         def func():
@@ -47,6 +55,11 @@ if __name__ == "__main__":
         "--enable_slow_tests",
         action="store_true",
         help="Run test cases including profiling, which takes a long time")
+    arg_parser.add_argument(
+        "--xla_client_mem_fraction",
+        type=float,
+        default=0.25,
+        help="The fraction of GPU memory used to run unit tests")
     args = arg_parser.parse_args()
 
     files = glob.glob("*.py")

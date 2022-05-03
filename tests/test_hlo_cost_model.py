@@ -1,5 +1,4 @@
 """Test HLO cost model."""
-
 import pickle
 import unittest
 
@@ -10,7 +9,8 @@ from flax.training.train_state import TrainState
 import optax
 import ray
 
-from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase
+from alpa import (parallelize, set_parallelize_options, global_config,
+        LocalPhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase)
 from alpa.mesh_profiling import estimate_hlo_module_cost
 from alpa.util import map_to_shape
 
@@ -18,12 +18,9 @@ from alpa.util import map_to_shape
 class HloCostModelTest(unittest.TestCase):
 
     def setUp(self):
-        jax.config.update('jax_platform_name', 'cpu')
-
         ray.init(address='auto')
 
     def tearDown(self):
-        # Restore global config
         ray.shutdown()
 
     def run_n_layer_mlp(self,
@@ -73,11 +70,17 @@ class HloCostModelTest(unittest.TestCase):
 
     def test_cluster_profling(self):
         cluster = DeviceCluster()
+        global_config.overwrite_submesh_choices = [
+            (1, 1),
+            cluster.get_virtual_physical_mesh().shape,
+        ]
+
         prof_database = cluster.profile_all("p3.16",
                                             2,
                                             2,
                                             max_fail_retry=5,
-                                            cache_filename="tmp_cache.pkl")
+                                            cache_filename="tmp_cache.pkl",
+                                            dot_range=(0, 1))
         prof_database.save("tmp_prof_database.pkl")
 
     def test_n_layer_mlp(self):

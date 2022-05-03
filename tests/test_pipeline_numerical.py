@@ -1,3 +1,4 @@
+"""Test the numerical correctness of shard parallel."""
 import unittest
 import time
 
@@ -12,15 +13,18 @@ class AccumulateGradTest(PipelineBasicTest):
         self.run_mlp()
 
     def test_2_layer_bert(self):
-        self.run_n_layer_bert(n_layers=2)
+        self.run_n_layer_bert(n_layers=2,
+                              use_value_and_grad=True)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert(self):
-        self.run_n_layer_bert(n_layers=8)
+        self.run_n_layer_bert(n_layers=8,
+                              use_value_and_grad=True)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert_manual_stage_assignment(self):
         self.run_n_layer_bert(n_layers=8,
+                              use_value_and_grad=True,
                               pipeline_stage_mode="manual_stage",
                               forward_stage_layer_ids=[[0, 1, 2, 3],
                                                        [4, 5, 6, 7]],

@@ -1,5 +1,6 @@
-"""Test auto sharding with simple computational graphs."""
-
+"""
+Test the numerical correctness of shard parallel with gradient accumulation.
+"""
 import os
 import unittest
 

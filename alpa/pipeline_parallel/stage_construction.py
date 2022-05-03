@@ -150,8 +150,8 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
 
 def get_submesh_choices(mesh: VirtualPhysicalMesh):
     """Gets the valid choices of submesh shapes."""
-    if global_config.fix_physical_mesh_shape:
-        return [global_config.fix_physical_mesh_shape]
+    if global_config.overwrite_submesh_choices is not None:
+        return global_config.overwrite_submesh_choices
     num_hosts = mesh.num_hosts
     num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []

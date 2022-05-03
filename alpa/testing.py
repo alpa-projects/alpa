@@ -12,7 +12,8 @@ import ray
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
-from alpa.api import parallelize, grad, value_and_grad
+import alpa
+from alpa.api import parallelize
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
@@ -123,8 +124,8 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
 
 def get_mlp_train_step(use_parallel,
                        manual_pipeline_layer,
-                       test_remat,
-                       return_value=False):
+                       use_remat,
+                       use_value_and_grad):
 
     def train_step(state, batch):
 
@@ -137,21 +138,21 @@ def get_mlp_train_step(use_parallel,
 
         if use_parallel:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
-                                         test_remat, 2)
-            if return_value:
-                val, grads = value_and_grad(loss_func)(state.params)
+                                         use_remat, 2)
+            if use_value_and_grad:
+                val, grads = alpa.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, grad(loss_func)(state.params)
+                grads = alpa.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
         else:
-            if return_value:
+            if use_value_and_grad:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, jax.grad(loss_func)(state.params)
+                grads = jax.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
 
         new_state = state.apply_gradients(grads=grads)
-        if return_value:
-            return new_state, val
-        return new_state
+        return new_state, val
 
     if use_parallel:
         return parallelize(train_step)
@@ -161,10 +162,10 @@ def get_mlp_train_step(use_parallel,
 
 def get_bert_layer_train_step(use_parallel,
                               manual_pipeline_layer,
-                              test_remat,
+                              use_remat,
                               num_layers,
-                              decorate=None,
-                              return_value=False):
+                              use_value_and_grad,
+                              decorate=None):
     if decorate is None:
         decorate = use_parallel
 
@@ -179,21 +180,21 @@ def get_bert_layer_train_step(use_parallel,
 
         if decorate:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
-                                         test_remat, num_layers)
-            if return_value:
-                val, grads = value_and_grad(loss_func)(state.params)
+                                         use_remat, num_layers)
+            if use_value_and_grad:
+                val, grads = alpa.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, grad(loss_func)(state.params)
+                grads = alpa.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
         else:
-            if return_value:
+            if use_value_and_grad:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, jax.grad(loss_func)(state.params)
+                grads = jax.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
 
         new_state = state.apply_gradients(grads=grads)
-        if return_value:
-            return new_state, val
-        return new_state
+        return new_state, val
 
     if use_parallel:
         return parallelize(train_step)
@@ -215,10 +216,10 @@ class PipelineBasicTest(unittest.TestCase):
 
     def run_mlp(self,
                 manual_pipeline_layer=True,
-                test_remat=False,
+                use_remat=False,
+                use_value_and_grad=False,
                 pipeline_stage_mode="uniform_stage",
-                do_numerical_test=True,
-                return_value=False):
+                do_numerical_test=True):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
@@ -243,11 +244,11 @@ class PipelineBasicTest(unittest.TestCase):
         serial_train_step = get_mlp_train_step(False,
                                                None,
                                                None,
-                                               return_value=return_value)
+                                               use_value_and_grad)
         parallel_train_step = get_mlp_train_step(True,
                                                  manual_pipeline_layer,
-                                                 test_remat,
-                                                 return_value=return_value)
+                                                 use_remat,
+                                                 use_value_and_grad)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -257,26 +258,17 @@ class PipelineBasicTest(unittest.TestCase):
             for i in range(3):
                 if i > 0:
                     state = expected_new_state
-                if return_value:
-                    expected_new_state, expected_val = serial_train_step(
-                        state, batch)
-                else:
-                    expected_new_state, expected_val = serial_train_step(
-                        state, batch), 0
+                expected_new_state, expected_val = serial_train_step(
+                    state, batch)
 
                 if i > 0:
                     state = actual_new_state
-                if return_value:
-                    actual_new_state, actual_val = parallel_train_step(
-                        state, batch)
-                else:
-                    actual_new_state, actual_val = parallel_train_step(
-                        state, batch), 0
+                actual_new_state, actual_val = parallel_train_step(
+                    state, batch)
 
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1e-3)
-                if return_value:
-                    assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
+                assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()
@@ -285,23 +277,23 @@ class PipelineBasicTest(unittest.TestCase):
     # pylint: disable=no-self-use
     def run_n_layer_bert(self,
                          n_layers,
-                         manual_pipeline_layer=True,
-                         test_remat=False,
-                         pipeline_stage_mode="uniform_stage",
-                         cache_compute_cost=None,
-                         forward_stage_layer_ids=None,
                          batch_size=16,
                          seq_len=256,
                          hidden_size=512,
                          num_heads=512 // 64,
+                         use_remat=False,
+                         use_value_and_grad=False,
+                         manual_pipeline_layer=True,
+                         pipeline_stage_mode="uniform_stage",
+                         cache_compute_cost=None,
+                         forward_stage_layer_ids=None,
                          submesh_shapes=None,
-                         do_numerical_test=True,
                          overwrite_global_config_dict=None,
                          virtual_mesh=None,
-                         return_value=False):
-        num_micro_batch = 2
+                         do_numerical_test=True):
         if virtual_mesh is None:
             virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
+
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
                                 pipeline_stage_mode=pipeline_stage_mode,
@@ -329,18 +321,18 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        global_config.num_micro_batches = num_micro_batch
+        global_config.num_micro_batches = 2
         serial_train_step = get_bert_layer_train_step(False,
                                                       None,
                                                       None,
                                                       n_layers,
-                                                      return_value=return_value)
+                                                      use_value_and_grad)
         parallel_train_step = get_bert_layer_train_step(
             True,
             manual_pipeline_layer,
-            test_remat,
+            use_remat,
             n_layers,
-            return_value=return_value)
+            use_value_and_grad)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -350,24 +342,18 @@ class PipelineBasicTest(unittest.TestCase):
             for i in range(1):
                 if i > 0:
                     state = expected_new_state
-                if return_value:
-                    expected_new_state, expected_val = serial_train_step(
-                        state, batch)
-                else:
-                    expected_new_state, expected_val = serial_train_step(
-                        state, batch), 0
+                expected_new_state, expected_val = serial_train_step(
+                    state, batch)
+
                 if i > 0:
                     state = actual_new_state
-                if return_value:
-                    actual_new_state, actual_val = parallel_train_step(
-                        state, batch)
-                else:
-                    actual_new_state, actual_val = parallel_train_step(
-                        state, batch), 0
-                if return_value:
-                    assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
+
+                actual_new_state, actual_val = parallel_train_step(
+                    state, batch)
+
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1.5e-3)
+                assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
         hlo_text = executable.get_hlo_text()
         executable.shutdown()

@@ -32,10 +32,7 @@ jobs:
           docker build -t build-alpa-doc -f docker/Dockerfile.doc_build docker/
 
       - name: Build and public docs
-        run: |
-          echo ${GITHUB_WORKSPACE}
-          ls ${GITHUB_WORKSPACE}
-          
+        run: |          
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
           --shm-size=10.24gb \

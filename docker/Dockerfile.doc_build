@@ -1,0 +1,18 @@
+# Adapted from https://github.com/alpa-projects/jax-alpa/blob/main/build/Dockerfile
+FROM gcr.io/tensorflow-testing/nosla-cuda11.1-cudnn8-ubuntu18.04-manylinux2010-multipython
+
+WORKDIR /
+SHELL ["/bin/bash", "-c"]
+RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
+RUN apt-get update
+apt install -y coinor-cbc glpk-utils
+
+RUN pip3 install --upgrade pip
+RUN pip3 install numpy==1.19.5 setuptools wheel six auditwheel cupy-cuda11.1
+RUN python3 -m cupyx.tools.install_library --library nccl --cuda 11.1
+RUN pip3 install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
+RUN pip3 install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
+
+COPY scripts/build_doc.sh build_doc.sh
+RUN chmod +x build_doc.sh
+RUN bash build_doc.sh

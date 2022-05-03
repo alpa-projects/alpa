@@ -122,10 +122,13 @@ def get_bert_functions():
 
 def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     # Model configs
-    model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,\
-        vocab_size, dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
-    num_micro_batches, force_dp,  checkpoint_activations, _, _, _\
-        = benchmark_case
+    (model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,
+     vocab_size, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    assert parallel_mode == "manual"
+    (prefer_reduce_scatter, use_remat, (dp, op, pp), force_batch_dim_mapping) = parallel_args
+
+    dp_size, tensor_mp_size, pipeline_mp_size = dp, op, pp
+    checkpoint_activations = use_remat
 
     num_gpus = dp_size * tensor_mp_size * pipeline_mp_size
     assert global_batch_size % (dp_size * num_micro_batches) == 0

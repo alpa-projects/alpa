@@ -1,0 +1,66 @@
+name: Unittest
+
+on:
+  workflow_run:
+    workflows: [Build Jaxlib and Jax]
+    types:
+      - completed
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  linting:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install prospector
+
+      - name: Linting
+        run: |
+          prospector alpa -i alpa/model/
+  
+
+  Unittest:
+    runs-on: [self-hosted, alpa]
+    needs: linting
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: clean up images
+        run: |
+          docker image prune -f
+
+      - name: build test image
+        run: |
+          cd build
+          docker build . -t test-alpa-image
+
+      - name: Test
+        run: |
+          cd build
+          if [ "${{github.event_name}}" == "pull_request" ]; then
+            ALPA_BRANCH=${{ github.event.pull_request.head.sha }}
+          else
+            ALPA_BRANCH=${{ github.ref }}
+          fi
+          
+          echo "${ALPA_BRANCH}"
+          
+          docker run --gpus all --tmpfs /build:exec --rm \
+          -v /data/alpa-dist:/alpa-dist \
+          --shm-size=10.24gb \
+          --entrypoint /test_alpa_docker_entrypoint.sh test-alpa-image 3.8 11.1 ${ALPA_BRANCH##*/}

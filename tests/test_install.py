@@ -17,9 +17,9 @@ from alpa.testing import assert_allclose
 
 
 def create_train_state_and_batch():
-    batch_size = 16
+    batch_size = 256
     num_micro_batches = 2
-    hidden_size = 16
+    hidden_size = 256
 
     class Model(nn.Module):
 
@@ -87,7 +87,7 @@ class InstallationTest(unittest.TestCase):
         device_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=device_mesh,
                                 strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_layer_gpipe")
+                                pipeline_stage_mode="uniform_stage")
 
         layer_num = min(device_mesh.num_devices, 2)
         state, batch = create_train_state_and_batch()

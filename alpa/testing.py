@@ -1,16 +1,16 @@
 """Utilities for testing."""
-from collections.abc import Iterable
 import time
 import unittest
+from collections.abc import Iterable
 
-from flax import linen as nn
-from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import jax
-from jax.experimental.maps import FrozenDict as FrozenDictJax
 import jax.numpy as jnp
+from jax.experimental.maps import FrozenDict as FrozenDictJax
 import numpy as np
 import optax
 import ray
+from flax import linen as nn
+from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 from alpa.api import parallelize, grad, value_and_grad
 from alpa.device_mesh import DeviceCluster
@@ -74,6 +74,7 @@ class BertLayerModel(nn.Module):
     manual_pipeline_layer: bool = True
 
     def setup(self):
+        # pylint: disable=attribute-defined-outside-init
         self.layers = [
             FlaxBertLayer(config=self.config, dtype=self.dtype)
             for _ in range(self.config.num_hidden_layers)
@@ -207,6 +208,7 @@ class PipelineBasicTest(unittest.TestCase):
                  namespace=get_ray_namespace_str(
                      prefix=global_config.unittest_ray_namespace_prefix))
 
+    # pylint: disable=no-self-use
     def tearDown(self):
         ray.shutdown()
         time.sleep(1)
@@ -214,7 +216,7 @@ class PipelineBasicTest(unittest.TestCase):
     def run_mlp(self,
                 manual_pipeline_layer=True,
                 test_remat=False,
-                pipeline_stage_mode="uniform_layer_gpipe",
+                pipeline_stage_mode="uniform_stage",
                 do_numerical_test=True,
                 return_value=False):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
@@ -280,11 +282,12 @@ class PipelineBasicTest(unittest.TestCase):
         executable.shutdown()
         return hlo_text
 
+    # pylint: disable=no-self-use
     def run_n_layer_bert(self,
                          n_layers,
                          manual_pipeline_layer=True,
                          test_remat=False,
-                         pipeline_stage_mode="uniform_layer_gpipe",
+                         pipeline_stage_mode="uniform_stage",
                          cache_compute_cost=None,
                          forward_stage_layer_ids=None,
                          batch_size=16,

@@ -17,7 +17,7 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                          n_layers,
                          manual_pipeline_layer=True,
                          test_remat=False,
-                         pipeline_stage_mode="uniform_layer_gpipe",
+                         pipeline_stage_mode="uniform_stage",
                          cache_compute_cost=None,
                          forward_stage_layer_ids=None,
                          batch_size=16,
@@ -74,7 +74,7 @@ class AutoStageClusteringOOMTest(PipelineBasicTest):
                               batch_size=16,
                               seq_len=1024,
                               num_heads=32,
-                              pipeline_stage_mode="auto_gpipe",
+                              pipeline_stage_mode="auto_stage",
                               cache_compute_cost=None)
 
 

@@ -32,7 +32,7 @@ rngkey = jax.random.PRNGKey(0)
 ### Set global environment variables
 # Here, we're setting the devices used to be the device cluster we defined earlier.
 # set_parallelize_options(devices=devices, strategy="pipeshard_parallel")
-set_parallelize_options(devices=devices, strategy="pipeshard_parallel", pipeline_stage_mode="auto_gpipe")
+set_parallelize_options(devices=devices, strategy="pipeshard_parallel", pipeline_stage_mode="auto_stage")
 
 ### Building our model
 # The model will be a two layer MLP model with a ReLU non-linearity. The input an output

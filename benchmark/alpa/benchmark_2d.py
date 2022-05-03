@@ -1,27 +1,27 @@
 """The entry point of intra-op parallelism only benchmark."""
 import argparse
 from datetime import datetime
+import time
 
 import numpy as np
 
 from alpa.util import write_tsv, run_cmd, get_num_hosts_and_num_devices, GB
 
 from benchmark_2d_one_case import benchmark_one_case
-from suite_paper_manual_gpt import fast_perf_test_gpt_suite, tmp_gpt_suite, manual_tuning_gpt_suite
-from suite_paper_manual_moe import fast_perf_test_moe_suite, tmp_moe_suite, manual_tuning_moe_suite
-from suite_paper_wresnet import fast_perf_test_wresnet_suite
+import suite_manual_gpt
+import suite_manual_moe
+import suite_wresnet
 
 
 benchmark_suites = {
-    "gpt.tmp": tmp_gpt_suite,
-    "gpt.fast_perf_test": fast_perf_test_gpt_suite,
-    "gpt.manual_tuning": manual_tuning_gpt_suite,
+    "gpt.tmp": suite_manual_gpt.tmp_suite,
+    "gpt.perf_test_fast_2d": suite_manual_gpt.perf_test_fast_2d_suite,
 
-    "moe.tmp": tmp_moe_suite,
-    "moe.fast_perf_test": fast_perf_test_moe_suite,
-    "moe.manual_tuning": manual_tuning_moe_suite,
+    "moe.tmp": suite_manual_moe.tmp_suite,
+    "moe.perf_test_fast_2d": suite_manual_moe.perf_test_fast_2d_suite,
 
-    "wresnet.fast_perf_test": fast_perf_test_wresnet_suite,
+    "wresnet.tmp": suite_wresnet.tmp_suite,
+    "wresnet.perf_test_2d": suite_wresnet.perf_test_2d_suite,
 }
 
 
@@ -61,30 +61,18 @@ if __name__ == "__main__":
     for benchmark_case in suite:
         if model_type in ["gpt", "bert"]:
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-             use_remat, prefer_reduce_scatter, pipeline_stage_mode, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads)
         elif model_type == "moe":
             (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts, expert_group_size,
-             l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size,
-             num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
-             auto_pipeline, overwrite_global_config_dict) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers, num_heads, num_experts, expert_group_size)
         elif model_type == "wresnet":
             (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-             l_dim0, l_dim1, num_micro_batches, force_batch_dim_mapping,
-             prefer_reduce_scatter, use_remat, other) = benchmark_case
+             num_micro_batches, parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, image_size, num_layers, num_channels, width_factor)
-            pipeline_mp_size = 1
         else:
             raise ValueError(f"Invalid model: {model_type}")
-
-        parallel_config = (l_dim0, l_dim1, pipeline_mp_size)
-
-        if pipeline_mp_size > 1:
-            print(f"Skipping the case: {str(benchmark_case)}, because PP > 1. "
-                  f"Please use `benchmark_gpt_bert_3d.py`.")
-            continue
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
@@ -96,13 +84,13 @@ if __name__ == "__main__":
             tflops = -1
 
         # Log results
-        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape",
-                 "#Microbatch", "Force Mapping", "Remat", "Reduce-scatter",
+        heads = ["Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
                  "Mean Time", "Std Time", "#Params", "TFLOPs",
                  "TFLOPs (ckpt)", "Peak Mem", "ILP objective"]
-        values = [model_type, model_config, parallel_config, "N/A",
-                  num_micro_batches, force_batch_dim_mapping, use_remat, prefer_reduce_scatter,
+        values = [model_type, model_config, num_micro_batches, num_gpus, parallel_args,
                   f"{np.mean(latencies):.3f}s", f"{np.std(latencies):.3f}",
                   f"{param_count/1e9:.3f}B", f"{tflops:.2f}", f"{tflops:.2f}",
                   f"{peak_mem/GB:.3f}G", f"{ilp_objective:.2f}" ]
         write_tsv(heads, values, output_name)
+
+        time.sleep(0.1)  # for ctrl+c to work

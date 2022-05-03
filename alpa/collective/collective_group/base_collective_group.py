@@ -36,17 +36,13 @@ class BaseGroup(metaclass=ABCMeta):
         """Return the group name of this group."""
         return self._group_name
 
-    def destroy_group(self):
-        """GC the communicators."""
-        pass
-
     @classmethod
     def backend(cls):
         """The backend of this collective group."""
         raise NotImplementedError()
 
     @abstractmethod
-    def allreduce(self, tensor, allreduce_options=AllReduceOptions()):
+    def allreduce(self, tensors, allreduce_options=AllReduceOptions()):
         raise NotImplementedError()
 
     @abstractmethod
@@ -54,31 +50,31 @@ class BaseGroup(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    def reduce(self, tensor, reduce_options=ReduceOptions()):
+    def reduce(self, tensors, reduce_options=ReduceOptions()):
         raise NotImplementedError()
 
     @abstractmethod
     def allgather(self,
-                  tensor_list,
-                  tensor,
+                  tensor_lists,
+                  tensors,
                   allgather_options=AllGatherOptions()):
         raise NotImplementedError()
 
     @abstractmethod
-    def broadcast(self, tensor, broadcast_options=BroadcastOptions()):
+    def broadcast(self, tensors, broadcast_options=BroadcastOptions()):
         raise NotImplementedError()
 
     @abstractmethod
     def reducescatter(self,
-                      tensor,
-                      tensor_list,
+                      tensors,
+                      tensor_lists,
                       reducescatter_options=ReduceScatterOptions()):
         raise NotImplementedError()
 
     @abstractmethod
-    def send(self, tensor, dst_rank):
+    def send(self, tensors, send_options):
         raise NotImplementedError()
 
     @abstractmethod
-    def recv(self, tensor, src_rank):
+    def recv(self, tensors, recv_options):
         raise NotImplementedError()

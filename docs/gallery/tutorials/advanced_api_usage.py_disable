@@ -307,7 +307,7 @@ state = create_train_state(rngkey, model, [x, attention_mask])
 global_config_backup = global_config.backup()
 
 # turn on manual stage plan
-global_config.pipeline_stage_mode = "manual_gpipe"
+global_config.pipeline_stage_mode = "manual_stage"
 # Layer-stage mapping
 global_config.forward_stage_layer_ids = [[0], [1], [2, 3]]
 # Physical mesh shape of each stage

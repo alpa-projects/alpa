@@ -19,7 +19,7 @@ class StageConstructionTest(PipelineBasicTest):
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert_manual_stage_assignment(self):
         self.run_n_layer_bert(n_layers=8,
-                              pipeline_stage_mode="manual_gpipe",
+                              pipeline_stage_mode="manual_stage",
                               forward_stage_layer_ids=[[0, 1, 2, 3],
                                                        [4, 5, 6, 7]],
                               submesh_shapes=[(1, 4), (1, 4)])

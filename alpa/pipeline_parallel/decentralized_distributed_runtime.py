@@ -7,11 +7,10 @@ from typing import Any, Dict, Sequence, List, Callable, Optional, Union, Tuple
 
 from jax.core import Var
 from jax.interpreters import pxla
-import jax.numpy as jnp
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, PhysicalDeviceMesh, DistributedArray, ReplicatedDistributedArray
+from alpa.device_mesh import MeshHostWorker, DistributedArray, ReplicatedDistributedArray
 from alpa.global_env import global_config
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   MemzeroWorkerExecutable,
@@ -78,7 +77,7 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(cls,
+    def Recv(cls, # noqa
              task_uuid,
              output_uuids,
              set_empty_buffer,
@@ -275,8 +274,10 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             not_batch_invars, var_at)
 
         worker_tmp_instructions = {}
+        all_workers = {}
         for mesh in self.physical_meshes:
             for worker in mesh.workers:
+                all_workers[worker] = []
                 worker_tmp_instructions[worker] = []
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
         worker_to_idx = {}
@@ -285,7 +286,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
-            for worker in worker_tmp_instructions:
+            for worker in all_workers:
                 worker_tmp_instructions[worker] = []
             for mesh_idx, task in enumerate(sched):
                 if not task:
@@ -403,8 +404,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             accumulated_uuids = [[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in list(uuids)
-            ]
-                                 for uuids in list(accumulated_uuids)]
+            ] for uuids in list(accumulated_uuids)]
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(accumulated_uuids))
             accumulated_uuid_lists[worker] = accumulated_uuids
@@ -849,9 +849,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for j in range(physical_mesh.num_devices):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
-                    dtype = self.global_outvars[
-                        self.mesh_index_to_outvar_indices_mapping[mesh_idx]
-                        [i]].aval.dtype
+                    # dtype = self.global_outvars[
+                    #     self.mesh_index_to_outvar_indices_mapping[mesh_idx]
+                    #     [i]].aval.dtype
                     output_bufs[mesh_idx][i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
                         output_uuid_transposed[i][host_id][device_id])

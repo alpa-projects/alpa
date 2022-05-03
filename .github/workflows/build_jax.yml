@@ -1,0 +1,74 @@
+name: Build Jaxlib and Jax
+
+on:
+  workflow_dispatch:
+    inputs:
+      tensorflow:
+        description: 'TensorFlow-alpa branch to build'
+        required: true
+        default: 'master'
+
+
+env:
+  TF_BRANCH: ${{ github.event.inputs.tensorflow }}
+
+
+jobs:
+  build_jaxlib:
+    name: Build JaxLib wheels
+    runs-on: [self-hosted]
+    # change the following to build with
+    #   Python： 3.7, 3.8. 3.9
+    #   CUDA 11.1, 11.2, 11.3
+    # Using github matrix
+
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ secrets.PAT_TOKEN }}
+        if: ${{github.ref != 'refs/head/main'}}
+
+      # checkout repo
+      - uses: actions/checkout@v3
+
+      - name: clean up images
+        run: |
+          docker image prune -f
+
+      - name: build image
+        run: |
+          cd build
+          docker build . -t build-jaxlib-image
+
+      - name: Compile Jaxlib
+        run: |
+          mkdir -p dist
+          docker run --gpus all --tmpfs /build:exec \
+          --rm -v $(pwd)/dist:/dist build-jaxlib-image \
+          3.8 cuda 11.1 ${TF_BRANCH##*/}
+
+      # change this to publishing to pypi
+      - name: Publish to local
+        run: |
+          echo "Move the Jaxlib binary"
+          mv dist/*.whl /data/alpa-dist/jaxlib-alpa/*.whl
+
+  build_jax:
+    name: Build Jax
+    runs-on: [self-hosted]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository: 'alpa-projects/jax-alpa'
+          ref: 'main'
+
+      - name: Jax source dist
+        run: |
+          python setup.py sdist
+
+      - name: Move to local
+        run: |
+          echo "Move the JAX binary"
+          mv dist/*.tar.gz /data/alpa-dist/jax-alpa/*.tar.gz

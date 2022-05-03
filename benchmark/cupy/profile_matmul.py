@@ -1,3 +1,4 @@
+"""Profile peak TFLOPS on matrix multiplications."""
 import time
 
 import cupy as cp

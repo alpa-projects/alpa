@@ -3,13 +3,13 @@
 name: Docs
 
 on:
-#  push:
-#    branches: [main]
-  workflow_dispatch:
-    tensor:
-      description: 'TensorFlow-alpa branch to build'
-      required: true
-      default: 'master'
+  push:
+    branches: [hao-docs]
+#  workflow_dispatch:
+#    tensor:
+#      description: 'TensorFlow-alpa branch to build'
+#      required: true
+#      default: 'master'
 
 jobs:
   build_docs:

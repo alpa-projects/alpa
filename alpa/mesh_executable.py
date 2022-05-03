@@ -10,13 +10,13 @@ from typing import Callable, Sequence, Optional
 import os
 
 import jax.numpy as jnp
-import ray
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax._src.util import partial
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten
 import numpy as np
+import ray
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh)

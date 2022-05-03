@@ -7,17 +7,17 @@ to build from source.
 
 ## Steps
 First, please figure out the CUDA and Python version you want to use to build JaxLib. Current supported versions are below:
-- CUDA: 10.0, 10.1, 10.2, 11.0, 11.1, 11.2
-- Python: 3.7.2, 3.8.0, 3.9.0
+- CUDA: 11.1, 11.2, 11.3
+- Python: 3.7, 3.8, 3.9
 
-Supposed we want to build the Jaxlib-alpa with CUDA 11.1 and Python 3.8.0.
+Supposed we want to build the Jaxlib-alpa with CUDA 11.1 and Python 3.8.
 ### Build the docker image
 ```python
 # build a folder to save the output wheels
 cd alpa/build && mkdir -p dist
 
 # build the image using chosen CUDA version
-docker build -t jaxlib-build . --build-arg JAX_CUDA_VERSION=11.1
+docker build -t build-jaxlib-image . --build-arg JAX_CUDA_VERSION=11.1
 ```
 
 ### Build the wheels inside a container
@@ -26,7 +26,7 @@ docker build -t jaxlib-build . --build-arg JAX_CUDA_VERSION=11.1
 mkdir -p dist/cuda11.1
 
 # build the wheel in a container using the selected Python and CUDA versions
-docker run --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxlib-build 3.8.0 cuda 11.1
+docker run --tmpfs /build:exec --rm -v $(pwd)/dist:/dist build-jaxlib-image 3.8 cuda 11.1 main
 
 # Move the output wheel
 mv -f dist/*.whl dist/cuda11.1/

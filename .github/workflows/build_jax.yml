@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tensorflow:
-        description: 'TensorFlow-alpa branch to test'
+        description: 'TensorFlow-alpa branch to build'
         required: true
         default: 'master'
 
+
 env:
   TF_BRANCH: ${{ github.event.inputs.tensorflow }}
-  ALPA_BRANCH: ${{ github.ref }}
 
 
 jobs:
@@ -23,23 +23,30 @@ jobs:
     # Using github matrix
 
     steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ secrets.PAT_TOKEN }}
+        if: ${{github.ref != 'refs/head/main'}}
+
       # checkout repo
       - uses: actions/checkout@v3
-        with:
-          ref: '${{ env.ALPA_BRANCH }}'
+
+      - name: clean up images
+        run: |
+          docker image prune -f
 
       - name: build image
         run: |
           cd build
           docker build . -t build-jaxlib-image
-          docker rmi -f $(docker images -f "dangling=true" -q)
 
       - name: Compile Jaxlib
         run: |
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec \
           --rm -v $(pwd)/dist:/dist build-jaxlib-image \
-          3.8 cuda 11.1 ${TF_BRANCH##*/} $ALPA_BRANCH
+          3.8 cuda 11.1 ${TF_BRANCH##*/}
 
       # change this to publishing to pypi
       - name: Publish to local
@@ -50,17 +57,15 @@ jobs:
   build_jax:
     name: Build Jax
     runs-on: [self-hosted]
-    needs: build_jaxlib
 
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v3
         with:
-          name: alpa-projects/jax-alpa
-          refs: main
+          repository: 'alpa-projects/jax-alpa'
+          ref: 'main'
 
       - name: Jax source dist
         run: |
-          cd jax-alpa
           python setup.py sdist
 
       - name: Move to local

@@ -78,15 +78,19 @@ install_require_list = [
     "tqdm",
     "scipy",
     "numba",
-    "ray[default]",
+    "ray",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
-    "pulp"
+    "pulp",
+    "tensorstore"
 ]
 
 dev_require_list = [
     "prospector",
-    "yapf"
+    "yapf",
+    "coverage",
+    "cmake",
+    "pybind11"
 ]
 
 

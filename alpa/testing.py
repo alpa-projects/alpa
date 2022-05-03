@@ -2,7 +2,6 @@
 import time
 import unittest
 from collections.abc import Iterable
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -75,6 +74,7 @@ class BertLayerModel(nn.Module):
     manual_pipeline_layer: bool = True
 
     def setup(self):
+        # pylint: disable=attribute-defined-outside-init
         self.layers = [
             FlaxBertLayer(config=self.config, dtype=self.dtype)
             for _ in range(self.config.num_hidden_layers)

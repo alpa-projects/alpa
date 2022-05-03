@@ -6,7 +6,6 @@ SHELL ["/bin/bash", "-c"]
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 RUN apt-get update
 RUN apt-get install -y python3-virtualenv
-
 RUN virtualenv --python=python3.7 python3.7-env
 RUN virtualenv --python=python3.8 python3.8-env
 RUN virtualenv --python=python3.9 python3.9-env
@@ -28,7 +27,9 @@ RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
 
 WORKDIR /
 COPY build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
+COPY test_alpa_docker_entrypoint.sh /test_alpa_docker_entrypoint.sh
 RUN chmod +x /build_wheel_docker_entrypoint.sh
+RUN chmod +x /test_alpa_docker_entrypoint.sh
 
 WORKDIR /build
 ENV TEST_TMPDIR /build

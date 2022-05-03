@@ -31,21 +31,12 @@ jobs:
         run: |
           docker build -t build-alpa-doc -f docker/Dockerfile.doc_build docker/
 
-      - name: Build docs
+      - name: Build and public docs
         run: |
           echo ${GITHUB_WORKSPACE}
           ls ${GITHUB_WORKSPACE}
           
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
-          -v ${GITHUB_WORKSPACE}:/alpa \
           --shm-size=10.24gb \
           build-alpa-doc
-
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          personal_token: ${{ secrets.PAT_TOKEN }}
-          external_repository: alpa-projects/alpa-projects.github.io
-          publish_branch: test
-          publish_dir: ./docs/_build/html

@@ -81,6 +81,7 @@ class StageConstructUtilTest(unittest.TestCase):
                                                manual_pipeline_layer,
                                                use_remat,
                                                n_layers,
+                                               False,
                                                decorate=True)
         closed_jaxpr, output_tree = make_jaxpr(train_step,
                                                return_shape=True)(state, batch)

@@ -35,7 +35,7 @@ jobs:
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
-          personal_token: ${{ secrets.PERSONAL_TOKEN }}
+          personal_token: ${{ secrets.PAT_TOKEN }}
           external_repository: alpa-projects/alpa-projects.github.io
-          publish_branch: master
+          publish_branch: test
           publish_dir: ./docs/_build/html

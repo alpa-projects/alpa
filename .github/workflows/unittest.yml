@@ -35,7 +35,7 @@ jobs:
   
 
   Unittest:
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, alpa]
     needs: linting
     steps:
       - uses: actions/checkout@v3

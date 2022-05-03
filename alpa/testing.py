@@ -12,7 +12,8 @@ import ray
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
-from alpa.api import parallelize, grad, value_and_grad
+import alpa
+from alpa.api import parallelize
 from alpa.device_mesh import DeviceCluster
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
@@ -139,14 +140,16 @@ def get_mlp_train_step(use_parallel,
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          use_remat, 2)
             if use_value_and_grad:
-                val, grads = value_and_grad(loss_func)(state.params)
+                val, grads = alpa.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, grad(loss_func)(state.params)
+                grads = alpa.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
         else:
             if use_value_and_grad:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, jax.grad(loss_func)(state.params)
+                grads = jax.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
 
         new_state = state.apply_gradients(grads=grads)
         return new_state, val
@@ -179,14 +182,16 @@ def get_bert_layer_train_step(use_parallel,
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          use_remat, num_layers)
             if use_value_and_grad:
-                val, grads = value_and_grad(loss_func)(state.params)
+                val, grads = alpa.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, grad(loss_func)(state.params)
+                grads = alpa.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
         else:
             if use_value_and_grad:
                 val, grads = jax.value_and_grad(loss_func)(state.params)
             else:
-                val, grads = 0, jax.grad(loss_func)(state.params)
+                grads = jax.grad(loss_func)(state.params)
+                val = jax.tree_leaves(grads)[0]
 
         new_state = state.apply_gradients(grads=grads)
         return new_state, val

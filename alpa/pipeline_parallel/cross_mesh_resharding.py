@@ -1,9 +1,8 @@
 """Cross mesh resharding for pipeline parallelism."""
-from collections import namedtuple
 from itertools import chain
 import logging
 import math
-from typing import List, Any, Sequence
+from typing import List, Any
 
 import numpy as np
 from jax.interpreters import pxla
@@ -137,11 +136,9 @@ def _allgather_logical_mesh_from_spec(sharding_spec):
             for spec in sharding_spec.sharding
             if isinstance(spec, pxla.Chunked)
         ]))
-    return tuple([
-        chunks[mapping.axis]
-        if isinstance(mapping, pxla.ShardedAxis) else mapping.replicas
-        for mapping in sharding_spec.mesh_mapping
-    ])
+    return tuple(
+        chunks[m.axis] if isinstance(m, pxla.ShardedAxis) else m.replicas
+        for m in sharding_spec.mesh_mapping)
 
 
 def _allgather_dim_offset(length, offset, chunks, local_allgather_idx):
@@ -215,7 +212,7 @@ class _AllgatherSpec:
                 self._allgather_chunk_num[tensor_dim] += 1
             else:
                 cur_tensor_dim = tensor_dim
-                assert not tensor_dim in self._allgather_chunk_num
+                assert tensor_dim not in self._allgather_chunk_num
                 self._allgather_chunk_num[tensor_dim] = 1
             cur_chunk_idx = chunk_idx
 
@@ -231,7 +228,7 @@ class _AllgatherSpec:
         for d, mapping in enumerate(sharding_spec.mesh_mapping):
             if isinstance(mapping, pxla.ShardedAxis):
                 idx = mapping.axis - start_axis
-                if idx >= 0 and idx < allgather_chunks:
+                if 0 <= idx < allgather_chunks:
                     mesh_dims[idx] = d
         return mesh_dims
 
@@ -334,8 +331,7 @@ class EagerReshardingTask(ReshardingTask):
             receiver]
         receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
             receiver]
-        result_buf = RemoteBufferRef(self.dst_mesh,
-                                     receiver_host_id,
+        result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
                                      receiver_device_id)
         # Put an empty buffer first.
         ray.get(
@@ -584,7 +580,7 @@ class SymbolicReshardingTask(ReshardingTask):
         each receiver has its own index with respect to the mesh shape. Let the
         index be (x_0,x_1,...,x_n) and the mesh shape is (l_0,l_1,...,l_n);
         3. The iterated tensor dimension corresponds to some logical mesh
-        dimensions, assume these dimensions are D \subset [n]. The index is
+        dimensions, assume these dimensions are D, a subset of [n]. The index is
         categorized into two parts. The first is (x_{i_0},x_{i_1},...x_{i_m}),
         where {i_0,i_1,...,i_m}=D while the second is the rest. The first part
         is named group index while the second is allgather index.
@@ -653,8 +649,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 receiver]
             receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
                 receiver]
-            result_buf = RemoteBufferRef(self.dst_mesh,
-                                         receiver_host_id,
+            result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
                                          receiver_device_id)
             recv_buf_uuids[receiver_worker].append(result_buf.uuid)
             device_str_to_buf_map[receiver] = result_buf
@@ -1151,7 +1146,7 @@ class CrossMeshCommunicator:
                     break
             if replica != 1:
                 logger.warning(
-                    f"ReshardingTask is not fully sharded, this causes redundant communication."
+                    "ReshardingTask is not fully sharded, this causes redundant communication."
                 )
             if len(dim_local_mapping) != 0:
                 squeezed_mesh_mapping[mesh_dim] = dim_local_mapping
@@ -1214,12 +1209,14 @@ class CrossMeshCommunicator:
                 # dst sharding spec before and after allgather
                 dst_sharding_spec, local_chunks = self._rewrite_allgather_spec(
                     dst_sharding_spec, dst_mesh, var.aval.shape)
-                src_array = VDA(device_mesh=src_mesh,
-                                aval=var.aval,
-                                sharding_spec=src_sharding_spec)
-                dst_array = VDA(device_mesh=dst_mesh,
-                                aval=var.aval,
-                                sharding_spec=dst_sharding_spec)
+                src_array = VirtualDistributedArray(
+                    device_mesh=src_mesh,
+                    aval=var.aval,
+                    sharding_spec=src_sharding_spec)
+                dst_array = VirtualDistributedArray(
+                    device_mesh=dst_mesh,
+                    aval=var.aval,
+                    sharding_spec=dst_sharding_spec)
                 task_spec = ReshardingTaskSpec(src_array, dst_array,
                                                local_chunks)
                 self.resharding_specs[src_mesh_index][dst_mesh_index][repr(

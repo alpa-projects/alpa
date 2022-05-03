@@ -49,14 +49,14 @@ class SaveLoadTest(unittest.TestCase):
 
         # Compile
         global_config.num_micro_batches = 2
-        serial_train_step = get_mlp_train_step(False, None, None)
-        parallel_train_step = get_mlp_train_step(True, True, False)
+        serial_train_step = get_mlp_train_step(False, None, None, False)
+        parallel_train_step = get_mlp_train_step(True, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         serial_state = state
         parallel_state = state
-        serial_state = serial_train_step(serial_state, batch)
-        parallel_state = parallel_train_step(parallel_state, batch)
+        serial_state = serial_train_step(serial_state, batch)[0]
+        parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
         # Save model to a temporary file
@@ -76,10 +76,10 @@ class SaveLoadTest(unittest.TestCase):
         assert_allclose(loaded_state.params, parallel_state.params, 1e-3, 1e-3)
 
         # Take a step with the loaded state on both serial and parallel version
-        serial_state = serial_train_step(serial_state, batch)
-        parallel_state = parallel_train_step(parallel_state, batch)
-        serial_loaded_state = serial_train_step(loaded_state, batch)
-        parallel_loaded_state = parallel_train_step(loaded_state, batch)
+        serial_state = serial_train_step(serial_state, batch)[0]
+        parallel_state = parallel_train_step(parallel_state, batch)[0]
+        serial_loaded_state = serial_train_step(loaded_state, batch)[0]
+        parallel_loaded_state = parallel_train_step(loaded_state, batch)[0]
 
         # All the states should be the same
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)

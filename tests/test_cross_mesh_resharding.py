@@ -240,7 +240,7 @@ class ReshardingTest(unittest.TestCase):
         dst_spec = ShardingSpec(
             [NoSharding(), NoSharding(),
              NoSharding()], [Replicated(4)])
-        self.test_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                   tensor_shape)
 
 

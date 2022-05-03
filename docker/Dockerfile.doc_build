@@ -9,6 +9,7 @@ RUN apt install -y coinor-cbc glpk-utils
 RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.8 0
 RUN python -m pip install --upgrade pip
 RUN python -m pip install numpy==1.19.5 setuptools wheel six auditwheel cupy-cuda111
+RUN python -m pip install sphinx sphinx-rtd-theme sphinx-gallery matplotlib
 COPY scripts/build_doc.sh build_doc.sh
 RUN chmod +x build_doc.sh
 ENTRYPOINT ["/build_doc.sh"]

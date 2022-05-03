@@ -1089,8 +1089,7 @@ class PipelineMeshWorkerExecutable:
                                            task_config.strategy_config,
                                            task_config.grad_sync_channel_ids)
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
-                continue
-            if isinstance(task_config, MemZeroWorkerExecutableConfig):
+            elif isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0
                 # allocate buffers
                 self.use_memzero = True
@@ -1108,12 +1107,13 @@ class PipelineMeshWorkerExecutable:
                                            MemzeroWorkerExecutable,
                                            task_config.grad_shard_shapes,
                                            task_config.grad_shard_dtypes)
-                continue
-            assert isinstance(task_config, AllocateZeroWorkerExecutableConfig)
-            self.worker.put_executable(task_config.exec_uuid,
-                                       AllocZeroBufferWorkerExecutable,
-                                       task_config.grad_shard_shapes,
-                                       task_config.grad_shard_dtypes)
+            elif isinstance(task_config, AllocateZeroWorkerExecutableConfig):
+                self.worker.put_executable(task_config.exec_uuid,
+                                           AllocZeroBufferWorkerExecutable,
+                                           task_config.grad_shard_shapes,
+                                           task_config.grad_shard_dtypes)
+            else:
+                raise ValueError(f"Invalid task config {task_config}")
         self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids):

@@ -39,15 +39,15 @@ def test_resharding(var,
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
     (rewrite_dst_sharding_spec,
-     extra_slice) = CrossMeshCommunicator._rewrite_allgather_specs(
-         dst_sharding_spec, dst_mesh, var)
+     locla_chunks) = CrossMeshCommunicator._rewrite_allgather_spec(
+         dst_sharding_spec, dst_mesh, var.aval.shape)
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
                                         aval=var.aval,
                                         sharding_spec=src_sharding_spec)
     dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
                                         aval=var.aval,
                                         sharding_spec=rewrite_dst_sharding_spec)
-    task_spec = ReshardingTaskSpec(src_array, dst_array, extra_slice)
+    task_spec = ReshardingTaskSpec(src_array, dst_array, locla_chunks)
     strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
         task_spec, src_loads, dst_loads)
     task_spec.set_resharding_strategy(strategy)
@@ -230,11 +230,25 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape)
 
+    def test_8gpu_2_dim_allgather(self):
+        src_shape = (1, 4)
+        dst_shape = (1, 4)
+        tensor_shape = (2, 8, 16)
+        src_spec = ShardingSpec(
+            [NoSharding(), NoSharding(),
+             NoSharding()], [Replicated(4)])
+        dst_spec = ShardingSpec(
+            [NoSharding(), NoSharding(),
+             NoSharding()], [Replicated(4)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                  tensor_shape)
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(ReshardingTest("test_4gpu_send_recv"))
     suite.addTest(ReshardingTest("test_4gpu_allgather"))
+    suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
     return suite
 
 

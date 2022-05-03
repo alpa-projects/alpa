@@ -1,0 +1,43 @@
+# This workflow will generate docs for alpa.
+
+name: Docs
+
+
+
+on:
+#  push:
+#    branches: [main]
+  workflow_dispatch:
+    tensor:
+      description: 'TensorFlow-alpa branch to build'
+      required: true
+      default: 'master'
+
+jobs:
+  build_docs:
+    runs-on: [self-hosted, alpa]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: Install dependency
+        run: |
+          pip install matplotlib sphinx sphinx-rtd-theme sphinx-gallery
+
+      - name: Build docs
+        run: |
+          export ALPA_TUTORIAL_EXEC_PATTERN=none
+          cd docs && make html
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          personal_token: ${{ secrets.PERSONAL_TOKEN }}
+          external_repository: alpa-projects/alpa-projects.github.io
+          publish_branch: master
+          publish_dir: ./docs/_build/html

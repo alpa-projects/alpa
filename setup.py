@@ -184,6 +184,6 @@ if __name__ == "__main__":
         install_requires=install_require_list,
         extras_require={
             'dev': dev_require_list,
-            'doc': doc_require_list,
+            'doc': doc_require_list + dev_require_list,
         },
     )

@@ -81,7 +81,8 @@ install_require_list = [
     "ray",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
-    "pulp"
+    "pulp",
+    "tensorstore"
 ]
 
 dev_require_list = [

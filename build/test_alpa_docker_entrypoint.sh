@@ -40,8 +40,5 @@ pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
 pip install -e .[dev]
 ray start --head
-coverage run -m unittest tests/test_*.py
-coverage report -m
-coverage html
-mkdir -p /alpa-dist/coverage
-coverage xml -o /alpa-dist/coverage/
+cd tests
+python run_all.py

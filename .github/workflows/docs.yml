@@ -30,20 +30,20 @@ jobs:
       - name: build doc-building image
         run: |
           cd docker
-          docker build -t build-alpa-doc Dockerfile.doc_build
-
-      - name: build doc
-        run: |
-          install 
+          docker build -t build-alpa-doc -f Dockerfile.doc_build .
 
       - name: Build docs
         run: |
-          cd docs && make html
+          docker run --gpus all --tmpfs /build:exec --rm \
+          -v /data/alpa-dist:/alpa-dist \
+          -v /alpa:/alpa \
+          --shm-size=10.24gb \
+          build-alpa-doc
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
           personal_token: ${{ secrets.PAT_TOKEN }}
           external_repository: alpa-projects/alpa-projects.github.io
-          publish_branch: master
+          publish_branch: test
           publish_dir: ./docs/_build/html

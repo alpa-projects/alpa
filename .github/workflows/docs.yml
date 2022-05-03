@@ -29,8 +29,7 @@ jobs:
 
       - name: build doc-building image
         run: |
-          cd docker
-          docker build -t build-alpa-doc -f Dockerfile.doc_build .
+          docker build -t build-alpa-doc -f docker/Dockerfile.doc_build docker/
 
       - name: Build docs
         run: |

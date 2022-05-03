@@ -13,7 +13,6 @@ python -m pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
 git clone https://github.com/alpa-projects/alpa.git
 cd alpa
-python -m pip install -e .
+python -m pip install -e .[dev]
 cd /alpa/docs
-make html
-
+PYTHONPATH=/usr/bin/python make html

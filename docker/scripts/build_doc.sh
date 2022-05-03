@@ -8,11 +8,12 @@ then
   exit 1
 fi
 
-python -m pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
-python -m pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
+source /python3.8-env/bin/activate
+pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
+pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
-git clone https://github.com/alpa-projects/alpa.git
+git clone -b hao-docs https://github.com/alpa-projects/alpa.git
 cd alpa
-python -m pip install -e .[doc]
+pip install -e .[doc]
 cd /alpa/docs
-PYTHONPATH=/usr/bin/python make html
+make html

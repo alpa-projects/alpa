@@ -618,13 +618,9 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def generate_stage_info(all_layers,
-                        selected_indices,
-                        donation_mapping,
-                        global_outvars,
-                        name,
-                        insert_hook_after=None,
-                        apply_grad_info=None):
+def generate_stage_info(all_layers, selected_indices, donation_mapping,
+                        global_outvars, name, insert_hook_after,
+                        apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
     backend = xla_bridge.get_backend("gpu")
 
@@ -664,9 +660,8 @@ def generate_stage_info(all_layers,
 
     apply_info = ApplyGradConfig(None, None)
 
-    if apply_grad_info is not None:
-        (apply_grad_layers, apply_grad_donation,
-         apply_grad_outvars) = apply_grad_info
+    if apply_grad_layers:
+        apply_grad_donation, apply_grad_outvars = apply_grad_info
         merged_apply = merge_marked_jaxprs_with_named_call(
             [layer.closed_jaxpr() for layer in apply_grad_layers],
             apply_grad_outvars, apply_grad_donation, name + "_apply")

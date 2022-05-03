@@ -12,8 +12,7 @@ from alpa.pipeline_parallel.decentralized_distributed_runtime import (
 from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
-from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                              PipeDreamFlush, gen_dependency_with_stages)
+from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
@@ -38,8 +37,9 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                 donated_invars, batch_invars, devices,
                                 memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
-    if not (isinstance(devices, (DistributedPhysicalDeviceMeshGroup,
-                                 VirtualPhysicalMesh))):
+    if not (isinstance(
+            devices,
+        (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))):
         raise RuntimeError(
             f"Unrecognized type of `devices`, got: {type(devices)},"
             "expected type: `VirtualPhysicalMesh`.")
@@ -92,21 +92,11 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     global_outvars = closed_jaxpr.jaxpr.outvars
     donation_mapping = dict(grad_in_to_out)
 
-    num_forward_layers = len(jax_pipeline_layers) // 2
-    layer_to_dummy_mesh = (list(range(num_forward_layers)) +
-                           list(reversed(range(num_forward_layers))))
-    # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
-    (jax_apply_layers, _, _, _, dummy_global_outvars,
-     dummy_donated_invars) = process_apply_gradient(
-         apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
-         layer_to_dummy_mesh, gensym_func, num_micro_batches,
-         len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-         donated_invars)
-    apply_grad_donation = create_donation_mapping(donation_mapping,
-                                                  dummy_donated_invars,
-                                                  global_invars, global_outvars)
-    apply_grad_global_info = apply_grad_donation, global_outvars
-
+    (jax_apply_layers,
+     apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
+         jax_pipeline_layers, apply_grad_jaxpr, barrier, acc_grad_dict,
+         global_invars, global_outvars, donated_invars, donation_mapping,
+         num_micro_batches, gensym_func)
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
      logical_mesh_shapes,
@@ -311,3 +301,28 @@ def launch_physical_meshes(virtual_meshes):
         threads[i].join()
 
     return DistributedPhysicalDeviceMeshGroup(physical_meshes)
+
+
+def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
+                                             barrier, acc_grad_dict,
+                                             global_invars, global_outvars,
+                                             donated_invars, donation_mapping,
+                                             num_microbatch, gensym_func):
+    assert len(pipeline_layers) % 2 == 0
+    num_mesh = len(pipeline_layers) // 2
+    layer_to_mesh = list(range(num_mesh)) + list(reversed(range(num_mesh)))
+    (layers, _, _, apply_grad_placement, _,
+     donated_invars) = process_apply_gradient(apply_grad_jaxpr, barrier,
+                                              acc_grad_dict, pipeline_layers,
+                                              layer_to_mesh, gensym_func,
+                                              num_microbatch, num_mesh, global_invars,
+                                              global_outvars, donated_invars)
+    apply_grad_donation = create_donation_mapping(donation_mapping,
+                                                  donated_invars, global_invars,
+                                                  global_outvars)
+    wrap_layers = [None] * num_mesh
+    for layer_idx in apply_grad_placement:
+        mesh_idx = apply_grad_placement[layer_idx]
+        wrap_layers[mesh_idx] = layers[layer_idx - 2 * num_mesh]
+    apply_grad_global_info = apply_grad_donation, global_outvars
+    return wrap_layers, apply_grad_global_info

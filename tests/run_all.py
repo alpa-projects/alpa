@@ -41,7 +41,9 @@ def run_unittest_files(files, args):
         p.join()
 
         if p.exitcode != 0:
-            return
+            return False
+
+    return True
 
 
 if __name__ == "__main__":
@@ -58,7 +60,7 @@ if __name__ == "__main__":
     arg_parser.add_argument(
         "--xla_client_mem_fraction",
         type=float,
-        default=0.25,
+        default=0.20,
         help="The fraction of GPU memory used to run unit tests")
     args = arg_parser.parse_args()
 
@@ -66,5 +68,11 @@ if __name__ == "__main__":
     files.sort()
 
     tic = time.time()
-    run_unittest_files(files, args)
-    print(f"Run all tests in {time.time() - tic:.2f}s")
+    success = run_unittest_files(files, args)
+
+    if success:
+        print(f"Success. Time elapsed: {time.time() - tic:.2f}s")
+    else:
+        print(f"Fail. Time elapsed: {time.time() - tic:.2f}s")
+
+    exit(0 if success else -1)

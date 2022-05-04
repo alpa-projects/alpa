@@ -61,4 +61,4 @@ jobs:
           
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
-          --shm-size=10.24gb 3.8 ${ALPA_BRANCH##*/}
+          --shm-size=10.24gb test-alpa-image 3.8 ${ALPA_BRANCH##*/}

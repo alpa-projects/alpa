@@ -38,8 +38,7 @@ jobs:
 
       - name: build image
         run: |
-          cd build
-          docker build . -t build-jaxlib-image
+          docker build -t build-jaxlib-image -f docker/build_jaxlib.Dockerfile docker/
 
       - name: Compile Jaxlib
         run: |

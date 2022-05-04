@@ -98,34 +98,33 @@ def test_broadcast_resharding(var,
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
 
-    for _ in range(5):
-        # Prepare array and shard args
-        test_array = np.arange(np.prod(var.aval.shape),
-                            dtype=var.aval.dtype).reshape(var.aval.shape)
-        indices = spec_to_indices(var.aval.shape, src_sharding_spec)
-        test_array = xla.canonicalize_dtype(test_array)
-        input_refs = shard_arg_handlers[type(test_array)](test_array, src_mesh,
-                                                        indices)
-        input_refs = np.array(input_refs).reshape(src_mesh.shape)
-        input_uuids = get_uuid_np_array(input_refs)
-        output_refs, output_uuids = create_remote_buffer_refs(dst_mesh)
-        output_uuids = output_uuids.reshape(dst_mesh.shape)
-        # Run executables
-        timers("overall_resharding_time").start()
-        for worker_idx, worker in enumerate(src_mesh.workers):
-            worker.run_executable.remote(exec_uuids[worker],
-                                        [input_uuids[worker_idx]], [])
-        for worker_idx, worker in enumerate(dst_mesh.workers):
-            worker.run_executable.remote(exec_uuids[worker], [],
-                                        [output_uuids[worker_idx]])
-        output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
-                                        output_refs)
-        # Check correctness
-        # assert_allclose(test_array, output_array._value)
-        dst_mesh.sync_workers()
-        timers("overall_resharding_time").stop()
-        timers("overall_resharding_time").log()
-        timers("overall_resharding_time").reset()
+    # Prepare array and shard args
+    test_array = np.arange(np.prod(var.aval.shape),
+                        dtype=var.aval.dtype).reshape(var.aval.shape)
+    indices = spec_to_indices(var.aval.shape, src_sharding_spec)
+    test_array = xla.canonicalize_dtype(test_array)
+    input_refs = shard_arg_handlers[type(test_array)](test_array, src_mesh,
+                                                    indices)
+    input_refs = np.array(input_refs).reshape(src_mesh.shape)
+    input_uuids = get_uuid_np_array(input_refs)
+    output_refs, output_uuids = create_remote_buffer_refs(dst_mesh)
+    output_uuids = output_uuids.reshape(dst_mesh.shape)
+    # Run executables
+    # timers("overall_resharding_time").start()
+    for worker_idx, worker in enumerate(src_mesh.workers):
+        worker.run_executable.remote(exec_uuids[worker],
+                                    [input_uuids[worker_idx]], [])
+    for worker_idx, worker in enumerate(dst_mesh.workers):
+        worker.run_executable.remote(exec_uuids[worker], [],
+                                    [output_uuids[worker_idx]])
+    output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
+                                    output_refs)
+    # Check correctness
+    assert_allclose(test_array, output_array._value)
+    dst_mesh.sync_workers()
+    # timers("overall_resharding_time").stop()
+    # timers("overall_resharding_time").log()
+    # timers("overall_resharding_time").reset()
 
     # Delete executables
     for worker in src_mesh.workers:
@@ -151,9 +150,7 @@ class ReshardingTest(unittest.TestCase):
                              src_sharding_spec,
                              dst_sharding_spec,
                              tensor_shape,
-                             tensor_dtype=None, 
-                             src_mesh_logical_shape=None, 
-                             dst_mesh_logical_shape=None):
+                             tensor_dtype=None):
         device_cluster = DeviceCluster()
         virtual_mesh = device_cluster.get_virtual_physical_mesh()
         src_num_host = src_mesh_shape[0]
@@ -173,10 +170,6 @@ class ReshardingTest(unittest.TestCase):
         dst_mesh = virtual_mesh.slice_2d(
             dst_host_indices, dst_device_indices).get_physical_mesh()
 
-        # if src_mesh_logical_shape is not None:
-        #     src_mesh = src_mesh.get_logical_mesh(src_mesh_logical_shape)
-        # if dst_mesh_logical_shape is not None:
-        #     dst_mesh = dst_mesh.get_logical_mesh(dst_mesh_logical_shape)
         tensor_dtype = tensor_dtype or jnp.int32
         var = Var(0, "", ShapedArray(tensor_shape, tensor_dtype))
         test_broadcast_resharding(var, src_mesh, src_sharding_spec, dst_mesh,
@@ -184,7 +177,7 @@ class ReshardingTest(unittest.TestCase):
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
-    def test_4gpu_broadcast_2(self):
+    def test_4gpu_broadcast_1(self):
         src_shape = (1, 2)
         dst_shape = (1, 2)
         tensor_shape = (4, 8, 16)
@@ -205,107 +198,42 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                   tensor_shape)
 
-    def test_4gpu_broadcast_1(self):
+    def test_4gpu_broadcast_2(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)
         base = 64
-        tensor_shape = (8*base, 8*base, 16*base)#6*3+(3+3+4)=28
+        tensor_shape = (8*base, 8*base, 16*base)
         src_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
         dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                   tensor_shape)
 
-    # def test_4gpu_broadcast_3(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (2, 4)
-    #     base = 64
-    #     tensor_shape = (8*base, 8*base, 16*base)
-    #     src_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(8)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
+    def test_4gpu_broadcast_3(self):
+        src_shape = (1, 4)
+        dst_shape = (1, 4)
+        base = 64
+        tensor_shape = (2, 8*base, 8*base*8*base)
+        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                  tensor_shape)
 
-    # def test_4gpu_broadcast_4(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (2, 4)
-    #     base = 64
-    #     tensor_shape = (8*base, 8*base, 16*base)
-    #     src_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     dst_spec = ShardingSpec([NoSharding(), Chunked([2]), NoSharding()], [ShardedAxis(0)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
-
-    # def test_4gpu_broadcast_5(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (2, 4)
-    #     base = 64
-    #     tensor_shape = (8*base, 8*base, 16*base)
-    #     src_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     dst_spec = ShardingSpec([NoSharding(), Chunked([2]), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
-
-    # def test_4gpu_broadcast_6(self):
-    #     src_shape = (2, 4)
-    #     dst_shape = (1, 4)
-    #     base = 64
-    #     tensor_shape = (8*base, 8*base, 16*base)
-    #     src_spec = ShardingSpec([NoSharding(), Chunked([2]), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
-    #     dst_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
-
-    # def test_4gpu_broadcast_7(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (1, 4)
-    #     base = 64
-    #     tensor_shape = (8*base, 8*base, 16*base)
-    #     src_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     dst_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
-
-    # def test_4gpu_broadcast_8(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (1, 4)
-    #     base = 64
-    #     tensor_shape = (8*base, 8*base, 16*base)
-    #     src_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
-    #     dst_spec = ShardingSpec([Chunked([4]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
-
-    # def test_4gpu_broadcast_9(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (1, 4)
-    #     base = 64
-    #     tensor_shape = (2, 8*base, 8*base*8*base)
-    #     src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
-    #     dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape, src_mesh_logical_shape=(2,2))
-
-    # def test_4gpu_broadcast_9(self):
-    #     src_shape = (1, 4)
-    #     dst_shape = (1, 4)
-    #     base = 64
-    #     tensor_shape = (2, 8*base, 8*base*8*base)
-    #     src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
-    #     dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
-    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-    #                               tensor_shape)
+    def test_4gpu_broadcast_4(self):
+        src_shape = (1, 4)
+        dst_shape = (1, 4)
+        base = 64
+        tensor_shape = (2, 8*base, 8*base*8*base)
+        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                  tensor_shape)
 
 def suite():
     suite = unittest.TestSuite()
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_1"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_2"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_3"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_4"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_5"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_6"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_7"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_8"))
-    # suite.addTest(ReshardingTest("test_4gpu_broadcast_9"))
+    suite.addTest(ReshardingTest("test_4gpu_broadcast_1"))
+    suite.addTest(ReshardingTest("test_4gpu_broadcast_2"))
+    suite.addTest(ReshardingTest("test_4gpu_broadcast_3"))
+    suite.addTest(ReshardingTest("test_4gpu_broadcast_4"))
     return suite
 
 

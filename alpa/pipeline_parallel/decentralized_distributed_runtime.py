@@ -766,9 +766,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                            recv_uuids: np.ndarray,
                                            instruction_lists,
                                            set_empty_buffer=False):
-        # print("src_uuids\n", src_uuids)
-        # print("recv_uuids\n", recv_uuids)
-        # print("src_mesh.host_ips: ", src_mesh.host_ips)
+
         # add broadcast-based resharding task for each worker
         for w, task_uuid in resharding_task.broadcast_worker_task_ids.items():
             output_uuids = None
@@ -1224,8 +1222,8 @@ class PipelineMeshWorkerExecutable:
         ]:
             if timer_name in timers:
                 timers(timer_name).stop()
-                # timers(timer_name).log(mode="sum")
-                # timers(timer_name).reset()
+                timers(timer_name).log(mode="sum")
+                timers(timer_name).reset()
         timers("overall").stop(sync_func=self.worker.sync)
 
         # copy to global env

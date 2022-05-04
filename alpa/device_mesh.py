@@ -512,12 +512,7 @@ class MeshHostWorker:
 
     def broadcast(self, uuids, comm_key, world_size, devices_ids, devices_global_rank, tensor_slices, group_name):
         used_tensors = []
-        slice_types = []
-        # print(devices_ids, uuids, devices_global_rank)
-        # for uuid in uuids:
-        #     print(uuid, end=" ")
-        #     print(self.buffers[uuid].shape, self.buffers[uuid].dtype)
-            
+        slice_types = []            
         is_bool = self.buffers[uuids[devices_ids[0]]].dtype == np.bool_
         for device_id, global_rank, tensor_slice in zip(devices_ids, devices_global_rank, tensor_slices):
             uuid = uuids[device_id]
@@ -576,7 +571,6 @@ class MeshHostWorker:
 
     def run_resharding_broadcast_task(self, uuid, buffer_uuids, set_empty_buffer=True):
         task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
-        # print(uuid, task)
         broadcast_specs = task.broadcast_specs
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]

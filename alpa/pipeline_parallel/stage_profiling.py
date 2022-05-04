@@ -761,7 +761,7 @@ def profile_layer_communication_cost(
                                                  src_phy_mesh, input_indices)
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_buffers, input_indices)
-            if global_config.resharding_mode == "broadcast":
+            if global_config.resharding_mode == "default":
                 task = SymbolicReshardingTask(task_spec, collective_group,
                                             collective_group.src_mesh,
                                             collective_group.dst_mesh)

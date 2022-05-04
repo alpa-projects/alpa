@@ -388,6 +388,7 @@ class SymbolicReshardingTask(ReshardingTask):
         # create communicators
         if global_config.eagerly_create_communicators:
             self._create_resharding_communicators()
+        # print(self.__str__()+"\n")
 
     @property
     def sender_tasks(self):
@@ -750,13 +751,9 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
             self.task_spec.dst_tile_to_src_tiles_map):
             spec_plan = self.task_spec.strategy.per_spec_plans[i]
-            # print(i)
-            # print(dst_tile, src_tiles, indices_in_dst_tiles)
-            # print(spec_plan)
             for src_tile_index, (src_tile, indices_in_dst_tile) in enumerate(zip(src_tiles, indices_in_dst_tiles)):
                 sender = spec_plan[src_tile_index]
                 sender_worker = self.collective_group.device_str_to_mesh_worker_map[sender]
-                # print(src_tile_index, sender, sender_worker)
                 broadcast_group = (i, src_tile_index)
                 devices = [sender] + dst_tile.replica_device_strs
                 comm_key = "$".join(devices)
@@ -1383,19 +1380,18 @@ class CrossMeshCommunicator:
             Generate the broadcast-based resharding strategy by balancing loads.
             For each tile, I not only allow one source to provide the tile.
         """
-        # print("++++", spec)
         #TODO(hexu): (1) allow for multiple sources. (2) update load on the fly.
         per_spec_plans = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             per_spec_plan = np.empty( (len(src_tileslices),), dtype=object)
-            # print(dst_tile, src_tileslices)
+
             for src_tileslice_idx, src_tileslice in enumerate(src_tileslices):
                 loads = {
                     sender: src_loads[sender]
                     for sender in src_tileslice.replica_device_strs
                 }
                 sender = min(loads, key=loads.get)
-                # print("-", src_tileslice_idx, src_tileslice, loads, sender)
+
                 per_spec_plan[src_tileslice_idx] = sender
                 src_loads[sender] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)

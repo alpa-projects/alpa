@@ -108,7 +108,7 @@ class GlobalConfig:
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
-        self.resharding_mode = "default" # or "default"
+        self.resharding_mode = "default" # or "broadcast"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42
@@ -167,7 +167,7 @@ def set_parallelize_options(
         auto_stage_construction_imbalance_tolerance: float = np.inf,
         use_hlo_cost_model: bool = False,
         profiling_database_filename: Optional[str] = None,
-        resharding_mode: str = "broadcast"):
+        resharding_mode: str = "default"):
     """
     Set the global options for all @parallelize decorator.
 

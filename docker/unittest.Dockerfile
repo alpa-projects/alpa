@@ -11,26 +11,30 @@ RUN virtualenv --python=python3.9 python3.9-env
 
 # We pin numpy to the minimum permitted version to avoid compatibility issues.
 RUN source python3.7-env/bin/activate && pip install --upgrade pip \
-    && pip install numpy==1.19.5 setuptools wheel six auditwheel \
-    tqdm scipy numba pulp tensorstore prospector yapf coverage \
-    cmake pybind11
+  && pip install numpy==1.19.5 setuptools wheel six auditwheel \
+  tqdm scipy numba pulp tensorstore prospector yapf coverage cmake \
+  pybind11 ray[default] matplotlib
 RUN source python3.8-env/bin/activate && pip install --upgrade pip \
-    && pip install numpy==1.19.5 setuptools wheel six auditwheel \
-    tqdm scipy numba pulp tensorstore prospector yapf coverage \
-    cmake pybind11
+  && pip install numpy==1.19.5 setuptools wheel six auditwheel \
+  tqdm scipy numba pulp tensorstore prospector yapf coverage cmake  \
+    pybind11  ray[default] matplotlib
 RUN source python3.9-env/bin/activate && pip install --upgrade pip \
-    && pip install numpy==1.19.5 setuptools wheel six auditwheel \
-    tqdm scipy numba pulp tensorstore prospector yapf coverage \
-    cmake pybind11 \
+  && pip install numpy==1.19.5 setuptools wheel six auditwheel \
+  tqdm scipy numba pulp tensorstore prospector yapf coverage cmake  \
+    pybind11 ray[default] matplotlib
 
-# Change the CUDA version if it doesn't match the installed version in the base image
-# which is 10.0
+# We determine the CUDA version at `docker build ...` phase
 ARG JAX_CUDA_VERSION=11.1
-COPY install_cuda.sh /install_cuda.sh
+COPY scripts/install_cuda.sh /install_cuda.sh
 RUN chmod +x /install_cuda.sh
 RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
   /install_cuda.sh $JAX_CUDA_VERSION; \
   fi'
+
+# Install cupy
+RUN source python3.7-env/bin/activate && pip install cupy-cuda${JAX_CUDA_VERSION//.}
+RUN source python3.8-env/bin/activate && pip install cupy-cuda${JAX_CUDA_VERSION//.}
+RUN source python3.9-env/bin/activate && pip install cupy-cuda${JAX_CUDA_VERSION//.}
 
 WORKDIR /
 COPY scripts/test_alpa_docker_entrypoint.sh /test_alpa_docker_entrypoint.sh

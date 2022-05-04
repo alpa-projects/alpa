@@ -4,15 +4,24 @@ WORKDIR /
 SHELL ["/bin/bash", "-c"]
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 RUN apt-get update
-RUN apt-get install -y python3-virtualenv
+RUN apt-get install -y python3-virtualenv coinor-cbc glpk-utils
 RUN virtualenv --python=python3.7 python3.7-env
 RUN virtualenv --python=python3.8 python3.8-env
 RUN virtualenv --python=python3.9 python3.9-env
 
 # We pin numpy to the minimum permitted version to avoid compatibility issues.
-RUN source python3.7-env/bin/activate && pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
-RUN source python3.8-env/bin/activate && pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
-RUN source python3.9-env/bin/activate && pip install --upgrade pip && pip install numpy==1.19.5 setuptools wheel six auditwheel
+RUN source python3.7-env/bin/activate && pip install --upgrade pip \
+    && pip install numpy==1.19.5 setuptools wheel six auditwheel \
+    tqdm scipy numba pulp tensorstore prospector yapf coverage \
+    cmake pybind11
+RUN source python3.8-env/bin/activate && pip install --upgrade pip \
+    && pip install numpy==1.19.5 setuptools wheel six auditwheel \
+    tqdm scipy numba pulp tensorstore prospector yapf coverage \
+    cmake pybind11
+RUN source python3.9-env/bin/activate && pip install --upgrade pip \
+    && pip install numpy==1.19.5 setuptools wheel six auditwheel \
+    tqdm scipy numba pulp tensorstore prospector yapf coverage \
+    cmake pybind11 \
 
 # Change the CUDA version if it doesn't match the installed version in the base image
 # which is 10.0
@@ -23,13 +32,10 @@ RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
   /install_cuda.sh $JAX_CUDA_VERSION; \
   fi'
 
-
 WORKDIR /
-COPY build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
-COPY test_alpa_docker_entrypoint.sh /test_alpa_docker_entrypoint.sh
-RUN chmod +x /build_wheel_docker_entrypoint.sh
+COPY scripts/test_alpa_docker_entrypoint.sh /test_alpa_docker_entrypoint.sh
 RUN chmod +x /test_alpa_docker_entrypoint.sh
 
 WORKDIR /build
 ENV TEST_TMPDIR /build
-ENTRYPOINT ["/build_wheel_docker_entrypoint.sh"]
+ENTRYPOINT ["/test_alpa_docker_entrypoint.sh"]

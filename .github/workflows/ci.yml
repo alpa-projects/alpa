@@ -38,6 +38,11 @@ jobs:
     runs-on: [self-hosted, gpu]
     needs: linting
     steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ secrets.PAT_TOKEN }}
+
       - uses: actions/checkout@v3
 
       - name: clean up images

@@ -1,0 +1,43 @@
+# This workflow will generate docs for alpa.
+
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build_docs:
+    runs-on: [self-hosted, alpa]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: clean up images
+        run: |
+          docker image prune -f
+
+      - name: build doc-building image
+        run: |
+          docker build -t build-alpa-doc -f docker/Dockerfile.doc_build docker/
+
+      - name: Build docs
+        run: |          
+          docker run --gpus all --tmpfs /build:exec --rm \
+          -v /data/alpa-dist:/alpa-dist \
+          --shm-size=10.24gb \
+          build-alpa-doc
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          personal_token: ${{ secrets.PAT_TOKEN }}
+          external_repository: alpa-projects/alpa-projects.github.io
+          publish_branch: test
+          publish_dir: /data/alpa-dist/docs

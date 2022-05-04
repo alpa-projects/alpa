@@ -102,3 +102,9 @@ intersphinx_mapping = {
     'matplotlib': ('https://matplotlib.org/', None),
     'pandas': ('https://pandas.pydata.org/', None),
 }
+
+# -- Monkey patch -------------------------------------------------
+
+# Fix a bug in sphinx_gallery
+from sphinx_gallery import gen_rst
+setattr(gen_rst._LoggingTee, "close", lambda x:x.restore_std())

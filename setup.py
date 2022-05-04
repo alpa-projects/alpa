@@ -78,7 +78,7 @@ install_require_list = [
     "tqdm",
     "scipy",
     "numba",
-    "ray",
+    "ray[default]",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp",
@@ -93,6 +93,12 @@ dev_require_list = [
     "pybind11"
 ]
 
+doc_require_list = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "sphinx-gallery",
+    "matplotlib"
+]
 
 def build():
     """Build the custom pipeline marker API."""
@@ -178,5 +184,6 @@ if __name__ == "__main__":
         install_requires=install_require_list,
         extras_require={
             'dev': dev_require_list,
+            'doc': doc_require_list + dev_require_list,
         },
     )

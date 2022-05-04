@@ -10,7 +10,7 @@ import ray
 
 import alpa.collective as col
 from alpa.device_mesh import (DistributedArray, ReshardingAllGatherSpec,
-                              ReshardingRecvSpec, ReshardingTileSpec)
+                              ReshardingRecvSpec, ReshardingTileSpec, ReshardingBroadcastSpec)
 from alpa.mesh_executable import RemoteBufferRef
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
@@ -699,6 +699,116 @@ class SymbolicReshardingTask(ReshardingTask):
                 f"{self.task_spec.src_sharding_spec} ->\n"
                 f"{self.task_spec.dst_sharding_spec})")
 
+class SymbolicBroadcastReshardingTask(ReshardingTask):
+    """A Broadcast based symbolic resharding task that puts task info in remote workers."""
+
+    def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
+        super().__init__(task_spec, collective_group, src_mesh, dst_mesh)
+        # task is a dict: (i, src_tile_index)->ReshardingBroadcastSpec
+        self._broadcast_tasks = {host: {} for host in self.src_mesh.workers + self.dst_mesh.workers}
+        self.broadcast_worker_task_ids = {}
+        self.communicator_params = set()
+        
+        # generate the above states
+        self._compile()
+        
+        # create communicators
+        if global_config.eagerly_create_communicators:
+            self._create_resharding_communicators()
+        # print(self.__str__()+"\n")
+        
+    @property
+    def broadcast_tasks(self):
+        """Return broadcast sub-tasks."""
+        return self._broadcast_tasks
+
+    def _compile(self):
+        """
+        Generate all broadcast tasks.
+
+        This function does the following:
+        (1) generate broadcast tasks (if needed),
+        (2) put all tasks to their corresponding MeshHostWorkers.
+        (3) pre-generate NCCL communicators for those tasks.
+        """
+        self._compile_broadcast_tasks()
+
+        # put broadcast tasks on corresponding mesh workers
+        task_dones = []
+        for worker, task in self._broadcast_tasks.items():
+            uuid = next_resharding_task_uuid()
+            self.broadcast_worker_task_ids[worker] = uuid
+            # print(worker, uuid, task)
+            task_dones.append(
+                worker.put_resharding_broadcast_task.remote(uuid, task, self.collective_group.group_name)
+            )
+        ray.get(task_dones)
+
+    def _compile_broadcast_tasks(self):
+        """Compile broadcast tasks."""
+        dtype = self.task_spec.src.aval.dtype        
+        for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
+            self.task_spec.dst_tile_to_src_tiles_map):
+            spec_plan = self.task_spec.strategy.per_spec_plans[i]
+            # print(i)
+            # print(dst_tile, src_tiles, indices_in_dst_tiles)
+            # print(spec_plan)
+            for src_tile_index, (src_tile, indices_in_dst_tile) in enumerate(zip(src_tiles, indices_in_dst_tiles)):
+                sender = spec_plan[src_tile_index]
+                sender_worker = self.collective_group.device_str_to_mesh_worker_map[sender]
+                # print(src_tile_index, sender, sender_worker)
+                broadcast_group = (i, src_tile_index)
+                devices = [sender] + dst_tile.replica_device_strs
+                comm_key = "$".join(devices)
+                world_size = len(devices)
+
+                group_spec = self._broadcast_tasks[sender_worker].setdefault(
+                   broadcast_group, ReshardingBroadcastSpec(comm_key=comm_key, world_size=world_size, \
+                                                            devices_ids=[self.collective_group.device_str_to_device_id_map[sender]], \
+                                                            devices_global_rank=[0], tensor_slices=[src_tile.offset], recv_tile_shape=src_tile.tile_shape,  dtype=dtype)
+                )
+                worker_devices = [(sender_worker, self.collective_group.device_str_to_device_id_map[sender])]
+
+                for replica_index, receiver in enumerate(dst_tile.replica_device_strs):
+                    receiver_worker = (self.collective_group.device_str_to_mesh_worker_map[receiver])
+                    group_spec = self._broadcast_tasks[receiver_worker].setdefault(
+                        broadcast_group, ReshardingBroadcastSpec(comm_key=comm_key, world_size=world_size, \
+                                                                 devices_ids=[], devices_global_rank=[], tensor_slices=[], recv_tile_shape=dst_tile.tile_shape, dtype=dtype)
+                    )
+
+                    group_spec.devices_ids.append(self.collective_group.device_str_to_device_id_map[receiver])
+                    group_spec.devices_global_rank.append(1+replica_index)
+                    group_spec.tensor_slices.append(indices_in_dst_tile)
+                    worker_devices.append((receiver_worker, self.collective_group.device_str_to_device_id_map[receiver]))
+                param = (comm_key, tuple(worker_devices))
+                self.communicator_params.add(param)
+        return self._broadcast_tasks
+
+    def _create_resharding_communicators(self):
+        """Create the NCCL communicators in advance."""
+        group_name = self.collective_group.group_name
+        for param in self.communicator_params:
+            task_dones = []
+            worker_to_devices_and_global_ranks = {}
+            world_size = len(param[1])
+            for global_rank, (worker, device_id) in enumerate(param[1]):
+                if worker not in worker_to_devices_and_global_ranks:
+                    worker_to_devices_and_global_ranks[worker] = {"device_ids":[], "global_ranks":[]}
+                worker_to_devices_and_global_ranks[worker]["device_ids"].append(device_id)
+                worker_to_devices_and_global_ranks[worker]["global_ranks"].append(global_rank)
+
+            sender_worker = param[1][0][0]
+            nccl_uid = ray.get(sender_worker.generate_nccl_uid.remote(group_name))
+            
+            for worker, devices_info in worker_to_devices_and_global_ranks.items():
+                task_dones.append(worker.init_broadcast_communicator.remote(group_name, param[0], world_size, devices_info["device_ids"], devices_info["global_ranks"], nccl_uid))
+                task_dones.append(worker.init_broadcast_communicator.remote(group_name, param[0], world_size, devices_info["device_ids"], devices_info["global_ranks"], nccl_uid))
+            ray.get(task_dones)
+
+    def __str__(self):
+        return (f"Broadcast based ReshardingTask(shape:{self.task_spec.aval.shape},\n"
+                f"{self.task_spec.src_sharding_spec} ->\n"
+                f"{self.task_spec.dst_sharding_spec})")
 
 class CollectiveGroup:
     """
@@ -1062,8 +1172,12 @@ class CrossMeshCommunicator:
         # Generate a send/recv strategies for all resharding tasks by looking at their load.
         for _, _, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
-                strategy = self._generate_send_recv_resharding_strategy_by_loads(
-                    spec, self._sender_loads, self._receiver_loads)
+                if global_config.resharding_mode == "default":
+                    strategy = self._generate_send_recv_resharding_strategy_by_loads(
+                                spec, self._sender_loads, self._receiver_loads)
+                else:
+                    strategy = self._generate_broadcast_resharding_strategy_by_loads(
+                        spec, self._sender_loads, self._receiver_loads)
                 spec.set_resharding_strategy(strategy)
 
     @property
@@ -1207,8 +1321,13 @@ class CrossMeshCommunicator:
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 # TODO(yonghao): to keep some consistency, record both
                 # dst sharding spec before and after allgather
-                dst_sharding_spec, local_chunks = self._rewrite_allgather_spec(
-                    dst_sharding_spec, dst_mesh, var.aval.shape)
+
+                if global_config.resharding_mode == "default":
+                    dst_sharding_spec, local_chunks = self._rewrite_allgather_spec(
+                        dst_sharding_spec, dst_mesh, var.aval.shape)
+                else:
+                    local_chunks = None
+                
                 src_array = VirtualDistributedArray(
                     device_mesh=src_mesh,
                     aval=var.aval,
@@ -1256,6 +1375,31 @@ class CrossMeshCommunicator:
                     dst_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
         strategy = ReshardingStrategy(per_spec_plans, is_local_allgather)
+        return strategy
+
+    @staticmethod
+    def _generate_broadcast_resharding_strategy_by_loads(spec, src_loads, dst_loads):
+        """
+            Generate the broadcast-based resharding strategy by balancing loads.
+            For each tile, I not only allow one source to provide the tile.
+        """
+        # print("++++", spec)
+        #TODO(hexu): (1) allow for multiple sources. (2) update load on the fly.
+        per_spec_plans = []
+        for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
+            per_spec_plan = np.empty( (len(src_tileslices),), dtype=object)
+            # print(dst_tile, src_tileslices)
+            for src_tileslice_idx, src_tileslice in enumerate(src_tileslices):
+                loads = {
+                    sender: src_loads[sender]
+                    for sender in src_tileslice.replica_device_strs
+                }
+                sender = min(loads, key=loads.get)
+                # print("-", src_tileslice_idx, src_tileslice, loads, sender)
+                per_spec_plan[src_tileslice_idx] = sender
+                src_loads[sender] += src_tileslice.slice_size
+            per_spec_plans.append(per_spec_plan)
+        strategy = ReshardingStrategy(per_spec_plans, None)
         return strategy
 
     @staticmethod

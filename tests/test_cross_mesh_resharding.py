@@ -1,4 +1,5 @@
 """Test cross-mesh resharding."""
+from email.policy import default
 import time
 import unittest
 
@@ -34,6 +35,7 @@ def test_resharding(var,
                     use_scatter_gather,
                     src_loads=None,
                     dst_loads=None):
+    global_config.resharding_mode = "default"
     backup_scatter_gather = global_config.use_scatter_gather
     global_config.use_scatter_gather = use_scatter_gather
     # Resharding task spec and send/recv strategy

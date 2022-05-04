@@ -31,9 +31,17 @@ jobs:
         run: |
           docker build -t build-alpa-doc -f docker/Dockerfile.doc_build docker/
 
-      - name: Build and public docs
+      - name: Build docs
         run: |          
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
           --shm-size=10.24gb \
           build-alpa-doc
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          personal_token: ${{ secrets.PAT_TOKEN }}
+          external_repository: alpa-projects/alpa-projects.github.io
+          publish_branch: test
+          publish_dir: /data/alpa-dist/docs

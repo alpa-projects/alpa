@@ -20,10 +20,11 @@ FULLY_OPTIMIZED
 """
 import logging
 import multiprocessing
+import os
 import time
 import traceback
-import warnings
 from typing import Sequence, Optional, Union, Tuple
+import warnings
 
 import numpy as np
 from jax._src.lib import xla_client as xc, xla_extension as xe
@@ -32,6 +33,7 @@ from jax.interpreters import pxla
 
 from alpa.global_env import global_config, AutoShardingOption
 from alpa.measure_record import (StrategyConfig)
+from alpa.timer import timers
 from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
 
 logger = logging.getLogger(__name__)
@@ -267,12 +269,15 @@ def run_auto_sharding_pass(
 
             # Debug options
             "auto_sharding::simplify_graph": True,
-            "auto_sharding::print_strategy": False,
+            "auto_sharding::print_strategy": os.environ.get(
+                "ALPA_DEBUG_PRINT_AS_STRATEGY", "False").lower() in ["true", "1"],
             "auto_sharding::force_strategy": False,
             "auto_sharding::force_strategy_inst_indices": [],
             "auto_sharding::force_strategy_stra_names": [],
     }):
+        timers("auto-sharding").start()
         compiled_module = xe.run_auto_sharding(xla_computation, compile_options)
+        timers("auto-sharding").stop()
 
     if multiple_stages:
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()

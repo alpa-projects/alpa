@@ -1,4 +1,4 @@
-name: Unittest
+name: CI
 
 on:
   workflow_run:
@@ -51,7 +51,6 @@ jobs:
 
       - name: build test image
         run: |
-#          set the CUDA version here
           docker build -t test-alpa-image -f docker/unittest.Dockerfile docker/
 
       - name: Test

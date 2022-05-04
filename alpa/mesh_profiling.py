@@ -151,9 +151,9 @@ class MeshProfilingResult:
             num_devices = len(key[0][0])
             sizes = np.array([x[0] for x in value])
             times = np.array([x[1] for x in value])
-            comm_bytes = (num_devices -
-                              1) / (num_devices **2) * sizes * to_np_dtype(
-                                  key[1]).itemsize
+            comm_bytes = (
+                (num_devices - 1) / (num_devices **2) 
+                * sizes * to_np_dtype(key[1]).itemsize)
             bandwidth = comm_bytes / times / GB
             ret += f"Key: {key}\nBandwidth: {to_str_round(bandwidth, 2)}\n\n"
         return ret

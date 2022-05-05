@@ -125,7 +125,7 @@ def optimize_microbatch(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                         memory_budget_per_device, *avals):
     """Optimize for the best microbatch size. """
     if global_config.num_micro_batches == 'auto':
-        assert global_config.pipeline_stage_mode == "auto_gpipe"
+        assert global_config.pipeline_stage_mode == "auto_stage"
         best_cost, best_microbatch = float('inf'), 0
         num_micro_batches = 1
         funs = {}

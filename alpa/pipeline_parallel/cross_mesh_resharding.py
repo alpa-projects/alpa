@@ -1409,7 +1409,7 @@ class CrossMeshCommunicator:
         #TODO(hexu): (1) allow for multiple sources. (2) update load on the fly.
         per_spec_plans = []
         dst_loads = None
-        for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
+        for _, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             per_spec_plan = np.empty((len(src_tileslices),), dtype=object)
 
             for src_tileslice_idx, src_tileslice in enumerate(src_tileslices):

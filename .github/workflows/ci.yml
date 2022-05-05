@@ -1,4 +1,4 @@
-name: Unittest
+name: CI
 
 on:
   workflow_run:
@@ -35,9 +35,14 @@ jobs:
   
 
   Unittest:
-    runs-on: [self-hosted, alpa]
+    runs-on: [self-hosted, gpu]
     needs: linting
     steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ secrets.PAT_TOKEN }}
+
       - uses: actions/checkout@v3
 
       - name: clean up images
@@ -46,12 +51,10 @@ jobs:
 
       - name: build test image
         run: |
-          cd build
-          docker build . -t test-alpa-image
+          docker build -t test-alpa-image -f docker/unittest.Dockerfile docker/
 
       - name: Test
         run: |
-          cd build
           if [ "${{github.event_name}}" == "pull_request" ]; then
             ALPA_BRANCH=${{ github.event.pull_request.head.sha }}
           else
@@ -62,5 +65,4 @@ jobs:
           
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
-          --shm-size=10.24gb \
-          --entrypoint /test_alpa_docker_entrypoint.sh test-alpa-image 3.8 11.1 ${ALPA_BRANCH##*/}
+          --shm-size=10.24gb test-alpa-image 3.8 ${ALPA_BRANCH##*/}

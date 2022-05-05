@@ -26,10 +26,8 @@ RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
 
 
 WORKDIR /
-COPY build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
-COPY test_alpa_docker_entrypoint.sh /test_alpa_docker_entrypoint.sh
+COPY scripts/build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
 RUN chmod +x /build_wheel_docker_entrypoint.sh
-RUN chmod +x /test_alpa_docker_entrypoint.sh
 
 WORKDIR /build
 ENV TEST_TMPDIR /build

@@ -8,33 +8,27 @@ then
 fi
 
 usage() {
-  echo "usage: ${0##*/} [3.7|3.8|3.9] [11.1|11.2|11.3] [alpa-branch]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [alpa-branch]"
   exit 1
 }
 
-if [[ $# -lt 3 ]]
+if [[ $# -lt 2 ]]
 then
   usage
 fi
 
-ALPA_BRANCH="$3"
-apt install -y coinor-cbc glpk-utils
 export PY_VERSION=$1
-export JAX_CUDA_VERSION=$2
-export CUPY_VERSION=${JAX_CUDA_VERSION//.}
+ALPA_BRANCH="$2"
 
 # Enter python env
 source /python${PY_VERSION}-env/bin/activate
-
 # switch to the merge commit
 git clone https://github.com/alpa-projects/alpa.git
 cd /build/alpa
 git fetch origin
 git checkout ${ALPA_BRANCH##*/}
 
-# install cupy
-pip install cupy-cuda${JAX_CUDA_VERSION//.}
-python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
+# install jaxlib and jax
 pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
 pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 

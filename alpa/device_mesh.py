@@ -237,6 +237,7 @@ class MeshHostWorker:
     def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
                              shard_indices: Sequence[Index],
                              device_ids: Sequence[int]):
+        assert len(uuids) > 0
         ts_spec = self.get_ts_spec(ckpt_dir)
         t = ts.open(ts.Spec(ts_spec), open=True).result()
 
@@ -247,6 +248,7 @@ class MeshHostWorker:
     def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
                            shard_indices: Sequence[Index],
                            global_shape: Sequence[int]):
+        assert len(uuids) > 0
         for uuid in uuids:
             assert uuid in self.buffers
 
@@ -1355,9 +1357,10 @@ class DistributedArray:
             indices_per_host[buf_ref.host_id].append(indice)
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
-            obj_refs.append(
-                self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
-                    path, uuids, indices_per_host[host_id], self.shape))
+            if len(uuids) > 0:
+                obj_refs.append(
+                    self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
+                        path, uuids, indices_per_host[host_id], self.shape))
         return ray.get(obj_refs)
 
     @classmethod
@@ -1378,10 +1381,11 @@ class DistributedArray:
             device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
-            obj_refs.append(
-                device_mesh.workers[host_id].load_buffers_from_ts.remote(
-                    path, uuids, indices_per_host[host_id],
-                    device_ids_per_host[host_id]))
+            if len(uuids) > 0:
+                obj_refs.append(
+                    device_mesh.workers[host_id].load_buffers_from_ts.remote(
+                        path, uuids, indices_per_host[host_id],
+                        device_ids_per_host[host_id]))
         ray.get(obj_refs)
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
                                 indices)

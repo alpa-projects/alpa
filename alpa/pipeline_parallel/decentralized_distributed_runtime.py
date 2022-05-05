@@ -1227,8 +1227,8 @@ class PipelineMeshWorkerExecutable:
         ]:
             if timer_name in timers:
                 timers(timer_name).stop()
-                timers(timer_name).log(mode="sum")
-                timers(timer_name).reset()
+                # timers(timer_name).log(mode="sum")
+                # timers(timer_name).reset()
         timers("overall").stop(sync_func=self.worker.sync)
 
         # copy to global env

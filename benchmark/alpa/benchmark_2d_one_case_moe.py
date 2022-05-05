@@ -41,10 +41,10 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time(None)
 
     # Model configs
-    batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, \
-        num_experts, expert_group_size, \
-        mesh_dim0, mesh_dim1, _, _ , _, num_micro_batches, force_batch_dim_mapping,\
-        use_remat, prefer_reduce_scatter, other, _ = benchmark_case
+    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts,
+     expert_group_size, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (prefer_reduce_scatter, use_remat, (dp, op, pp),
+     force_batch_dim_mapping) = parallel_args
     dtype = jnp.float16
 
     #rang_factor = 1
@@ -67,14 +67,14 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
 
-    if other == "zero-3":
+    if parallel_mode == "zero-3":
         as_option.force_zero_stage_3 = True
-    elif other in ["shard-largest"]:
+    elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
 
-    logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1])
+    logical_mesh = physical_mesh.get_logical_mesh([dp, op])
     set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
 
     # Prepare input batch
@@ -106,7 +106,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, dtype)
+    train_step = get_train_step(grad_func)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -141,7 +141,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Benchmark")
 
     # Compute statistics
-    num_gpus = mesh_dim0 * mesh_dim1
+    num_gpus = physical_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
                                                   mlp_factor=8)

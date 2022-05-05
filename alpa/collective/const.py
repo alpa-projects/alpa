@@ -30,5 +30,5 @@ class ENV(Enum):
     @property
     def val(self):
         """Return the output of the lambda against the system's env value."""
-        _, default_fn = self.value
+        _, default_fn = self.value  # pylint: disable=unpacking-non-sequence
         return default_fn(os.getenv(self.name))

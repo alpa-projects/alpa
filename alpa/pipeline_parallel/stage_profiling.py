@@ -1,19 +1,19 @@
 """Functionalities about profiling the stages."""
-from collections import namedtuple
 import gc
 import logging
-from typing import Dict, Sequence
 from abc import ABC, abstractmethod
+from collections import namedtuple
+from typing import Dict, Sequence
 
+import jax.numpy as jnp
+from jax.core import (ClosedJaxpr, Var, gensym)
+from jax.interpreters import pxla
+from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 import numpy as np
+import tqdm
 import ray
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
-import tqdm
-from jax.core import (ClosedJaxpr, Var, gensym)
-from jax.interpreters import pxla
-import jax.numpy as jnp
-from jax.lib import xla_bridge, xla_client, xla_extension as _xla
 
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
                               VirtualPhysicalMesh, _shard_device_array)
@@ -158,6 +158,7 @@ class CompileWorker:
         }
         try:
             computation = xla_client.XlaComputation(config.model_proto)
+            # pylint: disable=unbalanced-tuple-unpacking
             proto_names, protos, hooked_proto, strategy_config = run_auto_sharding_pass(
                 computation, *jaxpr_args, **other_kwargs)
         except RuntimeError as e:
@@ -209,7 +210,8 @@ class CompileWorker:
                                        output_sharding_proto, hooked_proto,
                                        apply_grad_input_sharding_protos)
 
-    def run_auto_sharding_pass(self, stage_id, proto, jaxpr_args, other_kwargs):
+    @staticmethod
+    def run_auto_sharding_pass(stage_id, proto, jaxpr_args, other_kwargs):
         """Run auto-sharding pass on a proto."""
         computation = xla_client.XlaComputation(proto)
         return stage_id, run_auto_sharding_pass(computation, *jaxpr_args,
@@ -738,7 +740,7 @@ def profile_layer_communication_cost(
             dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
                                                 aval=invar.aval,
                                                 sharding_spec=in_sharding_spec)
-            task_spec = ReshardingTaskSpec(src_array, dst_array)
+            task_spec = ReshardingTaskSpec(src_array, dst_array, [])
             # create resharding strategy, ignore global load balance
             strategy = dummy_resharding_send_recv_strategy(task_spec)
             task_spec.set_resharding_strategy(strategy)

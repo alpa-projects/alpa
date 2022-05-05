@@ -628,40 +628,30 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingAttentionTest("test_bert_layer_data_parallel"))
-    suite.addTest(AutoShardingAttentionTest("test_bert_layer_model_parallel"))
-    suite.addTest(AutoShardingAttentionTest("test_bert_layer_2d_mesh"))
-    suite.addTest(
-        AutoShardingAttentionTest("test_bert_layer_force_batch_dim_mapping"))
+    def add(name):
+        suite.addTest(AutoShardingAttentionTest(name))
 
-    suite.addTest(AutoShardingAttentionTest("test_embedding_2d_mesh"))
+    add("test_bert_layer_data_parallel")
+    add("test_bert_layer_model_parallel")
+    add("test_bert_layer_2d_mesh")
+    add("test_bert_layer_force_batch_dim_mapping")
 
-    suite.addTest(AutoShardingAttentionTest("test_bert_mlm_data_parallel"))
-    suite.addTest(AutoShardingAttentionTest("test_bert_mlm_model_parallel"))
-    suite.addTest(AutoShardingAttentionTest("test_bert_mlm_2d_mesh"))
+    add("test_embedding_2d_mesh")
 
-    suite.addTest(
-        AutoShardingAttentionTest(
-            "test_bert_layer_data_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingAttentionTest(
-            "test_bert_layer_model_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingAttentionTest("test_bert_layer_2d_mesh_reduce_scatter"))
+    add("test_bert_mlm_data_parallel")
+    add("test_bert_mlm_model_parallel")
+    add("test_bert_mlm_2d_mesh")
 
-    suite.addTest(
-        AutoShardingAttentionTest("test_bert_mlm_data_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingAttentionTest(
-            "test_bert_mlm_model_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingAttentionTest("test_bert_mlm_2d_mesh_reduce_scatter"))
-    suite.addTest(
-        AutoShardingAttentionTest(
-            "test_bert_mlm_data_parallel_reduce_scatter_zero_3"))
+    add("test_bert_layer_data_parallel_reduce_scatter")
+    add("test_bert_layer_model_parallel_reduce_scatter")
+    add("test_bert_layer_2d_mesh_reduce_scatter")
 
-    suite.addTest(
-        AutoShardingAttentionTest("test_bert_layer_model_parallel_remat"))
+    add("test_bert_mlm_data_parallel_reduce_scatter")
+    add("test_bert_mlm_model_parallel_reduce_scatter")
+    add("test_bert_mlm_2d_mesh_reduce_scatter")
+    add("test_bert_mlm_data_parallel_reduce_scatter_zero_3")
+
+    add("test_bert_layer_model_parallel_remat")
 
     return suite
 

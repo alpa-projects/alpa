@@ -185,7 +185,7 @@ class AutoShardingConvTest(unittest.TestCase):
 
     def test_n_layer_conv_data_parallel(self):
         batch_size = 16
-        image_size = 64
+        image_size = 16
         num_layers = 3
         channel = 4
 
@@ -201,7 +201,7 @@ class AutoShardingConvTest(unittest.TestCase):
         batch_size = 8
         image_size = 16
         num_layers = 4
-        channel = 1024
+        channel = 256
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
@@ -217,7 +217,7 @@ class AutoShardingConvTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
     def test_n_layer_conv_2d_mesh(self):
-        batch_size = 16
+        batch_size = 8
         image_size = 32
         num_layers = 4
         channel = 8
@@ -253,7 +253,7 @@ class AutoShardingConvTest(unittest.TestCase):
         batch_size = 4
         image_size = 8
         num_layers = 2
-        channel = 1024
+        channel = 256
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
@@ -274,19 +274,18 @@ class AutoShardingConvTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_data_parallel"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_model_parallel"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh"))
-    suite.addTest(AutoShardingConvTest("test_n_layer_conv_2d_mesh_mixed_shape"))
+    def add(name):
+        suite.addTest(AutoShardingConvTest(name))
 
-    suite.addTest(
-        AutoShardingConvTest("test_n_layer_conv_data_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingConvTest(
-            "test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter"))
+    add("test_n_layer_conv_data_parallel")
+    add("test_n_layer_conv_model_parallel")
+    add("test_n_layer_conv_2d_mesh")
+    add("test_n_layer_conv_2d_mesh_mixed_shape")
 
-    suite.addTest(
-        AutoShardingConvTest("test_n_layer_depthwise_conv_model_parallel"))
+    add("test_n_layer_conv_data_parallel_reduce_scatter")
+    add("test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter")
+
+    add("test_n_layer_depthwise_conv_model_parallel")
 
     return suite
 

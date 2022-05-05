@@ -14,7 +14,7 @@ class ScatterGatherTest(PipelineBasicTest):
                               seq_len=4,
                               hidden_size=4,
                               num_heads=1,
-                              pipeline_stage_mode="manual_gpipe",
+                              pipeline_stage_mode="manual_stage",
                               forward_stage_layer_ids=[[0], [1]],
                               overwrite_global_config_dict=dict(
                                   sub_physical_mesh_shapes=[(1, 2)] * 2,

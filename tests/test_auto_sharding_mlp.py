@@ -439,29 +439,24 @@ class AutoShardingMLPTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_data_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_model_parallel"))
-    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_2d_mesh"))
-    suite.addTest(AutoShardingMLPTest("test_n_layer_mlp_force_data_parallel"))
-    suite.addTest(
-        AutoShardingMLPTest("test_n_layer_mlp_force_batch_dim_mapping"))
+    def add(name):
+        suite.addTest(AutoShardingMLPTest(name))
 
-    suite.addTest(
-        AutoShardingMLPTest("test_n_layer_mlp_data_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingMLPTest("test_n_layer_mlp_model_parallel_reduce_scatter"))
-    suite.addTest(
-        AutoShardingMLPTest("test_n_layer_mlp_2d_mesh_reduce_scatter"))
+    add("test_n_layer_mlp_data_parallel")
+    add("test_n_layer_mlp_model_parallel")
+    add("test_n_layer_mlp_2d_mesh")
+    add("test_n_layer_mlp_force_data_parallel")
+    add("test_n_layer_mlp_force_batch_dim_mapping")
 
-    suite.addTest(
-        AutoShardingMLPTest(
-            "test_n_layer_mlp_data_parallel_reduce_scatter_adafactor"))
+    add("test_n_layer_mlp_data_parallel_reduce_scatter")
+    add("test_n_layer_mlp_model_parallel_reduce_scatter")
+    add("test_n_layer_mlp_2d_mesh_reduce_scatter")
 
-    suite.addTest(
-        AutoShardingMLPTest(
-            "test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3"))
+    add("test_n_layer_mlp_data_parallel_reduce_scatter_adafactor")
 
-    suite.addTest(AutoShardingMLPTest("test_weight_init"))
+    add("test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3")
+
+    add("test_weight_init")
 
     return suite
 

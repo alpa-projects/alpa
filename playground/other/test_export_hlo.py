@@ -9,9 +9,23 @@ import alpa
 from alpa import parallelize, global_config, set_parallelize_options, LocalPhysicalDeviceMesh
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
+from alpa.timer import timers
 from alpa.util import map_to_shape, count_communication_primitives, print_used_time, GB
 
 as_option = global_config.default_autosharding_option
+
+
+def compute_gpt_parameter_count(num_layers, hidden_size, vocab_size):
+    return num_layers * (
+            # self-attention
+            hidden_size * (3 * hidden_size + 1) +
+            hidden_size * (hidden_size + 1) +
+            # mlp
+            hidden_size * (4 * hidden_size + 1) +
+            hidden_size * 4 * (hidden_size + 1) +
+            # layer norm
+            hidden_size * 4
+           ) + vocab_size * (hidden_size + 1)
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -93,32 +107,33 @@ def benchmark_2d_one_case_gpt_bert(physical_mesh, model_type, benchmark_case):
 
     # Model configs
     (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     l_dim0, l_dim1, p_dim0, p_dim1, pipeline_mp_size, num_micro_batches, force_batch_dim_mapping,
-     use_remat, prefer_reduce_scatter, other, overwrite_global_config_dict) = benchmark_case
- 
+     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (prefer_reduce_scatter, use_remat, (dp, op, pp),
+     force_batch_dim_mapping) = parallel_args
+
     dtype = jnp.float16
 
     # Parallel configs
+    assert pp == 1, "Do not support pipeline parallelism"
     if num_micro_batches > 1:
         grad_func = alpa.grad
     else:
         num_micro_batches = None
         grad_func = jax.grad
 
-    if force_batch_dim_mapping:
-        # Always map batch dim to mesh dim 0
+    if force_batch_dim_mapping: # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
 
-    if other == "zero-3":
+    if parallel_mode == "zero-3":
         as_option.force_zero_stage_3 = True
-    elif other in ["shard-largest"]:
+    elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
-    logical_mesh = physical_mesh.get_logical_mesh([l_dim0, l_dim1])
-    set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
-
+    logical_mesh = physical_mesh.get_logical_mesh([dp, op])
+    set_parallelize_options(devices=logical_mesh,
+                            num_micro_batches=num_micro_batches)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
@@ -169,39 +184,51 @@ def benchmark_2d_one_case_gpt_bert(physical_mesh, model_type, benchmark_case):
     return executable
 
 
-
 if __name__ == "__main__":
+    global_config.xla_gpu_autotune_level = 0
     model_type = "gpt"
 
     num_nodes = 2
     num_devices_per_node = 8
     _ = None
 
-    # Define a model with 1.3B parameters
-
     # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
-    # #head = num_heads, LD0 = logical_mesh_dimension_0, LD1 = logical_mesh_dimension_1,
-    # PD0 = physical_mesh_dimension_0, PD1 = physical_mesh_dimension_1,
-    # NB = num_micro_batches, FM = force_batch_dim_mapping, Remat = use_rematerialization
-    # RS = prefer_reduce_scatter
-    benchmark_case = (
-        #B, S,     H      L,  #head, V,     LD0,       LD1,
-        8,  1024,  2048,  2,  32,    51200, num_nodes, num_devices_per_node, 
-        #_,_,  PP,  NB, FM,   Remat, RS,    _  _
-        _, _,  1,   1,  True, False, False, _, _)
-
-    # Device a fake physical mesh
+    # head = num_heads,
+    # NB = num_micro_batches, PM = parallel_mode
+    # 3D config = 3D parallel config (Data, Operator, Pipeline)
+    # RS = prefer_reduce_scatter, Remat = use_rematerialization,
+    # FM = force_batch_dim_mapping
+                     #B,  S,     H      L,  #head, V,     NB,
+    benchmark_case = (8,  1024,  1024,  6,  32,    51200, 1,
+                     #PM,        RS,    Remat, 3D config,  FM
+                      "manual", (False, True,  (2, 8, 1),  False))
     num_devices = num_nodes * num_devices_per_node
+
+    num_layers, hidden_size, vocab_size = (benchmark_case[3], benchmark_case[2],
+                                           benchmark_case[5])
+    param_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
+    print(f"Param count: {param_count/1e9:.2f} B")
+
+    # Define a fake physical mesh
     physical_mesh = LocalPhysicalDeviceMesh(devices=[None] * num_devices)
 
     # Compile a mesh executable
     executable = benchmark_2d_one_case_gpt_bert(physical_mesh, "gpt", benchmark_case)
+    print(f"Auto sharding time: {timers('auto-sharding').elapsed():.2f} s\n")
 
     # Write hlo ir to a file
-    print(type(executable.hlo_module))
-
     print("Write hlo module to files...")
-    with open("executable_hlo.txt", "w") as fout:
+    with open("optimized_hlo.txt", "w") as fout:
+        hlo_text = executable.get_hlo_text()
+        fout.write(hlo_text)
+        n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
+            count_communication_primitives(hlo_text)
+        print(f"#total: {n_total}, #all-reduce: {n_all_reduce}, "
+              f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
+              f"#all-to-all: {n_all_to_all}")
+        print(f"Allocation: {executable.get_total_allocation_size() / (1<<30):.2f} GB")
+
+    with open("after_spmd_partitioner_hlo.txt", "w") as fout:
         fout.write(executable.hlo_module.to_string())
 
     with open("executable_hlo.proto", "wb") as fout:

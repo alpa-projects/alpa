@@ -1,3 +1,4 @@
+"""Test the numerical correctness of shard parallel."""
 import unittest
 
 from flax import linen as nn

@@ -3,6 +3,10 @@ Alpa
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
+
+[![Build Jaxlib and Jax](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml)
+[![Unittest](https://github.com/alpa-projects/alpa/actions/workflows/unittest.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/unittest.yml)
+
 Alpa automatically parallelizes tensor computation graphs and runs them on a distributed cluster.
 
 Quick Start

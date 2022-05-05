@@ -1,21 +1,18 @@
 # pylint: disable=consider-using-enumerate
 """Common utilities."""
-from collections import OrderedDict
-from datetime import datetime
-from functools import partial
 import functools
 import itertools as it
 import os
 import subprocess
 import time
+from collections import OrderedDict
+from datetime import datetime
+from functools import partial, partialmethod
 from typing import Sequence, Any
 from warnings import warn
-from functools import partialmethod
 
-import cupy as cp
-import flax
-from flax.training import train_state
 import jax
+import jax.numpy as jnp
 from jax._src import dispatch
 from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.dlpack import from_dlpack, to_dlpack
@@ -24,16 +21,19 @@ from jax.api_util import shaped_abstractify
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
                       ShapedArray, Var)
 from jax.experimental.maps import FrozenDict
-from jax.interpreters import xla, pxla
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
-import jax.numpy as jnp
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
+import flax
+from flax.training import train_state
 import ray
 import tqdm
+import cupy as cp
 
 from alpa.global_env import global_config, is_worker
+
 
 ########################################
 ##### Alpa API Utilities
@@ -239,6 +239,7 @@ class OrderedSet:
             return self.dict == other.dict
         return False
 
+    @classmethod
     def __class_getitem__(cls, item):
         return f"{cls.__name__}[{item.__name__}]"
 
@@ -248,7 +249,7 @@ class DisjointDict:
     Path compression is used to avoid excess of maximum recursion depth."""
 
     def __init__(self):
-        self.values = dict()
+        self.values = {}
 
     def update(self, keys, values):
         for key, value in zip(keys, values):
@@ -257,7 +258,7 @@ class DisjointDict:
     def recursive_lookup(self, key):
         lookup_queue = [key]
         value = None
-        while len(lookup_queue):
+        while len(lookup_queue) > 0:
             k = lookup_queue.pop()
             if value is not None:
                 self.values[k] = value
@@ -349,8 +350,8 @@ def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
                 for a, d in zip(xla_args, donation_results)
                 if d
             ]
-            warn("Some donated buffers were not usable: {}".format(
-                ", ".join(unused_donations)))
+            warn_msg = ", ".join(unused_donations)
+            warn(f"Some donated buffers were not usable: {warn_msg}")
 
     return c.build(out_tuple)
 
@@ -602,15 +603,15 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
 def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                     sliced_eqns) -> Sequence[ClosedJaxpr]:
     """Wrap sliced equations to a list of ClosedJaxpr."""
-    N = len(sliced_eqns)
+    n_eqns = len(sliced_eqns)
     global_invars = OrderedSet(closed_jaxpr.jaxpr.invars)
     global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
     global_outvars = OrderedSet(
         var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
     result = []
-    layer_invars = [OrderedSet() for _ in range(N)]
-    layer_outvars = [OrderedSet() for _ in range(N)]
-    layer_consts = [dict() for _ in range(N)]
+    layer_invars = [OrderedSet() for _ in range(n_eqns)]
+    layer_outvars = [OrderedSet() for _ in range(n_eqns)]
+    layer_consts = [{} for _ in range(n_eqns)]
     var_layer_dict = {}
     for i, eqns in enumerate(sliced_eqns):
         for eqn in eqns:
@@ -643,7 +644,7 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
 def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     """Print jaxpr int a temporary file for debugging purposes."""
     path = "/tmp/" + filename
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(str(jaxpr))
 
 
@@ -755,7 +756,7 @@ def benchmark_func(run_func,
 ########################################
 
 
-def is_continuous_subset(slice, tensor_shape, row_major=True):
+def is_continuous_subset(tensor_slice, tensor_shape, row_major=True):
     """
     Figure out whether a slice is a continuous subset of the tensor.
 
@@ -770,30 +771,27 @@ def is_continuous_subset(slice, tensor_shape, row_major=True):
     if not row_major:
         raise NotImplementedError("Do not support column major.")
     ndim = len(tensor_shape)
-    if len(slice) != ndim:
+    if len(tensor_slice) != ndim:
         raise RuntimeError("ndims mismatch.")
-    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
     for dim, dim_shape in enumerate(slice_shape):
         if dim + 1 > ndim:
             return True
         if dim_shape == 1:
             continue
-        if slice_shape[dim + 1:] == tensor_shape[dim + 1:]:
-            return True
-        else:
-            return False
+        return slice_shape[dim + 1:] == tensor_shape[dim + 1:]
 
 
-def infer_offset_and_n_elements(slice):
+def infer_offset_and_n_elements(tensor_slice):
     """Calculate the offset and #elements before making NCCL calls.
 
     This function assumes the slice is a continuous subset of the original tensor.
     """
-    slice_shape = tuple(ind.stop - ind.start for ind in slice)
+    slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
     offset = tuple()
     n_elements = np.prod(slice_shape)
     for dim, dim_shape in enumerate(slice_shape):
-        offset = offset + (slice[dim].start,)
+        offset = offset + (tensor_slice[dim].start,)
         if dim_shape > 1:
             break
     return offset, n_elements
@@ -939,7 +937,7 @@ def write_tsv(heads: Sequence[str],
 
     values = [str(x) for x in values]
 
-    with open(filename, "a") as fout:
+    with open(filename, "a", encoding="utf-8") as fout:
         fout.write("\t".join(values) + "\n")
 
     if print_line:
@@ -953,16 +951,16 @@ def to_str_round(x: Any, decimal: int = 6):
     """Print a python object but round all floating point numbers."""
     if isinstance(x, str):
         return x
-    if isinstance(x, (list, tuple)) or isinstance(x, np.ndarray):
-        return "[" + ", ".join([to_str_round(y, decimal=decimal) for y in x
-                               ]) + "]"
+    if isinstance(x, (list, tuple, np.ndarray)):
+        tmp_str = ", ".join([to_str_round(y, decimal=decimal) for y in x])
+        return "[" + tmp_str + "]"
     if isinstance(x, dict):
         return str(
-            {k: eval(to_str_round(v, decimal=decimal)) for k, v in x.items()})
+            {k: to_str_round(v, decimal=decimal) for k, v in x.items()})
     if isinstance(x, int):
         return str(x)
     if isinstance(x, float):
-        format_str = "%%.%df" % decimal
+        format_str = f"%.{decimal}f"
         return format_str % x
     if x is None:
         return str(x)

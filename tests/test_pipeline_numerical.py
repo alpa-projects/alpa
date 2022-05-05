@@ -1,25 +1,31 @@
+"""Test the numerical correctness of shard parallel."""
 import unittest
+import time
+
 import jax
 
 from alpa.testing import PipelineBasicTest
 
 
-class StageConstructionTest(PipelineBasicTest):
+class AccumulateGradTest(PipelineBasicTest):
 
     def test_mlp(self):
-        self.run_mlp(return_value=True)
+        self.run_mlp()
 
     def test_2_layer_bert(self):
-        self.run_n_layer_bert(n_layers=2, return_value=True)
+        self.run_n_layer_bert(n_layers=2,
+                              use_value_and_grad=True)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert(self):
-        self.run_n_layer_bert(n_layers=8, return_value=True)
+        self.run_n_layer_bert(n_layers=8,
+                              use_value_and_grad=True)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert_manual_stage_assignment(self):
         self.run_n_layer_bert(n_layers=8,
-                              pipeline_stage_mode="manual_gpipe",
+                              use_value_and_grad=True,
+                              pipeline_stage_mode="manual_stage",
                               forward_stage_layer_ids=[[0, 1, 2, 3],
                                                        [4, 5, 6, 7]],
                               submesh_shapes=[(1, 4), (1, 4)])
@@ -27,11 +33,11 @@ class StageConstructionTest(PipelineBasicTest):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(StageConstructionTest('test_mlp'))
-    suite.addTest(StageConstructionTest('test_2_layer_bert'))
-    suite.addTest(StageConstructionTest('test_8_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_mlp'))
+    suite.addTest(AccumulateGradTest('test_2_layer_bert'))
+    suite.addTest(AccumulateGradTest('test_8_layer_bert'))
     suite.addTest(
-        StageConstructionTest('test_8_layer_bert_manual_stage_assignment'))
+        AccumulateGradTest('test_8_layer_bert_manual_stage_assignment'))
     return suite
 
 

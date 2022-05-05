@@ -1,8 +1,7 @@
 """Top-level user API."""
 from functools import wraps
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence
 
-import jax
 from jax import linear_util as lu
 from jax._src import api
 from jax._src.util import safe_map, HashableFunction
@@ -11,7 +10,6 @@ from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
-from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.global_env import global_config
@@ -219,7 +217,7 @@ def value_and_grad(*args, **kwargs):
 
     def ret(*call_args, **call_kwargs):
         func = api.value_and_grad(*args, **kwargs)
-        val, grad = func(*call_args, **call_kwargs)
-        return mark_gradient((val, grad))
+        val, ggrad = func(*call_args, **call_kwargs)
+        return mark_gradient((val, ggrad))
 
     return ret

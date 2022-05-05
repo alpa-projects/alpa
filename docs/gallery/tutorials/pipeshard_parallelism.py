@@ -206,11 +206,11 @@ manual_pipeline_train_step.get_executable(manual_pipeline_state,
 # Create a new cluster class for automatic pipeline parallelism.
 device_cluster = alpa.DeviceCluster()
 devices = device_cluster.get_virtual_physical_mesh()
-# Set pipeline stage mode to "auto_gpipe" to enable automatic
+# Set pipeline stage mode to "auto_stage" to enable automatic
 # parallelism with automatic stage slicing and mesh assignment.
 alpa.set_parallelize_options(
     devices=devices, strategy="pipeshard_parallel",
-    pipeline_stage_mode="auto_gpipe", num_micro_batches=num_micro_batches)
+    pipeline_stage_mode="auto_stage", num_micro_batches=num_micro_batches)
 
 # Define training step with automatic pipeline-operator parallelism. Note that
 # we reuse the same model and state as the single device case. The only

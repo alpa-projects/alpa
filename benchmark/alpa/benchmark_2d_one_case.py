@@ -21,10 +21,6 @@ def benchmark_one_case(model, case, niter,
                        local, use_separate_process,
                        dump_result=False):
     if not use_separate_process:
-        if model == "wresnet":
-            global_config.xla_client_mem_fraction = 0.88
-            global_config.xla_gpu_autotune_level = 0
-
         # Launch physical mesh
         if local:
             assert num_hosts == 1
@@ -45,6 +41,10 @@ def benchmark_one_case(model, case, niter,
         elif model == "moe":
             result = benchmark_moe_internal(physical_mesh, case, niter)
         elif model == "wresnet":
+            global_config.xla_client_mem_fraction = 0.88
+            # Due to legacy issues, we turn off auto-tuning. Although the performance
+            # will be much better if we turn it on
+            global_config.xla_gpu_autotune_level = 0
             result = benchmark_wresnet_internal(physical_mesh, case, niter)
         else:
             raise ValueError(f"Invalid model: {model}")

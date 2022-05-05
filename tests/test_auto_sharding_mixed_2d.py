@@ -1,4 +1,4 @@
-"""Test auto sharding with MLP."""
+"""Test auto sharding with mixed mesh shape."""
 
 import unittest
 

@@ -1,3 +1,11 @@
+"""
+Benchmark the communication bandwidth with Ray + NCCL.
+We use the python binding cupy.nccl to call NCCL.
+
+Usage:
+  python3 profile_communication.py
+"""
+
 import argparse
 import time
 import os

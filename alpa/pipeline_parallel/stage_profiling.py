@@ -711,6 +711,7 @@ def dummy_resharding_send_recv_strategy(spec: ReshardingTaskSpec):
     return CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
         spec, src_loads, dst_loads)
 
+
 def dummy_resharding_broadcast_strategy(spec: ReshardingTaskSpec):
     """Generates a dummy sharding strategy for profiling."""
     src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
@@ -762,13 +763,15 @@ def profile_layer_communication_cost(
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_buffers, input_indices)
             if global_config.resharding_mode == "default":
-                task = SymbolicReshardingTask(task_spec, collective_group,
-                                            collective_group.src_mesh,
-                                            collective_group.dst_mesh)
+                task = SymbolicReshardingTask(task_spec,
+                                              collective_group,
+                                              collective_group.src_mesh,
+                                              collective_group.dst_mesh)
             else:
-                task = SymbolicBroadcastReshardingTask(task_spec, collective_group,
-                                                    collective_group.src_mesh,
-                                                    collective_group.dst_mesh)
+                task = SymbolicBroadcastReshardingTask(task_spec,
+                                                       collective_group,
+                                                       collective_group.src_mesh,
+                                                       collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:

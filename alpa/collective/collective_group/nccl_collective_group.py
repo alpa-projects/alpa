@@ -257,7 +257,9 @@ class NCCLGroup(BaseGroup):
         _check_gpu_tensors(tensors)
 
         key = broadcast_options.comm_key
-        comms = self._get_nccl_broadcast_communicator(key, broadcast_options.world_size, broadcast_options.devices_ids, broadcast_options.devices_global_rank)
+        comms = self._get_nccl_broadcast_communicator(key, broadcast_options.world_size,
+                                                      broadcast_options.devices_ids,
+                                                      broadcast_options.devices_global_rank)
         streams = self._dev_streams_map[key]
         events = self._dev_event_map[key]
         self._sync_streams(broadcast_options.devices_ids, events, streams)
@@ -282,7 +284,7 @@ class NCCLGroup(BaseGroup):
                                 that participates into the collective.
             devices_global_rank (List): the corresponding global rank for device in devices_ids.
             nccl_uid : If it is None, we will create a nccl_uid here. 
-            
+
         Returns:
             communicator: the NCCL communicator corresponded to the devices.
         """
@@ -291,7 +293,7 @@ class NCCLGroup(BaseGroup):
 
         for d in devices_ids:
             self._used_gpu_indices.add(d)
-        
+
         # TODO(Hao): lock the _dev_comm_map here.
         if comm_key in self._dev_comm_map:
             return self._dev_comm_map[comm_key]

@@ -61,7 +61,9 @@ ReshardingAllGatherSpec = namedtuple(
 ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
                                      ["allgather_specs"])
 ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec",
-                                     ["comm_key", "world_size", "devices_ids", "devices_global_rank", "tensor_slices", "recv_tile_shape", "dtype"])
+                                     ["comm_key", "world_size", "devices_ids",
+                                      "devices_global_rank", "tensor_slices",
+                                      "recv_tile_shape", "dtype"])
 ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
@@ -297,7 +299,8 @@ class MeshHostWorker:
                                   backend=backend,
                                   group_name=group_name)
 
-    def init_broadcast_communicator(self, group_name, comm_key, world_size, device_ids, devices_global_rank, nccl_uid):
+    @staticmethod
+    def init_broadcast_communicator(group_name, comm_key, world_size, device_ids, devices_global_rank, nccl_uid):
         """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
         g = col.check_and_get_group(group_name)
@@ -543,11 +546,15 @@ class MeshHostWorker:
             used_tensors.append(to_use)
 
         _, n_elements = infer_offset_and_n_elements(tensor_slices[0])
-        col.broadcast_partialgpu([used_tensor[0][used_tensor[1]] if slice_type=="continuous_subset" else used_tensor \
-                                 for used_tensor, slice_type in zip(used_tensors, slice_types)], \
+        col.broadcast_partialgpu([used_tensor[0][used_tensor[1]] if slice_type == "continuous_subset" else used_tensor 
+                                 for used_tensor, slice_type in zip(used_tensors, slice_types)], 
                                  n_elements, comm_key, world_size, devices_ids, devices_global_rank, group_name)
-        
-        for used_tensor, slice_type, device_id, global_rank, tensor_slice in zip(used_tensors, slice_types, devices_ids, devices_global_rank, tensor_slices):
+
+        for used_tensor, slice_type, device_id, global_rank, tensor_slice in zip(used_tensors,
+                                                                                 slice_types,
+                                                                                 devices_ids,
+                                                                                 devices_global_rank,
+                                                                                 tensor_slices):
             if global_rank == 0:
                 continue
             uuid = uuids[device_id]
@@ -575,15 +582,23 @@ class MeshHostWorker:
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
             if set_empty_buffer:
-                for device_id, global_rank in zip(broadcast_spec.devices_ids, broadcast_spec.devices_global_rank):
+                for device_id, global_rank in zip(broadcast_spec.devices_ids,
+                                                  broadcast_spec.devices_global_rank):
                     if global_rank == 0:
                         continue
                     buf_uuid = buffer_uuids[device_id]
-                    if not buf_uuid in self.buffers:
-                        self.put_non_zero_buffer(buf_uuid, device_id, broadcast_spec.recv_tile_shape, broadcast_spec.dtype)
+                    if buf_uuid not in self.buffers:
+                        self.put_non_zero_buffer(buf_uuid, device_id,
+                                                 broadcast_spec.recv_tile_shape,
+                                                 broadcast_spec.dtype)
 
-            self.broadcast(buffer_uuids, broadcast_spec.comm_key, broadcast_spec.world_size, broadcast_spec.devices_ids,
-                           broadcast_spec.devices_global_rank, broadcast_spec.tensor_slices, task.group_name)    
+            self.broadcast(buffer_uuids,
+                           broadcast_spec.comm_key,
+                           broadcast_spec.world_size,
+                           broadcast_spec.devices_ids,
+                           broadcast_spec.devices_global_rank,
+                           broadcast_spec.tensor_slices,
+                           task.group_name)
 
     @staticmethod
     def destroy_collective_group(group_name: str = "default"):

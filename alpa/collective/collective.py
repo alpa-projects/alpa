@@ -381,6 +381,7 @@ def broadcast(tensor, src_rank: int = 0, group_name: str = "default"):
     opts.root_tensor = 0
     g.broadcast([tensor], opts)
 
+
 def broadcast_partialgpu(tensor_list,
                          n_elements,
                          comm_key,
@@ -416,6 +417,7 @@ def broadcast_partialgpu(tensor_list,
     opts.devices_ids = devices_ids
     opts.devices_global_rank = devices_global_rank
     g.broadcast_partialgpu(tensor_list, opts)
+
 
 def broadcast_multigpu(tensor_list,
                        src_rank: int = 0,

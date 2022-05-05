@@ -46,6 +46,7 @@ class PipelineInstType(enum.IntEnum):
     FREE = 3
     BROADCAST = 4
 
+
 @dataclass
 class PipelineInstruction:
     """Base class for pipeline instructions."""
@@ -94,11 +95,11 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Broadcast(cls,
-                task_uuid,
-                input_uuids,
-                output_uuids,
-                info="broadcast"):  # noqa
+    def Broadcast(cls, # noqa
+                  task_uuid,
+                  input_uuids,
+                  output_uuids,
+                  info="broadcast"):  # noqa
         return cls(opcode=PipelineInstType.BROADCAST,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
@@ -778,9 +779,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 host_id = dst_mesh.workers.index(w)
                 output_uuids = list(recv_uuids[host_id])
             # print(w, task_uuid, host_id, input_uuids, output_uuids)
-            instruction_lists[w].append(
-                    PipelineInstruction.Broadcast(task_uuid, input_uuids, output_uuids, "broadcast")
-                )
+            instruction_lists[w].append(PipelineInstruction.Broadcast(task_uuid, 
+                                                                      input_uuids, 
+                                                                      output_uuids, 
+                                                                      "broadcast")
+                                        )
 
     def _compile_free(self, worker, used_outside, donated):
         """Compile and generate FREE PipelineInstruction to recycle memory."""
@@ -1210,7 +1213,9 @@ class PipelineMeshWorkerExecutable:
             elif instruction.opcode == PipelineInstType.BROADCAST:
                 timers("resharding_broadcast").start()
                 self.worker.run_resharding_broadcast_task(instruction.task_uuid,
-                                                          instruction.input_uuids if instruction.input_uuids is not None else instruction.output_uuids)
+                                                          instruction.input_uuids
+                                                          if instruction.input_uuids is not None
+                                                          else instruction.output_uuids)
                 timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()

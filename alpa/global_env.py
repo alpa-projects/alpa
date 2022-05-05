@@ -108,7 +108,7 @@ class GlobalConfig:
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
-        self.resharding_mode = "default" # or "broadcast"
+        self.resharding_mode = "default"  # or "broadcast"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42

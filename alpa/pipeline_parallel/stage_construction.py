@@ -1,6 +1,5 @@
 """Core implementations for stage construction algorithms."""
 import logging
-import math
 from datetime import datetime
 from time import time
 from typing import Sequence, List, Tuple

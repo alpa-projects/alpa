@@ -361,3 +361,39 @@ class PipeDreamFlush(PipelineSchedule):
         """Return the index of the previous microbatch at backward pass."""
         assert batch_idx > 0
         return batch_idx - 1
+
+
+class InferenceSchedule(PipelineSchedule):
+    """Construct a Gpipe-like schedule."""
+
+    def _generate_schedule(self):
+        """
+        Generate a forward-only schedule.
+
+        The schedule will look like below:
+        i: index of micro-batch
+        j: index of partition/device
+        k: clock number
+
+        k (i,j) (i,j) (i,j)
+        - ----- ----- -----
+        0 (0,0)
+        1 (1,0) (0,1)
+        2 (2,0) (1,1) (0,2)
+        3       (2,1) (1,2)
+        4             (2,2)
+        """
+        m = self.num_batch
+        n = self.num_mesh
+        num_clock = m + n - 1
+        schedules = []
+        for k in range(num_clock):
+            scheds = [None] * n
+            for d in range(max(1 + k - m, 0), min(1 + k, n)):
+                scheds[d] = (k - d, d)
+            schedules.append(scheds)
+
+        # There should be no apply_grad tasks in the inference schedule.
+        assert len(self.apply_grad_placement) == 0
+
+        return schedules

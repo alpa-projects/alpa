@@ -13,7 +13,9 @@ from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                              PipeDreamFlush, gen_dependency_with_stages)
+                                              PipeDreamFlush,
+                                              InferenceSchedule,
+                                              gen_dependency_with_stages)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
@@ -54,17 +56,13 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, avals)
 
-    have_apply_grad = jaxpr_have_apply_grad(closed_jaxpr)
-
-    if have_apply_grad:
-        pass
-
     gensym_func = gensym([closed_jaxpr.jaxpr])
 
     # Split the jaxpr into compute_grad and apply_grad
     closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
         split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
     have_apply_grad = barrier is not None
+    inference_mode = (global_config.pipeline_parallel_schedule == "inference")
 
     if have_apply_grad:
         acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = (
@@ -81,27 +79,32 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
     assert (len(jax_pipeline_layers) == len(
-            set(layer.name for layer in jax_pipeline_layers))), \
-        "All layers must have unique names."
-    jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
-    jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
+            set(layer.name for layer in jax_pipeline_layers))), (
+        "All layers must have unique names.")
+    if not inference_mode:
+        jax_pipeline_layers = (mark_missing_vars_in_backward_computation_pipeline_marks(
+            jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func))
+        jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
+        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     # Initialize donation map
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     donation_mapping = dict(grad_in_to_out) if have_apply_grad else {}
 
-    num_forward_layers = len(jax_pipeline_layers) // 2
-    layer_to_dummy_mesh = (list(range(num_forward_layers)) +
-                           list(reversed(range(num_forward_layers))))
+    if inference_mode:
+        num_forward_layers = len(jax_pipeline_layers) // 2
+        layer_to_dummy_mesh = (list(range(num_forward_layers)) +
+                               list(reversed(range(num_forward_layers))))
+    else:
+        num_forward_layers = len(jax_pipeline_layers)
+        layer_to_dummy_mesh = list(range(num_forward_layers))
     # FIXME(yonghao): not consider the case that a pair of layers have no apply gradient part
     (jax_apply_layers, _, _, _, dummy_global_outvars,
      dummy_donated_invars) = process_apply_gradient(
          apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
          layer_to_dummy_mesh, gensym_func, num_micro_batches,
-         len(jax_pipeline_layers) // 2, global_invars, global_outvars,
+         num_forward_layers, global_invars, global_outvars,
          donated_invars)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   dummy_donated_invars,
@@ -160,6 +163,11 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                   meshes=sliced_virtual_meshes,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_micro_batches)
+    elif global_config.pipeline_parallel_schedule == "inference":
+        schedule = InferenceSchedule(dependency=dependency,
+                                     meshes=sliced_virtual_meshes,
+                                     apply_grad_placement=apply_grad_placement,
+                                     num_batch=num_micro_batches)
     else:
         raise RuntimeError(f"Unrecognized pipeline parallel schedule. "
                            f"Got {global_config.pipeline_parallel_schedule}. "

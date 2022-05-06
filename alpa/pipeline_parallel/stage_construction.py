@@ -617,8 +617,8 @@ def cluster_layers_and_slice_mesh(
             if num_devices_per_mesh > devices.num_devices_per_host:
                 assert num_devices_per_mesh % devices.num_devices_per_host == 0
                 submesh_shape = (num_devices_per_mesh //
-+                                devices.num_devices_per_host,
-+                                devices.num_devices_per_host)
+                                 devices.num_devices_per_host,
+                                 devices.num_devices_per_host)
             else:
                 assert devices.num_devices_per_host % num_devices_per_mesh == 0
                 submesh_shape = (1, num_devices_per_mesh)

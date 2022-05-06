@@ -1,8 +1,17 @@
 name: Release Alpa and Jaxlib
 
 on:
-  release:
-    types: [created]
+#  release:
+#    types: [created]
+  workflow_dispatch:
+    inputs:
+      tensorflow:
+        description: 'TensorFlow-alpa branch to build'
+        required: true
+        default: 'master'
+
+  push:
+    branches: [hao-cd]
 
 
 env:
@@ -11,12 +20,15 @@ env:
 
 
 jobs:
-
   release-jaxlib:
     runs-on: [ self-hosted ]
 
-    steps:
+    strategy:
+      matrix:
+        cuda: [11.0, 11.1, 11.2]
+        python: [3.7, 3.8, 3.9]
 
+    steps:
       - uses: actions/checkout@v3
 
       - name: clean up images
@@ -25,65 +37,71 @@ jobs:
 
       - name: build image
         run: |
-          docker build -t build-jaxlib-image -f docker/build_jaxlib.Dockerfile docker/
+          docker build -t build-jaxlib-image-cuda${CUDA_VERSION} \
+            -f docker/build_jaxlib.Dockerfile docker/ \
+            --build-arg JAX_CUDA_VERSION=${CUDA_VERSION}
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
 
       - name: Compile Jaxlib
         run: |
-          mkdir -p dist
+          mkdir -p dist/${CUDA_VERSION//.}
           docker run --gpus all --tmpfs /build:exec \
-          --rm -v $(pwd)/dist:/dist build-jaxlib-image \
-          3.8 cuda 11.1 main
+          --rm -v $(pwd)/dist:/dist build-jaxlib-image-cuda${CUDA_VERSION} \
+          ${PYTHON_VERSION} cuda ${CUDA_VERSION} main
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
+          PYTHON_VERSION: ${{ matrix.python }}
 
       # change this to publishing to pypi
       - name: Publish to local
         run: |
           echo "Move the Jaxlib binary"
-          mv dist/*.whl /data/alpa-dist/jaxlib-alpa/*.whl
+          mv dist/*.whl dist/${CUDA_VERSION//.}/
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
 
-
-
-  release-alpa:
-
-    runs-on: [self-hosted]
-
-    needs: release-jaxlib
-
-    steps:
-
-      - uses: actions/checkout@v3
-
-      - name: Set up Python 3.8
-        uses: actions/setup-python@v2
-        with:
-          python-version: '3.8'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install setuptools wheel twine six auditwheel pybind11 cmake
-
-      - name: Build and publish
-        run: |
-          export VERSION=$(./GENVER --pep440)
-          python setup.py sdist bdist_wheel
-          ls -ltr dist/
-          twine upload --repository testpypi dist/*
-
-      - name: Bump VERSION and commit
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git checkout -b actions/version-bump
-          cat VERSION | awk -F. -v OFS=. 'NF==1{print ++$NF}; NF>1{$NF=sprintf("%0*d", length($NF), ($NF+1)); print}' > VERSION.tmp && mv VERSION.tmp VERSION
-          git add VERSION
-          git commit -m "Bump candidate version"
-
-      - name: Push branch
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          branch: actions/version-bump
-          force: true
-
-      - name: Create version-bump PR
-        uses: repo-sync
+#  release-alpa:
+#    runs-on: [self-hosted]
+#
+#    needs: release-jaxlib
+#
+#    steps:
+#
+#      - uses: actions/checkout@v3
+#
+#      - name: Set up Python 3.8
+#        uses: actions/setup-python@v2
+#        with:
+#          python-version: '3.8'
+#
+#      - name: Install dependencies
+#        run: |
+#          python -m pip install --upgrade pip
+#          pip install setuptools wheel twine six auditwheel pybind11 cmake
+#
+#      - name: Build and publish
+#        run: |
+#          export VERSION=$(./GENVER --pep440)
+#          python setup.py sdist bdist_wheel
+#          ls -ltr dist/
+#          twine upload --repository testpypi dist/*
+#
+#      - name: Bump VERSION and commit
+#        run: |
+#          git config --local user.email "action@github.com"
+#          git config --local user.name "GitHub Action"
+#          git checkout -b actions/version-bump
+#          cat VERSION | awk -F. -v OFS=. 'NF==1{print ++$NF}; NF>1{$NF=sprintf("%0*d", length($NF), ($NF+1)); print}' > VERSION.tmp && mv VERSION.tmp VERSION
+#          git add VERSION
+#          git commit -m "Bump candidate version"
+#
+#      - name: Push branch
+#        uses: ad-m/github-push-action@master
+#        with:
+#          github_token: ${{ secrets.PAT_TOKEN }}
+#          branch: actions/version-bump
+#          force: true
+#
+#      - name: Create version-bump PR
+#        uses: repo-sync

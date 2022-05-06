@@ -20,9 +20,18 @@ env:
 
 
 jobs:
+
+  clean-up:
+    runs-on: [self-hosted]
+
+    steps:
+      - name: clean up images
+        run: |
+          docker image prune -f
+
   release-jaxlib:
     runs-on: [ self-hosted ]
-
+    needs: [clean-up]
     strategy:
       matrix:
         cuda: [11.0, 11.1, 11.2]
@@ -30,10 +39,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-
-      - name: clean up images
-        run: |
-          docker image prune -f
 
       - name: build image
         run: |

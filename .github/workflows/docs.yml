@@ -39,5 +39,5 @@ jobs:
         with:
           personal_token: ${{ secrets.PAT_TOKEN }}
           external_repository: alpa-projects/alpa-projects.github.io
-          publish_branch: test
+          publish_branch: master
           publish_dir: /data/alpa-dist/docs

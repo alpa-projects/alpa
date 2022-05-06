@@ -41,7 +41,7 @@ jobs:
       - name: Cancel previous
         uses: styfle/cancel-workflow-action@0.9.1
         with:
-          access_token: ${{ secrets.PAT_TOKEN }}'
+          access_token: ${{ secrets.PAT_TOKEN }}
         if: github.event.pull_request.head.repo.full_name == github.repository
 
       - uses: actions/checkout@v3

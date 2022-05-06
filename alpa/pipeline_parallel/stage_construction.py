@@ -1,6 +1,5 @@
 """Core implementations for stage construction algorithms."""
 import logging
-import math
 from datetime import datetime
 from time import time
 from typing import Sequence, List, Tuple
@@ -448,18 +447,18 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
     return compute_cost, max_n_succ_stages
 
 
-def get_sliced_virtual_submeshes(virtual_mesh, submeshe_shapes):
+def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
     """Slice the origin mesh into submeshes given submesh shapes."""
     num_hosts = virtual_mesh.num_hosts
     num_devices_per_host = virtual_mesh.num_devices_per_host
-    submesh_sizes = [np.prod(submesh) for submesh in submeshe_shapes]
-    virtual_submeshes = [None] * len(submeshe_shapes)
+    submesh_sizes = [np.prod(submesh) for submesh in submesh_shapes]
+    virtual_submeshes = [None] * len(submesh_shapes)
     assert sum(submesh_sizes) == virtual_mesh.num_devices
     sorted_submesh_indices = np.argsort(submesh_sizes)
     current_host_id = 0
     current_device_id = 0
     for i in reversed(sorted_submesh_indices):
-        required_num_hosts, required_num_devices = submeshe_shapes[i]
+        required_num_hosts, required_num_devices = submesh_shapes[i]
         if required_num_devices == num_devices_per_host:
             assert current_device_id == 0
             assert current_host_id + required_num_hosts <= num_hosts, (
@@ -487,97 +486,6 @@ def get_sliced_virtual_submeshes(virtual_mesh, submeshe_shapes):
     assert current_host_id == num_hosts
     assert current_device_id == 0
     return virtual_submeshes
-
-
-def uniform_slice_mesh(original_mesh, num_meshes, submesh_shapes=None):
-    """
-    Slice the mesh uniformly.
-
-    In this impl, we guarantee the slicing follows:
-    - len(sliced_meshes) == num_stages / 2 (place forward/backward in a mesh);
-    - higher priority to slice over the node dimension rather than gpu dimension
-    (so to preserve nvlink usage).
-
-    Args:
-        original_mesh: a virtual device mesh.
-        num_meshes: number of submeshes.
-        submesh_shapes (List[Tuple(int, int)]): a list of desired submesh shapes.
-
-    Returns:
-        sliced_meshes (List[Mesh]): List of meshes to spawn worker on.
-    """
-    output_meshes = []
-    assert isinstance(original_mesh, VirtualPhysicalMesh)
-    if original_mesh.num_devices < num_meshes:
-        raise RuntimeError("#device < #workers.")
-    num_device_per_mesh = int(original_mesh.num_devices / num_meshes)
-    num_device_per_host = original_mesh.num_devices_per_host
-    num_host = original_mesh.num_hosts
-
-    if submesh_shapes is None:
-        # uniformly slice the mesh by priority
-        if num_device_per_host >= num_device_per_mesh:
-            num_mesh_per_host = num_device_per_host // num_device_per_mesh
-            for i in range(num_meshes):
-                host_idx = i // num_mesh_per_host
-                mesh_idx = i % num_mesh_per_host
-                ind = list(range(num_device_per_host))
-                mesh = original_mesh.slice_1d(0, [host_idx]).slice_1d(
-                    1, [
-                        ind[mesh_idx * num_device_per_mesh:(mesh_idx + 1) *
-                            num_device_per_mesh]
-                    ])
-                output_meshes.append(mesh)
-        else:
-            num_host_per_mesh = math.ceil(num_device_per_mesh /
-                                          num_device_per_host)
-            ind = list(range(num_host))
-            for i in range(num_meshes):
-                output_meshes.append((original_mesh.slice_1d(
-                    0, ind[num_host_per_mesh * i:num_host_per_mesh * (i + 1)])))
-    else:
-        num_required_host, num_required_device_per_host = submesh_shapes[0]
-        assert num_required_host <= num_host, (
-            f"cannot satisfy physical mesh requirement, require "
-            f"{num_required_host} hosts given {num_host} hosts.")
-        assert num_required_device_per_host <= num_device_per_host, (
-            f"cannot satisfy physical mesh requirement, require "
-            f"{num_required_device_per_host} gpus per host given "
-            f"{num_device_per_host} gpus per host.")
-        # doing assignment
-        if num_required_device_per_host == num_device_per_host:
-            # allocate all devices of a host
-            num_host_per_mesh = num_host // num_meshes
-            output_meshes = [
-                original_mesh.slice_1d(
-                    0,
-                    list(
-                        range(i * num_host_per_mesh,
-                              (i + 1) * num_host_per_mesh)))
-                for i in range(num_meshes)
-            ]
-        else:
-            assert num_device_per_host % num_required_device_per_host == 0
-            cur_host_index = 0
-            cur_device_index = 0
-            for i in range(num_meshes):
-                host_indices = list(
-                    range(cur_host_index, cur_host_index + num_required_host))
-                device_indices = list(
-                    range(cur_device_index,
-                          cur_device_index + num_required_device_per_host))
-                device_indices = [device_indices] * len(host_indices)
-                output_meshes.append(
-                    original_mesh.slice_2d(host_indices, device_indices))
-                # move the device in priority
-                if cur_device_index + num_required_device_per_host == num_device_per_host:
-                    cur_device_index = 0
-                    cur_host_index = cur_host_index + num_required_host
-                else:
-                    cur_device_index = cur_device_index + num_required_device_per_host
-            assert cur_host_index == num_host, "unable to satisfy the mesh requirement."
-            assert cur_device_index == 0, "unable to satisfy the mesh requirement."
-    return output_meshes
 
 
 # TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate
@@ -706,10 +614,14 @@ def cluster_layers_and_slice_mesh(
             assert num_devices >= num_stages, "No enough devices"
             assert num_devices % num_stages == 0
             num_devices_per_mesh = num_devices // num_stages
-
-            submesh_shape = (
-                (num_devices_per_mesh + devices.num_devices_per_host - 1) // devices.num_devices_per_host,
-                num_devices_per_mesh % devices.num_devices_per_host)
+            if num_devices_per_mesh > devices.num_devices_per_host:
+                assert num_devices_per_mesh % devices.num_devices_per_host == 0
+                submesh_shape = (num_devices_per_mesh //
++                                devices.num_devices_per_host,
++                                devices.num_devices_per_host)
+            else:
+                assert devices.num_devices_per_host % num_devices_per_mesh == 0
+                submesh_shape = (1, num_devices_per_mesh)
             submesh_shapes = [submesh_shape] * num_stages
             logical_mesh_shapes = [submesh_shape] * num_stages
 

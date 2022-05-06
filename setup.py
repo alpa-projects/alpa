@@ -79,11 +79,12 @@ install_require_list = [
     "scipy",
     "numba",
     "ray[default]",
+    "jax==0.3.5",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp",
     "tensorstore",
-    "jaxlib-alpa @ http://169.229.48.123:8080/"  # TODO(Hao): update pypi
+    # "jaxlib-alpa"  # TODO(Hao): update pypi
 ]
 
 dev_require_list = [

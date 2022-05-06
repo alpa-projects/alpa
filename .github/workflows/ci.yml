@@ -58,10 +58,12 @@ jobs:
         run: |
           if [ "${{github.event_name}}" == "pull_request" ]; then
             ALPA_BRANCH=${{ github.event.pull_request.head.sha }}
+            ALPA_FORK=${{ github.event.pull_request.head.repo.full_name}}
           else
             ALPA_BRANCH=${{ github.ref }}
           fi
           
+          echo "${ALPA_FORK}"
           echo "${ALPA_BRANCH}"
           
           docker run --gpus all --tmpfs /build:exec --rm \

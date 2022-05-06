@@ -9,6 +9,8 @@ fi
 
 export CC=/dt7/usr/bin/gcc
 export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
+export CUDA_PATH=/usr/local/cuda
+export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
 usage() {
   echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name]"
@@ -38,7 +40,6 @@ source /python${PY_VERSION}-env/bin/activate
 
 # Workaround for https://github.com/bazelbuild/bazel/issues/9254
 export BAZEL_LINKLIBS="-lstdc++"
-
 export JAX_CUDA_VERSION=$3
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 

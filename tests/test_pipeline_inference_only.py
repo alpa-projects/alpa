@@ -15,8 +15,8 @@ from alpa.testing import (MLPModel, create_train_state, get_mlp_inference_step,
 
 class PipelineInferenceTest(PipelineBasicTest):
     def run_mlp_inference(self,
-                manual_pipeline_layer=True,
-                pipeline_stage_mode="uniform_layer_gpipe"):
+                          manual_pipeline_layer=True,
+                          pipeline_stage_mode="uniform_layer_gpipe"):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
@@ -52,10 +52,12 @@ class PipelineInferenceTest(PipelineBasicTest):
         executable.shutdown()
         return hlo_text
 
-
+    def test_pipeline_inference_only(self):
+        self.run_mlp_inference()
 
 def suite():
     suite = unittest.TestSuite()
+    suite.addTest(PipelineInferenceTest("test_pipeline_inference_only"))
     return suite
 
 

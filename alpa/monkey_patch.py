@@ -4,6 +4,7 @@ from functools import partial
 import numpy as np
 import jax
 from jax import core, lax, numpy as jnp
+from jax._src import dtypes
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
@@ -50,7 +51,7 @@ setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
 
 # Monkey patch random generator to use the stateful random generator.
 # This can simplify the computational graph for dropout.
-def fast_uniform(key, shape, dtype, minval=0.0, maxval=1.0):
+def fast_uniform(key, shape=(), dtype=dtypes.float_, minval=0.0, maxval=1.0):
     shape = core.as_named_shape(shape)
     minval = jnp.asarray(minval, dtype)
     maxval = jnp.asarray(maxval, dtype)
@@ -105,7 +106,7 @@ mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
 
 
 # Monkey patch random generator to use the stateful random generator.
-def fast_normal(key, shape, dtype, mu=0.0, sigma=1.0):
+def fast_normal(key, shape=(), dtype=dtypes.float_, mu=0.0, sigma=1.0):
     shape = core.as_named_shape(shape)
     mu = jnp.asarray(mu, dtype)
     sigma = jnp.asarray(sigma, dtype)

@@ -43,6 +43,18 @@ export BAZEL_LINKLIBS="-lstdc++"
 export JAX_CUDA_VERSION=$3
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
+if [ $JAX_CUDA_VERSION = "11.0" ]; then
+  export JAX_CUDNN_VERSION=8.0.5.39
+elif [ $CUDA_VERSION = "11.1" ]; then
+  export JAX_CUDNN_VERSION=8.0.5.39
+elif [ $CUDA_VERSION = "11.2" ]; then
+  export JAX_CUDNN_VERSION=8.1.0.77
+else
+  echo "Unknown CUDNN version for CUDA version: $CUDA_VERSION"
+  exit 1
+fi
+
+
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION

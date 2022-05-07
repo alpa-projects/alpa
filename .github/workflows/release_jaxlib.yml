@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
 #        cuda: [11.0, 11.1, 11.2]
-        cuda: [11.1]
+        cuda: [11.2]
 #        python: [3.7, 3.8, 3.9]
         python: [3.7, 3.8]
 
@@ -58,6 +58,6 @@ jobs:
       - name: Publish CUDA${{ matrix.cuda }}
         run: |
           echo "Move to self-hosted pypi"
-          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//}/*.whl /data/alpa-pypi/packages/
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
         env:
           CUDA_VERSION: ${{ matrix.cuda }}

@@ -42,7 +42,9 @@ jobs:
         uses: styfle/cancel-workflow-action@0.9.1
         with:
           access_token: ${{ secrets.PAT_TOKEN }}
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: |
+          github.event_name =='pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
 
       - uses: actions/checkout@v3
 
@@ -56,14 +58,9 @@ jobs:
 
       - name: Test
         run: |
-          if [ "${{github.event_name}}" == "pull_request" ]; then
-            ALPA_BRANCH=${{ github.event.pull_request.head.sha }}
-          else
-            ALPA_BRANCH=${{ github.ref }}
-          fi
-          
+          ALPA_BRANCH=${{ github.ref }}
           echo "${ALPA_BRANCH}"
           
           docker run --gpus all --tmpfs /build:exec --rm \
           -v /data/alpa-dist:/alpa-dist \
-          --shm-size=10.24gb test-alpa-image 3.8 ${ALPA_BRANCH##*/}
+          --shm-size=10.24gb test-alpa-image 3.8 ${ALPA_BRANCH}

@@ -51,7 +51,7 @@ jobs:
       - name: Publish to local
         run: |
           echo "Move the Jaxlib binary"
-          mv dist/*.whl /data/alpa-dist/jaxlib-alpa/*.whl
+          mv dist/*.whl /data/alpa-dist/jaxlib-alpa-ci/*.whl
 
   build_jax:
     name: Build Jax

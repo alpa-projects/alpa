@@ -4,9 +4,6 @@ on:
   release:
     types: [created]
   workflow_dispatch:
-  push:
-    branches: [hao-cd]
-
 
 env:
   TWINE_USERNAME: "__token__"
@@ -27,10 +24,10 @@ jobs:
     needs: [clean-up]
     strategy:
       matrix:
-#        cuda: [11.0, 11.1, 11.2]
-        cuda: [11.1]
-#        python: [3.7, 3.8, 3.9]
-        python: [3.7, 3.8]
+        cuda: [11.0, 11.1, 11.2]
+#        cuda: [11.2]
+        python: [3.7, 3.8, 3.9]
+#        python: [3.7, 3.8]
 
     steps:
       - uses: actions/checkout@v3
@@ -46,18 +43,19 @@ jobs:
       - name: Compile Jaxlib
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+
           docker run --gpus all --tmpfs /build:exec \
-          --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist build-jaxlib-image-cuda${CUDA_VERSION} \
-          ${PYTHON_VERSION} cuda ${CUDA_VERSION} master
+          --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
+          build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
+          cuda ${CUDA_VERSION} master
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
           PYTHON_VERSION: ${{ matrix.python }}
 
-      # change this to publishing to pypi
-
+      #TODO(Hao): change this to publishing to pypi
       - name: Publish CUDA${{ matrix.cuda }}
         run: |
           echo "Move to self-hosted pypi"
-          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//}/*.whl /data/alpa-pypi/packages/
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
         env:
           CUDA_VERSION: ${{ matrix.cuda }}

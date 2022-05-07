@@ -44,11 +44,11 @@ export JAX_CUDA_VERSION=$3
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
 
 if [ $JAX_CUDA_VERSION = "11.0" ]; then
-  export JAX_CUDNN_VERSION=8.0.5.39
+  export JAX_CUDNN_VERSION="805"
 elif [ $JAX_CUDA_VERSION = "11.1" ]; then
-  export JAX_CUDNN_VERSION=8.0.5.39
+  export JAX_CUDNN_VERSION="805"
 elif [ $JAX_CUDA_VERSION = "11.2" ]; then
-  export JAX_CUDNN_VERSION=8.1.0.77
+  export JAX_CUDNN_VERSION="810"
 else
   echo "Unknown CUDNN version for CUDA version: $JAX_CUDA_VERSION"
   exit 1

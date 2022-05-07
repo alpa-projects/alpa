@@ -56,6 +56,7 @@ if __name__ == "__main__":
         args.max_comm_size_intra_node,
         args.max_comm_size_inter_node,
         max_fail_retry=args.max_fail_retry,
-        cache_filename=args.cache_filename)
+        cache_filename=args.cache_filename,
+        dot_range=range(0, 8192, 128))
     prof_database.save(args.filename)
     print(f"Save profiling database to {args.filename}")

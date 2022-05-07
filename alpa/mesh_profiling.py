@@ -542,9 +542,9 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
                     for k in range(len(local_devices))
                 ])
             else:
+                np_array = np.ones(shape, dtype)
                 device_inputs.append([
-                    backend.buffer_from_pyval(np.ones(shape, dtype),
-                                              local_devices[k])
+                    backend.buffer_from_pyval(np_array, local_devices[k])
                     for k in range(len(local_devices))
                 ])
 
@@ -658,8 +658,7 @@ def profile_dot(dot_range, device_cluster, cache_filename):
     # Profile dot
     op_infos = []
     for dtype in ["f16", "f32"]:
-        for i in dot_range:
-            n = 128 * i
+        for n in dot_range:
             op_infos.append(("dot", (n, n, n, dtype)))
     results = physical_mesh.profile_hlo_ops(op_infos, cache_filename)
 
@@ -736,7 +735,7 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
 
 def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                 max_comm_size_inter_node, max_fail_retry, cache_filename,
-                dot_range=(0, 64)):
+                dot_range=(0, 1024)):
     """Profile costs for all dot and communication primitives."""
     #  pylint: disable=import-outside-toplevel
     from alpa.pipeline_parallel.stage_construction import get_submesh_choices

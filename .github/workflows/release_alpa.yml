@@ -1,10 +1,10 @@
-name: Release Jaxlib
+name: Release Alpa
 
 on:
-#  release:
-#    types: [created]
-  push:
-    branches: [hao-cd]
+  release:
+    types: [created]
+#  push:
+#    branches: [hao-cd]
 
 
 env:

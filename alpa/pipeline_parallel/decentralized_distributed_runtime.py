@@ -344,7 +344,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         src_idx, src_uuids = list(var_at[key].items())[0]
                         resharding_task = self._resharding_tasks[src_idx][
                             mesh_idx][var_key]
-                        if global_config.resharding_mode == "default":
+                        if global_config.resharding_mode == "send_recv":
                             self._compile_resharding_task(
                                 self.physical_meshes[src_idx],
                                 self.physical_meshes[mesh_idx], src_uuids,

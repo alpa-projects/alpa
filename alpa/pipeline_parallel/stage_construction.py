@@ -7,8 +7,8 @@ from typing import Sequence, List, Tuple
 
 import numpy as np
 import numba
-import tqdm
 from ray.exceptions import RayActorError
+import tqdm
 
 from alpa.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from alpa.global_env import global_config

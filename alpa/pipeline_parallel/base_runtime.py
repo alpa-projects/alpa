@@ -208,7 +208,7 @@ class BaseDistributedRuntime(BaseRuntime):
                     dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]
                 dst_mesh = self.physical_meshes[dst_mesh_idx]
-                if global_config.resharding_mode == "default":
+                if global_config.resharding_mode == "send_recv":
                     self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
                         key] = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
                 else:

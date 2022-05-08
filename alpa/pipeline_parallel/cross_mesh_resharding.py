@@ -701,6 +701,36 @@ class SymbolicReshardingTask(ReshardingTask):
                 f"{self.task_spec.dst_sharding_spec})")
 
 
+class CommunicatorConfig:
+    """Config used to initilize broadcast communicator."""
+
+    def __init__(self, comm_key):
+        self.comm_key = comm_key
+        self.workers = []
+        self.device_ids = []
+
+    def add(self, worker, device_id):
+        self.workers.append(worker)
+        self.device_ids.append(device_id)
+
+    def __hash__(self):
+        return hash((self.comm_key, tuple(self.workers), tuple(self.device_ids)))
+
+    def __eq__(self, other):
+        if type(self) != type(other):
+            return False
+        elif self.comm_key != other.comm_key:
+            return False
+        elif len(self.workers) != len(other.workers):
+            return False
+
+        for i in range(len(self.workers)):
+            if self.workers[i] != other.workers[i] or self.device_ids[i] != other.device_ids[i]:
+                return False
+
+        return True
+
+
 class SymbolicBroadcastReshardingTask(ReshardingTask):
     """A Broadcast based symbolic resharding task that puts task info in remote workers."""
 
@@ -709,7 +739,7 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
         # task is a dict: (i, src_tile_index)->ReshardingBroadcastSpec
         self._broadcast_tasks = {host: {} for host in self.src_mesh.workers + self.dst_mesh.workers}
         self.broadcast_worker_task_ids = {}
-        self.communicator_params = set()
+        self.communicator_configs = set()
 
         # generate the above states
         self._compile()
@@ -759,6 +789,8 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
                 comm_key = "$".join(devices)
                 world_size = len(devices)
 
+                comm_config = CommunicatorConfig(comm_key)
+
                 group_spec = self._broadcast_tasks[sender_worker].setdefault(
                     broadcast_group, ReshardingBroadcastSpec(comm_key=comm_key, 
                                                              world_size=world_size, 
@@ -769,7 +801,7 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
                                                              recv_tile_shape=src_tile.tile_shape, 
                                                              dtype=dtype)
                 )
-                worker_devices = [(sender_worker, self.collective_group.device_str_to_device_id_map[sender])]
+                comm_config.add(sender_worker, self.collective_group.device_str_to_device_id_map[sender])
 
                 for replica_index, receiver in enumerate(dst_tile.replica_device_strs):
                     receiver_worker = (self.collective_group.device_str_to_mesh_worker_map[receiver])
@@ -786,38 +818,37 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
                     group_spec.devices_ids.append(self.collective_group.device_str_to_device_id_map[receiver])
                     group_spec.devices_global_rank.append(1 + replica_index)
                     group_spec.tensor_slices.append(indices_in_dst_tile)
-                    worker_devices.append((receiver_worker, 
-                                           self.collective_group.device_str_to_device_id_map[receiver]))
-                param = (comm_key, tuple(worker_devices))
-                self.communicator_params.add(param)
+                    comm_config.add(receiver_worker, self.collective_group.device_str_to_device_id_map[receiver])
+
+                self.communicator_configs.add(comm_config)
         return self._broadcast_tasks
 
     def _create_resharding_communicators(self):
-        """Create the NCCL communicators in advance."""
+        """Create the NCCL communicators for broadcast in advance."""
         group_name = self.collective_group.group_name
-        for param in self.communicator_params:
+        for config in self.communicator_configs:
             task_dones = []
             worker_to_devices_and_global_ranks = {}
-            world_size = len(param[1])
-            for global_rank, (worker, device_id) in enumerate(param[1]):
+            world_size = len(config.workers)
+            for global_rank, (worker, device_id) in enumerate(zip(config.workers, config.device_ids)):
                 if worker not in worker_to_devices_and_global_ranks:
                     worker_to_devices_and_global_ranks[worker] = {"device_ids": [], "global_ranks": []}
                 worker_to_devices_and_global_ranks[worker]["device_ids"].append(device_id)
                 worker_to_devices_and_global_ranks[worker]["global_ranks"].append(global_rank)
 
-            sender_worker = param[1][0][0]
+            sender_worker = config.workers[0]
             nccl_uid = ray.get(sender_worker.generate_nccl_uid.remote(group_name))
 
             for worker, devices_info in worker_to_devices_and_global_ranks.items():
                 task_dones.append(worker.init_broadcast_communicator.remote(group_name, 
-                                                                            param[0], 
+                                                                            config.comm_key, 
                                                                             world_size, 
                                                                             devices_info["device_ids"], 
                                                                             devices_info["global_ranks"], 
                                                                             nccl_uid)
                                   )
                 task_dones.append(worker.init_broadcast_communicator.remote(group_name, 
-                                                                            param[0], 
+                                                                            config.comm_key, 
                                                                             world_size, 
                                                                             devices_info["device_ids"], 
                                                                             devices_info["global_ranks"], 
@@ -1193,7 +1224,7 @@ class CrossMeshCommunicator:
         # Generate a send/recv strategies for all resharding tasks by looking at their load.
         for _, _, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
-                if global_config.resharding_mode == "default":
+                if global_config.resharding_mode == "send_recv":
                     strategy = self._generate_send_recv_resharding_strategy_by_loads(spec,
                                                                                      self._sender_loads,
                                                                                      self._receiver_loads)
@@ -1345,7 +1376,7 @@ class CrossMeshCommunicator:
                 # TODO(yonghao): to keep some consistency, record both
                 # dst sharding spec before and after allgather
 
-                if global_config.resharding_mode == "default":
+                if global_config.resharding_mode == "send_recv":
                     dst_sharding_spec, local_chunks = self._rewrite_allgather_spec(
                         dst_sharding_spec, dst_mesh, var.aval.shape)
                 else:

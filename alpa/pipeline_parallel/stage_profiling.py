@@ -750,7 +750,7 @@ def profile_layer_communication_cost(
                                                 sharding_spec=in_sharding_spec)
             task_spec = ReshardingTaskSpec(src_array, dst_array, [])
             # create resharding strategy, ignore global load balance
-            if global_config.resharding_mode == "default":
+            if global_config.resharding_mode == "send_recv":
                 strategy = dummy_resharding_send_recv_strategy(task_spec)
             else:
                 strategy = dummy_resharding_broadcast_strategy(task_spec)
@@ -762,7 +762,7 @@ def profile_layer_communication_cost(
                                                  src_phy_mesh, input_indices)
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_buffers, input_indices)
-            if global_config.resharding_mode == "default":
+            if global_config.resharding_mode == "send_recv":
                 task = SymbolicReshardingTask(task_spec,
                                               collective_group,
                                               collective_group.src_mesh,

@@ -514,8 +514,8 @@ class MeshHostWorker:
                            allgather_spec.output_slice)
 
     def broadcast(self, uuids, comm_key, world_size, devices_ids, devices_global_rank, tensor_slices, group_name):
-        used_tensors = []
-        slice_types = []            
+        to_use = []
+        for_buffer = []
         is_bool = self.buffers[uuids[devices_ids[0]]].dtype == np.bool_
         for device_id, global_rank, tensor_slice in zip(devices_ids, devices_global_rank, tensor_slices):
             uuid = uuids[device_id]
@@ -523,47 +523,46 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
             if is_continuous_subset(tensor_slice, tensor_shape):
                 # fast path, two cases: (1) same shape, (2) continuous subset.
+                tmp = xla_buffer_to_cupy(self.buffers[uuid])
                 if slice_shape != tensor_shape:
                     ind, _ = infer_offset_and_n_elements(tensor_slice)
-                    slice_types.append("continuous_subset")
-                    to_use = (xla_buffer_to_cupy(self.buffers[uuid]), ind)
+                    to_use.append(tmp[ind])
                 else:
-                    slice_types.append("same_shape")
-                    to_use = xla_buffer_to_cupy(self.buffers[uuid])
-            elif global_rank == 0:
-                start_indices = tuple(o.start for o in tensor_slice)
-                to_use = jax_tensor_index(
-                    xla_buffer_to_jax_tensor(self.buffers[uuid]), start_indices,
-                    slice_shape)
-                to_use = jax_tensor_to_cupy(to_use)
-                slice_types.append("non_continuous_subset")
+                    to_use.append(tmp)
+                for_buffer.append(tmp)
             else:
-                to_use = device_put(
-                    jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
-                    self.local_devices[device_id])
-                to_use = jax_tensor_to_cupy(to_use, take_ownership=True)
-                slice_types.append("non_continuous_subset")
-            used_tensors.append(to_use)
+                tmp = None
+                if global_rank == 0:
+                    start_indices = tuple(o.start for o in tensor_slice)
+                    tmp = jax_tensor_index(
+                        xla_buffer_to_jax_tensor(self.buffers[uuid]), start_indices,
+                        slice_shape)
+                    tmp = jax_tensor_to_cupy(tmp)
+                else:
+                    tmp = device_put(
+                        jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
+                        self.local_devices[device_id])
+                    tmp = jax_tensor_to_cupy(tmp, take_ownership=True)
+                to_use.append(tmp)
+                for_buffer.append(tmp)
 
         _, n_elements = infer_offset_and_n_elements(tensor_slices[0])
-        col.broadcast_partialgpu([used_tensor[0][used_tensor[1]] if slice_type == "continuous_subset" else used_tensor 
-                                 for used_tensor, slice_type in zip(used_tensors, slice_types)], 
-                                 n_elements, comm_key, world_size, devices_ids, devices_global_rank, group_name)
+        col.broadcast_partialgpu(to_use, n_elements, comm_key, world_size, 
+                                 devices_ids, devices_global_rank, group_name)
 
-        for used_tensor, slice_type, device_id, global_rank, tensor_slice in zip(used_tensors,
-                                                                                 slice_types,
-                                                                                 devices_ids,
-                                                                                 devices_global_rank,
-                                                                                 tensor_slices):
+        for for_buffer_tensor, device_id, global_rank, tensor_slice in zip(for_buffer,
+                                                                           devices_ids,
+                                                                           devices_global_rank,
+                                                                           tensor_slices):
             if global_rank == 0:
                 continue
             uuid = uuids[device_id]
-            if slice_type == "same_shape":
-                self.buffers[uuid] = cupy_to_xla_buffer(used_tensor)
-            elif slice_type == "continuous_subset":
-                self.buffers[uuid] = cupy_to_xla_buffer(used_tensor[0])
+            tensor_shape = self.buffers[uuid].shape
+            slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
+            if is_continuous_subset(tensor_slice, tensor_shape):
+                self.buffers[uuid] = cupy_to_xla_buffer(for_buffer_tensor)
             else:
-                recv_tensor = cupy_to_jax_tensor(used_tensor)
+                recv_tensor = cupy_to_jax_tensor(for_buffer_tensor)
                 start_indices = tuple(ind_in_dst.start for ind_in_dst in tensor_slice)
                 new_buffer = jax_tensor_set(
                     xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,

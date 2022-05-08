@@ -108,7 +108,7 @@ class GlobalConfig:
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
-        self.resharding_mode = "default"  # or "broadcast"
+        self.resharding_mode = "send_recv"  # "send_recv" or "broadcast"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42
@@ -167,7 +167,7 @@ def set_parallelize_options(
         auto_stage_construction_imbalance_tolerance: float = np.inf,
         use_hlo_cost_model: bool = False,
         profiling_database_filename: Optional[str] = None,
-        resharding_mode: str = "default"):
+        resharding_mode: str = "broadcast"):
     """
     Set the global options for all @parallelize decorator.
 
@@ -208,7 +208,7 @@ def set_parallelize_options(
       profiling_database_filename: Only used for pipeshard_parallel with auto_stage.
         The filename of profiling result database.
       resharding_mode: The algorithm used to do cross mesh resharding.
-        Possible choices: {"default", "broadcast"}.
+        Possible choices: {"send_recv", "broadcast"}.
     """
     global global_config  # pylint: disable=global-variable-not-assigned
 

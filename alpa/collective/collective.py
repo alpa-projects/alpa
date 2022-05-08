@@ -391,7 +391,7 @@ def broadcast_partialgpu(tensor_list,
                          group_name: str = "default"):
     """Broadcast the tensor from a source GPU to some other GPUs. 
     This function is different from broadcast_multigpu that it only 
-    use a subset of gpus in one host.
+    uses a subset of gpus in one host.
 
     Args:
         tensor_list: the tensors to broadcast (src) or receive (dst).

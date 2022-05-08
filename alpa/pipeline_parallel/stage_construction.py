@@ -210,9 +210,10 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
             if num_devices % mp_size == 0:
                 dp_size = num_devices // mp_size
                 if batch_size % dp_size == 0:
-                    results.append(
-                        (virtual_submesh.get_logical_mesh((dp_size, mp_size)),
-                         {"force_batch_dim_to_mesh_dim": 0}))
+                    results.append((virtual_submesh.get_logical_mesh(
+                        (dp_size, mp_size)), {
+                            "force_batch_dim_to_mesh_dim": 0
+                    }))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
@@ -282,19 +283,14 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
             layer_indices = (
                 indices[start:end + 1] +
                 indices[2 * num_layers - end - 1:2 * num_layers - start])
-            selected_apply_grad_layers = [
-                apply_grad_layers[idx] for idx in indices[start:end + 1]
-            ]
+            selected_apply_grad_layers = filter(
+                lambda x: x is not None,
+                [apply_grad_layers[idx] for idx in indices[start:end + 1]])
             stage_name = f"stage_{start}_{end}"
             (intermediate_vars, stage_config) = generate_stage_info(
-                layers,
-                layer_indices,
-                donation_mapping,
-                global_outvars,
-                stage_name,
-                insert_hook_after=end - start,
-                apply_grad_info=(selected_apply_grad_layers,
-                                 *apply_grad_global_info))
+                layers, layer_indices, donation_mapping, global_outvars,
+                stage_name, end - start, list(selected_apply_grad_layers),
+                apply_grad_global_info)
             if is_full_mesh:
                 intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
@@ -520,7 +516,8 @@ def cluster_layers_and_slice_mesh(
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
     timers("stage-construction").start()
-    assert isinstance(devices, (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))
+    assert isinstance(devices,
+                      (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))
     if isinstance(devices, VirtualPhysicalMesh):
         given_mesh = False
         submesh_choices = get_submesh_choices(devices)

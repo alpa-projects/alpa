@@ -618,13 +618,9 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def generate_stage_info(all_layers,
-                        selected_indices,
-                        donation_mapping,
-                        global_outvars,
-                        name,
-                        insert_hook_after=None,
-                        apply_grad_info=None):
+def generate_stage_info(all_layers, selected_indices, donation_mapping,
+                        global_outvars, name, insert_hook_after,
+                        apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
     backend = xla_bridge.get_backend("gpu")
 
@@ -664,9 +660,8 @@ def generate_stage_info(all_layers,
 
     apply_info = ApplyGradConfig(None, None)
 
-    if apply_grad_info is not None:
-        (apply_grad_layers, apply_grad_donation,
-         apply_grad_outvars) = apply_grad_info
+    if apply_grad_layers:
+        apply_grad_donation, apply_grad_outvars = apply_grad_info
         merged_apply = merge_marked_jaxprs_with_named_call(
             [layer.closed_jaxpr() for layer in apply_grad_layers],
             apply_grad_outvars, apply_grad_donation, name + "_apply")
@@ -682,6 +677,10 @@ def generate_stage_info(all_layers,
         merged, is_donated = merge_unmarked_with_call([merged, merged_apply],
                                                       names, all_outvars,
                                                       donation_map)
+    else:
+        merged, is_donated = merge_unmarked_with_call([merged], ["merged"],
+                                                      new_outvars,
+                                                      selected_donation_mapping)
 
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
@@ -818,6 +817,9 @@ def compute_apply_grad_invar_size(input_sharding_protos,
     These parameters are never used in compute gradient period but stored on
     the GPU, so they take memory and influence max_n_succ_stages.
     """
+    if config.invars is None:
+        assert config.apply_grad_only_invars is None
+        return 0
     avals = [v.aval for v in config.invars]
     if np.prod(logical_mesh_shape) == 1:
         selected_sharding_specs = None

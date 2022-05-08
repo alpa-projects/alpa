@@ -1071,7 +1071,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     # so we can delete the old buffers
                     arg.delete()
 
-                if True:
+                if False:
                     size = np.prod(arg.shape) * arg.dtype.itemsize
                     bandwidth = size / (time.time() - tic)
                     total_bytes += size

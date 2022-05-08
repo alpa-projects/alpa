@@ -8,7 +8,7 @@ import os
 from typing import Callable, Optional, Sequence, Union, Any
 import uuid
 
-from flax.serialization import to_state_dict
+from flax.serialization import to_state_dict, from_state_dict
 import jax
 import msgpack
 import numpy as np
@@ -79,6 +79,7 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
         fp.write(msgpack.packb(state_dict, default=_msgpack_ext_pack_wrapper(ckpt_dir), strict_types=True))
 
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], 
+                       target: PyTree,
                        step: int):
     """The same as flax.training.checkpoints.load_checkpoint. Restore last/best checkpoint from checkpoints in path, but support DistributedArrays in alpa."""
     # TODO: copy all the safe-loading stuff from https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
@@ -86,4 +87,4 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike],
     with gfile.GFile(ckpt_path, 'rb') as fp:
         ckpt_contents = fp.read()
     state_dict = msgpack.unpackb(ckpt_contents, ext_hook=_msgpack_ext_unpack, raw=False)
-    return state_dict
+    return from_state_dict(target, state_dict)

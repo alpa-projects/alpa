@@ -242,7 +242,12 @@ class MeshHostWorker:
         t = ts.open(ts.Spec(ts_spec), open=True).result()
 
         for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
-            data = t[index].read().result()
+            try:
+                data = t[index].read().result()
+            except:
+                print(f"!!!{index}!!!", flush=True)
+                data = t.read().result()
+
             self.put_buffer(uuid, device_id, data)
 
     def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
@@ -1350,11 +1355,15 @@ class DistributedArray:
         one_replica_indices = [
             self.indices[i] for i in self.one_replica_buffer_indices
         ]
-        buf_refs_per_host = {k: [] for k in self.device_mesh.host_ids}
-        indices_per_host = {k: [] for k in self.device_mesh.host_ids}
+        buf_refs_per_host = {}
+        indices_per_host = {}
         for buf_ref, indice in zip(one_replica_buffers, one_replica_indices):
-            buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-            indices_per_host[buf_ref.host_id].append(indice)
+            if buf_refs_per_host.get(buf_ref.host_id) is None:
+                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
+                indices_per_host[buf_ref.host_id] = [indice]
+            else:
+                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
+                indices_per_host[buf_ref.host_id].append(indice)
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
@@ -1372,13 +1381,18 @@ class DistributedArray:
         buf_refs, _ = create_remote_buffer_refs(device_mesh, 1)
         indices = pxla.spec_to_indices(aval.shape, sharding_spec)
 
-        buf_refs_per_host = {k: [] for k in device_mesh.host_ids}
-        indices_per_host = {k: [] for k in device_mesh.host_ids}
-        device_ids_per_host = {k: [] for k in device_mesh.host_ids}
+        buf_refs_per_host = {}
+        indices_per_host = {}
+        device_ids_per_host = {}
         for buf_ref, indice in zip(buf_refs, indices):
-            buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-            indices_per_host[buf_ref.host_id].append(indice)
-            device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
+            if buf_refs_per_host.get(buf_ref.host_id) is None:
+                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
+                indices_per_host[buf_ref.host_id] = [indice]
+                device_ids_per_host[buf_ref.host_id] = [buf_ref.device_id]
+            else:
+                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
+                indices_per_host[buf_ref.host_id].append(indice)
+                device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:

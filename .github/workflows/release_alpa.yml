@@ -6,7 +6,7 @@ on:
 
 env:
   TWINE_USERNAME: "__token__"
-  TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+  TWINE_PASSWORD: ${{ secrets.TEST_PYPI_TOKEN }}
 
 jobs:
   release-alpa:
@@ -35,7 +35,7 @@ jobs:
           python setup.py sdist bdist_wheel
           ls -ltr dist/
 #  TODO(Hao): temporarily comment twine upload in case someone make it wrong
-#          twine upload --repository testpypi dist/*
+          twine upload --repository testpypi dist/*
 #          twine upload dist/*
 
   update-version:

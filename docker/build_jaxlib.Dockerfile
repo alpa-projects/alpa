@@ -18,7 +18,7 @@ RUN source python3.9-env/bin/activate && pip install --upgrade pip && pip instal
 # Change the CUDA version if it doesn't match the installed version in the base image
 # which is 10.0
 ARG JAX_CUDA_VERSION=11.1
-COPY install_cuda.sh /install_cuda.sh
+COPY scripts/install_cuda.sh /install_cuda.sh
 RUN chmod +x /install_cuda.sh
 RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
   /install_cuda.sh $JAX_CUDA_VERSION; \

@@ -31,7 +31,7 @@ jobs:
 
       - name: Build and publish
         run: |
-          export VERSION=$(./GENVER --pep440)
+          export VERSION=$(bash GENVER --pep440)
           python setup.py sdist bdist_wheel
           ls -ltr dist/
 #          twine upload --repository testpypi dist/*

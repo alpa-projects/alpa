@@ -213,7 +213,7 @@ def get_one_submesh_autosharding_config_choices(virtual_submesh, option,
                     results.append((virtual_submesh.get_logical_mesh(
                         (dp_size, mp_size)), {
                             "force_batch_dim_to_mesh_dim": 0
-                        }))
+                    }))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
     elif option == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))

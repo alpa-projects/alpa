@@ -16,7 +16,7 @@ from alpa.testing import (MLPModel, create_train_state, get_mlp_inference_step,
 class PipelineInferenceTest(PipelineBasicTest):
     def run_mlp_inference(self,
                           manual_pipeline_layer=True,
-                          pipeline_stage_mode="uniform_layer_gpipe"):
+                          pipeline_stage_mode="uniform_stage"):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",

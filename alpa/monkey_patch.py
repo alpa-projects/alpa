@@ -1,10 +1,16 @@
 """Monkey patch other python libraries."""
+from functools import partial
+
 import numpy as np
 import jax
 from jax import core, lax, numpy as jnp
+from jax._src import dtypes
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
+from jax.core import Primitive
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla, mlir
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   register_translation, wrap_name,
                                   _backend_specific_translations, parameter,
@@ -45,11 +51,66 @@ setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
 
 # Monkey patch random generator to use the stateful random generator.
 # This can simplify the computational graph for dropout.
-def fast_uniform(key, shape, dtype, minval=0.0, maxval=1.0):
+def fast_uniform(key, shape=(), dtype=dtypes.float_, minval=0.0, maxval=1.0):
     shape = core.as_named_shape(shape)
     minval = jnp.asarray(minval, dtype)
     maxval = jnp.asarray(maxval, dtype)
     return lax.rng_uniform(minval, maxval, shape.positional)
+
+
+def rng_normal(mu, sigma, shape):
+    """Stateful PRNG generator. Experimental and its use is discouraged.
+
+    Returns random numbers following normal distribution with (mu, sigma)
+
+    You should use jax.random for most purposes; this function exists only for
+    niche use cases with special performance requirements.
+
+    This API may be removed at any time.
+    """
+    return rng_normal_p.bind(mu, sigma, shape=tuple(shape))
+
+
+def _rng_normal_abstract_eval(mu, sigma, *, shape):
+    if mu.dtype != sigma.dtype:
+        raise ValueError(
+            f"Arguments to rng_normal must have identical dtypes, got {mu.dtype} and {sigma.dtype}."
+        )
+    if mu.shape != () or sigma.shape != ():
+        raise ValueError(
+            f"Arguments to rng_normal must be scalars; got shapes {mu.shape} and {sigma.shape}.")
+    return mu.update(shape=shape, dtype=mu.dtype,
+                     weak_type=(mu.weak_type and sigma.weak_type))
+
+
+def _rng_normal_translation_rule(ctx, avals_in, avals_out, mu, sigma, *, shape):
+    c = ctx.builder
+    xla_shape = xc.Shape.array_shape(c.get_shape(mu).xla_element_type(), shape)
+    return [xops.RngNormal(mu, sigma, xla_shape)]
+
+
+rng_normal_p = Primitive("rng_normal")
+rng_normal_p.def_impl(partial(xla.apply_primitive, rng_normal_p))
+rng_normal_p.def_abstract_eval(_rng_normal_abstract_eval)
+xla.register_translation(rng_normal_p, _rng_normal_translation_rule)
+
+
+def _rng_normal_lowering(ctx, mu, sigma, *, shape):
+    aval_out, = ctx.avals_out
+    shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
+                               canonicalize_types=False)
+    return mhlo.RngNormalOp(mu, sigma, shape).results
+
+
+mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
+
+
+# Monkey patch random generator to use the stateful random generator.
+def fast_normal(key, shape=(), dtype=dtypes.float_, mu=0.0, sigma=1.0):
+    shape = core.as_named_shape(shape)
+    mu = jnp.asarray(mu, dtype)
+    sigma = jnp.asarray(sigma, dtype)
+    return rng_normal(mu, sigma, shape.positional)
 
 
 def remove_fold_in(key, data):
@@ -58,6 +119,8 @@ def remove_fold_in(key, data):
 
 jax._src.random.uniform = fast_uniform
 jax.random.uniform = fast_uniform
+jax._src.random.normal = fast_normal
+jax.random.normal = fast_normal
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 

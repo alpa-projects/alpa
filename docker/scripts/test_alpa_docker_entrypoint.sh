@@ -25,11 +25,11 @@ source /python${PY_VERSION}-env/bin/activate
 # switch to the merge commit
 git clone https://github.com/alpa-projects/alpa.git
 cd /build/alpa
-git fetch origin
-git checkout ${ALPA_BRANCH##*/}
+git fetch origin +${ALPA_BRANCH}
+git checkout -qf FETCH_HEAD
 
 # install jaxlib and jax
-pip install /alpa-dist/jaxlib-alpa/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
+pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
 pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
 
 pip install -e .[dev]

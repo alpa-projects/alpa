@@ -717,7 +717,7 @@ class CommunicatorConfig:
         return hash((self.comm_key, tuple(self.workers), tuple(self.device_ids)))
 
     def __eq__(self, other):
-        if type(self) != type(other):
+        if not isinstance(other, CommunicatorConfig):
             return False
         elif self.comm_key != other.comm_key:
             return False

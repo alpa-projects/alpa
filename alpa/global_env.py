@@ -167,7 +167,7 @@ def set_parallelize_options(
         auto_stage_construction_imbalance_tolerance: float = np.inf,
         use_hlo_cost_model: bool = False,
         profiling_database_filename: Optional[str] = None,
-        resharding_mode: str = "broadcast"):
+        resharding_mode: str = "send_recv"):
     """
     Set the global options for all @parallelize decorator.
 

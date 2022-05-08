@@ -60,7 +60,7 @@ if __name__ == "__main__":
     arg_parser.add_argument(
         "--xla_client_mem_fraction",
         type=float,
-        default=0.20,
+        default=0.2,
         help="The fraction of GPU memory used to run unit tests")
     args = arg_parser.parse_args()
 

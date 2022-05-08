@@ -9,6 +9,8 @@ fi
 
 export CC=/dt7/usr/bin/gcc
 export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
+export CUDA_PATH=/usr/local/cuda
+export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
 usage() {
   echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name]"
@@ -38,9 +40,20 @@ source /python${PY_VERSION}-env/bin/activate
 
 # Workaround for https://github.com/bazelbuild/bazel/issues/9254
 export BAZEL_LINKLIBS="-lstdc++"
-
 export JAX_CUDA_VERSION=$3
 export CUPY_VERSION=${JAX_CUDA_VERSION//.}
+
+if [ $JAX_CUDA_VERSION = "11.0" ]; then
+  export JAX_CUDNN_VERSION="805"
+elif [ $JAX_CUDA_VERSION = "11.1" ]; then
+  export JAX_CUDNN_VERSION="805"
+elif [ $JAX_CUDA_VERSION = "11.2" ]; then
+  export JAX_CUDNN_VERSION="810"
+else
+  echo "Unknown CUDNN version for CUDA version: $JAX_CUDA_VERSION"
+  exit 1
+fi
+
 
 # install cupy
 pip install cupy-cuda${JAX_CUDA_VERSION//.}

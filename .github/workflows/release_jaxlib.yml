@@ -1,0 +1,61 @@
+name: Release Jaxlib
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+env:
+  TWINE_USERNAME: "__token__"
+  TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+jobs:
+
+  clean-up:
+    runs-on: [self-hosted]
+
+    steps:
+      - name: clean up images
+        run: |
+          docker image prune -f
+
+  release-jaxlib:
+    runs-on: [ self-hosted ]
+    needs: [clean-up]
+    strategy:
+      matrix:
+        cuda: [11.0, 11.1, 11.2]
+#        cuda: [11.2]
+        python: [3.7, 3.8, 3.9]
+#        python: [3.7, 3.8]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: build image
+        run: |
+          docker build -t build-jaxlib-image-cuda${CUDA_VERSION} \
+            -f docker/build_jaxlib.Dockerfile docker/ \
+            --build-arg JAX_CUDA_VERSION=${CUDA_VERSION}
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
+
+      - name: Compile Jaxlib
+        run: |
+          mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+
+          docker run --gpus all --tmpfs /build:exec \
+          --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
+          build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
+          cuda ${CUDA_VERSION} master
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
+          PYTHON_VERSION: ${{ matrix.python }}
+
+      #TODO(Hao): change this to publishing to pypi
+      - name: Publish CUDA${{ matrix.cuda }}
+        run: |
+          echo "Move to self-hosted pypi"
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}

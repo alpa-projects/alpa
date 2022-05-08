@@ -145,11 +145,11 @@ class StageConstructUtilTest(unittest.TestCase):
         compute_layer_indices = sorted(compute_layer_indices)
         apply_grad_indices = indices
         apply_grad_selected = [apply_grad_layers[i] for i in apply_grad_indices]
-        apply_grad_config = (apply_grad_selected, apply_grad_donate_map,
-                             global_outvars)
+        apply_grad_config = (apply_grad_donate_map, global_outvars)
         intermediate_vars, stage_config = generate_stage_info(
             compute_layers, compute_layer_indices, donation_mapping,
-            compute_outvars, "tmp", end - start, apply_grad_config)
+            compute_outvars, "tmp", end - start, apply_grad_selected,
+            apply_grad_config)
         return intermediate_vars, stage_config
 
     def _test_generate_stage_config_indices(self, info, start, end):
@@ -164,11 +164,11 @@ class StageConstructUtilTest(unittest.TestCase):
         compute_layer_indices = sorted(compute_layer_indices)
         apply_grad_indices = indices
         apply_grad_selected = [apply_grad_layers[i] for i in apply_grad_indices]
-        apply_grad_config = (apply_grad_selected, apply_grad_donate_map,
-                             global_outvars)
+        apply_grad_info = (apply_grad_donate_map, global_outvars)
         intermediate_vars, stage_config = generate_stage_info(
             compute_layers, compute_layer_indices, donation_mapping,
-            compute_outvars, "tmp", end - start, apply_grad_config)
+            compute_outvars, "tmp", end - start, apply_grad_selected,
+            apply_grad_info)
         aval = lambda x: [v.aval for v in x]
         # check intermediate vars. It is only to compute intermediate size, so
         # only check aval

@@ -25,7 +25,7 @@ jobs:
 
       - name: build doc-building image
         run: |
-          docker build -t build-alpa-doc -f docker/Dockerfile.doc_build docker/
+          docker build -t build-alpa-doc -f docker/build_doc.Dockerfile docker/
 
       - name: Build docs
         run: |          
@@ -39,5 +39,5 @@ jobs:
         with:
           personal_token: ${{ secrets.PAT_TOKEN }}
           external_repository: alpa-projects/alpa-projects.github.io
-          publish_branch: test
+          publish_branch: master
           publish_dir: /data/alpa-dist/docs

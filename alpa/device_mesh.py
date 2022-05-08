@@ -1683,7 +1683,10 @@ def _shard_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
         return _device_mesh_put_dummy(array, device_mesh, indices, num_batch)
     else:
         # Create shards according to indices for a numpy array
-        datas = [array[i] for i in indices]
+        if array.shape == ():
+            datas = [array] * len(indices)
+        else:
+            datas = [np.ascontiguousarray(array[i]) for i in indices]
         if num_batch > 1:
             concate_datas = []
             for device_id in range(device_mesh.num_devices):

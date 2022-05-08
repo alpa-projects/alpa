@@ -419,6 +419,7 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
         map(lambda x: get_var_mapping(mapping, x), global_outvars))
     return new_jaxpr, global_outvars
 
+
 def _propagate_var_at_mesh(eqns, var_mesh):
     """Propagate mesh assignments from input."""
     eqn_mesh = {}

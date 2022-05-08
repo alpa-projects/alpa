@@ -320,14 +320,15 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                              num_microbatch, gensym_func,
                                              inference_mode):
     if inference_mode:
-        num_forward_layers = len(jax_pipeline_layers) // 2
-        layer_to_mesh = (list(range(num_forward_layers)) +
-                               list(reversed(range(num_forward_layers))))
+        num_layers = len(pipeline_layers)
+        num_mesh = num_layers
+        layer_to_mesh = list(range(num_mesh))
     else:
-        num_forward_layers = len(jax_pipeline_layers)
-        layer_to_mesh = list(range(num_forward_layers))
-    assert len(pipeline_layers) % 2 == 0
-    num_mesh = len(pipeline_layers) // 2
+        num_layers = len(pipeline_layers)
+        assert len(pipeline_layers) % 2 == 0
+        num_mesh = num_layers // 2
+        layer_to_mesh = (list(range(num_mesh)) +
+                         list(reversed(range(num_mesh))))
     (layers, _, _, apply_grad_placement, _,
      donated_invars) = process_apply_gradient(apply_grad_jaxpr, barrier,
                                               acc_grad_dict, pipeline_layers,
@@ -340,6 +341,6 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                                   global_outvars)
     wrap_layers = [None] * num_mesh
     for layer_idx, mesh_idx in apply_grad_placement.items():
-        wrap_layers[mesh_idx] = layers[layer_idx - 2 * num_mesh]
+        wrap_layers[mesh_idx] = layers[layer_idx - num_layers]
     apply_grad_global_info = apply_grad_donation, global_outvars
     return wrap_layers, apply_grad_global_info

@@ -3,7 +3,9 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, Sequence, List, Callable, Optional, Union
+from typing import Any, Dict, Sequence, List, Callable, Optional, Union, Tuple
+from jax import tree_flatten
+from jax._src.tree_util import tree_unflatten
 
 from jax.core import Var
 from jax.interpreters import pxla

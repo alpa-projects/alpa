@@ -93,6 +93,7 @@ class DistSaveLoadTest(unittest.TestCase):
         physical_mesh.shutdown()
     
     def test_distributed_mlp_save_load(self):
+        # Set pipeline parallel option
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel")
@@ -115,46 +116,33 @@ class DistSaveLoadTest(unittest.TestCase):
         serial_train_step = get_mlp_train_step(False, None, None, False)
         parallel_train_step = get_mlp_train_step(True, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)
-
+       
+        # Run before save
         serial_state = state
         parallel_state = state
         serial_state = serial_train_step(serial_state, batch)[0]
         parallel_state = parallel_train_step(parallel_state, batch)[0]
-        # state_flat1, flat_tree1 = tree_flatten(parallel_state)
-        # parallel_state = parallel_train_step(parallel_state, batch)[0]
-        # state_flat2, flat_tree2 = tree_flatten(parallel_state)
-        # assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
+        assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
-        # Checkpoint (TODO: remove hard-coded path)
-        ckpt_dir1 = "/home/ubuntu/efs/ckpt1"
-        subprocess.run(["rm", "-rf", ckpt_dir1])
-        save_checkpoint(ckpt_dir1, parallel_state, 1)
+        with tempfile.TemporaryDirectory(prefix="/home/ubuntu/efs/") as ckpt_dir:
+            # Save checkpoint 
+            save_checkpoint(ckpt_dir, parallel_state, 1)
 
-        # Restore checkpoint
-        flat_save_state, save_tree = tree_flatten(parallel_state)
-        flat_load_path, load_tree = tree_flatten(restore_checkpoint(ckpt_dir1, state, 1))
-        flat_load_state = []
-        for x, path in zip(flat_save_state, flat_load_path):
-            if isinstance(x, ReplicatedDistributedArray):
-                x = x.replica
-            y = DistributedArray.load(path, x.aval, x.device_mesh, x.sharding_spec)
-            flat_load_state.append(y)
-            self.check_dist_array_eq(x, y)
-        load_state = tree_unflatten(load_tree, flat_load_state)
+            # Restore checkpoint
+            load_path_dict = restore_checkpoint(ckpt_dir, state, 1)
+            load_state = executable.load_state_dict(load_path_dict)
 
-        # state_flat_load = executable.load_args(state_flat)
-        # parallel_state_load = tree_unflatten(state_tree, state_flat_load)
-        # print(parallel_state_load)
-
-        # Check results
-        # assert_allclose(optimizer_serial.target, optimizer_parallel_load.target)
+        # Run after load
+        serial_state = serial_train_step(serial_state, batch)[0]
+        load_state = parallel_train_step(load_state, batch)[0]
+        assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
         # Cleanup
         executable.shutdown()
 
 def suite():
     suite = unittest.TestSuite()
-    # suite.addTest(DistSaveLoadTest("test_distributed_array_save_load"))
+    suite.addTest(DistSaveLoadTest("test_distributed_array_save_load"))
     suite.addTest(DistSaveLoadTest("test_distributed_mlp_save_load"))
     return suite
 

@@ -395,10 +395,8 @@ class InferenceSchedule(PipelineSchedule):
 
         return schedules
 
-    @abstractmethod
     def should_skip_grad_sync(self, task):
         raise ValueError("InferenceSchedule does not have backward.")
 
-    @abstractmethod
     def previous_backward_batch_index(self, batch_idx):
         raise ValueError("InferenceSchedule does not have backward.")

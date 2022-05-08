@@ -1,4 +1,5 @@
 """Generate pipeline schedules."""
+import itertools
 import logging
 from abc import abstractmethod, ABCMeta
 from typing import List, Tuple
@@ -13,13 +14,12 @@ logger.setLevel(logging.INFO)
 
 
 def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
-                               n_apply_grad_stages=0,
-                               apply_grad_deps=()):
+                               apply_grad_stages: List[PipelineComputation] = ()):
     """Generate the dependency matrix for a list of pipeline stages."""
-    n_stages = len(compute_stages) + n_apply_grad_stages
+    n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)
     var_stage_id = {}
-    for i, stage in enumerate(compute_stages):
+    for i, stage in enumerate(itertools.chain(compute_stages, apply_grad_stages)):
         for var in stage.invars:
             if var in var_stage_id:
                 d[i, var_stage_id[var]] = 1
@@ -29,9 +29,6 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
         for var in stage.outvars:
             var_stage_id[var] = i
 
-    # TODO(yonghao): this can be inferred as well.
-    for apply_stage_id, compute_stage_id in apply_grad_deps:
-        d[apply_stage_id][compute_stage_id] = 1
     return d
 
 

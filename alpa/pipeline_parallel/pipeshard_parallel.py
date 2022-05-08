@@ -65,7 +65,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if num_micro_batches > 1:
         (acc_grad_jaxpr, acc_grad_dict,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-            compute_grad_jaxpr, gensym_func, num_micro_batches)
+            compute_grad_jaxpr, gensym_func)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
         acc_grad_dict = {x: x for x in compute_grad_jaxpr.jaxpr.outvars}

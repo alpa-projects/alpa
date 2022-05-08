@@ -391,9 +391,18 @@ class InferenceSchedule(PipelineSchedule):
             schedules.append(scheds)
 
         # There should be no apply_grad tasks in the inference schedule.
-        assert len(self.apply_grad_placement) == 0
+        # apply_grad schedules
+        scheds = [None] * n
+        for stage_idx, worker in self.apply_grad_placement.items():
+            scheds[worker] = (self.last_backward_batch_index, stage_idx)
+        schedules.append(scheds)
 
         return schedules
+
+    @property
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
+        return self.num_batch - 1
 
     def should_skip_grad_sync(self, task):
         raise ValueError("InferenceSchedule does not have backward.")

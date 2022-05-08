@@ -102,7 +102,75 @@ class MeshHostWorker:
                 self.signal_tensors.append(
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
-                        take_ownership=True))
+                                       take_ownership=True))
+
+    ##### TensorStore Related Functions #####
+    def get_ts_spec(self, ckpt_path: str):
+        spec = {
+            'driver': 'zarr',
+            'kvstore': {},
+            'metadata_key': f".zarray{self.host_id}"
+        }
+        if ckpt_path.startswith('gs://'):
+            m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
+            if m is None:
+                raise ValueError(
+                    'The ckpt_path should contain the bucket name and the '
+                    f'file path inside the bucket. Got: {ckpt_path}')
+            gcs_bucket = m.group(1)
+            path_without_bucket = m.group(2)
+            spec['kvstore'] = {
+                'driver': 'gcs',
+                'bucket': gcs_bucket,
+                'path': path_without_bucket
+            }
+        else:
+            spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
+        return spec
+
+    def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                             shard_indices: Sequence[Index],
+                             device_ids: Sequence[int]):
+        assert len(uuids) > 0
+        ts_spec = self.get_ts_spec(ckpt_dir)
+        t = ts.open(ts.Spec(ts_spec), open=True).result()
+
+        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
+            data = t[index].read().result()
+            self.put_buffer(uuid, device_id, data)
+
+    def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                           shard_indices: Sequence[Index],
+                           global_shape: Sequence[int]):
+        assert len(uuids) > 0
+        for uuid in uuids:
+            assert uuid in self.buffers
+
+        ts_spec = self.get_ts_spec(ckpt_dir)
+        dtype = self.buffers[uuids[0]].dtype
+        if dtype == jnp.bfloat16:
+            # Tensorstore uses 'bfloat16', not '<V2'.
+            dtype = 'bfloat16'
+        else:
+            dtype = np.dtype(dtype).str
+        metadata = {
+            'compressor': {
+                'id': 'gzip'
+            },
+            'shape': global_shape,
+            'chunks': self.buffers[uuids[0]].shape,
+            'dtype': dtype,
+        }
+        ts_spec['metadata'] = metadata
+        t = ts.open(ts.Spec(ts_spec),
+                    create=True,
+                    open=True,
+                    context=ts.Context({'file_io_concurrency': {
+                        'limit': 128
+                    }})).result()
+
+        for index, uuid in zip(shard_indices, uuids):
+            t[index].write(self.buffers[uuid]).result()
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -635,6 +703,7 @@ class MeshHostWorker:
         # TODO(yonghao): the sync function should be carefully reconsidered
         def run_fn():
             self.run_resharding_send_task(uuid, buf_uuids)
+
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
@@ -1046,7 +1115,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     "XLA_PYTHON_CLIENT_ALLOCATOR"]
 
             if "NCCL_DEBUG" in os.environ:
-                env_vars["NCCL_DEBUG"] = os.environ["NCCL_DEBUG"] if i == 0 else "VERSION"
+                env_vars["NCCL_DEBUG"] = os.environ[
+                    "NCCL_DEBUG"] if i == 0 else "VERSION"
 
             if global_config.use_aws_efa:
                 env_vars.update({
@@ -1278,8 +1348,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def get_max_memory_allocated(self):
         self.sync_workers()
         return max(
-            ray.get([w.get_max_memory_allocated.remote()
-                     for w in self.workers]))
+            ray.get([w.get_max_memory_allocated.remote() for w in self.workers
+                    ]))
 
     def get_available_memory(self):
         return min(

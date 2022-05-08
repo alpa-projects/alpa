@@ -19,10 +19,6 @@ jobs:
         with:
           python-version: 3.8
 
-      - name: clean up images
-        run: |
-          docker image prune -f
-
       - name: build doc-building image
         run: |
           docker build -t build-alpa-doc -f docker/build_doc.Dockerfile docker/

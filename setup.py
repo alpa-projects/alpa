@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
     setup(
         name="alpa",
-        version="0.1.0",  # TODO(Hao): get a GENVER
+        version=os.environ.get("VERSION"),
         author="Alpa team",
         author_email="",
         description="Alpa automatically parallelizes large tensor computation graphs and "

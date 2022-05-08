@@ -2,7 +2,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
-from functools import partial
 from itertools import chain
 import logging
 from operator import attrgetter
@@ -12,17 +11,15 @@ import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
 import jax
-from jax import core, jit, xla, device_put
+from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
-from jax._src.numpy.lax_numpy import _multi_slice
 from jax._src.tree_util import tree_leaves
-from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.interpreters.pxla import (ShardingSpec, _as_slice_indices,
-                                   _hashable_index, ShardedDeviceArray, Index)
+from jax.interpreters.pxla import (ShardingSpec, _hashable_index,
+                                   ShardedDeviceArray, Index)
 from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
@@ -1046,8 +1043,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         return microbatch_arrays
 
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
-                           donated_invars: Sequence[bool], args):
+                           donated_invars: Sequence[bool],
+                           args: Sequence):
         input_bufs = []
+        total_bytes = 0
+        time_start = time.time()
+
         for arg, indices, donated in zip(args, shard_indices, donated_invars):
             # Fast path for DistributedArray
             if isinstance(arg, DistributedArray) and arg.indices == indices:
@@ -1057,6 +1058,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 assert replica.indices == indices
                 input_bufs.append(replica.remote_buffers)
             else:  # Slow path
+                tic = time.time()
                 if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
                     arg = xla.canonicalize_dtype(arg)
                 buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
@@ -1066,15 +1068,25 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     # so we can delete the old buffers
                     arg.delete()
 
+                if False:  # pylint: disable=using-constant-test
+                    size = np.prod(arg.shape) * arg.dtype.itemsize
+                    bandwidth = size / (time.time() - tic)
+                    total_bytes += size
+                    print(f"Slow path. "
+                          f"shape: {arg.shape}, "
+                          f"bandwidth: {bandwidth/1024**2:.2f} MB/s "
+                          f"total_bytes: {total_bytes/1024**2:.2f} MB "
+                          f"total_time: {time.time() - time_start:.2f}")
+
         return input_bufs
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
-                             sharding_specs: Sequence[ShardingSpec], args):
+                             sharding_specs: Sequence[ShardingSpec],
+                             args: Sequence[np.array]):
         arrays = []
         for i in range(len(avals)):
             buffers = _shard_array(args[i], self, shard_indices[i])
-            #buffers = _device_mesh_put_dummy(args[i], self, shard_indices[i], 1)
             arrays.append(
                 DistributedArray(self, avals[i], sharding_specs[i], buffers,
                                  shard_indices[i]))
@@ -1654,21 +1666,6 @@ def _device_mesh_put_dummy(array, device_mesh, indices, num_batch):
     return buf_refs
 
 
-def _shard_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
-    if global_config.use_dummy_value_for_benchmarking:
-        return _device_mesh_put_dummy(array, device_mesh, indices, num_batch)
-    else:
-        # Create shards according to indices for a numpy array
-        datas = [array[i] for i in indices]
-        if num_batch > 1:
-            concate_datas = []
-            for device_id in range(device_mesh.num_devices):
-                mb = datas[device_id * num_batch:(device_id + 1) * num_batch]
-                concate_datas.append(np.concatenate(mb, axis=batch_dim))
-            datas = concate_datas
-        return _device_mesh_put(device_mesh, datas, num_batch, batch_dim)
-
-
 def _shard_abstract_array(array,
                           device_mesh,
                           indices,
@@ -1678,37 +1675,30 @@ def _shard_abstract_array(array,
     return _device_mesh_put_dummy(array, device_mesh, indices, num_batch)
 
 
-@partial(jit, static_argnums=(1, 2, 3, 4, 5))
-def _split_and_concate(array,
-                       start_indices,
-                       limit_indices,
-                       removed_dims,
-                       num_batch=1,
-                       batch_dim=0):
-    shards = _multi_slice(array, start_indices, limit_indices, removed_dims)
-    if num_batch > 1:
-        concate_datas = []
-        step_num = len(shards) // num_batch
-        for shard_id in range(step_num):
-            concate_datas.append(
-                jnp.concatenate(shards[shard_id * num_batch:(shard_id + 1) *
-                                       num_batch],
-                                axis=batch_dim))
-        shards = concate_datas
-    return shards
+def _shard_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
+    if global_config.use_dummy_value_for_benchmarking:
+        return _device_mesh_put_dummy(array, device_mesh, indices, num_batch)
+    else:
+        # Create shards according to indices for a numpy array
+        if array.shape == ():
+            datas = [array] * len(indices)
+        else:
+            datas = [np.ascontiguousarray(array[i]) for i in indices]
+        if num_batch > 1:
+            concate_datas = []
+            for device_id in range(device_mesh.num_devices):
+                mb = datas[device_id * num_batch:(device_id + 1) * num_batch]
+                concate_datas.append(np.concatenate(mb, axis=batch_dim))
+            datas = concate_datas
+        return _device_mesh_put(device_mesh, datas, num_batch, batch_dim)
 
 
 def _shard_device_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
     if global_config.use_dummy_value_for_benchmarking:
         return _device_mesh_put_dummy(array, device_mesh, indices, num_batch)
     else:
-        # Create shards according to indices for a DeviceArray
-        start_indices, limit_indices, removed_dims = map(
-            tuple, unzip3(_as_slice_indices(array, idx) for idx in indices))
-        shards = _split_and_concate(array, start_indices, limit_indices,
-                                    removed_dims, num_batch, batch_dim)
-
-    return _device_mesh_put(device_mesh, shards, num_batch, batch_dim)
+        return _shard_array(np.asarray(array), device_mesh, indices, num_batch,
+                            batch_dim)
 
 
 def _shard_distributed_array(array,
@@ -1728,7 +1718,7 @@ def _uint8_to_bool(xla_buffer):
     return jax_tensor_to_xla_buffer(buf)
 
 
-shard_arg_handlers = {}  # Shard an argument to a distributed device mesh
+shard_arg_handlers = {}  # Shard an argument to a distributed array
 for a in array_types:
     shard_arg_handlers[a] = _shard_array
 shard_arg_handlers[ShapedArray] = _shard_abstract_array

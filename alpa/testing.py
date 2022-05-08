@@ -178,7 +178,7 @@ def get_mlp_inference_step(use_parallel,
         return out
 
     if use_parallel:
-        return parallelize(inference_step)
+        return parallelize(inference_step, donate_argnums=())
     else:
         return inference_step
 

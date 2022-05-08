@@ -2,7 +2,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
-from functools import partial
 from itertools import chain
 import logging
 from operator import attrgetter
@@ -12,17 +11,15 @@ import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
 import jax
-from jax import core, jit, xla, device_put
+from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
-from jax._src.numpy.lax_numpy import _multi_slice
 from jax._src.tree_util import tree_leaves
-from jax._src.util import unzip3
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.interpreters.pxla import (ShardingSpec, _as_slice_indices,
-                                   _hashable_index, ShardedDeviceArray, Index)
+from jax.interpreters.pxla import (ShardingSpec, _hashable_index,
+                                   ShardedDeviceArray, Index)
 from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
@@ -1071,7 +1068,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     # so we can delete the old buffers
                     arg.delete()
 
-                if False:
+                if False:  # pylint: disable=using-constant-test
                     size = np.prod(arg.shape) * arg.dtype.itemsize
                     bandwidth = size / (time.time() - tic)
                     total_bytes += size

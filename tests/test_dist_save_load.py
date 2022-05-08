@@ -1,24 +1,21 @@
 """Test distributed save and load."""
 
-from re import X
 import subprocess
 import tempfile
 import unittest
-from alpa.device_mesh import ReplicatedDistributedArray
 
 import jax
 import jax.numpy as jnp
-from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import optax
 import ray
 
-from alpa import DeviceCluster, DistributedArray, parallelize, set_parallelize_options, save_checkpoint, restore_checkpoint, manual_layer_construction
+from alpa import DeviceCluster, DistributedArray, set_parallelize_options, save_checkpoint, restore_checkpoint
 from alpa.global_env import set_parallelize_options, global_config
 from alpa.model.bert_model import BertConfig
 from alpa.model.model_util import TrainState
-from alpa.pipeline_parallel.primitive_def import mark_pipeline
-from alpa.testing import (MLPModel, BertLayerModel, create_train_state, get_bert_layer_train_step, get_mlp_train_step,
+from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
+                          get_bert_layer_train_step, get_mlp_train_step,
                           assert_allclose)
 
 
@@ -29,12 +26,16 @@ class DistSaveLoadTest(unittest.TestCase):
 
     def tearDown(self):
         ray.shutdown()
-    
+
     def check_dist_array_eq(self, x, y):
         if isinstance(x, DistributedArray):
-            x = np.array(x.device_mesh.get_remote_buffers(x.remote_buffers, batching=True))
+            x = np.array(
+                x.device_mesh.get_remote_buffers(x.remote_buffers,
+                                                 batching=True))
         if isinstance(y, DistributedArray):
-            y = np.array(y.device_mesh.get_remote_buffers(y.remote_buffers, batching=True))
+            y = np.array(
+                y.device_mesh.get_remote_buffers(y.remote_buffers,
+                                                 batching=True))
         assert_allclose(x, y)
 
     def test_distributed_array_save_load(self):
@@ -67,7 +68,8 @@ class DistSaveLoadTest(unittest.TestCase):
             (input_indices,), (input_sharding_spec,), (global_input_data1,))
 
         # Check the DistributedArray's remote buffers
-        desired_buffers1 = np.array([[[0], [2]], [[1], [3]], [[4], [6]], [[5], [7]]])
+        desired_buffers1 = np.array([[[0], [2]], [[1], [3]], [[4], [6]],
+                                     [[5], [7]]])
         self.check_dist_array_eq(desired_buffers1, dist_input_data1)
 
         # Save the DistributedArray (one replica only)
@@ -87,14 +89,13 @@ class DistSaveLoadTest(unittest.TestCase):
             physical_mesh, load_sharding_spec)
 
         # Check the DistributedArray's remote buffers
-        desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]], [[4, 5], [6,
-                                                                          7]],
-                            [[4, 5], [6, 7]]])
+        desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]],
+                                     [[4, 5], [6, 7]], [[4, 5], [6, 7]]])
         self.check_dist_array_eq(desired_buffers2, dist_load_data1)
 
         # Cleanup
         physical_mesh.shutdown()
-    
+
     def test_distributed_mlp_save_load(self):
         # Set pipeline parallel option
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
@@ -108,7 +109,7 @@ class DistSaveLoadTest(unittest.TestCase):
         model = MLPModel(hidden_dim=hidden_dim,
                          output_dim=output_dim,
                          manual_pipeline_layer=True)
-        
+
         # Init batch args
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, input_dim))
@@ -121,7 +122,7 @@ class DistSaveLoadTest(unittest.TestCase):
         serial_train_step = get_mlp_train_step(False, None, None, False)
         parallel_train_step = get_mlp_train_step(True, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)
-       
+
         # Run before save
         serial_state = state
         parallel_state = state
@@ -129,24 +130,24 @@ class DistSaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
-        with tempfile.TemporaryDirectory(prefix="/home/ubuntu/efs/") as ckpt_dir:
-            # Save checkpoint 
+        with tempfile.TemporaryDirectory(
+                prefix="/home/ubuntu/efs/") as ckpt_dir:
+            # Save checkpoint
             save_checkpoint(ckpt_dir, parallel_state, 1)
 
             # Restore checkpoint
-            load_path_dict = restore_checkpoint(ckpt_dir, state, 1)
-            load_state = executable.load_state_dict(load_path_dict)
+            load_state = restore_checkpoint(executable, ckpt_dir, state, 1)
 
         # Run after load
         serial_state = serial_train_step(serial_state, batch)[0]
         load_state = parallel_train_step(load_state, batch)[0]
-        
+
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
         # Cleanup
         executable.shutdown()
-    
+
     def test_distributed_bert_save_load(self):
         # Set pipeline parallel option
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
@@ -186,8 +187,10 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Compile
         global_config.num_micro_batches = 2
-        serial_train_step = get_bert_layer_train_step(False, None, None, n_layers, False)
-        parallel_train_step = get_bert_layer_train_step(True, True, False, n_layers, False)
+        serial_train_step = get_bert_layer_train_step(False, None, None,
+                                                      n_layers, False)
+        parallel_train_step = get_bert_layer_train_step(True, True, False,
+                                                        n_layers, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run before save
@@ -197,13 +200,13 @@ class DistSaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
-        with tempfile.TemporaryDirectory(prefix="/home/ubuntu/efs/") as ckpt_dir:
-            # Save checkpoint 
+        with tempfile.TemporaryDirectory(
+                prefix="/home/ubuntu/efs/") as ckpt_dir:
+            # Save checkpoint
             save_checkpoint(ckpt_dir, parallel_state, 1)
 
             # Restore checkpoint
-            load_path_dict = restore_checkpoint(ckpt_dir, state, 1)
-            load_state = executable.load_state_dict(load_path_dict)
+            load_state = restore_checkpoint(executable, ckpt_dir, state, 1)
 
         # Run after load
         serial_state = serial_train_step(serial_state, batch)[0]
@@ -211,11 +214,9 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
-        
+
         # Cleanup
         executable.shutdown()
-
-
 
 
 def suite():

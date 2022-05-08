@@ -86,12 +86,13 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(cls, # noqa
-             task_uuid,
-             output_uuids,
-             set_empty_buffer,
-             allgather_uuid=None,
-             info=""):  # noqa
+    def Recv(
+            cls,  # noqa
+            task_uuid,
+            output_uuids,
+            set_empty_buffer,
+            allgather_uuid=None,
+            info=""):  # noqa
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
@@ -894,7 +895,59 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             new_list.append(instruction)
         return list(reversed(new_list))
 
-    def run(self, *args):
+    def _exec_split_args(self, args, batch_dim=0):
+        split_args = []
+        num_batch = self.num_batch
+        for arg_idx, arg in enumerate(args):
+            if self.is_batch[arg_idx]:
+                # dispatch and split on worker.
+                replicas = [None] * num_batch
+                for mesh_and_shard in self.batch_arg_on_mesh[arg_idx]:
+                    mesh_idx, sharding_spec = mesh_and_shard
+                    mesh = self.physical_meshes[mesh_idx]
+                    splits = mesh.shard_batch_arg(
+                        arg, sharding_spec, num_batch, batch_dim,
+                        self.global_invars[arg_idx].aval)
+                    for batch_idx, split in enumerate(splits):
+                        if replicas[batch_idx] is not None:
+                            replicas[batch_idx].add_replica(mesh, split)
+                        else:
+                            replicas[batch_idx] = ReplicatedDistributedArray(
+                                [mesh], [split])
+                split_args.extend(replicas)
+            else:
+                split_args.append(arg)
+        return split_args
+
+    def load_state_dict(self, state_dict):
+        # Warning: current version only supports a constrained scenario in which
+        # the trainState is the first argument in the parallelized function, i.e. the train_step
+        flat_state_dict, state_tree = tree_flatten(state_dict)
+        load_state = [None] * len(flat_state_dict)
+        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            for local_idx, global_idx in enumerate(
+                    self.mesh_arg_indices[mesh_idx]):
+                if global_idx >= len(flat_state_dict):
+                    # ignore batch args
+                    continue
+                new_arr = DistributedArray.load(
+                    flat_state_dict[global_idx],
+                    self.global_invars[global_idx].aval, physical_mesh,
+                    self.input_specs[mesh_idx][local_idx])
+                if load_state[global_idx] is None:
+                    load_state[global_idx] = new_arr
+                elif isinstance(load_state[global_idx], DistributedArray):
+                    meshes = [load_state[global_idx].device_mesh, physical_mesh]
+                    arrays = [load_state[global_idx], new_arr]
+                    load_state[global_idx] = ReplicatedDistributedArray(
+                        meshes, arrays)
+                else:
+                    assert isinstance(load_state[global_idx],
+                                      ReplicatedDistributedArray)
+                    load_state[global_idx].add_replica(physical_mesh, new_arr)
+        return tree_unflatten(state_tree, load_state)
+
+    def run(self, *args, **kwargs):
         """The run function that maps to train_step()."""
         input_bufs = [None for _ in range(self.num_mesh)]
         output_bufs = [None for _ in range(self.num_mesh)]

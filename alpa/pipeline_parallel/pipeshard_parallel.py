@@ -121,7 +121,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         submesh_shapes=global_config.sub_physical_mesh_shapes,
         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
         autosharding_option_dicts=global_config.
-        submesh_autosharding_option_dicts)
+        submesh_autosharding_option_dicts,
+        inference_mode=inference_mode)
     num_meshes = len(sliced_virtual_meshes)
 
     # Process apply_gradient and donation

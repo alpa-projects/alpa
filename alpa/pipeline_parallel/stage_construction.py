@@ -491,7 +491,7 @@ def cluster_layers_and_slice_mesh(
         batch_size, jax_apply_layers, apply_grad_global_info,
         pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
-        autosharding_option_dicts, inference_mode=False):
+        autosharding_option_dicts, inference_mode):
     """
     Stage-mesh alignment.
 

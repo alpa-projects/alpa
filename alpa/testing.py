@@ -167,9 +167,11 @@ def get_mlp_inference_step(use_parallel,
 
         def inference_func(params):
             out = state.apply_fn(params, batch["x"])
+            # TODO(zhuohan): Make inference_func work with outputs also
+            loss = jnp.mean((out - batch["y"])**2)
             if manual_pipeline_layer:
                 mark_pipeline(name='2', mark_type='end')
-            return out
+            return loss
 
         if use_parallel:
             inference_func = decorate_loss_fn(inference_func, manual_pipeline_layer,

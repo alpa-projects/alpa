@@ -646,15 +646,15 @@ def cluster_layers_and_slice_mesh(
     num_forward_stages = len(forward_stage_layer_ids)
 
     if inference_mode:
+        stage_layer_ids = forward_stage_layer_ids
+        stage_to_mesh = list(range(num_forward_stages))
+    else:
         backward_stage_layer_ids = [[
             2 * num_layers - 1 - i for i in reversed(layer_ids)
         ] for layer_ids in reversed(forward_stage_layer_ids)]
         stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
         stage_to_mesh = list(range(num_forward_stages)) + list(
             reversed(range(num_forward_stages)))
-    else:
-        stage_layer_ids = forward_stage_layer_ids
-        stage_to_mesh = list(range(num_forward_stages))
 
     stage_outvars = get_stage_outvars(layers, stage_layer_ids,
                                       global_outvars)

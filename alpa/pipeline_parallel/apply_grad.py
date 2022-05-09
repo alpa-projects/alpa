@@ -160,7 +160,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     closed_jaxpr, sliced_eqns = _rewrite_cross_layer_grad(
         *sliced_eqns, gensym_fn, closed_jaxpr)
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
-    compute_grad, _, apply_grad = sliced_jaxprs  # pylint: disable=unbalanced-tuple-unpacking
+    compute_grad, _, apply_grad = sliced_jaxprs  # pylint: disable=unbalanced-tuple-unpackingd
     split_eqn = sliced_eqns[1][0]
     if len(apply_grad.eqns) == 0:
         logger.warning(

@@ -410,7 +410,13 @@ class InferenceSchedule(PipelineSchedule):
         return self.num_batch - 1
 
     def should_skip_grad_sync(self, task):
-        raise ValueError("InferenceSchedule does not have backward.")
+        """If we should skip the grad synchronization for this task."""
+        batch_idx, stage_idx = task
+        do_grad_sync = False
+        if (stage_idx < self.num_mesh and
+                batch_idx == self.last_backward_batch_index):
+            do_grad_sync = True
+        return not do_grad_sync
 
     def previous_backward_batch_index(self, batch_idx):
         raise ValueError("InferenceSchedule does not have backward.")

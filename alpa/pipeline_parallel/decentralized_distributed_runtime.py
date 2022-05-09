@@ -498,9 +498,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                             f"accumulate {invar} at multiple stages in a mesh")
                     grad_var_spec_dict[invar] = input_specs[var_idx]
         grad_uuids = [[] for _ in range(num_mesh)]
-        if len(grad_var_spec_dict):
-            for mesh_idx in range(num_mesh):
-                grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+        for mesh_idx in range(num_mesh):
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+            if len(grad_var_spec_dict):
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
 

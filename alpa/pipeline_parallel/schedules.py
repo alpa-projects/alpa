@@ -419,4 +419,6 @@ class InferenceSchedule(PipelineSchedule):
         return not do_grad_sync
 
     def previous_backward_batch_index(self, batch_idx):
-        raise ValueError("InferenceSchedule does not have backward.")
+        """Return the index of the previous microbatch at backward pass."""
+        assert batch_idx > 0
+        return batch_idx - 1

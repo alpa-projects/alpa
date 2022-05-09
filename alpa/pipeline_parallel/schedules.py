@@ -400,6 +400,11 @@ class InferenceSchedule(PipelineSchedule):
         return schedules
 
     @property
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        return 0
+
+    @property
     def last_backward_batch_index(self):
         """Return the index of the last microbatch at backward pass."""
         return self.num_batch - 1

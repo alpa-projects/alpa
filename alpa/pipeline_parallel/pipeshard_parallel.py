@@ -23,7 +23,6 @@ from alpa.pipeline_parallel.computation import (
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.apply_grad import (
-    jaxpr_have_apply_grad,
     compute_grad_to_accumulate_grad,
     process_apply_gradient,
     split_compute_grad_and_apply_grad)

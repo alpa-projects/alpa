@@ -1,4 +1,5 @@
 """Generate pipeline schedules."""
+import itertools
 import logging
 from abc import abstractmethod, ABCMeta
 from typing import List, Tuple
@@ -13,13 +14,12 @@ logger.setLevel(logging.INFO)
 
 
 def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
-                               n_apply_grad_stages=0,
-                               apply_grad_deps=()):
+                               apply_grad_stages: List[PipelineComputation] = ()):
     """Generate the dependency matrix for a list of pipeline stages."""
-    n_stages = len(compute_stages) + n_apply_grad_stages
+    n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)
     var_stage_id = {}
-    for i, stage in enumerate(compute_stages):
+    for i, stage in enumerate(itertools.chain(compute_stages, apply_grad_stages)):
         for var in stage.invars:
             if var in var_stage_id:
                 d[i, var_stage_id[var]] = 1
@@ -29,9 +29,6 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
         for var in stage.outvars:
             var_stage_id[var] = i
 
-    # TODO(yonghao): this can be inferred as well.
-    for apply_stage_id, compute_stage_id in apply_grad_deps:
-        d[apply_stage_id][compute_stage_id] = 1
     return d
 
 
@@ -356,6 +353,70 @@ class PipeDreamFlush(PipelineSchedule):
     def last_backward_batch_index(self):
         """Return the index of the last microbatch at backward pass."""
         return self.num_batch - 1
+
+    def previous_backward_batch_index(self, batch_idx):
+        """Return the index of the previous microbatch at backward pass."""
+        assert batch_idx > 0
+        return batch_idx - 1
+
+
+class InferenceSchedule(PipelineSchedule):
+    """Construct a Gpipe-like schedule."""
+
+    def _generate_schedule(self):
+        """
+        Generate a forward-only schedule.
+
+        The schedule will look like below:
+        i: index of micro-batch
+        j: index of partition/device
+        k: clock number
+
+        k (i,j) (i,j) (i,j)
+        - ----- ----- -----
+        0 (0,0)
+        1 (1,0) (0,1)
+        2 (2,0) (1,1) (0,2)
+        3       (2,1) (1,2)
+        4             (2,2)
+        """
+        m = self.num_batch
+        n = self.num_mesh
+        num_clock = m + n - 1
+        schedules = []
+        for k in range(num_clock):
+            scheds = [None] * n
+            for d in range(max(1 + k - m, 0), min(1 + k, n)):
+                scheds[d] = (k - d, d)
+            schedules.append(scheds)
+
+        # There should be no apply_grad tasks in the inference schedule.
+        # apply_grad schedules
+        scheds = [None] * n
+        for stage_idx, worker in self.apply_grad_placement.items():
+            scheds[worker] = (self.last_backward_batch_index, stage_idx)
+        schedules.append(scheds)
+
+        return schedules
+
+    @property
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        return 0
+
+    @property
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
+        return self.num_batch - 1
+
+    def should_skip_grad_sync(self, task):
+        """If we should skip the grad synchronization for this task."""
+        batch_idx, stage_idx = task
+        do_grad_sync = False
+        if (stage_idx < self.num_mesh and
+                batch_idx == self.last_backward_batch_index):
+            do_grad_sync = True
+        return not do_grad_sync
 
     def previous_backward_batch_index(self, batch_idx):
         """Return the index of the previous microbatch at backward pass."""

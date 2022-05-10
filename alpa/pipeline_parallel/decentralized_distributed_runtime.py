@@ -451,7 +451,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(accumulated_uuids))
             accumulated_uuid_lists[worker] = accumulated_uuids
-            # pylint: disable=umodified-iterating-dict
+            # pylint: disable=modified-iterating-dict
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 

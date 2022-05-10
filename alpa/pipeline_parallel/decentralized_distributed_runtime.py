@@ -195,10 +195,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.uuid_counter = 0  # counter for local buffer uuid
         self.flop_count = flop_count
 
+        # List[stage_idx -> executable_uuid]
+        self.executable_uuids = [] 
+
         # Cached sharding indices for inputs.
         # List[mesh_idx -> List[sharding_indices]].
         self.input_indices = [] 
-
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
@@ -277,6 +279,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Compile forward, backward and apply_grad computations
         executable_uuids = self._compile_computation_executables(
             executable_config_lists)
+        self.executable_uuids = executable_uuids 
 
         # Compile gradient buffer allocations
         grad_uuids = self._compile_grad_buffer_allocations(instruction_lists,
@@ -844,9 +847,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for mesh in self.physical_meshes
         ]
 
-        # check if there is OOM
+        # Check if there is OOM
         if global_config.pipeline_check_alive:
             self._check_alive()
+
+        # Shard arguments
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_args = [
@@ -868,6 +873,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
             #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
 
+
         # Sync before the execution to avoid exploding the ray task limits.
         self.sync()
 
@@ -886,7 +892,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if donate:
                     for buf in bufs:
                         buf.set_deleted_on_workers()
-        # construct output_bufs first.
+
+        # Construct output_bufs
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             num_devices_per_host = physical_mesh.num_devices_per_host
             output_uuid_transposed = output_uuids[mesh_idx].transpose([1, 0, 2])

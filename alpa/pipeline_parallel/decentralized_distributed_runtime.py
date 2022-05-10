@@ -1119,17 +1119,12 @@ class PipelineMeshWorkerExecutable:
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
-
-        self.global_executables = worker.executables
-        self.global_send_tasks = worker.send_tasks
-        self.global_recv_tasks = worker.recv_tasks
-
-        # Related executables
-        self._related_exec_uuids = []
-
         self.acc_grad_buffers = {}
         self.acc_in_uuids = [list(uuids) for uuids in list(acc_local_uuids)]
         self.acc_out_uuids = acc_out_uuids
+
+        # Executable management
+        self._related_exec_uuids = []
         self.partial_grad_exec_uuids = OrderedSet()
         self.use_memzero = False
 

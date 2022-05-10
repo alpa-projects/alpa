@@ -143,10 +143,12 @@ def test_resharding(var,
     # timers("overall_resharding_time").start()
     for worker_idx, worker in enumerate(src_mesh.workers):
         worker.run_executable.remote(exec_uuids[worker],
-                                    [input_uuids[worker_idx]], [])
+                                    [input_uuids[worker_idx]], [],
+                                    sync_for_timer=True)
     for worker_idx, worker in enumerate(dst_mesh.workers):
         worker.run_executable.remote(exec_uuids[worker], [],
-                                    [output_uuids[worker_idx]])
+                                    [output_uuids[worker_idx]],
+                                    sync_for_timer=True)
     output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
                                     output_refs)
     # dst_mesh.sync_workers()

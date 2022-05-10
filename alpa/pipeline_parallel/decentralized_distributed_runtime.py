@@ -438,7 +438,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         # Insert buffer free instructions
         accumulated_uuid_lists = {}
-        for worker in instruction_lists: # pylint: disable=umodified-iterating-dict
+        for worker in instruction_lists:
             used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
             mesh_idx, worker_idx = worker_to_idx[worker]
             accumulated_uuids = grad_uuids[mesh_idx]
@@ -451,6 +451,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(accumulated_uuids))
             accumulated_uuid_lists[worker] = accumulated_uuids
+            # pylint: disable=umodified-iterating-dict
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 

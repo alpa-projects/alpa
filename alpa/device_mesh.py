@@ -195,7 +195,8 @@ class MeshHostWorker:
         self.executables[uuid] = executable_class(self, uuid, *args)
 
     def delete_executable(self, uuid: int):
-        del self.executables[uuid]
+        if uuid in self.executables:
+            del self.executables[uuid]
 
     def run_executable(self, uuid: int, *args, **kwargs):
         self.executables[uuid].execute_on_worker(*args, **kwargs)
@@ -668,8 +669,8 @@ class MeshHostWorker:
 
     def shutdown(self):
         self.sync()
-        del self.buffers
-        del self.executables
+        self.buffers.clear()
+        self.executables.clear()
         self.distributed_client.shutdown()
 
 

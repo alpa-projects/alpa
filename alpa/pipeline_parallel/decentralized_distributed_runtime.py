@@ -438,7 +438,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         # Insert buffer free instructions
         accumulated_uuid_lists = {}
-        for worker in instruction_lists.keys():
+        for worker in instruction_lists: # pylint: disable=umodified-iterating-dict
             used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
             mesh_idx, worker_idx = worker_to_idx[worker]
             accumulated_uuids = grad_uuids[mesh_idx]
@@ -702,8 +702,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             key = keys[var_idx]
             _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
-
-
 
     # TODO(yonghao): set empty buffer is not compatiable with local allgather
     @staticmethod

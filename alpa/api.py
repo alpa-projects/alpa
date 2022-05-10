@@ -25,11 +25,13 @@ from alpa.util import (auto_donate_argnums, auto_static_argnums,
 unsafe_map, map = map, safe_map  # type: ignore
 
 
+# TODO(yonghao): Infer the reduce_outnums by batch_argnums and batch_dim
 def parallelize(fun=None,
                 *,
                 static_argnums="auto",
                 donate_argnums="auto",
-                batch_argnums=(1,)):
+                batch_argnums=(1,),
+                reduce_outnums="auto"):
     """
     Automatically parallelize a jax function.
 
@@ -43,6 +45,7 @@ def parallelize(fun=None,
           This information is used to split the original data batch into micro batches
           to perform gradient accumulation or pipeline parallelism.
           Alpa assumes the first dimension of the tensor is the batch dimension.
+        reduce_outnums: The indices of outputs that are reduced on batch dimension.
     """
 
     def decorate_fun(fun):
@@ -104,7 +107,7 @@ def parallelize(fun=None,
                 devices = tuple(devices)
             compiled_func = parallelize_callable(
                 f, in_tree, out_tree_hashable, static_argnums, donated_invars,
-                batch_invars, devices, global_config.strategy,
+                batch_invars, reduce_outnums, devices, global_config.strategy,
                 global_config.memory_budget_per_device, *abstract_args)
 
             if return_value_mode == "normal":
@@ -156,6 +159,7 @@ def parallelize_callable(
     static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
+    reduce_outnums: Sequence[int],
     devices,
     strategy: str,
     memory_budget_per_device: Optional[float],
@@ -177,8 +181,8 @@ def parallelize_callable(
     elif strategy == "pipeshard_parallel":
         return pipeshard_parallel_callable(fun, in_tree, out_tree_thunk,
                                            donated_invars, batch_invars,
-                                           devices, memory_budget_per_device,
-                                           *avals)
+                                           reduce_outnums, devices,
+                                           memory_budget_per_device, *avals)
     elif strategy == "local_pipeline_parallel":
         return local_pipeline_parallel_callable(fun, devices, *avals)
     else:

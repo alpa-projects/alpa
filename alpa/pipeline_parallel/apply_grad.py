@@ -187,6 +187,7 @@ def compute_grad_to_accumulate_grad(
         if isinstance(outvar, Var)
     ])
     # Currently, assume no grad is literal
+    # TODO(yonghao): this assertion fails if an output replicates in outvars
     assert len(raw_gradients) == len(compute_jaxpr.jaxpr.outvars)
     # from raw_gradients to gradients(cross pipeline marker)
     gradients = {}

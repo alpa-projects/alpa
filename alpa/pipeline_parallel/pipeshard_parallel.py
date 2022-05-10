@@ -37,7 +37,7 @@ logger.setLevel(logging.INFO)
 
 @lu.cache
 def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                                donated_invars, batch_invars, devices,
+                                donated_invars, batch_invars, reduce_outnums, devices,
                                 memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
     if not (isinstance(
@@ -54,6 +54,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         num_micro_batches = 1
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, avals)
+    do_reduction = _reduction_vector(reduce_outnums, out_tree_thunk)
 
     gensym_func = gensym([closed_jaxpr.jaxpr])
 
@@ -344,3 +345,13 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         wrap_layers[mesh_idx] = layers[layer_idx - num_layers]
     apply_grad_global_info = apply_grad_donation, global_outvars
     return wrap_layers, apply_grad_global_info
+
+def _reduction_vector(reduce_outnums, out_tree_thunk):
+    out_tree = out_tree_thunk()
+    if reduce_outnums == "all":
+        return tuple([True] * out_tree.num_leaves)
+    reduce_outnums = set(reduce_outnums)
+    reduction_vector = []
+    for idx, children in enumerate(out_tree.children()):
+        reduction_vector += [idx in reduce_outnums] * children.num_leaves
+    return reduction_vector

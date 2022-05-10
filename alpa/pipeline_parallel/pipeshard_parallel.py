@@ -12,7 +12,9 @@ from alpa.pipeline_parallel.decentralized_distributed_runtime import (
 from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
-from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush)
+from alpa.pipeline_parallel.schedules import (GpipeSchedule,
+                                              PipeDreamFlush,
+                                              InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
     generate_sharded_xla_computations,
@@ -20,9 +22,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import \
-    (compute_grad_to_accumulate_grad, process_apply_gradient,
-     split_compute_grad_and_apply_grad)
+from alpa.pipeline_parallel.apply_grad import (
+    compute_grad_to_accumulate_grad,
+    process_apply_gradient,
+    split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -61,6 +64,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         barrier = new_jaxpr_eqn(list(compute_grad_jaxpr.jaxpr.outvars),
                                 list(compute_grad_jaxpr.jaxpr.outvars),
                                 barrier.primitive, barrier.params)
+    inference_mode = (global_config.pipeline_parallel_schedule == "inference")
 
     if num_micro_batches > 1:
         (acc_grad_jaxpr, acc_grad_dict,
@@ -96,7 +100,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
         jax_pipeline_layers, apply_grad_jaxpr, barrier, acc_grad_dict,
         global_invars, global_outvars, donated_invars, donation_mapping,
-        num_micro_batches, gensym_func)
+        num_micro_batches, gensym_func, inference_mode)
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
      logical_mesh_shapes,
@@ -116,7 +120,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         submesh_shapes=global_config.sub_physical_mesh_shapes,
         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
         autosharding_option_dicts=global_config.
-        submesh_autosharding_option_dicts)
+        submesh_autosharding_option_dicts,
+        inference_mode=inference_mode)
     num_meshes = len(sliced_virtual_meshes)
 
     # Process apply_gradient and donation
@@ -143,6 +148,11 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                   meshes=sliced_virtual_meshes,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_micro_batches)
+    elif global_config.pipeline_parallel_schedule == "inference":
+        schedule = InferenceSchedule(dependency=dependency,
+                                     meshes=sliced_virtual_meshes,
+                                     apply_grad_placement=apply_grad_placement,
+                                     num_batch=num_micro_batches)
     else:
         raise RuntimeError(f"Unrecognized pipeline parallel schedule. "
                            f"Got {global_config.pipeline_parallel_schedule}. "
@@ -307,10 +317,18 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                              barrier, acc_grad_dict,
                                              global_invars, global_outvars,
                                              donated_invars, donation_mapping,
-                                             num_microbatch, gensym_func):
-    assert len(pipeline_layers) % 2 == 0
-    num_mesh = len(pipeline_layers) // 2
-    layer_to_mesh = list(range(num_mesh)) + list(reversed(range(num_mesh)))
+                                             num_microbatch, gensym_func,
+                                             inference_mode):
+    if inference_mode:
+        num_layers = len(pipeline_layers)
+        num_mesh = num_layers
+        layer_to_mesh = list(range(num_mesh))
+    else:
+        num_layers = len(pipeline_layers)
+        assert len(pipeline_layers) % 2 == 0
+        num_mesh = num_layers // 2
+        layer_to_mesh = (list(range(num_mesh)) +
+                         list(reversed(range(num_mesh))))
     (layers, _, _, apply_grad_placement, _,
      donated_invars) = process_apply_gradient(apply_grad_jaxpr, barrier,
                                               acc_grad_dict, pipeline_layers,
@@ -323,6 +341,6 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                                   global_outvars)
     wrap_layers = [None] * num_mesh
     for layer_idx, mesh_idx in apply_grad_placement.items():
-        wrap_layers[mesh_idx] = layers[layer_idx - 2 * num_mesh]
+        wrap_layers[mesh_idx] = layers[layer_idx - num_layers]
     apply_grad_global_info = apply_grad_donation, global_outvars
     return wrap_layers, apply_grad_global_info

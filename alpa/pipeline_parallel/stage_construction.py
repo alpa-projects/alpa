@@ -491,7 +491,7 @@ def cluster_layers_and_slice_mesh(
         batch_size, jax_apply_layers, apply_grad_global_info,
         pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
-        autosharding_option_dicts):
+        autosharding_option_dicts, inference_mode):
     """
     Stage-mesh alignment.
 
@@ -506,7 +506,8 @@ def cluster_layers_and_slice_mesh(
         donation_mapping: The donation_mapping for the layers.
         global_outvars: Global outvars of the layers.
         num_micro_batches: Number of microbatches for GPipe.
-        pipeline_stage_mode (str): one of "auto_stage", "manual_stage", "uniform_stage".
+        pipeline_stage_mode (str): one of "auto_stage", "manual_stage",
+          "uniform_stage".
         cache_compute_cost (Optional): Override the profiling results.
         forward_stage_layer_ids: hand-written layer-stage assignments.
         submesh_shapes (List): a list of allowed 2D mesh shapes.
@@ -528,9 +529,12 @@ def cluster_layers_and_slice_mesh(
         raise ValueError("Devices must be VirtualPhysicalMesh or "
                          "DistributedPhysicalDeviceMeshGroup.")
 
-    # Assume each forward layer corresponds to a backward layer
-    assert len(layers) % 2 == 0
-    num_layers = len(layers) // 2
+    if inference_mode:
+        num_layers = len(layers)
+    else:
+        # Assume each forward layer corresponds to a backward layer
+        assert len(layers) % 2 == 0
+        num_layers = len(layers) // 2
 
     if pipeline_stage_mode == "auto_stage":
         if given_mesh:
@@ -538,6 +542,10 @@ def cluster_layers_and_slice_mesh(
             raise NotImplementedError("automatically slicing layers with "
                                       "existing physical meshes is not"
                                       "supported yet.")
+        if inference_mode:
+            # TODO(zhuohan): Implement the auto slicing in inference mode.
+            raise NotImplementedError("automatically slicing layers with "
+                                      "inference mode is not supported yet.")
         autosharding_configs = get_all_submesh_autosharding_config_choices(
             devices,
             submesh_choices,
@@ -636,12 +644,18 @@ def cluster_layers_and_slice_mesh(
             devices, submesh_shapes)
 
     num_forward_stages = len(forward_stage_layer_ids)
-    backward_stage_layer_ids = [[
-        2 * num_layers - 1 - i for i in reversed(layer_ids)
-    ] for layer_ids in reversed(forward_stage_layer_ids)]
-    stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
-    stage_to_mesh = list(range(num_forward_stages)) + list(
-        reversed(range(num_forward_stages)))
+
+    if inference_mode:
+        stage_layer_ids = forward_stage_layer_ids
+        stage_to_mesh = list(range(num_forward_stages))
+    else:
+        backward_stage_layer_ids = [[
+            2 * num_layers - 1 - i for i in reversed(layer_ids)
+        ] for layer_ids in reversed(forward_stage_layer_ids)]
+        stage_layer_ids = forward_stage_layer_ids + backward_stage_layer_ids
+        stage_to_mesh = list(range(num_forward_stages)) + list(
+            reversed(range(num_forward_stages)))
+
     stage_outvars = get_stage_outvars(layers, stage_layer_ids,
                                       global_outvars)
     merged_stages = []

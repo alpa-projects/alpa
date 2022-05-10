@@ -1010,10 +1010,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
                 # "NCCL_DEBUG_SUBSYS": "ALL",
-                "NCCL_ALGO": "Ring",
-                "NCCL_PROTO": "Simple",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
+
+            if global_config.resharding_mode == "broadcast":
+                env_vars["NCCL_ALGO"] = "Ring"
+                env_vars["NCCL_PROTO"] = "Simple"
 
             if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
                 env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[

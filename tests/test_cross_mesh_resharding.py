@@ -36,6 +36,7 @@ def test_resharding(var,
                     src_loads=None,
                     dst_loads=None,
                     resharding_mode="send_recv"):
+    backup_resharding_mode = global_config.resharding_mode
     global_config.resharding_mode = resharding_mode
     backup_scatter_gather = global_config.use_scatter_gather
     global_config.use_scatter_gather = use_scatter_gather
@@ -162,7 +163,7 @@ def test_resharding(var,
         worker.delete_executable.remote(exec_uuids[worker])
     # Restore backup
     global_config.use_scatter_gather = backup_scatter_gather
-
+    global_config.resharding_mode = backup_resharding_mode
 
 class ReshardingTest(unittest.TestCase):
 
@@ -210,7 +211,7 @@ class ReshardingTest(unittest.TestCase):
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
-    def test_4gpu_all(self):
+    def test_4gpu_send_recv(self):
         src_shape = (1, 2)
         dst_shape = (1, 2)
         tensor_shape = (4, 8, 16)
@@ -220,28 +221,22 @@ class ReshardingTest(unittest.TestCase):
         dst_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="send_recv")
+                                 tensor_shape)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, False, resharding_mode="send_recv")
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, False, resharding_mode="broadcast")
+                                 tensor_shape, False)
         src_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="send_recv")
+                                 tensor_shape)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, False, resharding_mode="send_recv")
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, False, resharding_mode="broadcast")
+                                 tensor_shape, False)
         src_spec = ShardingSpec(
             [NoSharding(), Chunked([2]),
              NoSharding()], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="send_recv")
+                                 tensor_shape)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, False, resharding_mode="send_recv")
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, False, resharding_mode="broadcast")
+                                 tensor_shape, False)
 
     def test_4gpu_allgather(self):
         src_shape = (1, 2)
@@ -254,18 +249,18 @@ class ReshardingTest(unittest.TestCase):
             [NoSharding(), NoSharding(),
              NoSharding()], [Replicated(2)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="send_recv")
+                                 tensor_shape)
         src_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="send_recv")
+                                 tensor_shape)
         src_spec = ShardingSpec(
             [NoSharding(), Chunked([2]),
              NoSharding()], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="send_recv")
+                                 tensor_shape)
 
-    def test_8gpu_2_dim_allgather_broadcast(self):
+    def test_8gpu_2_dim_allgather(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)
         tensor_shape = (2, 8, 16)
@@ -276,21 +271,40 @@ class ReshardingTest(unittest.TestCase):
             [NoSharding(), NoSharding(),
              NoSharding()], [Replicated(4)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, resharding_mode="send_recv")
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, resharding_mode="broadcast")
+                                  tensor_shape)
 
     def test_4gpu_broadcast(self):
+        src_shape = (1, 2)
+        dst_shape = (1, 2)
+        tensor_shape = (4, 8, 16)
+        src_spec = ShardingSpec(
+            [NoSharding(), NoSharding(),
+             NoSharding()], [Replicated(2)])
+        dst_spec = ShardingSpec([Chunked(
+            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, resharding_mode="broadcast")
+        src_spec = ShardingSpec([Chunked(
+            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, resharding_mode="broadcast")
+        src_spec = ShardingSpec(
+            [NoSharding(), Chunked([2]),
+             NoSharding()], [ShardedAxis(0)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, resharding_mode="broadcast")
+
+    def test_8gpu_broadcast(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)
-        base = 64
-        tensor_shape = (2, 8*base, 8*base*8*base)
+        tensor_shape = (2, 64, 64)
 
         src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
         dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                   tensor_shape, resharding_mode="broadcast")
 
+        tensor_shape = (64, 64, 64)
         src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
         dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
@@ -298,10 +312,11 @@ class ReshardingTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(ReshardingTest("test_4gpu_all"))
+    suite.addTest(ReshardingTest("test_4gpu_send_recv"))
     suite.addTest(ReshardingTest("test_4gpu_allgather"))
-    suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather_broadcast"))
+    suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
     suite.addTest(ReshardingTest("test_4gpu_broadcast"))
+    suite.addTest(ReshardingTest("test_8gpu_broadcast"))
     return suite
 
 

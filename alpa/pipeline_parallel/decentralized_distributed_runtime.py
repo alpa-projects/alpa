@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, Sequence, List, Callable, Optional, Union, Tuple
+from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 
 from jax.core import Var
 from jax.interpreters import pxla
@@ -282,8 +282,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.executable_uuids = executable_uuids 
 
         # Compile gradient buffer allocations
-        grad_uuids = self._compile_grad_buffer_allocations(instruction_lists,
-            executable_config_lists, var_at)
+        grad_uuids = self._compile_grad_buffer_allocations(
+            instruction_lists, executable_config_lists, var_at)
 
         # Split input into micro batches
         not_batch_invars = OrderedSet([
@@ -320,8 +320,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             return var_key, key
 
         for _, sched in enumerate(self.schedule.schedules):
-            for worker in worker_tmp_instructions:
-                worker_tmp_instructions[worker] = []
+            for tmp_list in worker_tmp_instructions.values():
+                tmp_list.clear()
 
             for mesh_idx, task in enumerate(sched):
                 if not task:
@@ -438,7 +438,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         # Insert buffer free instructions
         accumulated_uuid_lists = {}
-        for worker in instruction_lists:
+        for worker in instruction_lists.keys():
             used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
             mesh_idx, worker_idx = worker_to_idx[worker]
             accumulated_uuids = grad_uuids[mesh_idx]
@@ -567,7 +567,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         var_to_spec[invar] = spec
                         if invar in not_batch_invars:
                             mesh_arg_set.add((invar, 0))
-                            continue
                         else:
                             for batch_idx in range(self.num_batch):
                                 mesh_arg_set.add((invar, batch_idx))
@@ -655,6 +654,57 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     var_to_spec_all_meshes[mesh_idx][outvar])
             self.mesh_output_indices.append(mesh_out_indices)
 
+    def _compile_alloc(self, variables, sharding_specs,
+                       mesh_idx, keys, preallocated,
+                       instruction_lists, executable_config_lists, var_at):
+        """Compile an executable which allocates zero buffers.
+
+        The zero buffers are:
+        1) gradient accumulation buffers
+        2) temp buffers for receiving tensors
+        """
+        config_class = (MemZeroWorkerExecutableConfig
+                        if preallocated else AllocateZeroWorkerExecutableConfig)
+        avals = [var.aval for var in variables]
+        sharded_shapes = [
+            get_shard_shape(aval, spec)
+            for aval, spec in zip(avals, sharding_specs)
+        ]
+        dtypes = [aval.dtype for aval in avals]
+        exec_uuid = next_mesh_executable_uuid()
+        config = config_class(exec_uuid, sharded_shapes, dtypes)
+
+        physical_mesh = self.physical_meshes[mesh_idx]
+        output_uuids = self.get_next_uuids(
+            len(variables) * physical_mesh.num_devices).reshape(
+                len(physical_mesh.workers), len(variables), -1)
+        for worker_idx, worker in enumerate(physical_mesh.workers):
+            executable_config_lists[worker].append(config)
+            if preallocated:
+                in_uuids = output_uuids[worker_idx]
+                out_uuids = []
+            else:
+                in_uuids = []
+                out_uuids = output_uuids[worker_idx]
+            instruction_lists[worker].append(
+                PipelineInstruction.Run(config.exec_uuid,
+                                        in_uuids,
+                                        out_uuids, {
+                                            "sync_before": False,
+                                            "sync_after": False
+                                        },
+                                        info="mem set zero" if preallocated else
+                                        "allocate zero for recv"))
+
+        # shape: (#args, num_hosts, num_devices_per_host)
+        transposed = output_uuids.transpose([1, 0, 2])
+        for var_idx in range(len(variables)):
+            key = keys[var_idx]
+            _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
+        return output_uuids
+
+
+
     # TODO(yonghao): set empty buffer is not compatiable with local allgather
     @staticmethod
     def _compile_resharding_task(src_mesh,
@@ -741,56 +791,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                                                       output_uuids, 
                                                                       "broadcast"))
 
-    def _compile_alloc(self, variables, sharding_specs,
-                       mesh_idx, keys, preallocated,
-                       instruction_lists, executable_config_lists, var_at):
-        """Compile an executable which allocates zero buffers.
-
-        The zero buffers are:
-        1) gradient accumulation buffers
-        2) temp buffers for receiving tensors
-        """
-        config_class = (MemZeroWorkerExecutableConfig
-                        if preallocated else AllocateZeroWorkerExecutableConfig)
-        avals = [var.aval for var in variables]
-        sharded_shapes = [
-            get_shard_shape(aval, spec)
-            for aval, spec in zip(avals, sharding_specs)
-        ]
-        dtypes = [aval.dtype for aval in avals]
-        exec_uuid = next_mesh_executable_uuid()
-        config = config_class(exec_uuid, sharded_shapes, dtypes)
-
-        physical_mesh = self.physical_meshes[mesh_idx]
-        output_uuids = self.get_next_uuids(
-            len(variables) * physical_mesh.num_devices).reshape(
-                len(physical_mesh.workers), len(variables), -1)
-        for worker_idx, worker in enumerate(physical_mesh.workers):
-            executable_config_lists[worker].append(config)
-            if preallocated:
-                in_uuids = output_uuids[worker_idx]
-                out_uuids = []
-            else:
-                in_uuids = []
-                out_uuids = output_uuids[worker_idx]
-            instruction_lists[worker].append(
-                PipelineInstruction.Run(config.exec_uuid,
-                                        in_uuids,
-                                        out_uuids, {
-                                            "sync_before": False,
-                                            "sync_after": False
-                                        },
-                                        info="mem set zero" if preallocated else
-                                        "allocate zero for recv"))
-
-        # shape: (#args, num_hosts, num_devices_per_host)
-        transposed = output_uuids.transpose([1, 0, 2])
-        for var_idx in range(len(variables)):
-            key = keys[var_idx]
-            _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
-        return output_uuids
-
-    def _compile_free(self, worker, used_outside, donated, instruction_lists):
+    @staticmethod
+    def _compile_free(worker, used_outside, donated, instruction_lists):
         """Compile and generate FREE PipelineInstruction to recycle memory."""
         instruction_list = instruction_lists[worker]
         new_list = []
@@ -1208,7 +1210,7 @@ class PipelineMeshWorkerExecutable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques["set_empty_buffer"])
-                # NOTE(lmzheng): move this to run_resharding_recv_task
+                # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
                     self.worker.run_allgather_task(
                         instruction.opaques["allgather_uuid"],

@@ -147,11 +147,9 @@ class CentralizedDistributedRuntime(BaseDistributedRuntime):  # pylint: disable=
                 key = (0, repr(var))
                 self._initial_var_reference_count[key] += 1
 
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """Run the training with pipelining."""
         # pylint: disable=too-many-locals
-        assert not kwargs, "kwargs not supported"
-
         timers("overall").start(sync_func=self.sync)
 
         # timers("overall").start()

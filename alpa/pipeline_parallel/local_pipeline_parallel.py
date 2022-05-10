@@ -97,9 +97,8 @@ class LocalRuntime(BaseRuntime):
                 self.hlo_texts_after_spmd_partitioner.append(
                     hlo_module.to_string())
 
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """Run function."""
-        assert not kwargs, "kwargs not supported"
         global_invals = dict(zip(self.global_invars, args))
         runners = {}
 

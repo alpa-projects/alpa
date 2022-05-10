@@ -100,6 +100,7 @@ class GlobalConfig:
         self.overwrite_submesh_choices = None
 
         ########## Options of pipeline runtime ##########
+        self.pipeline_check_alive = True
         self.pipeline_distributed_compile = True  # Whether to use distributed compilation
         # in pipeline parallel for each stage. Disabling it helps debug.
         self.pipeline_use_signal_send_recv = False

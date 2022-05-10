@@ -10,12 +10,12 @@ import numpy as np
 import ray
 from alpa.global_env import global_config
 from alpa.util import OrderedSet
-from alpa.pipeline_parallel.cross_mesh_resharding import (CrossMeshCommunicator,
-    SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
+from alpa.pipeline_parallel.cross_mesh_resharding import (
+    CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.computation import (PipelineComputation,
-    XlaShardedPipelineComputation)
+                                                XlaShardedPipelineComputation)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -63,7 +63,7 @@ class BaseRuntime(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """Run function."""
         raise NotImplementedError()
 
@@ -127,7 +127,7 @@ class BaseDistributedRuntime(BaseRuntime):
         logger.debug(
             f"Compile resharding tasks takes {end_time - start_time:.2f}")
 
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """The runtime invocation interface."""
         raise NotImplementedError()
 

@@ -3,16 +3,19 @@ import logging
 import time
 
 from abc import ABCMeta, abstractmethod
-from typing import List
+from typing import Sequence, Union
 
 from jax.core import Var
+import numpy as np
 import ray
 from alpa.global_env import global_config
 from alpa.util import OrderedSet
-from alpa.pipeline_parallel.cross_mesh_resharding import \
-    (CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
+from alpa.pipeline_parallel.cross_mesh_resharding import (
+    CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
+from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
-from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.pipeline_parallel.computation import (PipelineComputation,
+                                                XlaShardedPipelineComputation)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -21,16 +24,21 @@ logger.setLevel(logging.INFO)
 class BaseRuntime(metaclass=ABCMeta):
     """Abstract class for pipeline runtime."""
 
-    def __init__(self, *, pipeline_stages, global_invars, global_outvars,
-                 physical_meshes, **kwargs):
+    def __init__(self,
+                 *,
+                 pipeline_stages: Sequence[Union[PipelineComputation,
+                                                 XlaShardedPipelineComputation]],
+                 global_invars: Sequence[Var],
+                 global_outvars: Sequence[Var],
+                 physical_meshes: Sequence[Var]):
         """
         An abstract class for pipeline-parallel runtime.
 
         Args:
-            pipeline_stages (Sequence[PipelineComputation, XlaShardedPipelineComputation]): pipeline stages.
-            global_invars (Sequence[Var]): input variables.
-            global_outvars (Sequence[Var]): output varialbes.
-            physical_meshes (Sequence[PhysicalDeviceMesh]): input physical meshes.
+            pipeline_stages: pipeline stages.
+            global_invars: input variables.
+            global_outvars: output varialbes.
+            physical_meshes: input physical meshes.
         """
         self.global_invars = global_invars
         self.global_outvars = global_outvars
@@ -55,7 +63,7 @@ class BaseRuntime(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """Run function."""
         raise NotImplementedError()
 
@@ -65,16 +73,15 @@ class BaseDistributedRuntime(BaseRuntime):
 
     def __init__(self,
                  *,
-                 pipeline_stages: List[XlaShardedPipelineComputation],
-                 global_invars: List[Var],
-                 grad_dummy_invars,
-                 global_outvars: List[Var],
+                 pipeline_stages: Sequence[XlaShardedPipelineComputation],
+                 global_invars: Sequence[Var],
+                 grad_dummy_invars: Sequence[Var],
+                 global_outvars: Sequence[Var],
                  physical_meshes: DistributedPhysicalDeviceMeshGroup,
-                 dependency,
-                 schedule,
-                 is_batch,
-                 num_batch=1,
-                 **kwargs):
+                 dependency: np.ndarray,
+                 schedule: PipelineSchedule,
+                 is_batch: Sequence[bool],
+                 num_batch: int):
         """
         A base class of distributed pipeline-parallel runtime.
 
@@ -82,17 +89,15 @@ class BaseDistributedRuntime(BaseRuntime):
         across different distributed runtime implementations.
 
         Args:
-            pipeline_stages (List[XlaShardedPipelineComputation]): list of pipeline stage programs.
-            global_invars (List[Var]): input variables.
-            grad_dummy_invars (List[Var]): vars for gradient accumulation.
-            global_outvars (List[Var]): output variables.
-            physical_meshes (DistributedPhysicalDeviceMeshGroup): the cluster meshes to pipeline over.
-            dependency (np.array): dependency between stages as an adjacency matrix.
-            schedule (GpipeSchedule): schedule to follow to execute the pipeline.
-            is_batch (): indicator of the batch dimension.
-            num_batch (int): number of microbatches.
-            kwargs (dict): a dict of keyword arguments as the sharding
-                compilation parameters.
+            pipeline_stages: list of pipeline stage programs.
+            global_invars: input variables.
+            grad_dummy_invars: vars for gradient accumulation.
+            global_outvars: output variables.
+            physical_meshes: the cluster meshes to pipeline over.
+            dependency: dependency between stages as an adjacency matrix.
+            schedule: schedule to follow to execute the pipeline.
+            is_batch: indicators of the batch variables.
+            num_batch: number of microbatches.
         """
         super().__init__(pipeline_stages=pipeline_stages,
                          global_invars=global_invars,
@@ -114,7 +119,6 @@ class BaseDistributedRuntime(BaseRuntime):
             [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
 
-        # TODO(Hao): this establish_nccl_groups needs to be improved to cover allgather.
         self._establish_nccl_groups()
 
         start_time = time.time()
@@ -123,7 +127,7 @@ class BaseDistributedRuntime(BaseRuntime):
         logger.debug(
             f"Compile resharding tasks takes {end_time - start_time:.2f}")
 
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """The runtime invocation interface."""
         raise NotImplementedError()
 
@@ -165,7 +169,6 @@ class BaseDistributedRuntime(BaseRuntime):
 
         We establish one collective group between two physical meshes, covering all the devices in
         these two meshes that require NCCL communication.
-        TODO(Hao): we might need to improve this part later for adding scatter-gather optimization.
 
         Returns:
             device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at

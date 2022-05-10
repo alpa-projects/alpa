@@ -104,72 +104,6 @@ class MeshHostWorker:
                         jnp.ones((1,), dtype=jnp.int8), d),
                         take_ownership=True))
 
-    ##### TensorStore Related Functions #####
-    def get_ts_spec(self, ckpt_path: str):
-        spec = {
-            'driver': 'zarr',
-            'kvstore': {},
-            'metadata_key': f".zarray{self.host_id}"
-        }
-        if ckpt_path.startswith('gs://'):
-            m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
-            if m is None:
-                raise ValueError(
-                    'The ckpt_path should contain the bucket name and the '
-                    f'file path inside the bucket. Got: {ckpt_path}')
-            gcs_bucket = m.group(1)
-            path_without_bucket = m.group(2)
-            spec['kvstore'] = {
-                'driver': 'gcs',
-                'bucket': gcs_bucket,
-                'path': path_without_bucket
-            }
-        else:
-            spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
-        return spec
-
-    def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
-                             shard_indices: Sequence[Index],
-                             device_ids: Sequence[int]):
-        ts_spec = self.get_ts_spec(ckpt_dir)
-        t = ts.open(ts.Spec(ts_spec), open=True).result()
-
-        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
-            data = t[index].read().result()
-            self.put_buffer(uuid, device_id, data)
-
-    def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
-                           shard_indices: Sequence[Index],
-                           global_shape: Sequence[int]):
-        for uuid in uuids:
-            assert uuid in self.buffers
-
-        ts_spec = self.get_ts_spec(ckpt_dir)
-        dtype = self.buffers[uuids[0]].dtype
-        if dtype == jnp.bfloat16:
-            # Tensorstore uses 'bfloat16', not '<V2'.
-            dtype = 'bfloat16'
-        else:
-            dtype = np.dtype(dtype).str
-        metadata = {
-            'compressor': {
-                'id': 'gzip'
-            },
-            'shape': global_shape,
-            'chunks': self.buffers[uuids[0]].shape,
-            'dtype': dtype,
-        }
-        ts_spec['metadata'] = metadata
-        t = ts.open(ts.Spec(ts_spec),
-                    create=True,
-                    open=True,
-                    context=ts.Context({'file_io_concurrency': {
-                        'limit': 128
-                    }})).result()
-
-        for index, uuid in zip(shard_indices, uuids):
-            t[index].write(self.buffers[uuid]).result()
-
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
         assert uuid not in self.buffers
@@ -261,7 +195,8 @@ class MeshHostWorker:
         self.executables[uuid] = executable_class(self, uuid, *args)
 
     def delete_executable(self, uuid: int):
-        del self.executables[uuid]
+        if uuid in self.executables:
+            del self.executables[uuid]
 
     def run_executable(self, uuid: int, *args, **kwargs):
         self.executables[uuid].execute_on_worker(*args, **kwargs)
@@ -274,6 +209,72 @@ class MeshHostWorker:
 
     def get_exec_grad_sync_channel_ids(self, uuid: int):
         return self.executables[uuid].grad_sync_channel_ids
+
+    ##### TensorStore Related Functions #####
+    def get_ts_spec(self, ckpt_path: str):
+        spec = {
+            'driver': 'zarr',
+            'kvstore': {},
+            'metadata_key': f".zarray{self.host_id}"
+        }
+        if ckpt_path.startswith('gs://'):
+            m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
+            if m is None:
+                raise ValueError(
+                    'The ckpt_path should contain the bucket name and the '
+                    f'file path inside the bucket. Got: {ckpt_path}')
+            gcs_bucket = m.group(1)
+            path_without_bucket = m.group(2)
+            spec['kvstore'] = {
+                'driver': 'gcs',
+                'bucket': gcs_bucket,
+                'path': path_without_bucket
+            }
+        else:
+            spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
+        return spec
+
+    def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                             shard_indices: Sequence[Index],
+                             device_ids: Sequence[int]):
+        ts_spec = self.get_ts_spec(ckpt_dir)
+        t = ts.open(ts.Spec(ts_spec), open=True).result()
+
+        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
+            data = t[index].read().result()
+            self.put_buffer(uuid, device_id, data)
+
+    def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
+                           shard_indices: Sequence[Index],
+                           global_shape: Sequence[int]):
+        for uuid in uuids:
+            assert uuid in self.buffers
+
+        ts_spec = self.get_ts_spec(ckpt_dir)
+        dtype = self.buffers[uuids[0]].dtype
+        if dtype == jnp.bfloat16:
+            # Tensorstore uses 'bfloat16', not '<V2'.
+            dtype = 'bfloat16'
+        else:
+            dtype = np.dtype(dtype).str
+        metadata = {
+            'compressor': {
+                'id': 'gzip'
+            },
+            'shape': global_shape,
+            'chunks': self.buffers[uuids[0]].shape,
+            'dtype': dtype,
+        }
+        ts_spec['metadata'] = metadata
+        t = ts.open(ts.Spec(ts_spec),
+                    create=True,
+                    open=True,
+                    context=ts.Context({'file_io_concurrency': {
+                        'limit': 128
+                    }})).result()
+
+        for index, uuid in zip(shard_indices, uuids):
+            t[index].write(self.buffers[uuid]).result()
 
     ##### Data loader Related Functions #####
     def put_data_loader(self, uuid: int, *args):
@@ -664,12 +665,12 @@ class MeshHostWorker:
 
     @staticmethod
     def check_alive():
-        return 0
+        return True
 
     def shutdown(self):
         self.sync()
-        del self.buffers
-        del self.executables
+        self.buffers.clear()
+        self.executables.clear()
         self.distributed_client.shutdown()
 
 

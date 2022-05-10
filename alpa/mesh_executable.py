@@ -894,8 +894,11 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
 
 class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     """
-    The driver part of a mesh executable that
-    only computes and accumulates gradients, but does not apply it.
+    The driver part of a mesh executable that can optionally skip
+    the gradient synchronization step.
+
+    This executable is used for computation stages in pipeline,
+    such as forward, backward and apply_grad
     """
 
     def __init__(self, physical_mesh: "PhysicalDeviceMesh",
@@ -945,8 +948,11 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
 
 class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
-    The worker part of a mesh executable that
-    only computes and accumulates grads, but does not apply it
+    The worker part of a mesh executable that can optionally skip
+    the gradient synchronization step.
+
+    This executable is used for computation stages in pipeline,
+    such as forward, backward and apply_grad
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,

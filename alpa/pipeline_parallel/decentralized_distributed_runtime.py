@@ -225,7 +225,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Compile pipeline instructions and configs of mesh executables
         (instruction_lists, executable_config_lists,
          input_local_uuid_lists, grad_uuids,
-         accumulated_uuid_lists) = self._compile()
+         reduced_var_uuid_lists) = self._compile()
 
         # Create a PipelineMeshWorkerExecutable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}
@@ -240,7 +240,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         self.output_local_uuid_list[worker],
                         executable_config_lists[worker],
                         acc_grad_local_uuids,
-                        accumulated_uuid_lists[worker],
+                        reduced_var_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
                 worker.put_executable.remote(uuid, PipelineMeshWorkerExecutable,
@@ -437,27 +437,27 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self._compile_collect_outputs(var_at)
 
         # Insert buffer free instructions
-        accumulated_uuid_lists = {}
+        reduced_var_uuid_lists = {}
         for worker in instruction_lists:
             used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
             mesh_idx, worker_idx = worker_to_idx[worker]
-            accumulated_uuids = grad_uuids[mesh_idx]
-            if len(accumulated_uuids) > 0:
-                accumulated_uuids = accumulated_uuids[worker_idx]
-            accumulated_uuids = [[
+            reduced_var_uuids = grad_uuids[mesh_idx]
+            if len(reduced_var_uuids) > 0:
+                reduced_var_uuids = reduced_var_uuids[worker_idx]
+            reduced_var_uuids = [[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in uuids
-            ] for uuids in accumulated_uuids]
+            ] for uuids in reduced_var_uuids]
             donated = set(donation_mapping[mesh_idx].keys())
-            used_outside.update(flatten_uuid_set(accumulated_uuids))
-            accumulated_uuid_lists[worker] = accumulated_uuids
+            used_outside.update(flatten_uuid_set(reduced_var_uuids))
+            reduced_var_uuid_lists[worker] = reduced_var_uuids
             # pylint: disable=modified-iterating-dict
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 
         return (instruction_lists, executable_config_lists,
                 input_local_uuid_lists, grad_uuids,
-                accumulated_uuid_lists)
+                reduced_var_uuid_lists)
 
     def _compile_computation_executables(self, executable_config_lists):
         """Compile executables for forward, backward, and apply_grad compuations."""

@@ -351,7 +351,10 @@ def _get_reduction_vector(reduce_outnums, out_tree_thunk):
     if reduce_outnums == "all":
         return tuple([True] * out_tree.num_leaves)
     reduce_outnums = set(reduce_outnums)
-    reduction_vector = []
-    for idx, children in enumerate(out_tree.children()):
-        reduction_vector += [idx in reduce_outnums] * children.num_leaves
+    if len(out_tree.children()):
+        reduction_vector = []
+        for idx, children in enumerate(out_tree.children()):
+            reduction_vector += [idx in reduce_outnums] * children.num_leaves
+    else:
+        reduction_vector = [0 in reduce_outnums] * out_tree.num_leaves
     return reduction_vector

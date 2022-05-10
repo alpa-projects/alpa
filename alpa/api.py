@@ -31,7 +31,7 @@ def parallelize(fun=None,
                 static_argnums="auto",
                 donate_argnums="auto",
                 batch_argnums=(1,),
-                reduce_outnums="auto"):
+                reduce_outnums="all"):
     """
     Automatically parallelize a jax function.
 

@@ -168,101 +168,69 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     return closed_jaxpr, compute_grad, apply_grad, split_eqn
 
 
-def compute_grad_to_accumulate_grad(
-        compute_jaxpr: ClosedJaxpr, reduction_vector,
-        gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
-    """
-    Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
-
-    Args:
-        compute_jaxpr: the original jaxpr
-        gensym_fn: gensym function
-    Returns:
-        acc_grad_jaxpr: The accumulate grad jaxpr
-        update_outs: From original output(grad) to new output(acc grad)
-        grad_in_to_out: From accumulated gradient inputs to outputs
-    """
-    raw_gradients = [
+def _get_post_grad_to_pre_grad_mapping(compute_jaxpr):
+    post_marker_outs = [
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
     ]
     # Currently, assume no grad is literal
-    # TODO(yonghao): this assertion fails if an output replicates in outvars
-    assert len(raw_gradients) == len(compute_jaxpr.jaxpr.outvars)
-    raw_gradients = OrderedSet([
-        g for g, do_reduction in zip(raw_gradients, reduction_vector)
-        if do_reduction
-    ])
-    # from raw_gradients to gradients(cross pipeline marker)
-    gradients = {}
-    reverse_gradients = {}
+    assert len(post_marker_outs) == len(compute_jaxpr.jaxpr.outvars)
+    post_marker_outs = OrderedSet(post_marker_outs)
+    # from post_marker_outs to post_to_pre_marker_outs(cross pipeline marker)
+    post_to_pre_marker_outs = {}
+    pre_to_post_marker_outs = {}
     for eqn in reversed(compute_jaxpr.eqns):
         if eqn.primitive is pipeline_p:
             for i, outvar in enumerate(eqn.outvars):
-                if outvar in raw_gradients:
-                    gradients[outvar] = eqn.invars[i]
-                    reverse_gradients[eqn.invars[i]] = outvar
-                elif outvar in reverse_gradients:
+                if outvar in post_marker_outs:
+                    post_to_pre_marker_outs[outvar] = eqn.invars[i]
+                    pre_to_post_marker_outs[eqn.invars[i]] = outvar
+                elif outvar in pre_to_post_marker_outs:
                     # in case that:
                     #   invar = compute gradient
                     #   invar' = pipeline end(invar)
                     #   outvar = pipeline start(invar')
                     #   final = pipeline end(outvar)
-                    # gradients[final] should finally maps invar instead of
-                    # outvar, then acc grad there
-                    final_outvar = reverse_gradients[outvar]
-                    gradients[final_outvar] = eqn.invars[i]
-                    reverse_gradients[eqn.invars[i]] = final_outvar
+                    # post_to_pre_marker_outs[final] = invar instead of outvar
+                    final_outvar = pre_to_post_marker_outs[outvar]
+                    post_to_pre_marker_outs[final_outvar] = eqn.invars[i]
+                    pre_to_post_marker_outs[eqn.invars[i]] = final_outvar
     # FIXME(zhuohan): Should support auxiliary outputs in the future (e.g. loss)
-    for outvar in raw_gradients:
-        assert outvar in gradients, "all gradients should be captured by pipeline marker"
-    grad_values = list(gradients.values())
-    # generate new variables
-    grad_invars = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
-    grad_outs = {outvar: gensym_fn(outvar.aval) for outvar in grad_values}
-    # modify output, here all grads are acc_grad
-    new_glob_outvars = []
-    new_glob_invars = compute_jaxpr.jaxpr.invars + []
-    update_outs = {}
-    grad_in_to_out = {}
-    for outvar in compute_jaxpr.jaxpr.outvars:
-        if isinstance(outvar, Var):
-            assert outvar in gradients
-            new_glob_outvars.append(grad_outs[gradients[outvar]])
-            new_glob_invars.append(grad_invars[gradients[outvar]])
-            update_outs[outvar] = grad_outs[gradients[outvar]]
-            grad_in_to_out[grad_invars[gradients[outvar]]] = grad_outs[
-                gradients[outvar]]
-        else:
-            raise NotImplementedError("gradients cannot be Literal")
-    gradients = OrderedSet(grad_values)
-    # rewrite eqns
+    for outvar in post_marker_outs:
+        assert outvar in post_to_pre_marker_outs, "all outputs should be captured by pipeline marker"
+    return post_to_pre_marker_outs
+
+
+def _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr, to_reduce_pre_marker_outs,
+                                      reduce_invars, reduce_outvars, gensym_fn):
     new_eqns = []
     pipe_start = None
     pipe_eqns = []
     to_acc = []
+    to_reduce_pre_marker_outs = OrderedSet(to_reduce_pre_marker_outs)
     for eqn in compute_jaxpr.eqns:
         if eqn.primitive is pipeline_p:
             if eqn.params["mark_type"] == "start":
                 pipe_start = eqn
                 for outvar in eqn.outvars:
-                    if not isinstance(outvar, DropVar) and outvar in gradients:
-                        # collect gradients in this computation
+                    if (not isinstance(outvar, DropVar) and
+                            outvar in to_reduce_pre_marker_outs):
+                        # collect to_reduce_pre_marker_outs in this computation
                         to_acc.append(outvar)
                 continue
             if eqn.params["mark_type"] == "end":
                 # add grad used in this computation in pipeline start
-                grad_in_after_pipe = {
+                reduce_invar_post_pipe = {
                     outvar: gensym_fn(outvar.aval) for outvar in to_acc
                 }
-                grad_out_before_pipe = {
+                reduce_outvar_pre_pipe = {
                     outvar: gensym_fn(outvar.aval) for outvar in to_acc
                 }
                 new_pipe_start = mark_pipeline_jaxpreqn(
-                    pipe_start.invars + map(lambda x: grad_invars[x], to_acc),
+                    pipe_start.invars + map(lambda x: reduce_invars[x], to_acc),
                     pipe_start.outvars +
                     # pylint: disable=cell-var-from-loop
-                    map(lambda x: grad_in_after_pipe[x], to_acc),
+                    map(lambda x: reduce_invar_post_pipe[x], to_acc),
                     pipe_start.params['name'],
                     pipe_start.params['mark_type'])
                 new_eqns.append(new_pipe_start)
@@ -271,14 +239,15 @@ def compute_grad_to_accumulate_grad(
                 # add acc grad(adds)
                 for gradient in to_acc:
                     new_eqns.append(
-                        new_jaxpr_eqn([grad_in_after_pipe[gradient], gradient],
-                                      [grad_out_before_pipe[gradient]], add_p,
-                                      {}))
+                        new_jaxpr_eqn(
+                            [reduce_invar_post_pipe[gradient], gradient],
+                            [reduce_outvar_pre_pipe[gradient]], add_p, {}))
                 # add grad created in this computation in pipeline end
                 new_pipe_end = mark_pipeline_jaxpreqn(
                     # pylint: disable=cell-var-from-loop
-                    eqn.invars + map(lambda x: grad_out_before_pipe[x], to_acc),
-                    eqn.outvars + map(lambda x: grad_outs[x], to_acc),
+                    eqn.invars +
+                    map(lambda x: reduce_outvar_pre_pipe[x], to_acc),
+                    eqn.outvars + map(lambda x: reduce_outvars[x], to_acc),
                     eqn.params['name'],
                     eqn.params['mark_type'])
                 new_eqns.append(new_pipe_end)
@@ -288,14 +257,74 @@ def compute_grad_to_accumulate_grad(
                 continue
         pipe_eqns.append(eqn)
         for outvar in eqn.outvars:
-            if not isinstance(outvar, DropVar) and outvar in gradients:
-                # collect gradients in this computation
+            if (not isinstance(outvar, DropVar) and
+                    outvar in to_reduce_pre_marker_outs):
+                # collect to_reduce_pre_marker_outs in this computation
                 to_acc.append(outvar)
+    return new_eqns
+
+
+# TODO(yonghao): support not only reduction and concate. Some outputs may not
+# rely on batch dimension.
+def compute_grad_to_accumulate_grad(
+        compute_jaxpr: ClosedJaxpr, reduction_vector,
+        gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
+    """
+    Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
+
+    Args:
+        compute_jaxpr: the original jaxpr
+        reduction_vector: if the outvar is reduced(accumulated) or not
+        gensym_fn: gensym function
+    Returns:
+        acc_grad_jaxpr: The accumulate grad jaxpr
+        update_outs: From original output(grad) to new output(acc grad)
+        reduced_in_to_out: From accumulated gradient inputs to outputs
+    """
+    post_to_pre_marker_outs = _get_post_grad_to_pre_grad_mapping(compute_jaxpr)
+    to_reduce_pre_marker_outs = []
+    for var, reduced in zip(compute_jaxpr.jaxpr.outvars, reduction_vector):
+        if reduced:
+            to_reduce_pre_marker_outs.append(post_to_pre_marker_outs[var])
+    # generate new variables
+    reduced_invars = {
+        outvar: gensym_fn(outvar.aval) for outvar in to_reduce_pre_marker_outs
+    }
+    reduced_outvars = {
+        outvar: gensym_fn(outvar.aval) for outvar in to_reduce_pre_marker_outs
+    }
+    # modify output, here all grads are acc_grad
+    new_glob_outvars = []
+    new_glob_invars = compute_jaxpr.jaxpr.invars + []
+    update_outs = {}
+    reduced_in_to_out = {}
+    for outvar, reduced in zip(compute_jaxpr.jaxpr.outvars, reduction_vector):
+        if not reduced:
+            new_glob_outvars.append(outvar)
+            update_outs[outvar] = outvar
+        elif isinstance(outvar, Var):
+            assert outvar in post_to_pre_marker_outs
+            pre_marker_outvar = post_to_pre_marker_outs[outvar]
+            reduced_outvar = reduced_outvars[pre_marker_outvar]
+            reduced_invar = reduced_invars[pre_marker_outvar]
+
+            new_glob_outvars.append(reduced_outvar)
+            new_glob_invars.append(reduced_invar)
+            update_outs[outvar] = reduced_outvar
+            reduced_in_to_out[reduced_invar] = reduced_outvar
+        else:
+            raise NotImplementedError("outputs cannot be Literal")
+    # rewrite eqns
+    new_eqns = _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr,
+                                                 to_reduce_pre_marker_outs,
+                                                 reduced_invars,
+                                                 reduced_outvars, gensym_fn)
+
     new_closed_jaxpr = clone_jaxpr(compute_jaxpr, new_glob_invars,
                                    new_glob_outvars, new_eqns)
     # We do not modify donate_invars here, as it is only to append Trues
     # Instead return grad outs to help modify apply_grad
-    return new_closed_jaxpr, update_outs, grad_in_to_out
+    return new_closed_jaxpr, update_outs, reduced_in_to_out
 
 
 def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,

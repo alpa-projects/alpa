@@ -160,6 +160,31 @@ def get_mlp_train_step(use_parallel,
         return train_step
 
 
+def get_mlp_inference_step(use_parallel,
+                           manual_pipeline_layer):
+
+    def inference_step(state, batch):
+
+        def inference_func(params):
+            out = state.apply_fn(params, batch["x"])
+            # TODO(zhuohan): Make inference_func work with outputs also
+            loss = jnp.mean((out - batch["y"])**2)
+            if manual_pipeline_layer:
+                mark_pipeline(name='2', mark_type='end')
+            return loss
+
+        if use_parallel:
+            inference_func = decorate_loss_fn(inference_func, manual_pipeline_layer,
+                                              False, 2)
+        out = inference_func(state.params)
+        return out
+
+    if use_parallel:
+        return parallelize(inference_step, donate_argnums=())
+    else:
+        return inference_step
+
+
 def get_bert_layer_train_step(use_parallel,
                               manual_pipeline_layer,
                               use_remat,

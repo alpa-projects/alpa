@@ -130,6 +130,12 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
     return closed_jaxpr, [new_compute_eqns, [new_barrier], new_apply_eqns]
 
 
+def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
+    """Returns True if the jaxpr has apply_grad."""
+    return any(eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad'
+               for eqn in closed_jaxpr.eqns)
+
+
 def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     """Split the train_step jaxpr into two parts: compute_grad and apply_grad."""
     split_eqn = None
@@ -342,8 +348,10 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
 
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
                                                    gradvar_to_mesh, outvar_mesh,
-                                                   num_meshes, donation_mapping)
-    apply_deps, apply_grad_placement, _ = info
+                                                   num_meshes,
+                                                   len(jax_pipeline_stages),
+                                                   donation_mapping)
+    apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        apply_in_to_acc_out,
                                                        gensym_func,
@@ -352,7 +360,7 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
         map(lambda x: get_var_mapping(out_map, x), global_outvars))
     n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
     dependency = gen_dependency_with_stages(jax_pipeline_stages,
-                                            len(sliced_apply_grad), apply_deps)
+                                            sliced_apply_grad)
 
     used_simultaneously = OrderedSet()
     used = OrderedSet()
@@ -473,13 +481,13 @@ def _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping, eqn_mesh,
     return changed
 
 
-def _apply_grad_group_vars(closed_jaxpr: ClosedJaxpr, var_mesh, mesh_num):
+def _apply_grad_group_vars(closed_jaxpr: ClosedJaxpr, var_mesh, num_mesh):
     """Slice the input, output and consts of the jaxpr based on var_mesh."""
     global_invars = closed_jaxpr.jaxpr.invars
-    invars = [[] for _ in range(mesh_num)]
-    outvars = [[] for _ in range(mesh_num)]
-    constvars = [[] for _ in range(mesh_num)]
-    consts = [[] for _ in range(mesh_num)]
+    invars = [[] for _ in range(num_mesh)]
+    outvars = [[] for _ in range(num_mesh)]
+    constvars = [[] for _ in range(num_mesh)]
+    consts = [[] for _ in range(num_mesh)]
     infered_global_invars = {}
     # grouping invars and outvars
     for invar in global_invars:
@@ -501,8 +509,8 @@ def _apply_grad_group_vars(closed_jaxpr: ClosedJaxpr, var_mesh, mesh_num):
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
-                         outvar_mesh: Dict[Var, OrderedSet[int]], mesh_num,
-                         donation_mapping: Dict[Var, Var]):
+                         outvar_mesh: Dict[Var, OrderedSet[int]], num_mesh,
+                         num_stage, donation_mapping: Dict[Var, Var]):
     """
     Slice the apply gradient jaxpr based on mesh allocation information.
 
@@ -511,8 +519,9 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         grad_mesh: some invars should be at certain mesh;
             If not in the dict, the variable should be a global parameter.
         outvar_mesh: some outvars should be at certain mesh.
-        mesh_num: number of meshes. If a mesh does not have apply gradient computation,
+        num_mesh: number of meshes. If a mesh does not have apply gradient computation,
         add an empty jaxpr
+        num_stage: number of stages in the apply gradient computation.
         donation_mapping: donation mapping for global invars
 
     Returns:
@@ -524,7 +533,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
             this invar.
     """
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
-    sliced_eqns = [[] for _ in range(mesh_num)]
+    sliced_eqns = [[] for _ in range(num_mesh)]
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
     # propagate to get var_at_mesh
@@ -556,27 +565,22 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     # grouping invars and outvars
     (var_info,
      infered_global_invars) = _apply_grad_group_vars(closed_jaxpr, var_mesh,
-                                                     mesh_num)
+                                                     num_mesh)
     invars, outvars, consts, constvars = var_info
 
     jaxprs = []
-    deps = []
     mesh_assignment = {}
 
-    for i in range(mesh_num):
+    for i in range(num_mesh):
         if not outvars[i]:
             continue
-        computation_idx = mesh_num * 2 + len(jaxprs)
+        computation_idx = num_stage + len(jaxprs)
         # assign the current computation into mesh i
         mesh_assignment[computation_idx] = i
-        for v in invars[i]:
-            if v in grad_mesh:
-                # Add dependency as (computation, compute grad computation)
-                deps.append((computation_idx, mesh_num * 2 - 1 - grad_mesh[v]))
         sliced = Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i])
         jaxprs.append(ClosedJaxpr(sliced, consts[i]))
 
-    info = deps, mesh_assignment, infered_global_invars
+    info = mesh_assignment, infered_global_invars
     return jaxprs, info
 
 

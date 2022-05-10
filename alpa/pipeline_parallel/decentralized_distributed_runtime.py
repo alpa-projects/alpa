@@ -835,7 +835,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 split_args.append(arg)
         return split_args
 
-    def run(self, *args, **kwargs):
+    def run(self, *args):
         """The run function that maps to train_step()."""
         input_bufs: List[Any] = [None for _ in range(self.num_mesh)]
         input_uuids: List[Any] = [None for _ in range(self.num_mesh)]
@@ -847,11 +847,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for mesh in self.physical_meshes
         ]
 
-        # Check if there is OOM
-        if global_config.pipeline_check_alive:
-            self._check_alive()
-
-        # Shard arguments
+        # Shard inputs
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_args = [
@@ -873,17 +869,13 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
             #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
 
-
-        # Sync before the execution to avoid exploding the ray task limits.
-        self.sync()
-
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
                     self.worker_executable_uuid_mapping[worker],
                     input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
-                    **kwargs)
+                    sync_for_timer=True)
 
         # Handle donation
         for mesh_idx in range(len(self.physical_meshes)):
@@ -909,6 +901,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     output_bufs[mesh_idx][i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
                         output_uuid_transposed[i][host_id][device_id])
+
+        # Check if there is OOM
+        if global_config.pipeline_check_alive:
+            self._check_alive()
+
         return self.outs_handler(output_bufs)
 
     def _setup_outs_handler(self):
@@ -1174,7 +1171,7 @@ class PipelineMeshWorkerExecutable:
         self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids,
-                          sync_for_timer=False):
+                          sync_for_timer):
         """Execute on the mesh worker given input and output uuids."""
         # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)

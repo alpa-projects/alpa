@@ -193,8 +193,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                          num_batch=num_micro_batches,
                                          flop_count=total_flops)
 
-    def ret_func(*args, **kwargs):
-        return jp.run(*args, **kwargs)
+    def ret_func(*args):
+        return jp.run(*args)
 
     ret_func.get_executable = lambda: jp
     return ret_func  # pylint: disable=unnecessary-lambda

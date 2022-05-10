@@ -664,7 +664,7 @@ class MeshHostWorker:
 
     @staticmethod
     def check_alive():
-        return 0
+        return True
 
     def shutdown(self):
         self.sync()

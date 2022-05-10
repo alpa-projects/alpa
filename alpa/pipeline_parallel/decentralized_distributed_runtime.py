@@ -40,9 +40,13 @@ timer_names = {
 class PipelineInstType(enum.IntEnum):
     """Enum class for pipeline instruction types."""
 
+    # Run an XLA executable
     RUN = 0
+    # Run a sending task
     SEND = 1
+    # Run a receiving task
     RECV = 2
+    # Free tensors
     FREE = 3
     BROADCAST = 4
 
@@ -145,20 +149,13 @@ ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
 
 def flatten_uuid_set(container):
     """Convert Sequence[np.ndarray] to OrderedSet of elements in the array."""
-    container = list(container)
     output = OrderedSet()
     for e in container:
         if isinstance(e, (np.ndarray, list)):
             output.update(flatten_uuid_set(e))
-            continue
-        output.add(e)
+        else:
+            output.add(e)
     return output
-
-
-def logging_instructions(instructions):
-    """Print an instruction for debug."""
-    for ins_idx, instruction in enumerate(instructions):
-        logger.debug(f">>> ins_idx {ins_idx}: op code {instruction.opcode}...")
 
 
 def _get_dict(d: Dict[Any, Dict], k) -> Dict:
@@ -176,16 +173,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def __init__(self,
                  *,
-                 pipeline_stages: List[XlaShardedPipelineComputation],
-                 global_invars: List[Var],
-                 grad_dummy_invars,
-                 global_outvars: List[Var],
+                 pipeline_stages: Sequence[XlaShardedPipelineComputation],
+                 global_invars: Sequence[Var],
+                 grad_dummy_invars: Sequence[Var],
+                 global_outvars: Sequence[Var],
                  physical_meshes: DistributedPhysicalDeviceMeshGroup,
                  dependency: np.ndarray,
                  schedule: PipelineSchedule,
-                 is_batch: List[bool],
-                 num_batch=1,
-                 flop_count=None):
+                 is_batch: Sequence[bool],
+                 num_batch: int,
+                 flop_count: int):
         super().__init__(pipeline_stages=pipeline_stages,
                          global_invars=global_invars,
                          grad_dummy_invars=grad_dummy_invars,
@@ -211,7 +208,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.output_spec_list = [[] for _ in range(self.num_mesh)]
 
         self.hlo_texts_after_spmd_partitioner = []
-        self.executable_uuids = []
 
         # Compile pipeline instructions and send mesh executables to workers
         (executable_config_lists, input_local_uuid_list, grad_uuids,
@@ -219,9 +215,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         # Create a PipelineMeshWorkerExecutable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}
-        self.executable_uuid_worker_mapping = {}
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            mesh_grad_uuids = list(grad_uuids[mesh_idx])
+            mesh_grad_uuids = grad_uuids[mesh_idx]
             for worker_idx, worker in enumerate(physical_mesh.workers):
                 acc_grad_local_uuids = []
                 if len(mesh_grad_uuids) > 0:
@@ -229,14 +224,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 args = (self.instruction_lists[worker],
                         input_local_uuid_list[worker],
                         self.output_local_uuid_list[worker],
-                        executable_config_lists[worker], acc_grad_local_uuids,
+                        executable_config_lists[worker],
+                        acc_grad_local_uuids,
                         accumulated_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
                 worker.put_executable.remote(uuid, PipelineMeshWorkerExecutable,
                                              *args)
                 self.worker_executable_uuid_mapping[worker] = uuid
-                self.executable_uuid_worker_mapping[uuid] = worker
 
         # For handling input/outputs
         self.outs_handler: Callable = None
@@ -251,7 +246,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         return ret
 
     def _compile(self):
-        """Precompile the stages and generate static instructions for each worker.
+        """Compile the stages and generate static instructions for each worker.
 
         This function takes symbolic passes, allocates uuids of intermediates, and
         creates instruction lists for all intermediates.
@@ -277,12 +272,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             return var_key, key
 
         # TODO(Hao): make the var_at an attribute instead of a ref.
+        # Dict[var_key -> Dict[mesh_idx -> np.array of uuids]]
         var_at = {}
-        # Microbatch-unrelated work
-        # compile args for tasks
+
+        # Compile forward computation, backward computation and,
+        # gradient buffer allocation.
         (executable_config_lists, executable_uuids,
-         grad_uuids) = self._compile_task_configs(var_at)
-        self.executable_uuids = executable_uuids
+         grad_uuids) = self._compile_forward_backward(var_at)
+        self.forward_backward_uuids = executable_uuids
 
         input_local_uuid_list = self._compile_split_input_to_microbatches(
             not_batch_invars, var_at)
@@ -436,6 +433,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def _compile_alloc(self, variables, sharding_specs, mesh_idx, var_at,
                        executable_config_lists, keys, preallocated):
+        """Compile an executable which allocates zero buffers.
+        The zero buffers are:
+        1) gradient accumulation buffers
+        2) temp buffers for receiving tensors
+        """
         config_class = (MemZeroWorkerExecutableConfig
                         if preallocated else AllocateZeroWorkerExecutableConfig)
         avals = [var.aval for var in variables]
@@ -476,22 +478,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             _get_dict(var_at, key)[mesh_idx] = transposed[var_idx]
         return output_uuids
 
-    def _compile_task_configs(
-        self, var_at
-    ) -> Tuple[Dict[MeshHostWorker, Sequence[ExecutableConfig]], Sequence[int]]:
+    def _compile_forward_backward(self, var_at):
         """
-        Assign uuids for each task and prepare configs.
-
-        The configs save arguments for the __init__() method in DriverExecutable.
-
-        Returns:
-            executable_config_lists: configs of executables put on each mesh;
-            executable_uuids: uuid for each sta ge's executable.
+        Compile forward computation, backward computations and gradient buffer allocation.
+        Each computation/allocation corresponds to a MeshWorkerExecutable.
+        In this function, we create arguments for these worker executables.
+        The arguments will be used to create these executables later.
+        We use ExecutableConfig to wrap all arguments for a single executable
         """
         num_mesh = len(self.physical_meshes)
         executable_config_lists = {}
-        resharding_config_lists = {}
-
         executable_uuids = []
 
         # Each worker has its own instruction list because Resharding is not SPMD
@@ -499,43 +495,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for worker in physical_mesh.workers:
                 self.instruction_lists[worker] = []
                 executable_config_lists[worker] = []
-                resharding_config_lists[worker] = []
 
-        # 1. AllocZeroBuffer executables
-        mesh_grad_vars = [{} for _ in range(num_mesh)]
-        # TODO(yonghao): replicated code. abstract this part?
-        # collect intermediate buffers in each mesh
-        for stage_idx, stage in enumerate(self.stages):
-            mesh_indices = list(self.schedule.stage_placement(stage_idx))
-            assert len(mesh_indices) == 1
-            mesh_idx = mesh_indices[0]
-            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
-            input_specs = stage.input_sharding_specs
-            for var_idx, invar in enumerate(stage.invars):
-                if invar in self.grad_dummy_invars:
-                    if invar in grad_var_spec_dict:
-                        raise NotImplementedError(
-                            f"accumulate {invar} at multiple stages in a mesh")
-                    grad_var_spec_dict[invar] = input_specs[var_idx]
-        grad_uuids = [[] for _ in range(num_mesh)]
-        for mesh_idx in range(num_mesh):
-            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
-            if len(grad_var_spec_dict):
-                grad_vars, grad_sharding_specs = list(
-                    zip(*grad_var_spec_dict.items()))
-
-                # TODO(yonghao): below, we start accumulation according to hints provided by schedule;
-                #    this is a case that only works for pipeline-parallel training and gradients.
-                #    In some model, some var has non-gradient intermediate states that need accumulation.
-                #    for these vars, we need to record its first mb index when accum will take place.
-                keys = [(repr(var), self.schedule.first_backward_batch_index)
-                        for var in grad_vars]
-                grad_uuids[mesh_idx] = self._compile_alloc(
-                    grad_vars, grad_sharding_specs, mesh_idx, var_at,
-                    executable_config_lists, keys,
-                    global_config.use_memzero_for_gradient_accumulation)
-
-        # 2. PartialGradAccMeshExecutable
+        # 1. Compile forward and backward compuations.
+        # They are PartialGradAccMeshExecutable
         for stage_idx, stage in enumerate(self.stages):
             exec_uuid = next_mesh_executable_uuid()
             executable_uuids.append(exec_uuid)
@@ -550,7 +512,44 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     PartialGradWorkerExecutableConfig(
                         exec_uuid, hlo_proto, stage.strategy_config,
                         stage.output_acc_grad_indices))
-        return executable_config_lists, executable_uuids, grad_uuids
+
+        # 2. Compile allocation for gradient buffers.
+        # They are AllocZeroBuffer executables
+        mesh_grad_vars = [{} for _ in range(num_mesh)]
+        # TODO(yonghao): replicated code. abstract this part?
+
+        # collect gradient accumulation buffers in each mesh
+        for stage_idx, stage in enumerate(self.stages):
+            mesh_indices = list(self.schedule.stage_placement(stage_idx))
+            assert len(mesh_indices) == 1
+            mesh_idx = mesh_indices[0]
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+            input_specs = stage.input_sharding_specs
+            for var_idx, invar in enumerate(stage.invars):
+                if invar in self.grad_dummy_invars:
+                    if invar in grad_var_spec_dict:
+                        raise NotImplementedError(
+                            f"accumulate {invar} at multiple stages in a mesh")
+                    grad_var_spec_dict[invar] = input_specs[var_idx]
+        alloc_grad_uuids = [[] for _ in range(num_mesh)]
+        for mesh_idx in range(num_mesh):
+            grad_var_spec_dict = mesh_grad_vars[mesh_idx]
+            if len(grad_var_spec_dict):
+                grad_vars, grad_sharding_specs = list(
+                    zip(*grad_var_spec_dict.items()))
+
+                # TODO(yonghao): below, we start accumulation according to hints provided by schedule;
+                #    this is a case that only works for pipeline-parallel training and gradients.
+                #    In some model, some var has non-gradient intermediate states that need accumulation.
+                #    for these vars, we need to record its first mb index when accum will take place.
+                keys = [(repr(var), self.schedule.first_backward_batch_index)
+                        for var in grad_vars]
+                alloc_grad_uuids[mesh_idx] = self._compile_alloc(
+                    grad_vars, grad_sharding_specs, mesh_idx, var_at,
+                    executable_config_lists, keys,
+                    global_config.use_memzero_for_gradient_accumulation)
+
+        return executable_config_lists, executable_uuids, alloc_grad_uuids
 
     def _compile_split_input_to_microbatches(self, not_batch_invars, var_at):
         """
@@ -844,7 +843,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         ]
 
         # check if there is OOM
-        if global_config.pipeline_runtime_mode == "paper":
+        if global_config.pipeline_check_alive:
             self._check_alive()
         split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -853,6 +852,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             ]
             input_bufs[mesh_idx] = physical_mesh.shard_args_to_bufs(
                 self.input_indices[mesh_idx], self.delete_after_shard[mesh_idx],
+                (False,) * len(mesh_args), None,
                 mesh_args)
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
@@ -1094,14 +1094,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
 
 class PipelineMeshWorkerExecutable:
-    """An executable that executes static pipeline runtime instructions."""
+    """An executable that executes static pipeline runtime instructions on a worker."""
 
     def __init__(self, worker: MeshHostWorker, uuid: int,
                  instructions: Sequence[PipelineInstruction],
                  input_local_uuids: Sequence[int],
-                 output_local_uuids: Sequence[int], executable_configs,
+                 output_local_uuids: Sequence[int],
+                 executable_configs: Sequence[ExecutableConfig],
                  acc_local_uuids: np.ndarray,
-                 acc_out_uuids: Sequence[Sequence[int]], donate_invars):
+                 acc_out_uuids: Sequence[Sequence[int]],
+                 donate_invars: Sequence[bool]):
         # Instruction Lists
         self.my_uuid = uuid
         self.instructions = instructions
@@ -1117,7 +1119,7 @@ class PipelineMeshWorkerExecutable:
         self.global_send_tasks = worker.send_tasks
         self.global_recv_tasks = worker.recv_tasks
 
-        # my related executables
+        # Related executables
         self._related_exec_uuids = []
 
         self.acc_grad_buffers = {}
@@ -1125,6 +1127,7 @@ class PipelineMeshWorkerExecutable:
         self.acc_out_uuids = acc_out_uuids
         self.partial_grad_exec_uuids = OrderedSet()
         self.use_memzero = False
+
         # Create tasks
         for task_config in executable_configs:
             self._related_exec_uuids.append(task_config.exec_uuid)
@@ -1162,15 +1165,14 @@ class PipelineMeshWorkerExecutable:
                 raise ValueError(f"Invalid task config {task_config}")
         self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
 
-    def execute_on_worker(self, input_global_uuids, output_global_uuids):
-        """Execute on mesh worker given input and output uuids."""
-        # copy to local env
+    def execute_on_worker(self, input_global_uuids, output_global_uuids,
+                          sync_for_timer=False):
+        """Execute on the mesh worker given input and output uuids."""
+        # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = {}
         for local_ids, global_ids in zip(self.input_local_uuids,
                                          input_global_uuids):
-            local_ids = list(local_ids)
-            global_ids = list(global_ids)
             for local_id, global_id in zip(local_ids, global_ids):
                 buffers[local_id] = self.global_buffers[global_id]
         # add preallocated buffers for gradient accumulation
@@ -1178,16 +1180,17 @@ class PipelineMeshWorkerExecutable:
         # donate invars
         for global_ids, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
-                self.worker.delete_buffers(list(global_ids))
-        # monkey patch
+                self.worker.delete_buffers(global_ids)
+        # load the local env
         self.worker.buffers = buffers
+        sync_func = self.worker.sync if sync_for_timer else None
 
         # Execute
-        timers("overall").start(sync_func=self.worker.sync)
+        timers("overall").start(sync_func=sync_func)
         for instruction in self.instructions:
             # print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
-            #     f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
-            #     f"next instruction: {instruction}")
+            #       f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
+            #       f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
@@ -1205,6 +1208,7 @@ class PipelineMeshWorkerExecutable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids,
                     instruction.opaques["set_empty_buffer"])
+                # NOTE(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
                     self.worker.run_allgather_task(
                         instruction.opaques["allgather_uuid"],
@@ -1229,32 +1233,27 @@ class PipelineMeshWorkerExecutable:
                 timers(timer_name).stop()
                 # timers(timer_name).log(mode="sum")
                 # timers(timer_name).reset()
-        timers("overall").stop(sync_func=self.worker.sync)
+        timers("overall").stop(sync_func=sync_func)
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)
         for local_ids, global_ids in zip(self.output_local_uuids,
                                          output_global_uuids):
-            local_ids = list(local_ids)
-            global_ids = list(global_ids)
             for local_id, global_id in zip(local_ids, global_ids):
                 self.global_buffers[global_id] = buffers[local_id]
-
         # now acc_grad_buffers are those after grad acc, before apply grad
-        # with memzero, these buffers are reused in the next iteration.
+        # with memzero. These buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
         if self.use_memzero:
             for in_uuids, out_uuids in zip(self.acc_in_uuids,
                                            self.acc_out_uuids):
                 for in_uuid, out_uuid in zip(in_uuids, out_uuids):
                     self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
-        # monkey patch
+        # restore global environment
         self.worker.buffers = self.global_buffers
-        # Clean the dict
         buffers.clear()
-        return True
 
-    def profile_with_dummy_inputs(self, *args, **kwargs):
+    def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""
         self.worker.reset_memory_stats()
         ret = {

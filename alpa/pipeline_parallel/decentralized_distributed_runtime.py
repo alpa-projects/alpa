@@ -18,7 +18,7 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   next_mesh_executable_uuid, get_uuid_np_array,
                                   next_remote_buffer_uuid, RemoteBufferRef)
 from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask
+from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, SymbolicBroadcastReshardingTask
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
@@ -44,6 +44,7 @@ class PipelineInstType(enum.IntEnum):
     SEND = 1
     RECV = 2
     FREE = 3
+    BROADCAST = 4
 
 
 @dataclass
@@ -91,6 +92,19 @@ class PipelineInstruction:
                        "set_empty_buffer": set_empty_buffer,
                        "allgather_uuid": allgather_uuid
                    },
+                   info=info)
+
+    @classmethod
+    def Broadcast(cls, # noqa
+                  task_uuid,
+                  input_uuids,
+                  output_uuids,
+                  info="broadcast"):  # noqa
+        return cls(opcode=PipelineInstType.BROADCAST,
+                   task_uuid=task_uuid,
+                   input_uuids=input_uuids,
+                   output_uuids=output_uuids,
+                   opaques=None,
                    info=info)
 
     @classmethod
@@ -330,10 +344,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         src_idx, src_uuids = list(var_at[key].items())[0]
                         resharding_task = self._resharding_tasks[src_idx][
                             mesh_idx][var_key]
-                        self._compile_resharding_task(
-                            self.physical_meshes[src_idx],
-                            self.physical_meshes[mesh_idx], src_uuids,
-                            resharding_task, recv_uuids, self.instruction_lists)
+                        if global_config.resharding_mode == "send_recv":
+                            self._compile_resharding_task(
+                                self.physical_meshes[src_idx],
+                                self.physical_meshes[mesh_idx], src_uuids,
+                                resharding_task, recv_uuids, self.instruction_lists)
+                        else:
+                            self._compile_broadcast_resharding_task(
+                                self.physical_meshes[src_idx],
+                                self.physical_meshes[mesh_idx], src_uuids,
+                                resharding_task, recv_uuids, self.instruction_lists)
                         received_keys.add(key)
 
                 # execute
@@ -738,6 +758,32 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             instruction_lists[w].append(
                 PipelineInstruction.Recv(task_uuid, output_uuids,
                                          set_empty_buffer, allgather_uuid))
+
+    @staticmethod
+    def _compile_broadcast_resharding_task(src_mesh,
+                                           dst_mesh,
+                                           src_uuids: np.ndarray,
+                                           resharding_task: SymbolicBroadcastReshardingTask,
+                                           recv_uuids: np.ndarray,
+                                           instruction_lists,
+                                           set_empty_buffer=False):
+
+        # add broadcast-based resharding task for each worker
+        for w, task_uuid in resharding_task.broadcast_worker_task_ids.items():
+            output_uuids = None
+            input_uuids = None
+            if w in src_mesh.workers:
+                host_id = src_mesh.workers.index(w)
+                input_uuids = list(src_uuids[host_id])
+            else:
+                host_id = dst_mesh.workers.index(w)
+                output_uuids = list(recv_uuids[host_id])
+            # print(w, task_uuid, host_id, input_uuids, output_uuids)
+            instruction_lists[w].append(PipelineInstruction.Broadcast(task_uuid, 
+                                                                      input_uuids, 
+                                                                      output_uuids, 
+                                                                      "broadcast")
+                                        )
 
     def _compile_free(self, worker, used_outside, donated):
         """Compile and generate FREE PipelineInstruction to recycle memory."""
@@ -1164,16 +1210,25 @@ class PipelineMeshWorkerExecutable:
                         instruction.opaques["allgather_uuid"],
                         instruction.output_uuids)
                 timers("resharding_recv").suspend()
+            elif instruction.opcode == PipelineInstType.BROADCAST:
+                timers("resharding_broadcast").start()
+                self.worker.run_resharding_broadcast_task(instruction.task_uuid,
+                                                          instruction.input_uuids
+                                                          if instruction.input_uuids is not None
+                                                          else instruction.output_uuids)
+                timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()
                 self.worker.delete_buffers(instruction.input_uuids)
                 timers("free").suspend()
 
         for timer_name in [
-                "compute", "resharding_send", "resharding_recv", "free"
+                "compute", "resharding_send", "resharding_recv", "resharding_broadcast", "free"
         ]:
             if timer_name in timers:
                 timers(timer_name).stop()
+                # timers(timer_name).log(mode="sum")
+                # timers(timer_name).reset()
         timers("overall").stop(sync_func=self.worker.sync)
 
         # copy to global env

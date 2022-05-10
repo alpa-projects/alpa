@@ -108,6 +108,7 @@ class GlobalConfig:
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
+        self.resharding_mode = "send_recv"  # "send_recv" or "broadcast"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42
@@ -165,7 +166,8 @@ def set_parallelize_options(
         logical_mesh_search_space: str = "default",
         auto_stage_construction_imbalance_tolerance: float = np.inf,
         use_hlo_cost_model: bool = False,
-        profiling_database_filename: Optional[str] = None):
+        profiling_database_filename: Optional[str] = None,
+        resharding_mode: str = "send_recv"):
     """
     Set the global options for all @parallelize decorator.
 
@@ -205,6 +207,8 @@ def set_parallelize_options(
         Whether to use the Hlo instruction cost model for pipeline profiling.
       profiling_database_filename: Only used for pipeshard_parallel with auto_stage.
         The filename of profiling result database.
+      resharding_mode: The algorithm used to do cross mesh resharding.
+        Possible choices: {"send_recv", "broadcast"}.
     """
     global global_config  # pylint: disable=global-variable-not-assigned
 
@@ -230,6 +234,7 @@ def set_parallelize_options(
     global_config.auto_stage_construction_imbalance_tolerance = auto_stage_construction_imbalance_tolerance
     global_config.use_hlo_cost_model = use_hlo_cost_model
     global_config.profiling_database_filename = profiling_database_filename
+    global_config.resharding_mode = resharding_mode
 
 
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"

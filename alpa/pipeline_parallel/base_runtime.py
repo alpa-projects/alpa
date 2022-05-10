@@ -7,10 +7,10 @@ from typing import List
 
 from jax.core import Var
 import ray
-
+from alpa.global_env import global_config
 from alpa.util import OrderedSet
 from alpa.pipeline_parallel.cross_mesh_resharding import \
-    (CrossMeshCommunicator, SymbolicReshardingTask)
+    (CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 
@@ -208,8 +208,12 @@ class BaseDistributedRuntime(BaseRuntime):
                     dst_mesh_idx]
                 src_mesh = self.physical_meshes[src_mesh_idx]
                 dst_mesh = self.physical_meshes[dst_mesh_idx]
-                self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
-                    key] = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
+                if global_config.resharding_mode == "send_recv":
+                    self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
+                        key] = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
+                else:
+                    self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
+                        key] = SymbolicBroadcastReshardingTask(spec, cg, src_mesh, dst_mesh)
 
     def print_resharding_tasks(self):
         """Pretty print all compiled resharding tasks."""

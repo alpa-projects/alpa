@@ -17,13 +17,14 @@ from alpa.mesh_executable import (create_remote_buffer_refs, get_uuid_np_array,
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
-    SymbolicReshardingTask)
+    SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.decentralized_distributed_runtime import (
     AllocateZeroWorkerExecutableConfig, DecentralizedDistributedRuntime,
     PipelineInstruction, PipelineMeshWorkerExecutable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str, get_shard_shape
+from alpa.timer import timers
 
 
 def test_resharding(var,
@@ -33,24 +34,35 @@ def test_resharding(var,
                     dst_sharding_spec,
                     use_scatter_gather,
                     src_loads=None,
-                    dst_loads=None):
+                    dst_loads=None,
+                    resharding_mode="send_recv"):
+    backup_resharding_mode = global_config.resharding_mode
+    global_config.resharding_mode = resharding_mode
     backup_scatter_gather = global_config.use_scatter_gather
     global_config.use_scatter_gather = use_scatter_gather
     # Resharding task spec and send/recv strategy
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
-    (rewrite_dst_sharding_spec,
-     locla_chunks) = CrossMeshCommunicator._rewrite_allgather_spec(
-         dst_sharding_spec, dst_mesh, var.aval.shape)
+    if resharding_mode == "send_recv":
+        (rewrite_dst_sharding_spec,
+        local_chunks) = CrossMeshCommunicator._rewrite_allgather_spec(
+            dst_sharding_spec, dst_mesh, var.aval.shape)
+    else:
+        rewrite_dst_sharding_spec = dst_sharding_spec
+        local_chunks = None
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
                                         aval=var.aval,
                                         sharding_spec=src_sharding_spec)
     dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
                                         aval=var.aval,
                                         sharding_spec=rewrite_dst_sharding_spec)
-    task_spec = ReshardingTaskSpec(src_array, dst_array, locla_chunks)
-    strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
-        task_spec, src_loads, dst_loads)
+    task_spec = ReshardingTaskSpec(src_array, dst_array, local_chunks)
+    if resharding_mode == "send_recv":
+        strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
+            task_spec, src_loads, dst_loads)
+    else:
+        strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
+            task_spec, src_loads, dst_loads)
     task_spec.set_resharding_strategy(strategy)
     # Resharding task. Compile send/recv from strategy and allgather.
     collective_group = CollectiveGroup(task_spec.get_participant_device_strs(),
@@ -59,8 +71,12 @@ def test_resharding(var,
         collective_group.instantiate_now()
     else:
         collective_group.instantiate()
-    task = SymbolicReshardingTask(task_spec, collective_group, src_mesh,
-                                  dst_mesh)
+    if resharding_mode == "send_recv":
+        task = SymbolicReshardingTask(task_spec, collective_group, src_mesh,
+                                      dst_mesh)
+    else:
+        task = SymbolicBroadcastReshardingTask(task_spec, collective_group, 
+                                               src_mesh, dst_mesh)
     # Compile pipeline instructions
     instruction_lists = {worker: [] for worker in src_mesh.workers}
     for worker in dst_mesh.workers:
@@ -87,8 +103,13 @@ def test_resharding(var,
                                     },
                                     info="allocate zero for recv"))
     # resharding task
-    DecentralizedDistributedRuntime._compile_resharding_task(
-        src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+    if resharding_mode == "send_recv":
+        DecentralizedDistributedRuntime._compile_resharding_task(
+            src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+    else:
+        DecentralizedDistributedRuntime._compile_broadcast_resharding_task(
+            src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+
     exec_uuids = {}
     # Compile Pipeline Executable
     for worker_idx, worker in enumerate(src_mesh.workers):
@@ -118,14 +139,21 @@ def test_resharding(var,
     output_refs, output_uuids = create_remote_buffer_refs(dst_mesh)
     output_uuids = output_uuids.reshape(dst_mesh.shape)
     # Run executables
+    # for _ in range(3):
+    # timers("overall_resharding_time").start()
     for worker_idx, worker in enumerate(src_mesh.workers):
         worker.run_executable.remote(exec_uuids[worker],
-                                     [input_uuids[worker_idx]], [])
+                                    [input_uuids[worker_idx]], [])
     for worker_idx, worker in enumerate(dst_mesh.workers):
         worker.run_executable.remote(exec_uuids[worker], [],
-                                     [output_uuids[worker_idx]])
+                                    [output_uuids[worker_idx]])
     output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
                                     output_refs)
+    # dst_mesh.sync_workers()
+    # timers("overall_resharding_time").stop()
+    # timers("overall_resharding_time").log()
+    # timers("overall_resharding_time").reset()
+
     # Check correctness
     assert_allclose(test_array, output_array._value)
     # Delete executables
@@ -135,7 +163,7 @@ def test_resharding(var,
         worker.delete_executable.remote(exec_uuids[worker])
     # Restore backup
     global_config.use_scatter_gather = backup_scatter_gather
-
+    global_config.resharding_mode = backup_resharding_mode
 
 class ReshardingTest(unittest.TestCase):
 
@@ -155,7 +183,8 @@ class ReshardingTest(unittest.TestCase):
                             dst_sharding_spec,
                             tensor_shape,
                             use_scatter_gather=True,
-                            tensor_dtype=None):
+                            tensor_dtype=None,
+                            resharding_mode="send_recv"):
         device_cluster = DeviceCluster()
         virtual_mesh = device_cluster.get_virtual_physical_mesh()
         src_num_host = src_mesh_shape[0]
@@ -178,7 +207,7 @@ class ReshardingTest(unittest.TestCase):
         tensor_dtype = tensor_dtype or jnp.int32
         var = Var(0, "", ShapedArray(tensor_shape, tensor_dtype))
         test_resharding(var, src_mesh, src_sharding_spec, dst_mesh,
-                        dst_sharding_spec, use_scatter_gather)
+                        dst_sharding_spec, use_scatter_gather,resharding_mode=resharding_mode)
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
@@ -244,12 +273,50 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                   tensor_shape)
 
+    def test_4gpu_broadcast(self):
+        src_shape = (1, 2)
+        dst_shape = (1, 2)
+        tensor_shape = (4, 8, 16)
+        src_spec = ShardingSpec(
+            [NoSharding(), NoSharding(),
+             NoSharding()], [Replicated(2)])
+        dst_spec = ShardingSpec([Chunked(
+            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, resharding_mode="broadcast")
+        src_spec = ShardingSpec([Chunked(
+            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, resharding_mode="broadcast")
+        src_spec = ShardingSpec(
+            [NoSharding(), Chunked([2]),
+             NoSharding()], [ShardedAxis(0)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, resharding_mode="broadcast")
+
+    def test_8gpu_broadcast(self):
+        src_shape = (1, 4)
+        dst_shape = (1, 4)
+        tensor_shape = (2, 64, 64)
+
+        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                  tensor_shape, resharding_mode="broadcast")
+
+        tensor_shape = (64, 64, 64)
+        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                  tensor_shape, resharding_mode="broadcast")
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(ReshardingTest("test_4gpu_send_recv"))
     suite.addTest(ReshardingTest("test_4gpu_allgather"))
     suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
+    suite.addTest(ReshardingTest("test_4gpu_broadcast"))
+    suite.addTest(ReshardingTest("test_8gpu_broadcast"))
     return suite
 
 

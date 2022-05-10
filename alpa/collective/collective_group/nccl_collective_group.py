@@ -233,6 +233,105 @@ class NCCLGroup(BaseGroup):
 
         self._collective(tensors, tensors, collective_fn)
 
+    def broadcast_partialgpu(self, tensors, broadcast_options=BroadcastOptions()):
+        """Broadcast tensors to all other gpus following options. 
+        It will only involve subset of gpu in this worker. 
+
+        Args:
+            tensors (List): tensors to be broadcast or received.
+            broadcast_options: broadcast options.
+
+        Returns:
+            None
+        """
+        root_rank = 0
+
+        def collective_fn(input_tensor, output_tensor, comm, stream):
+            comm.broadcast(nccl_util.get_tensor_ptr(input_tensor),
+                           nccl_util.get_tensor_ptr(output_tensor),
+                           broadcast_options.n_elements if broadcast_options.n_elements > 0 else
+                           nccl_util.get_tensor_n_elements(input_tensor),
+                           nccl_util.get_nccl_tensor_dtype(input_tensor),
+                           root_rank, stream.ptr)
+
+        _check_gpu_tensors(tensors)
+
+        key = broadcast_options.comm_key
+        comms = self._get_nccl_broadcast_communicator(key, broadcast_options.world_size,
+                                                      broadcast_options.devices_ids,
+                                                      broadcast_options.devices_global_rank)
+        streams = self._dev_streams_map[key]
+        events = self._dev_event_map[key]
+        self._sync_streams(broadcast_options.devices_ids, events, streams)
+
+        nccl_util.groupStart()
+        for i, tensor in enumerate(tensors):
+            collective_fn(tensor, tensor, comms[i], streams[i])
+        nccl_util.groupEnd()
+
+    def _get_nccl_broadcast_communicator(self, comm_key, world_size, devices_ids, devices_global_rank, nccl_uid=None):
+        """Create or retrieve an NCCL communicator for broadcast from cache. 
+        Here we only use partial devices in a host, so we create this function 
+        besides _get_nccl_collective_communicator. 
+
+        If the communicator is found in cache, return the communicator. If not,
+        a communicator and a stream will be created and put in cache.
+
+        Args:
+            comm_key (str): the key to query the communicator cache.
+            world_size (int): the number of devices in this collective communicator.
+            devices_ids (List): a list of GPU devices of the current process
+                                that participates into the collective.
+            devices_global_rank (List): the corresponding global rank for device in devices_ids.
+            nccl_uid : If it is None, we will create a nccl_uid here. 
+
+        Returns:
+            communicator: the NCCL communicator corresponded to the devices.
+        """
+        if not comm_key:
+            raise RuntimeError("Got empty communicator key.")
+
+        for d in devices_ids:
+            self._used_gpu_indices.add(d)
+
+        # TODO(Hao): lock the _dev_comm_map here.
+        if comm_key in self._dev_comm_map:
+            return self._dev_comm_map[comm_key]
+
+        group_key = self._generate_group_key(comm_key)
+        if devices_global_rank[0] == 0:
+            if nccl_uid is None:
+                nccl_uid = self._generate_nccl_uid(group_key)
+        else:
+            if nccl_uid is None:
+                rendezvous = Rendezvous(group_key)
+                rendezvous.meet()
+                nccl_uid = rendezvous.get_nccl_id()
+
+                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
+                # named actor leak.
+                if rendezvous.get_access_counter() == self.world_size:
+                    logger.debug(
+                        "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
+                        "will go out of context and be destroyed.")
+                    rendezvous.destroy_store()
+
+        # Now create the communicators
+        comms = [None] * len(devices_ids)
+        streams = [None] * len(devices_ids)
+        events = [None] * len(devices_ids)
+        nccl_util.groupStart()
+        for i, (global_rank, device_id) in enumerate(zip(devices_global_rank, devices_ids)):
+            with nccl_util.Device(device_id):
+                comms[i] = nccl_util.create_nccl_communicator(world_size, nccl_uid, global_rank)
+                streams[i] = get_stream_pool(device_id).get_stream()
+                events[i] = cupy.cuda.Event()
+        nccl_util.groupEnd()
+        self._dev_comm_map[comm_key] = comms
+        self._dev_streams_map[comm_key] = streams
+        self._dev_event_map[comm_key] = events
+        return comms
+
     def broadcast(self, tensors, broadcast_options=BroadcastOptions()):
         """Broadcast tensors to all other gpus following options.
 

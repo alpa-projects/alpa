@@ -57,6 +57,12 @@ ReshardingAllGatherSpec = namedtuple(
     "ReshardingAllGatherSpec", ["device_ids", "tensor_slices", "output_slice"])
 ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
                                      ["allgather_specs"])
+ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec",
+                                     ["comm_key", "world_size", "devices_ids",
+                                      "devices_global_rank", "tensor_slices",
+                                      "recv_tile_shape", "dtype"])
+ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
+                                     ["broadcast_specs", "group_name"])
 
 
 class MeshHostWorker:
@@ -78,11 +84,13 @@ class MeshHostWorker:
         # Monkey patch the backend
         self.local_devices = self.backend.local_devices()
         self.allgather_communicators = {}
+        self.broadcast_communicators = {}
         self.buffers = {}  # Dict[uuid -> DeviceArray]
         self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
         self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
+        self.broadcast_tasks = {}  # Dict[uuid -> BroadcastTask]
         self.data_loaders = {}  # Dict[uuid -> MeshWorkerDataLoader]
         self.data_loader_iters = {}  # Dict[uuid -> iterator]
         set_override_backend(self.backend)
@@ -287,6 +295,13 @@ class MeshHostWorker:
                                   rank,
                                   backend=backend,
                                   group_name=group_name)
+
+    @staticmethod
+    def init_broadcast_communicator(group_name, comm_key, world_size, device_ids, devices_global_rank, nccl_uid):
+        """Initialize the P2P communicator from within the mesh workers."""
+        assert col.is_group_initialized(group_name)
+        g = col.check_and_get_group(group_name)
+        g._get_nccl_broadcast_communicator(comm_key, world_size, device_ids, devices_global_rank, nccl_uid)
 
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
@@ -494,6 +509,92 @@ class MeshHostWorker:
             self.allgather(buffer_uuids, allgather_spec.device_ids,
                            allgather_spec.tensor_slices,
                            allgather_spec.output_slice)
+
+    def broadcast(self, uuids, comm_key, world_size, devices_ids, devices_global_rank, tensor_slices, group_name):
+        to_use = []
+        for_buffer = []
+        is_bool = self.buffers[uuids[devices_ids[0]]].dtype == np.bool_
+        for device_id, global_rank, tensor_slice in zip(devices_ids, devices_global_rank, tensor_slices):
+            uuid = uuids[device_id]
+            tensor_shape = self.buffers[uuid].shape
+            slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
+            if is_continuous_subset(tensor_slice, tensor_shape):
+                # fast path, two cases: (1) same shape, (2) continuous subset.
+                tmp = xla_buffer_to_cupy(self.buffers[uuid])
+                if slice_shape != tensor_shape:
+                    ind, _ = infer_offset_and_n_elements(tensor_slice)
+                    to_use.append(tmp[ind])
+                else:
+                    to_use.append(tmp)
+                for_buffer.append(tmp)
+            else:
+                tmp = None
+                if global_rank == 0:
+                    start_indices = tuple(o.start for o in tensor_slice)
+                    tmp = jax_tensor_index(
+                        xla_buffer_to_jax_tensor(self.buffers[uuid]), start_indices,
+                        slice_shape)
+                    tmp = jax_tensor_to_cupy(tmp)
+                else:
+                    tmp = device_put(
+                        jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
+                        self.local_devices[device_id])
+                    tmp = jax_tensor_to_cupy(tmp, take_ownership=True)
+                to_use.append(tmp)
+                for_buffer.append(tmp)
+
+        _, n_elements = infer_offset_and_n_elements(tensor_slices[0])
+        col.broadcast_partialgpu(to_use, n_elements, comm_key, world_size, 
+                                 devices_ids, devices_global_rank, group_name)
+
+        for for_buffer_tensor, device_id, global_rank, tensor_slice in zip(for_buffer,
+                                                                           devices_ids,
+                                                                           devices_global_rank,
+                                                                           tensor_slices):
+            if global_rank == 0:
+                continue
+            uuid = uuids[device_id]
+            tensor_shape = self.buffers[uuid].shape
+            slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
+            if is_continuous_subset(tensor_slice, tensor_shape):
+                self.buffers[uuid] = cupy_to_xla_buffer(for_buffer_tensor)
+            else:
+                recv_tensor = cupy_to_jax_tensor(for_buffer_tensor)
+                start_indices = tuple(ind_in_dst.start for ind_in_dst in tensor_slice)
+                new_buffer = jax_tensor_set(
+                    xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
+                    start_indices)
+                self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+            if is_bool:
+                self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])
+
+    def put_resharding_broadcast_task(self, uuid, tasks, group_name):
+        self.broadcast_tasks[uuid] = ReshardingBroadcastTask(broadcast_specs=tasks,
+                                                             group_name=group_name)
+
+    def run_resharding_broadcast_task(self, uuid, buffer_uuids, set_empty_buffer=True):
+        task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
+        broadcast_specs = task.broadcast_specs
+        for group_idx in broadcast_specs:
+            broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
+            if set_empty_buffer:
+                for device_id, global_rank in zip(broadcast_spec.devices_ids,
+                                                  broadcast_spec.devices_global_rank):
+                    if global_rank == 0:
+                        continue
+                    buf_uuid = buffer_uuids[device_id]
+                    if buf_uuid not in self.buffers:
+                        self.put_non_zero_buffer(buf_uuid, device_id,
+                                                 broadcast_spec.recv_tile_shape,
+                                                 broadcast_spec.dtype)
+
+            self.broadcast(buffer_uuids,
+                           broadcast_spec.comm_key,
+                           broadcast_spec.world_size,
+                           broadcast_spec.devices_ids,
+                           broadcast_spec.devices_global_rank,
+                           broadcast_spec.tensor_slices,
+                           task.group_name)
 
     @staticmethod
     def destroy_collective_group(group_name: str = "default"):
@@ -905,8 +1006,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
+                # "NCCL_DEBUG_SUBSYS": "ALL",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
+
+            if global_config.resharding_mode == "broadcast":
+                env_vars["NCCL_ALGO"] = "Ring"
+                env_vars["NCCL_PROTO"] = "Simple"
 
             if "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ:
                 env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[

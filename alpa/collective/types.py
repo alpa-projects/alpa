@@ -86,8 +86,11 @@ class AllGatherOptions:
 
 @dataclass
 class BroadcastOptions:
-    root_rank = 0
-    root_tensor = 0
+    comm_key = ""
+    world_size = 0
+    devices_ids = []
+    devices_global_rank = []
+    n_elements = 0
     timeout_ms = unset_timeout_ms
 
 

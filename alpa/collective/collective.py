@@ -382,6 +382,43 @@ def broadcast(tensor, src_rank: int = 0, group_name: str = "default"):
     g.broadcast([tensor], opts)
 
 
+def broadcast_partialgpu(tensor_list,
+                         n_elements,
+                         comm_key,
+                         world_size,
+                         devices_ids,
+                         devices_global_rank,
+                         group_name: str = "default"):
+    """Broadcast the tensor from a source GPU to some other GPUs. 
+    This function is different from broadcast_multigpu that it only 
+    uses a subset of gpus in one host.
+
+    Args:
+        tensor_list: the tensors to broadcast (src) or receive (dst).
+        n_elements: total number of elements involved in this broadcast.
+        comm_key: an unique identifier for this cross-host collective group.
+        world_size: total number of devices in this cross-host collective group.
+        devices_ids: local devices in this cross-host collective group.
+        devices_global_rank: the corresponding global rank for local devices.
+        group_name (str): the collective group name to perform broadcast.
+
+    Returns:
+        None
+    """
+    if not types.cupy_available():
+        raise RuntimeError("Multigpu calls requires NCCL and Cupy.")
+    _check_tensor_list_input(tensor_list)
+    g = _check_and_get_group(group_name)
+
+    opts = types.BroadcastOptions()
+    opts.n_elements = n_elements
+    opts.comm_key = comm_key
+    opts.world_size = world_size
+    opts.devices_ids = devices_ids
+    opts.devices_global_rank = devices_global_rank
+    g.broadcast_partialgpu(tensor_list, opts)
+
+
 def broadcast_multigpu(tensor_list,
                        src_rank: int = 0,
                        src_tensor: int = 0,

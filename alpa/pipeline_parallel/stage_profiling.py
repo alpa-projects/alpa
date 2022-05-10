@@ -27,7 +27,7 @@ from alpa.pipeline_parallel.computation import (
     rearrange_vars)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicReshardingTask, CollectiveGroup,
-    ReshardingTaskSpec)
+    ReshardingTaskSpec, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
@@ -711,6 +711,14 @@ def dummy_resharding_send_recv_strategy(spec: ReshardingTaskSpec):
         spec, src_loads, dst_loads)
 
 
+def dummy_resharding_broadcast_strategy(spec: ReshardingTaskSpec):
+    """Generates a dummy sharding strategy for profiling."""
+    src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
+    dst_loads = {dst: 0 for dst in spec.dst.device_mesh.device_strs}
+    return CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
+        spec, src_loads, dst_loads)
+
+
 # FIXME(Hao): this function is broken by recent updates. Use with caution.
 def profile_layer_communication_cost(
         src: JaxPipelineComputation, dst: JaxPipelineComputation,
@@ -741,7 +749,10 @@ def profile_layer_communication_cost(
                                                 sharding_spec=in_sharding_spec)
             task_spec = ReshardingTaskSpec(src_array, dst_array, [])
             # create resharding strategy, ignore global load balance
-            strategy = dummy_resharding_send_recv_strategy(task_spec)
+            if global_config.resharding_mode == "send_recv":
+                strategy = dummy_resharding_send_recv_strategy(task_spec)
+            else:
+                strategy = dummy_resharding_broadcast_strategy(task_spec)
             task_spec.set_resharding_strategy(strategy)
             # create distributed array as dummy inputs
             input_indices = pxla.spec_to_indices(invar.aval.shape,
@@ -750,9 +761,16 @@ def profile_layer_communication_cost(
                                                  src_phy_mesh, input_indices)
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_buffers, input_indices)
-            task = SymbolicReshardingTask(task_spec, collective_group,
-                                          collective_group.src_mesh,
-                                          collective_group.dst_mesh)
+            if global_config.resharding_mode == "send_recv":
+                task = SymbolicReshardingTask(task_spec,
+                                              collective_group,
+                                              collective_group.src_mesh,
+                                              collective_group.dst_mesh)
+            else:
+                task = SymbolicBroadcastReshardingTask(task_spec,
+                                                       collective_group,
+                                                       collective_group.src_mesh,
+                                                       collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:

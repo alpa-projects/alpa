@@ -70,7 +70,9 @@ def test_compute_to_accumulate():
     compute_grad_jaxpr = make_jaxpr(compute_grad)(params, x, y)
     gensym_fn = gensym([compute_grad_jaxpr.jaxpr])
     flatten_args, _ = tree_flatten((params, x, y))
+    reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
     acc_grad_jaxpr, grad_outs, _ = compute_grad_to_accumulate_grad(compute_grad_jaxpr,
+                                                                   reduction_vector,
                                                                    gensym_fn)
     grad_zeros = [jnp.zeros_like(val) for val in acc_grad_jaxpr.out_avals]
     # donate_argnums = [
@@ -128,8 +130,9 @@ def test_compute_and_apply_basic():
     compute_grad_jaxpr, old_apply_grad_jaxpr, barrier = split_compute_grad_and_apply_grad(
         closed_jaxpr)
     # compute grad to accumulate grad
+    reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
     acc_grad_jaxpr, acc_grad_dict, _ = compute_grad_to_accumulate_grad(
-        compute_grad_jaxpr, gensym_func)
+        compute_grad_jaxpr, reduction_vector, gensym_func)
     # apply-grad
     mask = {
         outv: acc_grad_dict[inv]
@@ -188,8 +191,9 @@ def test_compute_and_apply(microbatches):
         closed_jaxpr)
     # compute grad to accumulate grad
     global grad_in_to_out
+    reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
     acc_grad_jaxpr, acc_grad_dict, grad_glob_in = compute_grad_to_accumulate_grad(
-        compute_grad_jaxpr, gensym_func)
+        compute_grad_jaxpr, reduction_vector, gensym_func)
     grad_in_to_out = grad_glob_in
     # slice accumulate grad
     acc_invars = acc_grad_jaxpr.jaxpr.invars

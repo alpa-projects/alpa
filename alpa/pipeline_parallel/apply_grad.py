@@ -169,7 +169,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
 
 
 def compute_grad_to_accumulate_grad(
-        compute_jaxpr: ClosedJaxpr,
+        compute_jaxpr: ClosedJaxpr, reduction_vector,
         gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
     """
     Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
@@ -182,13 +182,17 @@ def compute_grad_to_accumulate_grad(
         update_outs: From original output(grad) to new output(acc grad)
         grad_in_to_out: From accumulated gradient inputs to outputs
     """
-    raw_gradients = OrderedSet([
+    raw_gradients = [
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
-    ])
+    ]
     # Currently, assume no grad is literal
     # TODO(yonghao): this assertion fails if an output replicates in outvars
     assert len(raw_gradients) == len(compute_jaxpr.jaxpr.outvars)
+    raw_gradients = OrderedSet([
+        g for g, do_reduction in zip(raw_gradients, reduction_vector)
+        if do_reduction
+    ])
     # from raw_gradients to gradients(cross pipeline marker)
     gradients = {}
     reverse_gradients = {}

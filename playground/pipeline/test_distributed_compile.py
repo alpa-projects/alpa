@@ -79,8 +79,9 @@ origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch,
                                                            model.apply)
 compute_jaxpr, _, _ = split_compute_grad_and_apply_grad(origin_jaxpr)
 gensym_fn = gensym([compute_jaxpr.jaxpr])
+reduction_vector = [True] * len(compute_jaxpr.jaxpr.outvars)
 acc_grad_jaxpr, acc_grad_dict, grad_in_to_out = compute_grad_to_accumulate_grad(
-    compute_jaxpr, gensym_fn)
+    compute_jaxpr, reduction_vector, gensym_fn)
 
 stages = slice_closed_jaxpr_by_full_pipeline_marks(acc_grad_jaxpr)
 stages = mark_missing_vars_in_backward_computation_pipeline_marks(stages,

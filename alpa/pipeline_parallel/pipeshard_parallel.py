@@ -54,7 +54,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         num_micro_batches = 1
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, avals)
-    do_reduction = _reduction_vector(reduce_outnums, out_tree_thunk)
+    reduction_vector = _get_reduction_vector(reduce_outnums, out_tree_thunk)
 
     gensym_func = gensym([closed_jaxpr.jaxpr])
 
@@ -70,7 +70,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if num_micro_batches > 1:
         (acc_grad_jaxpr, acc_grad_dict,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-            compute_grad_jaxpr, gensym_func)
+            compute_grad_jaxpr, reduction_vector, gensym_func)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
         acc_grad_dict = {x: x for x in compute_grad_jaxpr.jaxpr.outvars}
@@ -346,7 +346,7 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
     apply_grad_global_info = apply_grad_donation, global_outvars
     return wrap_layers, apply_grad_global_info
 
-def _reduction_vector(reduce_outnums, out_tree_thunk):
+def _get_reduction_vector(reduce_outnums, out_tree_thunk):
     out_tree = out_tree_thunk()
     if reduce_outnums == "all":
         return tuple([True] * out_tree.num_leaves)

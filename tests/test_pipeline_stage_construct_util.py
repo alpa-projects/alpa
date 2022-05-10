@@ -98,9 +98,10 @@ class StageConstructUtilTest(unittest.TestCase):
             split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
         have_apply_grad = barrier is not None
         assert have_apply_grad
+        reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
         (acc_grad_jaxpr, acc_grad_dict,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-             compute_grad_jaxpr, gensym_func)
+             compute_grad_jaxpr, reduction_vector, gensym_func)
         acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
         acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
 

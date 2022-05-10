@@ -19,7 +19,7 @@ jobs:
         run: |
           docker image prune -f
 
-  release-jaxlib:
+  build-jaxlib:
     runs-on: [ self-hosted ]
     needs: [clean-up]
     strategy:
@@ -50,10 +50,17 @@ jobs:
           CUDA_VERSION: ${{ matrix.cuda }}
           PYTHON_VERSION: ${{ matrix.python }}
 
-      #TODO(Hao): change this to publishing to pypi
-      - name: Publish CUDA${{ matrix.cuda }}
-        run: |
-          echo "Move to self-hosted pypi"
-          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
-        env:
-          CUDA_VERSION: ${{ matrix.cuda }}
+  publish:
+    runs-on: ubuntu-latest
+    needs: [build-jaxlib]
+    strategy:
+      matrix:
+        cuda: [11.0, 11.1, 11.2]
+    steps:
+    #TODO(Hao): change this to publishing to pypi
+    - name: Publish CUDA${{ matrix.cuda }}
+      run: |
+        echo "Move to self-hosted pypi"
+        mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
+      env:
+        CUDA_VERSION: ${{ matrix.cuda }}

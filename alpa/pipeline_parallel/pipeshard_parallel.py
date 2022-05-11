@@ -12,8 +12,7 @@ from alpa.pipeline_parallel.decentralized_distributed_runtime import (
 from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
-from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                              PipeDreamFlush,
+from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
@@ -22,10 +21,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad,
-    process_apply_gradient,
-    split_compute_grad_and_apply_grad)
+from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
+                                               process_apply_gradient,
+                                               split_compute_grad_and_apply_grad
+                                              )
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -37,12 +36,12 @@ logger.setLevel(logging.INFO)
 
 @lu.cache
 def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                                donated_invars, batch_invars, reduce_outnums, devices,
-                                memory_budget_per_device, *avals):
+                                donated_invars, batch_invars, reduce_outnums,
+                                devices, memory_budget_per_device, *avals):
     """3d parallel combining pipelining and 2d sharding."""
     if not (isinstance(
             devices,
-            (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))):
+        (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))):
         raise RuntimeError(
             f"Unrecognized type of `devices`, got: {type(devices)},"
             "expected type: `VirtualPhysicalMesh`.")
@@ -70,7 +69,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     if num_micro_batches > 1:
         (acc_grad_jaxpr, acc_grad_dict,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-            compute_grad_jaxpr, reduction_vector, gensym_func)
+             compute_grad_jaxpr, reduction_vector, gensym_func)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
         acc_grad_dict = {x: x for x in compute_grad_jaxpr.jaxpr.outvars}
@@ -99,38 +98,38 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
-        jax_pipeline_layers, apply_grad_jaxpr, barrier, acc_grad_dict,
-        global_invars, global_outvars, donated_invars, donation_mapping,
-        num_micro_batches, gensym_func, inference_mode)
+         jax_pipeline_layers, apply_grad_jaxpr, barrier, acc_grad_dict,
+         global_invars, global_outvars, donated_invars, donation_mapping,
+         reduction_vector, num_micro_batches, gensym_func, inference_mode)
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
      logical_mesh_shapes,
      autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-        jax_pipeline_layers,
-        devices,
-        donation_mapping,
-        acc_grad_outvars,
-        num_micro_batches,
-        batch_size,
-        jax_apply_layers=jax_apply_layers,
-        apply_grad_global_info=apply_grad_global_info,
-        pipeline_stage_mode=global_config.pipeline_stage_mode,
-        logical_mesh_search_space=global_config.logical_mesh_search_space,
-        cache_compute_cost=global_config.cache_compute_cost,
-        forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-        submesh_shapes=global_config.sub_physical_mesh_shapes,
-        logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-        autosharding_option_dicts=global_config.
-        submesh_autosharding_option_dicts,
-        inference_mode=inference_mode)
+         jax_pipeline_layers,
+         devices,
+         donation_mapping,
+         acc_grad_outvars,
+         num_micro_batches,
+         batch_size,
+         jax_apply_layers=jax_apply_layers,
+         apply_grad_global_info=apply_grad_global_info,
+         pipeline_stage_mode=global_config.pipeline_stage_mode,
+         logical_mesh_search_space=global_config.logical_mesh_search_space,
+         cache_compute_cost=global_config.cache_compute_cost,
+         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+         submesh_shapes=global_config.sub_physical_mesh_shapes,
+         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+         autosharding_option_dicts=global_config.
+         submesh_autosharding_option_dicts,
+         inference_mode=inference_mode)
     num_meshes = len(sliced_virtual_meshes)
 
     # Process apply_gradient and donation
     (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
      global_outvars, donated_invars) = process_apply_gradient(
-        apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
-        stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
-        global_invars, global_outvars, donated_invars)
+         apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
+         stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
+         global_invars, global_outvars, donated_invars, reduction_vector)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
 
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
@@ -318,8 +317,8 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                              barrier, acc_grad_dict,
                                              global_invars, global_outvars,
                                              donated_invars, donation_mapping,
-                                             num_microbatch, gensym_func,
-                                             inference_mode):
+                                             reduction_vector, num_microbatch,
+                                             gensym_func, inference_mode):
     if inference_mode:
         num_layers = len(pipeline_layers)
         num_mesh = num_layers
@@ -330,13 +329,11 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         num_mesh = num_layers // 2
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
-    (layers, _, _, apply_grad_placement, _,
-     donated_invars) = process_apply_gradient(apply_grad_jaxpr, barrier,
-                                              acc_grad_dict, pipeline_layers,
-                                              layer_to_mesh, gensym_func,
-                                              num_microbatch, num_mesh,
-                                              global_invars,
-                                              global_outvars, donated_invars)
+    (layers, _, _,
+     apply_grad_placement, _, donated_invars) = process_apply_gradient(
+         apply_grad_jaxpr, barrier, acc_grad_dict, pipeline_layers,
+         layer_to_mesh, gensym_func, num_microbatch, num_mesh, global_invars,
+         global_outvars, donated_invars, reduction_vector)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)
@@ -345,6 +342,7 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         wrap_layers[mesh_idx] = layers[layer_idx - num_layers]
     apply_grad_global_info = apply_grad_donation, global_outvars
     return wrap_layers, apply_grad_global_info
+
 
 def _get_reduction_vector(reduce_outnums, out_tree_thunk):
     out_tree = out_tree_thunk()

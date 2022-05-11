@@ -484,10 +484,8 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
     return virtual_submeshes
 
 
-# TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate
-# gradient part instead of the whole computation
 def cluster_layers_and_slice_mesh(
-        layers, devices, donation_mapping, global_outvars, num_micro_batches,
+        layers, devices, donation_mapping, final_outvars, num_micro_batches,
         batch_size, jax_apply_layers, apply_grad_global_info,
         pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
@@ -504,7 +502,7 @@ def cluster_layers_and_slice_mesh(
         layers (Sequence[JaxPipelineComputation]): All the layers.
         mesh (VirtualPhysicalMesh): The cluser device mesh.
         donation_mapping: The donation_mapping for the layers.
-        global_outvars: Global outvars of the layers.
+        final_outvars: Global outvars of the layers.
         num_micro_batches: Number of microbatches for GPipe.
         pipeline_stage_mode (str): one of "auto_stage", "manual_stage",
           "uniform_stage".
@@ -560,7 +558,7 @@ def cluster_layers_and_slice_mesh(
             cached_result = None
         compute_cost, max_n_succ_stages = get_compute_cost(
             devices, submesh_choices, autosharding_configs, layers,
-            donation_mapping, global_outvars, jax_apply_layers,
+            donation_mapping, final_outvars, jax_apply_layers,
             apply_grad_global_info, cached_result)
         _, solution = dp(num_layers, devices.num_devices, num_micro_batches,
                          submesh_choices, num_autosharding_configs,
@@ -657,7 +655,7 @@ def cluster_layers_and_slice_mesh(
             reversed(range(num_forward_stages)))
 
     stage_outvars = get_stage_outvars(layers, stage_layer_ids,
-                                      global_outvars)
+                                      final_outvars)
     merged_stages = []
     for stage_id, layer_ids in enumerate(stage_layer_ids):
         if len(layer_ids) == 1:

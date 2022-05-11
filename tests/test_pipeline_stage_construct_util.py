@@ -120,13 +120,14 @@ class StageConstructUtilTest(unittest.TestCase):
         num_forward_layers = len(jax_pipeline_layers) // 2
         layer_to_dummy_mesh = (list(range(num_forward_layers)) +
                                list(reversed(range(num_forward_layers))))
+        reduce_invars = [True] * len(barrier.invars)
 
         (jax_apply_layers, _, _, _, _,
          dummy_donated_invars) = process_apply_gradient(
              apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
              layer_to_dummy_mesh, gensym_func, num_microbatch,
              len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-             donated_invars)
+             donated_invars, reduce_invars)
         apply_grad_donation = create_donation_mapping(donation_mapping,
                                                       dummy_donated_invars,
                                                       global_invars,

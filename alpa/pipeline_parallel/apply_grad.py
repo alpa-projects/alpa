@@ -347,7 +347,7 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
 def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
                            num_micro_batches, num_meshes, global_invars,
-                           global_outvars, donated_invars):
+                           global_outvars, donated_invars, reduction_vector):
     """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
     # TODO(yonghao): the condition of creating RDA variable should be extended.
 
@@ -366,7 +366,7 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
     #                  calculate loss. It will fail if we use sum.
     apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
         apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
-        global_outvars)
+        global_outvars, reduction_vector)
 
     # update donation mapping
     donation_mapping = {}
@@ -426,7 +426,7 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
 
 
 def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
-                        global_outvars):
+                        global_outvars, reduce_invars):
     """
     Get the mean of input (accumulated) gradients and run apply gradient.
 
@@ -436,7 +436,10 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
     new_eqns = []
     invar_set = OrderedSet(closed_jaxpr.jaxpr.invars)
     outvar_set = OrderedSet(closed_jaxpr.jaxpr.outvars)
-    for invar in gradients:
+    for invar, reduce in zip(gradients, reduce_invars):
+        if not reduce:
+            mapping[invar] = invar
+            continue
         div_out = gensym_fn(invar.aval)
         literal_val = np.array(num_microbatch, invar.aval.dtype)
         new_eqns.append(
@@ -446,12 +449,15 @@ def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
             ], [div_out], div_p, {}))
         mapping[invar] = div_out
     replaced = replace_all_with(closed_jaxpr, mapping)
-    final_invars = closed_jaxpr.jaxpr.invars
-    final_outvars = replaced.jaxpr.outvars
-    for invar in gradients:
+    final_invars = list(closed_jaxpr.jaxpr.invars)
+    final_outvars = list(replaced.jaxpr.outvars)
+    for invar, reduce in zip(gradients, reduce_invars):
+        if not reduce:
+            continue
         if invar not in invar_set:
             final_invars.append(invar)
         if invar in global_outvars and invar not in outvar_set:
+            # use the divided version to replace the original one
             final_outvars.append(mapping[invar])
     new_eqns.extend(replaced.jaxpr.eqns)
     new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, final_invars, final_outvars,

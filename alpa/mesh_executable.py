@@ -541,6 +541,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     avals[i], logical_mesh_shape))
 
         # Cache results for input and output sharding
+        global_batch_arg_indices = [
+            i for i in range(len(avals)) if batch_invars[i]
+        ]
         global_arg_shard_indices = []
         for i, aval in enumerate(avals):
             if batch_invars[i] and isinstance(self.physical_mesh,
@@ -566,9 +569,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             for aval, spec in zip(grad_avals, grad_sharding_specs)
         ]
         grad_shard_dtypes = [aval.dtype for aval in grad_avals]
+        self.global_batch_arg_indices = global_batch_arg_indices
+        self.global_arg_shard_indices = global_arg_shard_indices
         self.outs_handler = physical_mesh.get_outputs_handler(
             out_avals, output_sharding_specs)
-        self.global_arg_shard_indices = global_arg_shard_indices
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
@@ -633,14 +637,12 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.donated_invars, self.batch_invars,
             num_micro_batches, args)
 
-        first_batch_bufs = []
+        first_batch_bufs = input_bufs
         next_batches_bufs = []
-        for i in range(len(input_bufs)):
-            if self.batch_invars[i]:
-                first_batch_bufs.append(input_bufs[i][0])
-                next_batches_bufs.extend(input_bufs[i][1:])
-            else:
-                first_batch_bufs.append(input_bufs[i])
+        for i in self.global_batch_arg_indices:
+            micro_batches = input_bufs[i]
+            first_batch_bufs[i] = micro_batches[0]
+            next_batches_bufs.extend(micro_batches[1:])
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
@@ -684,7 +686,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                         output_uuids[i][host_id][device_id])
 
             # Mark donated input buffers as already deleted on workers.
-            for bufs, is_donated in zip(input_bufs, self.donated_invars):
+            for bufs, is_donated in zip(first_batch_bufs, self.donated_invars):
                 if is_donated:
                     for buf in bufs:
                         buf.set_deleted_on_workers()

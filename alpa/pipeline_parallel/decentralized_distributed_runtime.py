@@ -940,9 +940,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
-            #print(f"after shard_args mesh_idx={mesh_idx} allocated:",
-            #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
-            #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
 
         # Execute
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
@@ -950,7 +947,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker.run_executable.remote(
                     self.worker_executable_uuid_mapping[worker],
                     input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
-                    sync_for_timer=True)
+                    sync_for_timer=global_config.pipeline_sync_for_timer)
 
         # Handle donation
         for mesh_idx in range(len(self.physical_meshes)):

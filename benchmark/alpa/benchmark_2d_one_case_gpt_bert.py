@@ -174,14 +174,16 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     if alloc_mem > physical_mesh.get_available_memory():
         latencies = [-1]
     else:
+        # Benchmark latency without driver overhead
         for i in range(niter):
-            print(f"Iteration {i}...")
+            print(f"Iteration {i} ...")
             state = train_step(state, batch, rngkey)
             physical_mesh.sync_workers()
 
         latencies = executable.get_execution_time_costs(warmup=warmup)
 
-        # Benchmark e2e latency
+        # Benchmark latency with driver overhead
+        global_config.use_dummy_value_for_benchmarking = False
         global_config.shard_parallel_sync_for_timer = False
         number = niter
         physical_mesh.sync_workers()
@@ -190,7 +192,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
             state = train_step(state, batch, rngkey)
         physical_mesh.sync_workers()
         e2e_latency = (time.time() - tic) / number
-        print(f"e2e latency w/o preshard: {e2e_latency:.3f}")
+        print(f"latency with dirver overhead: {e2e_latency:.3f}")
 
     print_used_time("Benchmark")
 

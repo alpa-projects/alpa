@@ -180,7 +180,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
 
     # Benchmark step time
     for i in range(niter):
-        print(f"Iteration: {i}....")
+        print(f"Iteration: {i} ...")
         state = train_step(state, batch, rngkey)
         executable.sync()
 

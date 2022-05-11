@@ -893,18 +893,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def run(self, *args):
         """The run function that maps to train_step()."""
-        input_bufs: List[Any] = [None for _ in range(self.num_mesh)]
-        input_uuids: List[Any] = [None for _ in range(self.num_mesh)]
-        output_bufs: List[Any] = [None for _ in range(self.num_mesh)]
-        output_uuids: List[Any] = [None for _ in range(self.num_mesh)]
+        input_bufs = [None for _ in range(self.num_mesh)]
+        output_bufs = [None for _ in range(self.num_mesh)]
+        output_uuids = [None for _ in range(self.num_mesh)]
 
         num_outs = [
             len(self.output_local_uuid_list[mesh.workers[0]])
             for mesh in self.physical_meshes
         ]
 
-        # Shard inputs
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            # Shard inputs
             mesh_args = [
                 args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
@@ -924,22 +923,21 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     flatten_bufs.append(tmp_bufs[i])
             input_bufs[mesh_idx] = flatten_bufs
 
+            # Convert bufs to uuids
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
-            input_uuids[mesh_idx] = (get_uuid_np_array(
-                input_bufs[mesh_idx]).reshape(-1, num_hosts,
-                                              num_devices_per_host).transpose(
-                                                  [1, 0, 2]))
+            input_uuids = get_uuid_np_array(
+                input_bufs[mesh_idx]).reshape(
+                    -1, num_hosts, num_devices_per_host).transpose([1, 0, 2])
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
 
-        # Execute
-        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            # Execute
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
                     self.worker_executable_uuid_mapping[worker],
-                    input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
+                    input_uuids[i], output_uuids[mesh_idx][i],
                     sync_for_timer=global_config.pipeline_sync_for_timer)
 
         # Handle donation

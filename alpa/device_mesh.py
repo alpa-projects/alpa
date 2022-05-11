@@ -1186,7 +1186,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         # so we can delete the old buffers
                         arg.delete()
 
-            if slow_path:  # pylint: disable=using-constant-test
+            if False:  # pylint: disable=using-constant-test
                 # Print debug info
                 size = np.prod(arg.shape) * arg.dtype.itemsize
                 bandwidth = size / (time.time() - tic)

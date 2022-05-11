@@ -1144,27 +1144,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         ray.get(tasks)
 
     ##### Executable Related Functions #####
-    def shard_batch_arg(self, arg, sharding_spec, num_micro_batches, batch_dim,
-                        microbatch_aval):
-        """Shard high-level arguments as low-level buffers,
-        then reorganize them into micro batches."""
-        new_spec = get_microbatch_sharding_spec(sharding_spec, batch_dim,
-                                                num_micro_batches)
-        indices = pxla.spec_to_indices(arg.shape, new_spec)
-        buf_refs = shard_arg_handlers[type(arg)](arg, self, indices,
-                                                 num_micro_batches)
-
-        microbatch_arrays = []
-        # build distributed array
-        for batch_idx in range(num_micro_batches):
-            refs = [
-                buf_refs[device_idx * num_micro_batches + batch_idx]
-                for device_idx in range(self.num_devices)
-            ]
-            microbatch_arrays.append(
-                DistributedArray(self, microbatch_aval, sharding_spec, refs))
-        return microbatch_arrays
-
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool],
                            batch_invars: Sequence[bool],

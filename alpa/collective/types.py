@@ -4,13 +4,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 _NUMPY_AVAILABLE = True
-_TORCH_AVAILABLE = True
+_TORCH_AVAILABLE = False
 _CUPY_AVAILABLE = True
-
-try:
-    import torch as th  # noqa: F401
-except ImportError:
-    _TORCH_AVAILABLE = False
 
 try:
     import cupy as cp  # noqa: F401

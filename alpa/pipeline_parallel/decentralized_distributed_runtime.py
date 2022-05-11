@@ -196,11 +196,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.flop_count = flop_count
 
         # List[stage_idx -> executable_uuid]
-        self.executable_uuids = [] 
+        self.executable_uuids = []
 
         # Cached sharding indices for inputs.
         # List[mesh_idx -> List[sharding_indices]].
-        self.input_indices = [] 
+        self.input_indices = []
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
@@ -279,7 +279,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Compile forward, backward and apply_grad computations
         executable_uuids = self._compile_computation_executables(
             executable_config_lists)
-        self.executable_uuids = executable_uuids 
+        self.executable_uuids = executable_uuids
 
         # Compile gradient buffer allocations
         grad_uuids = self._compile_grad_buffer_allocations(
@@ -294,144 +294,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             not_batch_invars, var_at)
 
         # Simulate the pipeline schedule and generate instructions
-        worker_tmp_instructions = {}
-        for mesh in self.physical_meshes:
-            for worker in mesh.workers:
-                worker_tmp_instructions[worker] = []
-
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
         worker_to_idx = {}
         for mesh_idx, mesh in enumerate(self.physical_meshes):
             for worker_idx, worker in enumerate(mesh.workers):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
-        def get_invar_key(invar, batch_idx):
-            if invar in not_batch_invars:
-                var_key = repr(invar)
-                key = (repr(invar), 0)
-            elif (invar in self.grad_dummy_invars and
-                  batch_idx != self.schedule.first_backward_batch_index):
-                var_key = self.grad_dummy_invars[invar]
-                key = (var_key,
-                       self.schedule.previous_backward_batch_index(batch_idx))
-            else:
-                var_key = repr(invar)
-                key = (repr(invar), batch_idx)
-            return var_key, key
-
         for _, sched in enumerate(self.schedule.schedules):
-            for tmp_list in worker_tmp_instructions.values():
-                tmp_list.clear()
-
-            for mesh_idx, task in enumerate(sched):
-                if not task:
-                    continue
-                physical_mesh = self.physical_meshes[mesh_idx]
-                num_devices_per_host = physical_mesh.num_devices_per_host
-                batch_idx, stage_idx = task
-                stage = self.stages[stage_idx]
-                received_keys = OrderedSet()
-                # shard_args for intermediates
-                to_reshard_vars = []
-                reshard_sharding_specs = []
-                for invar, spec in zip(stage.invars,
-                                       stage.input_sharding_specs):
-                    var_key, key = get_invar_key(invar, batch_idx)
-                    if mesh_idx in var_at[key]:
-                        # have a copy at the current mesh
-                        continue
-                    if len(var_at[key]) > 1:
-                        raise NotImplementedError(
-                            "Not support resharding replicated")
-                    to_reshard_vars.append(invar)
-                    reshard_sharding_specs.append(spec)
-                keys = [
-                    get_invar_key(var, batch_idx)[1] for var in to_reshard_vars
-                ]
-                if len(keys):
-                    # TODO(yonghao): only compile alloc once, use multiple times
-                    output_uuids = self._compile_alloc(to_reshard_vars,
-                                                       reshard_sharding_specs,
-                                                       mesh_idx, keys, False,
-                                                       instruction_lists,
-                                                       executable_config_lists,
-                                                       var_at)
-                    # shape: (args, num_hosts, num_devices_per_host)
-                    transposed = output_uuids.transpose([1, 0, 2])
-                    recv_uuid_list = transposed
-
-                    for invar, recv_uuids in zip(to_reshard_vars,
-                                                 recv_uuid_list):
-                        var_key, key = get_invar_key(invar, batch_idx)
-                        src_idx, src_uuids = list(var_at[key].items())[0]
-                        resharding_task = self._resharding_tasks[src_idx][
-                            mesh_idx][var_key]
-                        if global_config.resharding_mode == "send_recv":
-                            self._compile_resharding_task(
-                                self.physical_meshes[src_idx],
-                                self.physical_meshes[mesh_idx], src_uuids,
-                                resharding_task, recv_uuids, instruction_lists)
-                        else:
-                            self._compile_broadcast_resharding_task(
-                                self.physical_meshes[src_idx],
-                                self.physical_meshes[mesh_idx], src_uuids,
-                                resharding_task, recv_uuids, instruction_lists)
-                        received_keys.add(key)
-
-                # execute
-                # allocate uuids for buffers created by RUN
-                for outvar in stage.outvars:
-                    key = (repr(outvar), batch_idx)
-                    # get uuids of this outvar
-                    _get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
-                        physical_mesh.num_devices).reshape(
-                            -1, num_devices_per_host)
-
-                exec_uuid = executable_uuids[stage_idx]
-                donated_invars = self.stages[stage_idx].donated_invars
-                for worker_idx, worker in enumerate(physical_mesh.workers):
-                    # Get input and output uuids. They should be at the mesh
-                    input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host),
-                        dtype=np.int64)
-                    output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host),
-                        dtype=np.int64)
-                    for idx, invar in enumerate(stage.invars):
-                        _, key = get_invar_key(invar, batch_idx)
-                        input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
-                    for idx, outvar in enumerate(stage.outvars):
-                        key = (repr(outvar), batch_idx)
-                        output_uuids[idx] = var_at[key][mesh_idx][worker_idx]
-                    for idx in range(len(stage.invars)):
-                        if donated_invars[idx]:
-                            donation_mapping[mesh_idx].update(
-                                input_uuids[idx], output_uuids[idx])
-
-                    kwargs = {
-                        "skip_grad_sync":
-                            self.schedule.should_skip_grad_sync(task),
-                        "sync_before": False,
-                        "sync_after": False,
-                    }
-
-                    worker_tmp_instructions[worker].append(
-                        PipelineInstruction.Run(exec_uuid,
-                                                input_uuids,
-                                                output_uuids,
-                                                kwargs,
-                                                info=f"stage {stage_idx}"))
-                # free all received buffers
-                # received_uuids = [
-                #     var_at[key].pop(mesh_idx) for key in received_keys
-                # ]
-                # for worker_idx, worker in enumerate(physical_mesh.workers):
-                #     instructions = worker_tmp_instructions[worker]
-                #     for uuids in received_uuids:
-                #         instructions.append(
-                #             PipelineInstruction.Free(uuids[worker_idx]))
-            for worker, worker_instruction in worker_tmp_instructions.items():
-                instruction_lists[worker].extend(worker_instruction)
+            self._compile_exec_one_tick(sched, not_batch_invars,
+                                        donation_mapping, var_at,
+                                        instruction_lists, executable_uuids,
+                                        executable_config_lists)
 
         # Compile information for outputs
         self._compile_collect_outputs(var_at)
@@ -447,7 +320,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             reduced_var_uuids = [[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in uuids
-            ] for uuids in reduced_var_uuids]
+            ]
+                                 for uuids in reduced_var_uuids]
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids
@@ -456,8 +330,137 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker, used_outside, donated, instruction_lists)
 
         return (instruction_lists, executable_config_lists,
-                input_local_uuid_lists, grad_uuids,
-                reduced_var_uuid_lists)
+                input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists)
+
+    def _compile_get_vars_from_mesh(self, vars, dst_specs, mesh_idx, batch_idx,
+                                    instruction_lists, executable_config_lists,
+                                    var_at, get_invar_key):
+        if len(vars) == 0:
+            return
+        received_keys = OrderedSet()
+        keys = [get_invar_key(var, batch_idx)[1] for var in vars]
+        # TODO(yonghao): only compile alloc once, use multiple times
+        output_uuids = self._compile_alloc(vars, dst_specs, mesh_idx, keys,
+                                           False, instruction_lists,
+                                           executable_config_lists, var_at)
+        # shape: (args, num_hosts, num_devices_per_host)
+        transposed = output_uuids.transpose([1, 0, 2])
+        recv_uuid_list = transposed
+
+        for invar, recv_uuids in zip(vars, recv_uuid_list):
+            var_key, key = get_invar_key(invar, batch_idx)
+            src_idx, src_uuids = list(var_at[key].items())[0]
+            resharding_task = self._resharding_tasks[src_idx][mesh_idx][var_key]
+            if global_config.resharding_mode == "send_recv":
+                self._compile_resharding_task(self.physical_meshes[src_idx],
+                                              self.physical_meshes[mesh_idx],
+                                              src_uuids, resharding_task,
+                                              recv_uuids, instruction_lists)
+            else:
+                self._compile_broadcast_resharding_task(
+                    self.physical_meshes[src_idx],
+                    self.physical_meshes[mesh_idx], src_uuids, resharding_task,
+                    recv_uuids, instruction_lists)
+            received_keys.add(key)
+
+    def _compile_exec_one_tick(self, sched, not_batch_invars, donation_mapping,
+                               var_at, instruction_lists, executable_uuids,
+                               executable_config_lists):
+        worker_tmp_instructions = {}
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                worker_tmp_instructions[worker] = []
+
+        def get_invar_key(invar, batch_idx):
+            if invar in not_batch_invars:
+                var_key = repr(invar)
+                key = (repr(invar), 0)
+            elif (invar in self.grad_dummy_invars and
+                  batch_idx != self.schedule.first_backward_batch_index):
+                var_key = self.grad_dummy_invars[invar]
+                key = (var_key,
+                       self.schedule.previous_backward_batch_index(batch_idx))
+            else:
+                var_key = repr(invar)
+                key = (repr(invar), batch_idx)
+            return var_key, key
+
+        for mesh_idx, task in enumerate(sched):
+            if not task:
+                continue
+            physical_mesh = self.physical_meshes[mesh_idx]
+            num_devices_per_host = physical_mesh.num_devices_per_host
+            batch_idx, stage_idx = task
+            stage = self.stages[stage_idx]
+            # shard_args for intermediates
+            to_reshard_vars = []
+            reshard_sharding_specs = []
+            for invar, spec in zip(stage.invars, stage.input_sharding_specs):
+                _, key = get_invar_key(invar, batch_idx)
+                if mesh_idx in var_at[key]:
+                    # have a copy at the current mesh
+                    continue
+                if len(var_at[key]) > 1:
+                    raise NotImplementedError(
+                        "Not support resharding replicated")
+                to_reshard_vars.append(invar)
+                reshard_sharding_specs.append(spec)
+            self._compile_get_vars_from_mesh(to_reshard_vars,
+                                             reshard_sharding_specs, mesh_idx,
+                                             batch_idx, instruction_lists,
+                                             executable_config_lists, var_at,
+                                             get_invar_key)
+
+            # execute
+            # allocate uuids for buffers created by RUN
+            for outvar in stage.outvars:
+                key = (repr(outvar), batch_idx)
+                # get uuids of this outvar
+                _get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
+                    physical_mesh.num_devices).reshape(-1, num_devices_per_host)
+
+            exec_uuid = executable_uuids[stage_idx]
+            donated_invars = self.stages[stage_idx].donated_invars
+            for worker_idx, worker in enumerate(physical_mesh.workers):
+                # Get input and output uuids. They should be at the mesh
+                input_uuids = np.zeros(
+                    (len(stage.invars), num_devices_per_host), dtype=np.int64)
+                output_uuids = np.zeros(
+                    (len(stage.outvars), num_devices_per_host), dtype=np.int64)
+                for idx, invar in enumerate(stage.invars):
+                    _, key = get_invar_key(invar, batch_idx)
+                    input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
+                for idx, outvar in enumerate(stage.outvars):
+                    key = (repr(outvar), batch_idx)
+                    output_uuids[idx] = var_at[key][mesh_idx][worker_idx]
+                for idx in range(len(stage.invars)):
+                    if donated_invars[idx]:
+                        donation_mapping[mesh_idx].update(
+                            input_uuids[idx], output_uuids[idx])
+
+                kwargs = {
+                    "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
+                    "sync_before": False,
+                    "sync_after": False,
+                }
+
+                worker_tmp_instructions[worker].append(
+                    PipelineInstruction.Run(exec_uuid,
+                                            input_uuids,
+                                            output_uuids,
+                                            kwargs,
+                                            info=f"stage {stage_idx}"))
+            # free all received buffers
+            # received_uuids = [
+            #     var_at[key].pop(mesh_idx) for key in received_keys
+            # ]
+            # for worker_idx, worker in enumerate(physical_mesh.workers):
+            #     instructions = worker_tmp_instructions[worker]
+            #     for uuids in received_uuids:
+            #         instructions.append(
+            #             PipelineInstruction.Free(uuids[worker_idx]))
+        for worker, worker_instruction in worker_tmp_instructions.items():
+            instruction_lists[worker].extend(worker_instruction)
 
     def _compile_computation_executables(self, executable_config_lists):
         """Compile executables for forward, backward, and apply_grad compuations."""
@@ -507,14 +510,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
 
-                # TODO(yonghao): Some var has non-gradient intermediate states 
+                # TODO(yonghao): Some var has non-gradient intermediate states
                 # that need accumulation. for these vars, we need to record its
                 # first mb index when accum will take place.
                 keys = [(repr(var), self.schedule.first_backward_batch_index)
                         for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
-                    grad_vars, grad_sharding_specs, mesh_idx,
-                    keys, global_config.use_memzero_for_gradient_accumulation,
+                    grad_vars, grad_sharding_specs, mesh_idx, keys,
+                    global_config.use_memzero_for_gradient_accumulation,
                     instruction_lists, executable_config_lists, var_at)
 
         return grad_uuids
@@ -784,10 +787,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             else:
                 host_id = dst_mesh.workers.index(w)
                 output_uuids = recv_uuids[host_id]
-            instruction_lists[w].append(PipelineInstruction.Broadcast(task_uuid, 
-                                                                      input_uuids, 
-                                                                      output_uuids, 
-                                                                      "broadcast"))
+            instruction_lists[w].append(
+                PipelineInstruction.Broadcast(task_uuid, input_uuids,
+                                              output_uuids, "broadcast"))
 
     @staticmethod
     def _compile_free(worker, used_outside, donated, instruction_lists):
@@ -1216,10 +1218,10 @@ class PipelineMeshWorkerExecutable:
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.BROADCAST:
                 timers("resharding_broadcast").start()
-                self.worker.run_resharding_broadcast_task(instruction.task_uuid,
-                                                          instruction.input_uuids
-                                                          if instruction.input_uuids is not None
-                                                          else instruction.output_uuids)
+                self.worker.run_resharding_broadcast_task(
+                    instruction.task_uuid,
+                    instruction.input_uuids if instruction.input_uuids
+                    is not None else instruction.output_uuids)
                 timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()
@@ -1227,7 +1229,8 @@ class PipelineMeshWorkerExecutable:
                 timers("free").suspend()
 
         for timer_name in [
-                "compute", "resharding_send", "resharding_recv", "resharding_broadcast", "free"
+                "compute", "resharding_send", "resharding_recv",
+                "resharding_broadcast", "free"
         ]:
             if timer_name in timers:
                 timers(timer_name).stop()

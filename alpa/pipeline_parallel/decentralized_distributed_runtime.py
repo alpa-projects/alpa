@@ -929,6 +929,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             ]
             input_bufs[mesh_idx] = physical_mesh.shard_args_to_bufs(
                 self.input_indices[mesh_idx], self.delete_after_shard[mesh_idx],
+                (False,) * len(mesh_args), None,
                 mesh_args)
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host

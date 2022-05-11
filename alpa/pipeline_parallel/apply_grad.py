@@ -29,8 +29,8 @@ APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
 # If layer that outputs a(called layer_a, and the same applys for b) is
 # merged with layer_b to the same stage, they do not need any communication,
 # so the communication does not benefit from the rewrite.
-def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
-                              closed_jaxpr):
+def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
+                              gensym_fn, closed_jaxpr):
     """
     If a parameter is used in multiple stages, its gradient is computed in
     multiple stages and then added together. We accumulate the results on each
@@ -66,49 +66,54 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
         cross_layer_grad_eqns.append(eqn)
         unmarked_vars.update(outvars)
         defined_vars.update(outvars)
-    # Rewrite barrier and cross_layer_grad eqns.
-    barrier_map = {}
-    for invar, outvar in zip(barrier.invars, barrier.outvars):
+    # Rewrite microbatch_bound and cross_layer_grad eqns.
+    microbatch_bound_in_to_outs = {}
+    for invar, outvar in zip(microbatch_bound.invars, microbatch_bound.outvars):
         if isinstance(invar, Var) and not isinstance(outvar, DropVar):
-            barrier_map[invar] = outvar
-    new_cross_barrier_vars = OrderedSet()
-    cross_barrier_outvars = OrderedSet()
+            microbatch_bound_in_to_outs[invar] = outvar
+    new_cross_microbatch_bound_invars = OrderedSet()
+    new_post_microbatch_bound_outvars = OrderedSet()
     for eqn in cross_layer_grad_eqns:
         for invar in eqn.invars:
-            if (isinstance(invar, Var) and invar not in barrier_map and
+            if (isinstance(invar, Var) and
+                    invar not in microbatch_bound_in_to_outs and
                     invar not in defined_vars):
-                new_cross_barrier_vars.add(invar)
-                barrier_map[invar] = gensym_fn(invar.aval)
-        cross_barrier_outvars.update([
-            var for var in eqn.outvars
-            if not isinstance(var, DropVar) and var in barrier_map
+                new_cross_microbatch_bound_invars.add(invar)
+                microbatch_bound_in_to_outs[invar] = gensym_fn(invar.aval)
+        new_post_microbatch_bound_outvars.update([
+            var for var in eqn.outvars if not isinstance(var, DropVar) and
+            var in microbatch_bound_in_to_outs
         ])
-    # rewrite the barrier
-    new_barrier_invars = []
-    new_barrier_outvars = []
-    for idx, var in enumerate(barrier.invars + list(new_cross_barrier_vars)):
-        # remove vars now defined after barrier.
-        if isinstance(var, Var) and var in cross_barrier_outvars:
+    # rewrite the microbatch_bound
+    new_microbatch_bound_invars = []
+    new_microbatch_bound_outvars = []
+    for idx, var in enumerate(microbatch_bound.invars +
+                              list(new_cross_microbatch_bound_invars)):
+        # remove vars now defined after microbatch_bound.
+        if isinstance(var, Var) and var in new_post_microbatch_bound_outvars:
             continue
-        new_barrier_invars.append(var)
-        # add vars now used after barrier.
-        new_barrier_outvars.append(barrier.outvars[idx] if idx < len(
-            barrier.invars) else barrier_map[var])
-    new_barrier = new_jaxpr_eqn(new_barrier_invars, new_barrier_outvars,
-                                barrier.primitive, barrier.params,
-                                barrier.source_info)
+        new_microbatch_bound_invars.append(var)
+        # add vars now used after microbatch_bound.
+        new_microbatch_bound_outvars.append(
+            microbatch_bound.outvars[idx] if idx < len(microbatch_bound.invars)
+            else microbatch_bound_in_to_outs[var])
+    new_microbatch_bound = new_jaxpr_eqn(new_microbatch_bound_invars,
+                                         new_microbatch_bound_outvars,
+                                         microbatch_bound.primitive,
+                                         microbatch_bound.params,
+                                         microbatch_bound.source_info)
     # rewrite cross layer grad eqns and insert them to the top of apply eqns.
     new_apply_eqns = []
-    rewrite_invars = set(new_barrier_invars)
-    rewrite_invars.update(barrier.invars)
+    rewrite_invars = set(new_microbatch_bound_invars)
+    rewrite_invars.update(microbatch_bound.invars)
     for eqn in cross_layer_grad_eqns:
         invars = [
-            barrier_map[var]
+            microbatch_bound_in_to_outs[var]
             if isinstance(var, Var) and var in rewrite_invars else var
             for var in eqn.invars
         ]
         outvars = [
-            barrier_map[var]
+            microbatch_bound_in_to_outs[var]
             if not isinstance(var, DropVar) and var in rewrite_invars else var
             for var in eqn.outvars
         ]
@@ -122,12 +127,14 @@ def _rewrite_cross_layer_grad(compute_eqns, barrier, apply_eqns, gensym_fn,
         if isinstance(var, Literal):
             continue
         if var in rewrite_invars:
-            new_global_outvars[idx] = barrier_map[var]
+            new_global_outvars[idx] = microbatch_bound_in_to_outs[var]
     closed_jaxpr = clone_jaxpr(closed_jaxpr,
-                               eqns=new_compute_eqns + [new_barrier] +
+                               eqns=new_compute_eqns + [new_microbatch_bound] +
                                new_apply_eqns,
                                outvars=new_global_outvars)
-    return closed_jaxpr, [new_compute_eqns, [new_barrier], new_apply_eqns]
+    return closed_jaxpr, [
+        new_compute_eqns, [new_microbatch_bound], new_apply_eqns
+    ]
 
 
 def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
@@ -145,14 +152,14 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
             split_idx = idx
     if split_eqn is None:
         logger.warning(
-            "Missing barrier between compute and apply. Assume there is no "
+            "Missing microbatch_bound between compute and apply. Assume there is no "
             "apply gradient step. Hint: replace jax.grad by alpa.grad.")
         dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
-        dummy_barrier = new_jaxpr_eqn([], [], pipeline_p, {
+        dummy_bound = new_jaxpr_eqn([], [], pipeline_p, {
             'mark_type': 'grad',
             'name': ''
         })
-        return closed_jaxpr, closed_jaxpr, dummy_jaxpr, dummy_barrier
+        return closed_jaxpr, closed_jaxpr, dummy_jaxpr, dummy_bound
     sliced_eqns = [
         closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]
@@ -344,7 +351,7 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
     return outvar_mesh
 
 
-def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
+def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
                            num_micro_batches, num_meshes, global_invars,
                            global_outvars, donated_invars, reduction_vector):
@@ -353,10 +360,13 @@ def process_apply_gradient(apply_grad_jaxpr, barrier, acc_grad_dict,
 
     # Process apply gradient:
     # 1. change invars of apply grad to outvars of accumulate grad
-    gradients = [g for g in barrier.outvars if not isinstance(g, DropVar)]
-    assert len(gradients) == len(barrier.invars)
+    gradients = [
+        g for g in microbatch_bound.outvars if not isinstance(g, DropVar)
+    ]
+    assert len(gradients) == len(microbatch_bound.invars)
     apply_in_to_acc_out = {
-        outv: acc_grad_dict[inv] for outv, inv in zip(gradients, barrier.invars)
+        outv: acc_grad_dict[inv]
+        for outv, inv in zip(gradients, microbatch_bound.invars)
     }
 
     # 2. Add compute mean and slice apply-grad stages

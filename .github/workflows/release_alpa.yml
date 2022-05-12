@@ -34,13 +34,12 @@ jobs:
           export VERSION=$(bash GENVER --pep440)
           python setup.py sdist bdist_wheel
           ls -ltr dist/
-#  TODO(Hao): temporarily comment twine upload in case someone make it wrong
           twine upload --repository testpypi dist/*
 #          twine upload dist/*
 
   update-version:
-    runs-on: [ubuntu-latest]
-    needs: release-alpa
+    runs-on: ubuntu-latest
+    needs: [release-alpa]
     steps:
       - uses: actions/checkout@v3
 

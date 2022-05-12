@@ -302,7 +302,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     # Benchmark latency with driver overhead
     global_config.use_dummy_value_for_benchmarking = False
     global_config.pipeline_sync_for_timer = False
-    number = 5
+    number = niter
     executable.sync()
     tic = time.time()
     for i in range(number):

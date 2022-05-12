@@ -239,9 +239,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
-  #ray.init(address="auto")
-  #physical_mesh = alpa.DeviceCluster().get_physical_mesh()
-  physical_mesh = alpa.LocalPhysicalDeviceMesh()
+  ray.init(address="auto")
+  physical_mesh = alpa.DeviceCluster().get_physical_mesh()
+  #physical_mesh = alpa.LocalPhysicalDeviceMesh()
   alpa.set_parallelize_options(physical_mesh)
 
   writer = metric_writers.create_default_writer(

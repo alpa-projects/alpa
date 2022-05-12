@@ -116,7 +116,7 @@ class InstallationTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(InstallationTest("test_1_shard_parallel"))
+    #suite.addTest(InstallationTest("test_1_shard_parallel"))
     suite.addTest(InstallationTest("test_2_pipeline_parallel"))
     return suite
 

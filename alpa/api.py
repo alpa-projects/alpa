@@ -43,7 +43,6 @@ def parallelize(fun=None,
           This information is used to split the original data batch into micro batches
           to perform gradient accumulation or pipeline parallelism.
           Alpa assumes the first dimension of the tensor is the batch dimension.
-        reduce_outnums: The indices of outputs that are reduced on batch dimension.
     """
 
     def decorate_fun(fun):

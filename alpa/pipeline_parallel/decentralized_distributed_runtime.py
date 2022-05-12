@@ -328,34 +328,34 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             reduced_var_uuids = [[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in uuids
-            ]
-                                 for uuids in reduced_var_uuids]
+            ] for uuids in reduced_var_uuids]
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids
-            # pylint: disable=modified-iterating-dict
+
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 
         return (instruction_lists, executable_config_lists,
                 input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists)
 
-    def _compile_get_vars_from_mesh(self, vars, dst_specs, mesh_idx, batch_idx,
-                                    instruction_lists, executable_config_lists,
-                                    var_at, get_invar_key):
-        if len(vars) == 0:
+    def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
+                                    batch_idx, instruction_lists,
+                                    executable_config_lists, var_at,
+                                    get_invar_key):
+        if len(invars) == 0:
             return
         received_keys = OrderedSet()
-        keys = [get_invar_key(var, batch_idx)[1] for var in vars]
+        keys = [get_invar_key(var, batch_idx)[1] for var in invars]
         # TODO(yonghao): only compile alloc once, use multiple times
-        output_uuids = self._compile_alloc(vars, dst_specs, mesh_idx, keys,
+        output_uuids = self._compile_alloc(invars, dst_specs, mesh_idx, keys,
                                            False, instruction_lists,
                                            executable_config_lists, var_at)
         # shape: (args, num_hosts, num_devices_per_host)
         transposed = output_uuids.transpose([1, 0, 2])
         recv_uuid_list = transposed
 
-        for invar, recv_uuids in zip(vars, recv_uuid_list):
+        for invar, recv_uuids in zip(invars, recv_uuid_list):
             var_key, key = get_invar_key(invar, batch_idx)
             src_idx, src_uuids = list(var_at[key].items())[0]
             resharding_task = self._resharding_tasks[src_idx][mesh_idx][var_key]
@@ -636,7 +636,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         but are not reduced. They should be concated.
         """
         batch_dim = 0
-        to_concate_vars = set([v for v in concat_vars_mapping.values()])
+        to_concate_vars = set(concat_vars_mapping.values())
         to_concate_specs = self._compile_concate_get_spec(to_concate_vars)
         for var in concat_vars_mapping:
             src_var = concat_vars_mapping[var]
@@ -696,7 +696,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         global_outvar_set = OrderedSet(self.global_outvars)
         # This is only a patch. It will be deprecated after we move concat into a stage
         reversed_concat = {
-            v:k
+            v: k
             for k, v in concat_vars_mapping.items()
             if k in global_outvar_set
         }

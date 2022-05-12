@@ -1,7 +1,7 @@
 """Generate pipeline schedules."""
 import itertools
 import logging
-from abc import abstractmethod, ABCMeta, abstractproperty
+from abc import abstractmethod, ABCMeta
 from typing import List, Tuple
 
 import numpy as np
@@ -13,9 +13,8 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def gen_dependency_with_stages(
-    compute_stages: List[PipelineComputation],
-    apply_grad_stages: List[PipelineComputation] = ()):
+def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
+                               apply_grad_stages: List[PipelineComputation] = ()):
     """Generate the dependency matrix for a list of pipeline stages."""
     n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)
@@ -165,12 +164,14 @@ class PipelineSchedule(metaclass=ABCMeta):
         """Return microbatch index during backward prior to batch_idx."""
         raise NotImplementedError()
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def first_backward_batch_index(self):
         """Return the index of the first microbatch at backward pass."""
         raise NotImplementedError()
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def last_backward_batch_index(self):
         """Return the index of the last microbatch at backward pass."""
         raise NotImplementedError()

@@ -3,7 +3,7 @@ import logging
 import threading
 
 from jax import linear_util as lu
-from jax.core import gensym, new_jaxpr_eqn
+from jax.core import gensym
 
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
@@ -21,10 +21,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
-                                               process_apply_gradient,
-                                               split_compute_grad_and_apply_grad
-                                              )
+from alpa.pipeline_parallel.apply_grad import (
+    compute_grad_to_accumulate_grad,
+    process_apply_gradient,
+    split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -41,7 +41,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     """3d parallel combining pipelining and 2d sharding."""
     if not (isinstance(
             devices,
-        (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))):
+            (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))):
         raise RuntimeError(
             f"Unrecognized type of `devices`, got: {type(devices)},"
             "expected type: `VirtualPhysicalMesh`.")

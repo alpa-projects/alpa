@@ -759,8 +759,8 @@ def _call_solver_serialized_args(
 
     msg = verbose
     time_limit = 600
-    assert "GLPK_CMD" in pulp.listSolvers(onlyAvailable=True), (
-        "Please install ILP solvers by 'sudo apt install coinor-cbc glpk-utils'"
+    assert "COIN_CMD" in pulp.listSolvers(onlyAvailable=True), (
+        "Please install ILP solvers by 'sudo apt install coinor-cbc'"
     )
 
     with warnings.catch_warnings():  # disable CBC warnings

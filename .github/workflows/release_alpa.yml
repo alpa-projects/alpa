@@ -3,6 +3,7 @@ name: Release Alpa
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 env:
   TWINE_USERNAME: "__token__"
@@ -38,7 +39,7 @@ jobs:
 #          twine upload dist/*
 
   update-version:
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest]
     needs: [release-alpa]
     steps:
       - uses: actions/checkout@v3

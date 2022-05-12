@@ -306,6 +306,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
+            # pylint: disable=modified-iterating-dict
             self._compile_exec_one_tick(sched, not_batch_invars,
                                         donation_mapping, var_at,
                                         instruction_lists, executable_uuids,

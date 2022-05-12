@@ -47,7 +47,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
-    num_microbatch = global_config.num_microbatch
+    num_microbatch = global_config.num_micro_batches
     if num_microbatch is None:
         logger.warning("num microbatch is unset. Use 1 by default.")
         num_microbatch = 1
@@ -262,7 +262,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "logical_mesh": logical_mesh,
                 "return_mode": "stage_protos",
                 "as_option": autosharding_option,
-                "num_microbatch": num_microbatch,
+                "num_micro_batches": num_microbatch,
                 "memory_budget_per_device": memory_budget_per_device,
             }
             compile_workers.submit(compile_fn,
@@ -348,17 +348,19 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
 
 
 # TODO(yonghao): the reduction vector should be created by a more careful analysis.
-def _get_full_batch_apply_grad(fun, avals, batch_invars, microbatch_bound,
+def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars, microbatch_bound,
                                num_microbatch, batch_dim):
     # Trace and split a non-microbatch version for the correct shape of
     # Global output and apply grad
     dummy_microbatch = 1
-    closed_jaxpr, _, _ = trace_jaxpr_with_micro_batch(fun, batch_invars,
+    stores = [lu.Store() for _ in fun.stores]
+    clone = lu.WrappedFun(fun.f, fun.transforms, stores, fun.params)
+    closed_jaxpr, _, _ = trace_jaxpr_with_micro_batch(clone, batch_invars,
                                                       dummy_microbatch, avals)
     gensym_func = gensym([closed_jaxpr.jaxpr])
-    (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
+    (closed_jaxpr, _, apply_grad_jaxpr,
      dummy_microbatch_bound) = (split_compute_grad_and_apply_grad(
-         closed_jaxpr, gensym_func))
+         closed_jaxpr, gensym_func, num_microbatch))
     reduced_vector = []
     for mb_var, var in zip(microbatch_bound.outvars,
                            dummy_microbatch_bound.outvars):
@@ -366,9 +368,9 @@ def _get_full_batch_apply_grad(fun, avals, batch_invars, microbatch_bound,
         batch_shape = var.aval.shape
         if microbatch_shape != batch_shape:
             expected_microbatched_shape = list(batch_shape)
-            assert expected_microbatched_shape[batch_dim] % num_microbatch
+            assert expected_microbatched_shape[batch_dim] % num_microbatch == 0
             expected_microbatched_shape[batch_dim] //= num_microbatch
-            assert expected_microbatched_shape == microbatch_shape
+            assert tuple(expected_microbatched_shape) == microbatch_shape
         reduced_vector.append(microbatch_shape == batch_shape)
 
     return reduced_vector, apply_grad_jaxpr

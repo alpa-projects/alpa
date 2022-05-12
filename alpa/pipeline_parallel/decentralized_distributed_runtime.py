@@ -3,12 +3,12 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, Sequence, List, Callable, Optional, Union, Tuple
-from jax._src.tree_util import tree_unflatten
+from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
+from jax.tree_util import tree_unflatten
 import numpy as np
 import ray.exceptions
 

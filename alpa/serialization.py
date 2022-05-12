@@ -5,20 +5,21 @@ Add support for DistributedArray and ReplicatedDistributedArray serialization in
 
 import enum
 import os
-from typing import Union, Any
+from typing import Union, Any, Sequence
 import uuid
 
-from flax.serialization import to_state_dict, from_state_dict
+from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
 import jax
+from jax.interpreters.pxla import ShardingSpec
+from jax.core import ShapedArray
+from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 import msgpack
 import numpy as np
 from tensorflow.io import gfile
 
-from alpa import DistributedArray, ReplicatedDistributedArray
-from alpa.pipeline_parallel.decentralized_distributed_runtime import DecentralizedDistributedRuntime
+from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh
 
 PyTree = Any
-
 
 class _MsgpackExtType(enum.IntEnum):
     """Messagepack custom type ids."""
@@ -27,35 +28,6 @@ class _MsgpackExtType(enum.IntEnum):
     npscalar = 3
     distarray = 4
     replicated_distarray = 5
-
-
-def _ndarray_to_bytes(arr) -> bytes:
-    """Save ndarray to simple msgpack encoding."""
-    if isinstance(arr, jax.xla.DeviceArray):
-        arr = np.array(arr)
-    if arr.dtype.hasobject or arr.dtype.isalignedstruct:
-        raise ValueError('Object and structured dtypes not supported '
-                         'for serialization of ndarrays.')
-    tpl = (arr.shape, arr.dtype.name, arr.tobytes('C'))
-    return msgpack.packb(tpl, use_bin_type=True)
-
-
-def _dtype_from_name(name: str):
-    """Handle JAX bfloat16 dtype correctly."""
-    if name == b'bfloat16':
-        return jax.numpy.bfloat16
-    else:
-        return np.dtype(name)
-
-
-def _ndarray_from_bytes(data: bytes) -> np.ndarray:
-    """Load ndarray from simple msgpack encoding."""
-    shape, dtype_name, buffer = msgpack.unpackb(data, raw=True)
-    return np.frombuffer(buffer,
-                         dtype=_dtype_from_name(dtype_name),
-                         count=-1,
-                         offset=0).reshape(shape, order='C')
-
 
 def _msgpack_ext_pack_wrapper(ckpt_dir):
 
@@ -107,8 +79,10 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
                     step: int):
     """Save a checkpoint of the `target` to `path`. 
 
-        Similar to flax.training.checkpoints.save_checkpoint, but support DistributedArrays and ReplicatedDistributedArray in alpa.
-        # TODO: copy all the safe-saving stuff from https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#save_checkpoint
+        Similar to flax.training.checkpoints.save_checkpoint, but support DistributedArrays 
+        and ReplicatedDistributedArray in alpa.
+        # TODO: copy all the safe-saving stuff from 
+        https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#save_checkpoint
 
         Args:
            ckpt_dir: str or pathlib-like path to store checkpoint directories in.
@@ -124,20 +98,47 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
                           default=_msgpack_ext_pack_wrapper(ckpt_dir),
                           strict_types=True))
 
+class LoadInfo:
+    """
+    A wrapper for the loading information.
+    """
+    def __init__(self, avals: Sequence[ShapedArray], 
+                       meshes: Sequence[PhysicalDeviceMesh], 
+                       specs: Sequence[ShardingSpec]):
+        assert len(avals) == len(meshes)
+        assert len(meshes) == len(specs)
+        self.avals = avals
+        self.meshes = meshes
+        self.specs = specs
+    
+    def add_replica(self, aval, mesh, spec):
+        self.avals.append(aval)
+        self.meshes.append(mesh)
+        self.specs.append(spec)
 
-def restore_checkpoint(executable: DecentralizedDistributedRuntime,
-                       ckpt_dir: Union[str,
-                                       os.PathLike], target: PyTree, step: int):
+    def get_info(self):
+        if self.is_replicated():
+            return zip(self.avals, self.meshes, self.specs)
+        else:
+            return self.avals[0], self.meshes[0], self.specs[0]
+
+    def is_replicated(self):
+        return len(self.avals) > 1
+
+
+def restore_checkpoint(ckpt_dir: Union[str,os.PathLike], step: int, target: PyTree, load_info: PyTree):
     """Restore the specified checkpoint from `path`. 
     
-        Similar to flax.training.checkpoints.load_checkpoint, but support DistributedArrays and ReplicatedDistributedArray in alpa.
-        # TODO: copy all the safe-loading stuff from https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
+        Similar to flax.training.checkpoints.load_checkpoint, 
+        but support DistributedArrays and ReplicatedDistributedArray in alpa.
+        # TODO: copy all the safe-loading stuff from 
+        https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
 
         Args:
-            executable: Alpa's DecentalizedDistributedRuntime, which contains sharding information to restore
             ckpt_dir: directory of checkpoints to restore from.
-            target: matching object to rebuild via deserialized state-dict.
             step: step number to load.
+            target: matching object to rebuild via deserialized state-dict.
+            load_info: shardingSpec and deviceMesh allocation info for loading.
     """
     ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
     with gfile.GFile(ckpt_path, 'rb') as fp:
@@ -145,5 +146,17 @@ def restore_checkpoint(executable: DecentralizedDistributedRuntime,
     state_dict_content = msgpack.unpackb(ckpt_contents,
                                          ext_hook=_msgpack_ext_unpack,
                                          raw=False)
-    return executable.load_state_dict(
-        from_state_dict(target, state_dict_content))
+    state_paths, state_tree = tree_flatten(from_state_dict(target, state_dict_content))
+    flat_info = tree_leaves(load_info)
+    flat_load_state = []
+    for path, info in zip(state_paths, flat_info):
+        if info.is_replicated():
+            meshes, arrays = [], []
+            for aval, mesh, spec in info.get_info():
+                meshes.append(mesh)
+                arrays.append(DistributedArray.load(path, aval, mesh, spec))
+            flat_load_state.append(ReplicatedDistributedArray(meshes, arrays)) 
+        else:
+            aval, mesh, spec = info.get_info()
+            flat_load_state.append(DistributedArray.load(path, aval, mesh, spec))
+    return tree_unflatten(state_tree, flat_load_state)

@@ -25,6 +25,7 @@ from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask,
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
+from alpa.serialization import LoadInfo
 from alpa.timer import timers
 from alpa.util import (DisjointDict, OrderedSet, get_shard_shape, get_microbatch_sharding_spec,
                        compile_concatenate)
@@ -191,7 +192,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  is_batch: Sequence[bool],
                  num_batch: int,
                  flop_count: int,
-                 concat_vars_mapping: Dict[Var, Var]):
+                 concat_vars_mapping: Dict[Var, Var],
+                 in_tree = None):
         super().__init__(pipeline_stages=pipeline_stages,
                          global_invars=global_invars,
                          grad_dummy_invars=grad_dummy_invars,
@@ -919,33 +921,44 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 split_args.append(arg)
         return split_args
 
-    def load_state_dict(self, state_dict):
-        # Warning: current version only supports a constrained scenario in which
-        # the trainState is the first argument in the parallelized function, i.e. the train_step
-        flat_state_dict, state_tree = tree_flatten(state_dict)
-        load_state = [None] * len(flat_state_dict)
+    def get_load_info(self):
+        assert self.in_tree is not None
+        split_to_ori = {}
+        ori_to_split = {}
+        load_info_map = {}
+        
+        # build the mapping between original (flatten) index and split (and flatten) index
+        split_idx = 0
+        for i, is_batch in enumerate(self.is_batch):
+            ori_to_split[i] = split_idx
+            split_to_ori[split_idx] = i
+            if is_batch:
+                for j in range(self.num_batch):
+                    split_to_ori[split_idx + j] = i
+                split_idx += self.num_batch
+            else:
+                split_idx += 1
+
+        # build load_info_map: split index => LoadInfo object
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            for local_idx, global_idx in enumerate(
-                    self.mesh_arg_indices[mesh_idx]):
-                if global_idx >= len(flat_state_dict):
-                    # ignore batch args
-                    continue
-                new_arr = DistributedArray.load(
-                    flat_state_dict[global_idx],
-                    self.global_invars[global_idx].aval, physical_mesh,
-                    self.input_specs[mesh_idx][local_idx])
-                if load_state[global_idx] is None:
-                    load_state[global_idx] = new_arr
-                elif isinstance(load_state[global_idx], DistributedArray):
-                    meshes = [load_state[global_idx].device_mesh, physical_mesh]
-                    arrays = [load_state[global_idx], new_arr]
-                    load_state[global_idx] = ReplicatedDistributedArray(
-                        meshes, arrays)
+            for local_idx, split_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
+                aval, mesh, spec = (self.global_invars[split_to_ori[split_idx]].aval, 
+                                    physical_mesh, 
+                                    self.input_specs[mesh_idx][local_idx])
+                if load_info_map.get(split_idx) is None:
+                    load_info_map[split_idx] = LoadInfo([aval], [mesh], [spec])
                 else:
-                    assert isinstance(load_state[global_idx],
-                                      ReplicatedDistributedArray)
-                    load_state[global_idx].add_replica(physical_mesh, new_arr)
-        return tree_unflatten(state_tree, load_state)
+                    load_info_map[split_idx].add_replica(aval, mesh, spec)
+
+        # build load_info_arr by merging split batch args
+        load_info_arr = [None] * len(self.is_batch)
+        for i, is_batch in enumerate(self.is_batch):
+            if is_batch:
+                load_info_arr[i] = [load_info_map[j] for j in range(ori_to_split[i], ori_to_split[i] + self.num_batch)]
+            else:
+                load_info_arr[i] = load_info_map[ori_to_split[i]]
+        return tree_unflatten(self.in_tree, load_info_arr)
+        
 
     def run(self, *args, **kwargs):
         """The run function that maps to train_step()."""

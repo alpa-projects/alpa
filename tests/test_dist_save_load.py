@@ -18,7 +18,6 @@ from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
                           get_bert_layer_train_step, get_mlp_train_step,
                           assert_allclose)
 
-
 class DistSaveLoadTest(unittest.TestCase):
 
     def setUp(self):
@@ -96,11 +95,28 @@ class DistSaveLoadTest(unittest.TestCase):
         # Cleanup
         physical_mesh.shutdown()
 
+    def _get_efs_mount_point(self):
+        # Hacky function to get the EFS mount point
+        for line in subprocess.check_output("df -h", shell=True).decode().split('\n'):
+            cols = line.split(' ')
+            if "efs" in cols[0]:
+                return cols[-1]+"/"
+        return None
+
     def test_distributed_mlp_save_load(self):
         # Set pipeline parallel option
-        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
+        cluster = DeviceCluster()
+        virtual_mesh = cluster.get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel")
+
+        if len(cluster.host_info) > 1:
+            # Get EFS mount point for the multi-host test
+            save_prefix = self._get_efs_mount_point()
+            if save_prefix is None:
+                self.skipTest("The multi-host test requires a mounted EFS! ")
+        else:
+            save_prefix = "/tmp/"
 
         # Init model and optimizer
         batch_size = 64
@@ -130,13 +146,13 @@ class DistSaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
-        with tempfile.TemporaryDirectory(
-                prefix="/home/ubuntu/efs/") as ckpt_dir:
+        with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
             # Save checkpoint
             save_checkpoint(ckpt_dir, parallel_state, 1)
 
             # Restore checkpoint
-            load_state = restore_checkpoint(executable, ckpt_dir, state, 1)
+            state_ss, _ = executable.get_load_info()
+            load_state = restore_checkpoint(ckpt_dir, 1, state, state_ss)
 
         # Run after load
         serial_state = serial_train_step(serial_state, batch)[0]
@@ -150,9 +166,18 @@ class DistSaveLoadTest(unittest.TestCase):
 
     def test_distributed_bert_save_load(self):
         # Set pipeline parallel option
-        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
+        cluster = DeviceCluster()
+        virtual_mesh = cluster.get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel")
+
+        if len(cluster.host_info) > 1:
+            # Get EFS mount point for the multi-host test
+            save_prefix = self._get_efs_mount_point()
+            if save_prefix is None:
+                self.skipTest("The multi-host test requires a mounted EFS! ")
+        else:
+            save_prefix = "/tmp/"
 
         # Config
         batch_size = 16
@@ -200,13 +225,13 @@ class DistSaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
-        with tempfile.TemporaryDirectory(
-                prefix="/home/ubuntu/efs/") as ckpt_dir:
+        with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
             # Save checkpoint
             save_checkpoint(ckpt_dir, parallel_state, 1)
 
             # Restore checkpoint
-            load_state = restore_checkpoint(executable, ckpt_dir, state, 1)
+            state_ss, _ = executable.get_load_info()
+            load_state = restore_checkpoint(ckpt_dir, 1, state, state_ss)
 
         # Run after load
         serial_state = serial_train_step(serial_state, batch)[0]

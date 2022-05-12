@@ -143,7 +143,8 @@ def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
                for eqn in closed_jaxpr.eqns)
 
 
-def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
+def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
+                                      num_microbatch):
     """Split the train_step jaxpr into two parts: compute_grad and apply_grad."""
     split_eqn = None
     for idx, eqn in enumerate(closed_jaxpr.eqns):
@@ -156,6 +157,12 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
             "apply gradient step. Hint: replace jax.grad by alpa.grad.")
         dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
         dummy_bound = new_jaxpr_eqn([], [], pipeline_p, {
+            'mark_type': 'grad',
+            'name': ''
+        })
+        invars = list(closed_jaxpr.jaxpr.outvars) if num_microbatch > 1 else []
+        outvars = list(closed_jaxpr.jaxpr.outvars) if num_microbatch > 1 else []
+        dummy_bound = new_jaxpr_eqn(invars, outvars, pipeline_p, {
             'mark_type': 'grad',
             'name': ''
         })
@@ -175,7 +182,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn):
     return closed_jaxpr, compute_grad, apply_grad, split_eqn
 
 
-def _get_post_grad_to_pre_grad_mapping(compute_jaxpr):
+def _get_post_to_pre_marker_mapping(compute_jaxpr):
     post_marker_outs = [
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
@@ -288,7 +295,7 @@ def compute_grad_to_accumulate_grad(
         update_outs: From original output(grad) to new output(acc grad)
         reduced_in_to_out: From accumulated gradient inputs to outputs
     """
-    post_to_pre_marker_outs = _get_post_grad_to_pre_grad_mapping(compute_jaxpr)
+    post_to_pre_marker_outs = _get_post_to_pre_marker_mapping(compute_jaxpr)
     to_reduce_pre_marker_outs = []
     for var, reduced in zip(compute_jaxpr.jaxpr.outvars, reduction_vector):
         if reduced:

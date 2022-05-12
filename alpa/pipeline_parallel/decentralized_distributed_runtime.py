@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import enum
 import logging
 from typing import Any, Dict, Sequence, List, Callable, Optional, Union, Tuple
-from jax import tree_flatten
 from jax._src.tree_util import tree_unflatten
 
 from jax.core import Var
@@ -926,7 +925,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         split_to_ori = {}
         ori_to_split = {}
         load_info_map = {}
-        
+
         # build the mapping between original (flatten) index and split (and flatten) index
         split_idx = 0
         for i, is_batch in enumerate(self.is_batch):
@@ -958,7 +957,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             else:
                 load_info_arr[i] = load_info_map[ori_to_split[i]]
         return tree_unflatten(self.in_tree, load_info_arr)
-        
 
     def run(self, *args, **kwargs):
         """The run function that maps to train_step()."""

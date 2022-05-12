@@ -21,6 +21,7 @@ from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, Physi
 
 PyTree = Any
 
+
 class _MsgpackExtType(enum.IntEnum):
     """Messagepack custom type ids."""
     ndarray = 1
@@ -28,6 +29,7 @@ class _MsgpackExtType(enum.IntEnum):
     npscalar = 3
     distarray = 4
     replicated_distarray = 5
+
 
 def _msgpack_ext_pack_wrapper(ckpt_dir):
 
@@ -98,19 +100,21 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
                           default=_msgpack_ext_pack_wrapper(ckpt_dir),
                           strict_types=True))
 
+
 class LoadInfo:
     """
     A wrapper for the loading information.
     """
-    def __init__(self, avals: Sequence[ShapedArray], 
-                       meshes: Sequence[PhysicalDeviceMesh], 
-                       specs: Sequence[ShardingSpec]):
+    def __init__(self, 
+                 avals: Sequence[ShapedArray], 
+                 meshes: Sequence[PhysicalDeviceMesh], 
+                 specs: Sequence[ShardingSpec]):
         assert len(avals) == len(meshes)
         assert len(meshes) == len(specs)
         self.avals = avals
         self.meshes = meshes
         self.specs = specs
-    
+
     def add_replica(self, aval, mesh, spec):
         self.avals.append(aval)
         self.meshes.append(mesh)
@@ -126,9 +130,9 @@ class LoadInfo:
         return len(self.avals) > 1
 
 
-def restore_checkpoint(ckpt_dir: Union[str,os.PathLike], step: int, target: PyTree, load_info: PyTree):
+def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyTree, load_info: PyTree):
     """Restore the specified checkpoint from `path`. 
-    
+
         Similar to flax.training.checkpoints.load_checkpoint, 
         but support DistributedArrays and ReplicatedDistributedArray in alpa.
         # TODO: copy all the safe-loading stuff from 

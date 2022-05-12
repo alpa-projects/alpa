@@ -204,10 +204,17 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                          num_batch=num_batch)
         self.uuid_counter = 0  # counter for local buffer uuid
         self.flop_count = flop_count
+        self.in_tree = in_tree
 
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = []
 
+        # Cached sharding indices for inputs.
+        # List[mesh_idx -> List[sharding_indices]].
+        self.input_indices = [] 
+        # Cached sharding specs for inputs.
+        # List[mesh_idx -> List[sharding_spec]]
+        self.input_specs = []
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
@@ -895,30 +902,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             cannot_free_uuids.update(input_uuids)
             new_list.append(instruction)
         return list(reversed(new_list))
-
-    def _exec_split_args(self, args, batch_dim=0):
-        split_args = []
-        num_batch = self.num_batch
-        for arg_idx, arg in enumerate(args):
-            if self.is_batch[arg_idx]:
-                # dispatch and split on worker.
-                replicas = [None] * num_batch
-                for mesh_and_shard in self.batch_arg_on_mesh[arg_idx]:
-                    mesh_idx, sharding_spec = mesh_and_shard
-                    mesh = self.physical_meshes[mesh_idx]
-                    splits = mesh.shard_batch_arg(
-                        arg, sharding_spec, num_batch, batch_dim,
-                        self.global_invars[arg_idx].aval)
-                    for batch_idx, split in enumerate(splits):
-                        if replicas[batch_idx] is not None:
-                            replicas[batch_idx].add_replica(mesh, split)
-                        else:
-                            replicas[batch_idx] = ReplicatedDistributedArray(
-                                [mesh], [split])
-                split_args.extend(replicas)
-            else:
-                split_args.append(arg)
-        return split_args
 
     def get_load_info(self):
         assert self.in_tree is not None

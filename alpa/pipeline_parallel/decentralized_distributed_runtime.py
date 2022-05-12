@@ -306,7 +306,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
-            # pylint: disable=modified-iterating-dict
             self._compile_exec_one_tick(sched, not_batch_invars,
                                         donation_mapping, var_at,
                                         instruction_lists, executable_uuids,
@@ -333,7 +332,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids
-
+            # pylint: disable=modified-iterating-dict
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 

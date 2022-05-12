@@ -27,8 +27,8 @@ from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
                                                run_backend_compilation)
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
-                       compile_memset_zero_buffers, get_shard_shape,
-                       profile_xla_executable)
+                       compile_memset_zero_buffers, get_compile_options,
+                       get_shard_shape, profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -69,9 +69,8 @@ class RemoteBufferRef:
         self.device_id = device_id
         self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
         self.is_deleted_on_workers = False
-        logger.debug(
-            f"RemoteBufferRef uuid: {self.uuid} created on mesh "
-            f"with devices {self.device_mesh.device_strs}.")
+        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
+                     f"with devices {self.device_mesh.device_strs}.")
 
     def set_deleted_on_workers(self):
         """
@@ -222,14 +221,16 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
             if physical_mesh.devices[0] is None:
                 # A fake physical mesh for generating HLO module only
-                self.compiled = run_backend_compilation(backend, hlo_module,
-                                                        strategy_config,
-                                                        physical_mesh.num_devices,
-                                                        bypass_device_assignment_check=True)
+                self.compiled = run_backend_compilation(
+                    backend,
+                    hlo_module,
+                    strategy_config,
+                    physical_mesh.num_devices,
+                    bypass_device_assignment_check=True)
             else:
-                self.compiled = run_backend_compilation(backend, hlo_module,
-                                                        strategy_config,
-                                                        physical_mesh.num_devices)
+                self.compiled = run_backend_compilation(
+                    backend, hlo_module, strategy_config,
+                    physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
 
     def get_driver_callable(self):
@@ -305,7 +306,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         """Fast call without signature matching."""
         if self.static_argnums:
             dyn_args = [
-                args[i] for i in range(len(args))
+                args[i]
+                for i in range(len(args))
                 if i not in self.static_argnums
             ]
         else:
@@ -1142,3 +1144,42 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
         timers(self.timer_name).start(before_sync_func)
         _ = self.memzero.execute_sharded_on_local_devices(input_bufs)
         timers(self.timer_name).stop(after_sync_func)
+
+
+class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
+    # This is only a patch. It will be deprecated when we move concat into apply_grad
+    def __init__(self, worker, uuid, hlo_proto):
+        num_devices = len(worker.backend.devices())
+        compile_options = get_compile_options(
+            num_replicas=1,
+            num_partitions=num_devices,
+            device_assignment=np.arange(num_devices).reshape((1, -1)),
+            use_spmd_partitioning=False,
+            parameter_is_tupled_arguments=False,
+            build_random_seed=global_config.build_random_seed)
+        xla_computation = xe.XlaComputation(hlo_proto)
+
+        self.concat = worker.backend.compile(xla_computation, compile_options)
+
+        self.worker = worker
+        self.timer_name = get_execution_timer_name(uuid)
+        self.sync_func = get_sync_func_worker(worker)
+
+    def execute_on_worker(self,
+                          input_uuids: Sequence[Sequence[int]],
+                          output_uuids: Sequence[Sequence[int]],
+                          sync_before: bool = False,
+                          sync_after: bool = False):
+        """Run the executable on the worker."""
+        buffer_dict = self.worker.buffers
+        before_sync_func = self.sync_func if sync_before else None
+        after_sync_func = self.sync_func if sync_after else None
+
+        # Get input
+        input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+        # Execute
+        timers(self.timer_name).start(before_sync_func)
+        output_bufs = self.concat.execute_sharded_on_local_devices(input_bufs)
+        timers(self.timer_name).stop(after_sync_func)
+        for i in range(len(output_uuids)):
+            set_buffers(buffer_dict, output_uuids[i], output_bufs[i])

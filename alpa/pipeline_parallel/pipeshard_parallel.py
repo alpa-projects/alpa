@@ -28,7 +28,7 @@ from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
-from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
+from alpa.util import get_var_mapping, trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -61,13 +61,12 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
      microbatch_bound) = split_compute_grad_and_apply_grad(
          closed_jaxpr, gensym_func, num_microbatch)
     inference_mode = (global_config.pipeline_parallel_schedule == "inference")
-    # FIXME(yonghao): use this apply grad jaxpr
-    reduction_vector, _ = _get_full_batch_apply_grad(fun,
-                                                     avals,
-                                                     batch_invars,
+    # FIXME(yonghao): use apply grad jaxpr returned by this function
+    batch_dim = 0
+    (reduction_vector, post_microbatch_bound,
+     _apply_grad_jaxpr) = _get_full_batch_apply_grad(fun, avals, batch_invars,
                                                      microbatch_bound,
-                                                     num_microbatch,
-                                                     batch_dim=0)
+                                                     num_microbatch, batch_dim)
 
     if num_microbatch > 1:
         (acc_grad_jaxpr, acc_grad_dict,
@@ -185,16 +184,21 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
-                                         global_invars=global_invars,
-                                         grad_dummy_invars=grad_in_to_out,
-                                         global_outvars=global_outvars,
-                                         physical_meshes=physical_meshes,
-                                         dependency=dependency,
-                                         schedule=schedule,
-                                         is_batch=batch_invars,
-                                         num_batch=num_microbatch,
-                                         flop_count=total_flops)
+    global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
+        global_outvars, reduction_vector, microbatch_bound,
+        post_microbatch_bound, gensym_func)
+    jp = DecentralizedDistributedRuntime(
+        pipeline_stages=xla_stages,
+        global_invars=global_invars,
+        grad_dummy_invars=grad_in_to_out,
+        global_outvars=global_outvars,
+        physical_meshes=physical_meshes,
+        dependency=dependency,
+        schedule=schedule,
+        is_batch=batch_invars,
+        num_batch=num_microbatch,
+        flop_count=total_flops,
+        concat_vars_mapping=concat_vars_mapping)
 
     def ret_func(*args):
         return jp.run(*args)
@@ -348,8 +352,8 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
 
 
 # TODO(yonghao): the reduction vector should be created by a more careful analysis.
-def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars, microbatch_bound,
-                               num_microbatch, batch_dim):
+def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars,
+                               microbatch_bound, num_microbatch, batch_dim):
     # Trace and split a non-microbatch version for the correct shape of
     # Global output and apply grad
     dummy_microbatch = 1
@@ -371,6 +375,26 @@ def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars, microbat
             assert expected_microbatched_shape[batch_dim] % num_microbatch == 0
             expected_microbatched_shape[batch_dim] //= num_microbatch
             assert tuple(expected_microbatched_shape) == microbatch_shape
+            if len(apply_grad_jaxpr.eqns) > 0:
+                raise NotImplementedError(
+                    "apply gradient with not reduced input is not supported yet."
+                )
         reduced_vector.append(microbatch_shape == batch_shape)
 
-    return reduced_vector, apply_grad_jaxpr
+    return reduced_vector, dummy_microbatch_bound, apply_grad_jaxpr
+
+
+def _rewrite_global_outvars_post_concate(global_outvars, reduction_vector,
+                                         microbatch_bound,
+                                         post_microbatch_bound, gensym_func):
+    concat_vars_mapping = {}
+    for idx, reduce in enumerate(reduction_vector):
+        if not reduce:
+            var = microbatch_bound.outvars[idx]
+            actual_aval = post_microbatch_bound.outvars[idx].aval
+            concat_vars_mapping[gensym_func(actual_aval)] = var
+    reversed_mapping = {v: k for k, v in concat_vars_mapping.items()}
+    global_outvars = [
+        get_var_mapping(reversed_mapping, v) for v in global_outvars
+    ]
+    return global_outvars, concat_vars_mapping

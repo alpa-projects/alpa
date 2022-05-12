@@ -8,6 +8,7 @@ from typing import Sequence, Union
 from jax.core import Var
 import numpy as np
 import ray
+from alpa.device_mesh import DistributedPhysicalDeviceMesh
 from alpa.global_env import global_config
 from alpa.util import OrderedSet
 from alpa.pipeline_parallel.cross_mesh_resharding import (
@@ -30,7 +31,7 @@ class BaseRuntime(metaclass=ABCMeta):
                                                  XlaShardedPipelineComputation]],
                  global_invars: Sequence[Var],
                  global_outvars: Sequence[Var],
-                 physical_meshes: Sequence[Var]):
+                 physical_meshes: Sequence[DistributedPhysicalDeviceMesh]):
         """
         An abstract class for pipeline-parallel runtime.
 

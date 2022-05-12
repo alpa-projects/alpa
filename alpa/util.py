@@ -497,6 +497,33 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     return compiled
 
 
+def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
+                        batch_dim, aval):
+    num_devices = np.prod(mesh_shape)
+    sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
+    build_random_seed = global_config.build_random_seed
+    compile_options = get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+        parameter_is_tupled_arguments=False,
+        build_random_seed=build_random_seed)
+    c = xc.XlaBuilder("concatenate buffers")
+    c.set_sharding(sharding)
+    operands = []
+    for batch_idx in range(batch_size):
+        operands.append(
+            xc.ops.Parameter(
+                c, batch_idx,
+                xc.shape_from_pyval(np.ones(aval.shape, aval.dtype))))
+    concated = xc.ops.ConcatInDim(c, operands, batch_dim)
+    c = c.build(concated)
+    compiled = backend.compile(c, compile_options)
+    hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
+    return hlo_proto
+
+
 def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):
     """Return the shape of a shard."""
     shape = []
@@ -955,8 +982,7 @@ def to_str_round(x: Any, decimal: int = 6):
         tmp_str = ", ".join([to_str_round(y, decimal=decimal) for y in x])
         return "[" + tmp_str + "]"
     if isinstance(x, dict):
-        return str(
-            {k: to_str_round(v, decimal=decimal) for k, v in x.items()})
+        return str({k: to_str_round(v, decimal=decimal) for k, v in x.items()})
     if isinstance(x, int):
         return str(x)
     if isinstance(x, float):

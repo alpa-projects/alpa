@@ -95,7 +95,8 @@ class StageConstructUtilTest(unittest.TestCase):
                             num_microbatch=2):
         gensym_func = gensym([closed_jaxpr.jaxpr])
         closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
-            split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
+            split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func,
+                                              num_microbatch))
         have_apply_grad = barrier is not None
         assert have_apply_grad
         reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)

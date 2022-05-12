@@ -23,7 +23,7 @@ def train_step(model_state, batch):
         out = model_state.forward(params, batch["x"])
         return jnp.mean((out - batch["y"]) ** 2)
 
-    grads = grad(loss_func)(state.params)
+    grads = grad(loss_func)(model_state.params)
     new_model_state = model_state.apply_gradient(grads)
     return new_model_state
 

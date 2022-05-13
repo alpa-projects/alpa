@@ -20,7 +20,7 @@ jobs:
           docker image prune -f
 
   build-jaxlib:
-    runs-on: [ self-hosted ]
+    runs-on: [self-hosted]
     needs: [clean-up]
     strategy:
       matrix:
@@ -51,7 +51,7 @@ jobs:
 #          PYTHON_VERSION: ${{ matrix.python }}
 
   publish:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     needs: [build-jaxlib]
     strategy:
       matrix:

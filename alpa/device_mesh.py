@@ -1157,7 +1157,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         time_start = time.time()
 
         for arg, indices, donated, is_batch_var in zip(
-            args, shard_indices, donated_invars, batch_invars):
+                args, shard_indices, donated_invars, batch_invars):
             tic = time.time()
             slow_path = False
 
@@ -1189,7 +1189,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         # so we can delete the old buffers
                         arg.delete()
 
-            if False and slow_path:  # pylint: disable=using-constant-test
+            if False and slow_path:  # pylint: disable=condition-evals-to-constant
                 # Print debug info
                 size = np.prod(arg.shape) * arg.dtype.itemsize
                 bandwidth = size / (time.time() - tic)

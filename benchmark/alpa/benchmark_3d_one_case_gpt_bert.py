@@ -300,16 +300,17 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     max_mem_allocated = executable.get_max_memory_allocated()
 
     # Benchmark latency with driver overhead
-    global_config.use_dummy_value_for_benchmarking = False
-    global_config.pipeline_sync_for_timer = False
-    number = niter
-    executable.sync()
-    tic = time.time()
-    for i in range(number):
-        state = train_step(state, batch, rngkey)
-    executable.sync()
-    e2e_latency = (time.time() - tic) / number
-    print(f"latency with dirver overhead: {e2e_latency:.3f}")
+    if False:
+        global_config.use_dummy_value_for_benchmarking = False
+        global_config.pipeline_sync_for_timer = False
+        number = niter
+        executable.sync()
+        tic = time.time()
+        for i in range(number):
+            state = train_step(state, batch, rngkey)
+        executable.sync()
+        e2e_latency = (time.time() - tic) / number
+        print(f"latency with dirver overhead: {e2e_latency:.3f}")
     print_used_time("Benchmark")
 
     # Compute statistics

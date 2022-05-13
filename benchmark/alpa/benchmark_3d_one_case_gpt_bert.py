@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import ray
+import time
 
 import alpa
 from alpa import (parallelize, global_config, set_parallelize_options,
@@ -289,14 +290,27 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     executable.sync()
     print_used_time("Compile (worker)")
 
-    # Benchmark step time
+    # Benchmark latency without driver overhead
     for i in range(niter):
-        print(f"Iteration {i}")
+        print(f"Iteration {i} ...")
         state = train_step(state, batch, rngkey)
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
     max_mem_allocated = executable.get_max_memory_allocated()
+
+    # Benchmark latency with driver overhead
+    if False:
+        global_config.use_dummy_value_for_benchmarking = False
+        global_config.pipeline_sync_for_timer = False
+        number = niter
+        executable.sync()
+        tic = time.time()
+        for i in range(number):
+            state = train_step(state, batch, rngkey)
+        executable.sync()
+        e2e_latency = (time.time() - tic) / number
+        print(f"latency with dirver overhead: {e2e_latency:.3f}")
     print_used_time("Benchmark")
 
     # Compute statistics

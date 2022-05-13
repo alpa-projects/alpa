@@ -25,7 +25,9 @@ def benchmark_one_case(model, case, niter,
     if not use_separate_process:
         ray.init(address="auto", ignore_reinit_error=True,
                  namespace=get_ray_namespace_str())
+
         global_config.use_dummy_value_for_benchmarking = True
+        global_config.pipeline_sync_for_timer = True
 
         # Run benchmark
         if model in ["gpt", "bert"]:

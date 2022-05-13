@@ -35,8 +35,8 @@ from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
-from alpa.util import (benchmark_func, get_microbatch_sharding_spec,
-                       list_gpu_info, jax_tensor_to_cupy, cupy_to_jax_tensor,
+from alpa.util import (benchmark_func, list_gpu_info,
+                       jax_tensor_to_cupy, cupy_to_jax_tensor,
                        jax_tensor_set, xla_buffer_to_jax_tensor,
                        jax_tensor_to_xla_buffer, xla_buffer_to_cupy,
                        cupy_to_xla_buffer, is_continuous_subset,
@@ -605,7 +605,7 @@ class MeshHostWorker:
     def delete_data_loader(self, uuid):
         del self.data_loaders[uuid]
 
-    ##### Profiling Related Functions #####
+    ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
                         single_timeout: float):
         num_devices = self.num_hosts * len(self.local_devices)
@@ -658,6 +658,9 @@ class MeshHostWorker:
     def reset_timer(name: str):
         timers(name).reset()
 
+    def get_live_buffer_uuids(self):
+        return list(self.buffers.keys())
+
     ##### Other Functions #####
     def sync(self):
         for device in self.local_devices:
@@ -675,6 +678,8 @@ class MeshHostWorker:
 
 
 class PhysicalDeviceMesh(ABC):
+    """The base class of device mesh."""
+
     num_devices_per_host: int
 
     def get_signature(self) -> str:
@@ -790,7 +795,10 @@ class PhysicalDeviceMesh(ABC):
     ##### Executable Related Functions #####
     @abstractmethod
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
-                           donated_invars: Sequence[bool], args):
+                           donated_invars: Sequence[bool],
+                           batch_invars: Sequence[bool],
+                           num_micro_batches: int,
+                           args: Sequence):
         """Shard high-level arguments as low-level buffers."""
         raise NotImplementedError()
 
@@ -846,8 +854,8 @@ class PhysicalDeviceMesh(ABC):
 
 class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
     """
-    A single-host physical device mesh to run computation distributedly. It uses
-    the native XLA runtime.
+    A single-host physical device mesh to run computation on local devices.
+    It uses the native XLA runtime.
     """
 
     def __init__(self, devices: Sequence["Device"] = None):
@@ -862,13 +870,24 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
-                           donated_invars: Sequence[bool], args):
-        ret = []
-        for arg, donated, indices in zip(args, donated_invars, shard_indices):
-            ret.append(pxla._shard_arg(arg, self.devices, indices))
+                           donated_invars: Sequence[bool],
+                           batch_invars: Sequence[bool],
+                           num_micro_batches: int,
+                           args: Sequence):
+        bufs = []
+        for arg, indices, donated, is_batch_var in zip(
+                args, shard_indices, donated_invars, batch_invars):
+            if is_batch_var:
+                micro_batches = jnp.split(arg, num_micro_batches)
+                bufs.append([pxla._shard_arg(x, self.devices, indices)
+                             for x in micro_batches])
+            else:
+                bufs.append(pxla._shard_arg(arg, self.devices, indices))
+
             if isinstance(arg, xe.DeviceArray) and donated:
                 arg.delete()
-        return ret
+
+        return bufs
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
@@ -1128,64 +1147,60 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         ray.get(tasks)
 
     ##### Executable Related Functions #####
-    def shard_batch_arg(self, arg, sharding_spec, num_microbatch, batch_dim,
-                        microbatch_aval):
-        """Shard high-level arguments as low-level buffers,
-        then reorganize them into micro batches."""
-        new_spec = get_microbatch_sharding_spec(sharding_spec, batch_dim,
-                                                num_microbatch)
-        indices = pxla.spec_to_indices(arg.shape, new_spec)
-        buf_refs = shard_arg_handlers[type(arg)](arg, self, indices,
-                                                 num_microbatch)
-
-        microbatch_arrays = []
-        # build distributed array
-        for batch_idx in range(num_microbatch):
-            refs = [
-                buf_refs[device_idx * num_microbatch + batch_idx]
-                for device_idx in range(self.num_devices)
-            ]
-            microbatch_arrays.append(
-                DistributedArray(self, microbatch_aval, sharding_spec, refs))
-        return microbatch_arrays
-
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool],
+                           batch_invars: Sequence[bool],
+                           num_micro_batches: int,
                            args: Sequence):
-        input_bufs = []
+        ret_bufs = []
         total_bytes = 0
         time_start = time.time()
 
-        for arg, indices, donated in zip(args, shard_indices, donated_invars):
-            # Fast path for DistributedArray
-            if isinstance(arg, DistributedArray) and arg.indices == indices:
-                input_bufs.append(arg.remote_buffers)
-            elif isinstance(arg, ReplicatedDistributedArray):
-                replica = arg.get_replica_on_mesh(self)
-                assert replica.indices == indices
-                input_bufs.append(replica.remote_buffers)
-            else:  # Slow path
-                tic = time.time()
-                if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
-                    arg = xla.canonicalize_dtype(arg)
-                buf_refs = shard_arg_handlers[type(arg)](arg, self, indices)
-                input_bufs.append(buf_refs)
-                if donated and hasattr(arg, "delete"):
-                    # shard_arg_handler always creates new buffers,
-                    # so we can delete the old buffers
-                    arg.delete()
+        for arg, indices, donated, is_batch_var in zip(
+                args, shard_indices, donated_invars, batch_invars):
+            tic = time.time()
+            slow_path = False
 
-                if False:  # pylint: disable=using-constant-test
-                    size = np.prod(arg.shape) * arg.dtype.itemsize
-                    bandwidth = size / (time.time() - tic)
-                    total_bytes += size
-                    print(f"Slow path. "
-                          f"shape: {arg.shape}, "
-                          f"bandwidth: {bandwidth/1024**2:.2f} MB/s "
-                          f"total_bytes: {total_bytes/1024**2:.2f} MB "
-                          f"total_time: {time.time() - time_start:.2f}")
+            if is_batch_var:
+                slow_path = True
+                arg = np.asarray(arg)
+                bufs = _shard_array(arg, self, indices, num_micro_batches)
+                bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
+                                              num_micro_batches)
+                bufs = bufs.transpose([2, 0, 1]).reshape(
+                    (num_micro_batches, self.num_hosts * self.num_devices_per_host))
+                ret_bufs.append(bufs)
+            else:
+                if isinstance(arg, DistributedArray) and arg.indices == indices:
+                    # Fast path for DistributedArray
+                    ret_bufs.append(arg.remote_buffers)
+                elif isinstance(arg, ReplicatedDistributedArray):
+                    replica = arg.get_replica_on_mesh(self)
+                    assert replica.indices == indices
+                    ret_bufs.append(replica.remote_buffers)
+                else:  # Slow path
+                    slow_path = True
+                    if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
+                        arg = xla.canonicalize_dtype(arg)
+                    bufs = shard_arg_handlers[type(arg)](arg, self, indices)
+                    ret_bufs.append(bufs)
+                    if donated and hasattr(arg, "delete"):
+                        # shard_arg_handler always creates new buffers,
+                        # so we can delete the old buffers
+                        arg.delete()
 
-        return input_bufs
+            if False and slow_path:  # pylint: disable=condition-evals-to-constant
+                # Print debug info
+                size = np.prod(arg.shape) * arg.dtype.itemsize
+                bandwidth = size / (time.time() - tic)
+                total_bytes += size
+                print("Slow path "
+                      f"shape: {arg.shape}, "
+                      f"bandwidth: {bandwidth/1024**2:.2f} MB/s "
+                      f"total_bytes: {total_bytes/1024**2:.2f} MB "
+                      f"total_time: {time.time() - time_start:.2f}")
+
+        return ret_bufs
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
@@ -1227,7 +1242,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         for i in range(self.num_hosts):
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
-    ##### Profiling Related Functions #####
+    ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self,
                         op_infos: Sequence[Tuple],
                         cache_filename: str,
@@ -1316,6 +1331,7 @@ class DistributedArray:
     def delete(self):
         for buf in self.remote_buffers:
             del buf
+        self.remote_buffers = None
         self.device_buffers = None
         self._npy_value = None
 
@@ -1750,11 +1766,11 @@ def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
     from alpa.mesh_executable import create_remote_buffer_refs
     buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
     device_ids = np.arange(device_mesh.num_devices_per_host)
-    buf_step = device_mesh.num_devices_per_host * num_batch
+    uuid_step = device_mesh.num_devices_per_host * num_batch
     shard_step = device_mesh.num_devices_per_host
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].put_buffers.remote(
-            buf_uuids[host_id * buf_step:(host_id + 1) * buf_step], device_ids,
+            buf_uuids[host_id * uuid_step:(host_id + 1) * uuid_step], device_ids,
             shards[host_id * shard_step:(host_id + 1) * shard_step], num_batch,
             batch_dim)
     return buf_refs

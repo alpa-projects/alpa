@@ -10,22 +10,30 @@ class AutoShardingOption:
     """Options of the auto-sharding solver."""
 
     def __init__(self):
-        self.allow_all_gather = True  # Whether to allow all-gather during re-sharding.
-        self.allow_all_to_all = True  # Whether to allow all-to-all during re-sharding.
-        self.allow_replicated_parameters = True  # Whether to allow replicated parameters.
-        self.force_data_parallel = False  # Whether to forcibly generate data-parallel.
-        self.force_batch_dim_to_mesh_dim = None  # Forcibly map the batch dimension to
-        # a mesh dimension.
-        self.force_zero_stage_3 = False  # Whether to forcibly generate a strategy similar to
-        # ZeRO optimizer stage 3.
-        self.force_zero_stage_3_all_gather_threshold = 1 << 25  # The threshold of all-gather combiner
-        # if force_zero_stage_3 is true.
-        self.prefer_reduce_scatter = False  # Prefer reduce-scatter over all-reduce.
-        self.allow_mixed_mesh_shape = False  # Allow mixed 1d mesh and 2d mesh shape.
-        self.allow_recompute_heavy_op = False  # Allow replicated dot computation.
-        self.force_simple_heuristic = ""  # If it is not empty, forcibly use a simple heuristic
-        # instead of the ILP solver.
-        self.all_reduce_threshold = 1 << 60  # The threshold of all-reduce combiner in bytes.
+        # Whether to allow all-gather during re-sharding.
+        self.allow_all_gather = True
+        # Whether to allow all-to-all during re-sharding.
+        self.allow_all_to_all = True
+        # Whether to allow replicated parameters.
+        self.allow_replicated_parameters = True
+        # Whether to forcibly generate data-parallel.
+        self.force_data_parallel = False
+        # Forcibly map the batch dimension to a mesh dimension.
+        self.force_batch_dim_to_mesh_dim = None
+        # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+        self.force_zero_stage_3 = False
+        # The threshold of all-gather combiner if force_zero_stage_3 is true.
+        self.force_zero_stage_3_all_gather_threshold = 1 << 25
+        # Prefer reduce-scatter over all-reduce.
+        self.prefer_reduce_scatter = False
+        # Allow mixed 1d mesh and 2d mesh shape.
+        self.allow_mixed_mesh_shape = False
+        # Allow replicated dot computation.
+        self.allow_recompute_heavy_op = False
+        # If it is not empty, forcibly use a simple heuristic instead of the ILP solver.
+        self.force_simple_heuristic = ""
+        # The threshold of all-reduce combiner in bytes.
+        self.all_reduce_threshold = 1 << 60
 
     def deepcopy_and_update(self, new_values: dict):
         """Make a deepcopy and update some keys with new values."""
@@ -74,21 +82,23 @@ class GlobalConfig:
         self.shard_parallel_search_logical_mesh_shape = False
         self.shard_parallel_mesh_shape_search_mode = "cost_model"
         self.shard_parallel_mesh_shape_search_log_file = None
+        # Whether to sync before and after the executable for accurate internal timer
         self.shard_parallel_sync_for_timer = False
 
         ########## Options of pipeline_parallel ##########
         self.pipeline_stage_mode = "uniform_stage"
         self.pipeline_parallel_schedule = "1f1b"
 
-        # manual stage
+        # ------ manual stage ------
         self.forward_stage_layer_ids = None
         self.sub_physical_mesh_shapes = None
         self.sub_logical_mesh_shapes = None
         self.submesh_autosharding_option_dicts = None
 
-        # auto stage
+        # ----- auto stage ------
         self.profile_with_whole_ray_cluster = True
-        self.cache_compute_cost = None  # The path to the file containing the compute cost profile
+        # The path to the file containing the compute cost profile
+        self.cache_compute_cost = None
         self.submesh_choices_mode = "power_of_two"
         self.logical_mesh_search_space = "default"
         self.auto_stage_construction_imbalance_tolerance = np.inf
@@ -101,17 +111,22 @@ class GlobalConfig:
 
         ########## Options of pipeline runtime ##########
         self.pipeline_check_alive = True
-        self.pipeline_distributed_compile = True  # Whether to use distributed compilation
-        # in pipeline parallel for each stage. Disabling it helps debug.
+        # Whether to sync before and after the executable for accurate internal timer
+        self.pipeline_sync_for_timer = False
+        # Whether to use distributed compilation in pipeline parallel for
+        # each stage. Disabling it helps debug.
+        self.pipeline_distributed_compile = True
         self.pipeline_use_signal_send_recv = False
         self.precompile_resharding_tasks = True
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
-        self.resharding_mode = "send_recv"  # "send_recv" or "broadcast"
+        # Cross mesh resharding mode. Possible choices: {"send_recv", "broadcast"}
+        self.resharding_mode = "send_recv"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42
+        # Whether to use xla while instruction for preventing CSE in rematerialization
         self.remat_using_while = False
 
         ########## Options of benchmark ##########

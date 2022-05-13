@@ -261,7 +261,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
 
     # Benchmark step time
     for i in range(niter):
-        print(f"Iteration {i}")
+        print(f"Iteration: {i} ...")
         state, metrics = train_step(state, batch)
         executable.sync()
 

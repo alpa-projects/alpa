@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import time
 
 import alpa
 from alpa import parallelize, global_config, set_parallelize_options
@@ -27,7 +28,7 @@ def create_train_state(rngkey, model, dtype, batch):
 
     tx = optax.chain(
         #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
+        optax.adamw(learning_rate=1e-8, mask=weight_decay_mask)
     )
 
     mixed_precision = (dtype == jnp.float16)
@@ -139,8 +140,10 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    #state = create_train_state(rngkey, model, dtype, batch)
-    state = create_train_state_aval(rngkey, model, batch, dtype)
+    if global_config.use_dummy_value_for_benchmarking:
+        state = create_train_state_aval(rngkey, model, batch, dtype)
+    else:
+        state = create_train_state(rngkey, model, dtype, batch)
     print_used_time("Create train state")
 
     # Compile executable
@@ -155,7 +158,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = executable.auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last_2d.hlo", "w") as fout:
+    with open("tmp/last_2d_gpt.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -171,12 +174,27 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     if alloc_mem > physical_mesh.get_available_memory():
         latencies = [-1]
     else:
+        # Benchmark latency without driver overhead
         for i in range(niter):
-            print(f"Iteration {i}...")
+            print(f"Iteration {i} ...")
             state = train_step(state, batch, rngkey)
             physical_mesh.sync_workers()
 
         latencies = executable.get_execution_time_costs(warmup=warmup)
+
+        # Benchmark latency with driver overhead
+        if False:
+            global_config.use_dummy_value_for_benchmarking = False
+            global_config.shard_parallel_sync_for_timer = False
+            number = niter
+            physical_mesh.sync_workers()
+            tic = time.time()
+            for i in range(number):
+                state = train_step(state, batch, rngkey)
+            physical_mesh.sync_workers()
+            e2e_latency = (time.time() - tic) / number
+            print(f"latency with dirver overhead: {e2e_latency:.3f}")
+
     print_used_time("Benchmark")
 
     # Compute statistics

@@ -24,7 +24,8 @@ from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.timer import timers
-from alpa.util import DisjointDict, OrderedSet, compile_concatenate, get_shard_shape
+from alpa.util import (DisjointDict, OrderedSet, get_shard_shape, get_microbatch_sharding_spec,
+                       compile_concatenate)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -203,19 +204,20 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = []
 
-        # Cached sharding indices for inputs.
-        # List[mesh_idx -> List[sharding_indices]].
-        self.input_indices = []
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
-        # Whether the var should be deleted after shard
-        # List[mesh_idx -> List[bool]]
-        self.delete_after_shard = []
         # List[mesh_idx -> List[arg_idx]]
         self.mesh_arg_indices = []
-        # List[arg_idx -> List[(mesh_idx, sharding_spec)]]
-        self.batch_arg_on_mesh = []
+        # Cached sharding indices for input arguments
+        # List[mesh_idx -> List[sharding_indices]].
+        self.input_shard_indices = [] 
+        # Whether the argument should be deleted after shard
+        # List[mesh_idx -> List[bool]]
+        self.delete_after_shard = []
+        # Whether the argument is a batch argument
+        # List[mesh_idx -> List[bool]]
+        self.batch_invars = []
 
         # Dict[worker -> List[uuid]]
         self.output_local_uuid_list = {}
@@ -291,12 +293,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             instruction_lists, executable_config_lists, var_at)
 
         # Split input into micro batches
-        not_batch_invars = OrderedSet([
+        global_batch_invar_set = OrderedSet([
             var for var, batch in zip(self.global_invars, self.is_batch)
-            if not batch
+            if batch
         ])
         input_local_uuid_lists = self._compile_split_input_to_microbatches(
-            not_batch_invars, var_at)
+            global_batch_invar_set, var_at)
 
         # Simulate the pipeline schedule and generate instructions
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
@@ -306,14 +308,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
-            self._compile_exec_one_tick(sched, not_batch_invars,
+            self._compile_exec_one_tick(sched, global_batch_invar_set,
                                         donation_mapping, var_at,
                                         instruction_lists, executable_uuids,
                                         executable_config_lists)
 
-        # Compile concate:
+        # Compile concate
         self._compile_concate(instruction_lists, executable_config_lists,
                               concat_vars_mapping, var_at)
+
         # Compile information for outputs
         self._compile_collect_outputs(concat_vars_mapping, var_at)
 
@@ -371,7 +374,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     recv_uuids, instruction_lists)
             received_keys.add(key)
 
-    def _compile_exec_one_tick(self, sched, not_batch_invars, donation_mapping,
+    def _compile_exec_one_tick(self, sched, global_batch_invar_set, donation_mapping,
                                var_at, instruction_lists, executable_uuids,
                                executable_config_lists):
         worker_tmp_instructions = {}
@@ -380,7 +383,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_tmp_instructions[worker] = []
 
         def get_invar_key(invar, batch_idx):
-            if invar in not_batch_invars:
+            if invar in self.global_invars and invar not in global_batch_invar_set:
                 var_key = repr(invar)
                 key = (repr(invar), 0)
             elif (invar in self.grad_dummy_invars and
@@ -522,7 +525,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         return grad_uuids
 
-    def _compile_split_input_to_microbatches(self, not_batch_invars, var_at):
+    def _compile_split_input_to_microbatches(self, global_batch_invar_set, var_at):
         """
         Split batch arguments into micro batches.
 
@@ -537,27 +540,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 if donate and invar in global_invar_set:
                     donated_invar_set.add(invar)
         num_mesh = len(self.physical_meshes)
-        global_indices = {}
-        invar_counter = 0
+        num_batch = self.num_batch
         mesh_arg_lists = [None for _ in range(num_mesh)]
-        self.batch_arg_on_mesh = [None] * len(self.global_invars)
-        batch_arg_indices = {v: idx for idx, v in enumerate(self.global_invars)}
-
-        # Split barch args
-        for arg_idx, invar in enumerate(self.global_invars):
-            if invar in not_batch_invars:
-                key = invar, 0
-                global_indices[key] = invar_counter
-                invar_counter += 1
-            else:
-                self.batch_arg_on_mesh[arg_idx] = []
-                for batch_idx in range(self.num_batch):
-                    key = invar, batch_idx
-                    global_indices[key] = invar_counter
-                    invar_counter += 1
 
         # Dispatch args to each mesh
-        arg_last_use = [-1] * invar_counter
+        arg_last_use = {}
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = {}
@@ -568,34 +555,54 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                        stage.invars):
                     if invar in self.global_invars:
                         var_to_spec[invar] = spec
-                        if invar in not_batch_invars:
-                            mesh_arg_set.add((invar, 0))
-                        else:
-                            for batch_idx in range(self.num_batch):
+                        if invar in global_batch_invar_set:
+                            # Split batch arg
+                            for batch_idx in range(num_batch):
                                 mesh_arg_set.add((invar, batch_idx))
                             mesh_batch_vars.add(invar)
+                        else:
+                            mesh_arg_set.add((invar, 0))
             mesh_arg_list = list(mesh_arg_set)
             mesh_arg_lists[mesh_idx] = mesh_arg_list
-            for invar in mesh_batch_vars:
-                self.batch_arg_on_mesh[batch_arg_indices[invar]].append(
-                    (mesh_idx, var_to_spec[invar]))
 
             self.donate_invars.append(
-                [key[0] in donated_invar_set for key in mesh_arg_list])
-            self.input_indices.append([
-                pxla.spec_to_indices(key[0].aval.shape, var_to_spec[key[0]])
-                for key in mesh_arg_list
-            ])
-            mesh_global_indices = [global_indices[key] for key in mesh_arg_list]
-            for global_idx in mesh_global_indices:
-                arg_last_use[global_idx] = mesh_idx
-            self.mesh_arg_indices.append(mesh_global_indices)
+                [var in donated_invar_set or var in global_batch_invar_set
+                 for var, batch_idx in mesh_arg_list])
+
+            tmp_mesh_arg_indices = []
+            tmp_input_shard_indices = []
+            tmp_batch_invars = []
+            for key in mesh_arg_list:
+                var, batch_idx = key
+                if batch_idx == 0:
+                    arg_last_use[var] = mesh_idx
+
+                    global_idx = self.global_invars.index(var)
+                    tmp_mesh_arg_indices.append(global_idx)
+                    tmp_batch_invars.append(self.is_batch[global_idx])
+
+                    if self.is_batch[global_idx]:
+                        aval = var.aval
+                        batch_dim = 0
+                        new_shape = (num_batch * aval.shape[0],) + aval.shape[1:]
+                        new_spec = get_microbatch_sharding_spec(
+                            var_to_spec[var], batch_dim, num_batch)
+                        tmp_input_shard_indices.append(
+                            pxla.spec_to_indices(new_shape, new_spec))
+                    else:
+                        tmp_input_shard_indices.append(
+                            pxla.spec_to_indices(var.aval.shape, var_to_spec[var])
+                        )
+
+            self.mesh_arg_indices.append(tmp_mesh_arg_indices)
+            self.input_shard_indices.append(tmp_input_shard_indices)
+            self.batch_invars.append(tmp_batch_invars)
 
         for mesh_idx in range(num_mesh):
             self.delete_after_shard.append([
-                arg_last_use[idx] == mesh_idx and donate
-                for idx, donate in zip(self.mesh_arg_indices[mesh_idx],
-                                       self.donate_invars[mesh_idx])
+                self.global_invars[idx] in donated_invar_set and
+                arg_last_use[self.global_invars[idx]] == mesh_idx
+                for idx in self.mesh_arg_indices[mesh_idx]
             ])
 
         # Get local uuids for each input
@@ -885,71 +892,54 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             new_list.append(instruction)
         return list(reversed(new_list))
 
-    def _exec_split_args(self, args, batch_dim=0):
-        split_args = []
-        num_batch = self.num_batch
-        for arg_idx, arg in enumerate(args):
-            if self.is_batch[arg_idx]:
-                # dispatch and split on worker.
-                replicas = [None] * num_batch
-                for mesh_and_shard in self.batch_arg_on_mesh[arg_idx]:
-                    mesh_idx, sharding_spec = mesh_and_shard
-                    mesh = self.physical_meshes[mesh_idx]
-                    splits = mesh.shard_batch_arg(
-                        arg, sharding_spec, num_batch, batch_dim,
-                        self.global_invars[arg_idx].aval)
-                    for batch_idx, split in enumerate(splits):
-                        if replicas[batch_idx] is not None:
-                            replicas[batch_idx].add_replica(mesh, split)
-                        else:
-                            replicas[batch_idx] = ReplicatedDistributedArray(
-                                [mesh], [split])
-                split_args.extend(replicas)
-            else:
-                split_args.append(arg)
-        return split_args
-
     def run(self, *args):
         """The run function that maps to train_step()."""
-        input_bufs: List[Any] = [None for _ in range(self.num_mesh)]
-        input_uuids: List[Any] = [None for _ in range(self.num_mesh)]
-        output_bufs: List[Any] = [None for _ in range(self.num_mesh)]
-        output_uuids: List[Any] = [None for _ in range(self.num_mesh)]
+        input_bufs = [None for _ in range(self.num_mesh)]
+        output_bufs = [None for _ in range(self.num_mesh)]
+        output_uuids = [None for _ in range(self.num_mesh)]
 
         num_outs = [
             len(self.output_local_uuid_list[mesh.workers[0]])
             for mesh in self.physical_meshes
         ]
 
-        # Shard inputs
-        split_args = self._exec_split_args(args)
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            # Shard inputs
             mesh_args = [
-                split_args[idx] for idx in self.mesh_arg_indices[mesh_idx]
+                args[idx] for idx in self.mesh_arg_indices[mesh_idx]
             ]
-            input_bufs[mesh_idx] = physical_mesh.shard_args_to_bufs(
-                self.input_indices[mesh_idx], self.delete_after_shard[mesh_idx],
+            tmp_bufs = physical_mesh.shard_args_to_bufs(
+                self.input_shard_indices[mesh_idx],
+                self.delete_after_shard[mesh_idx],
+                self.batch_invars[mesh_idx],
+                self.num_batch,
                 mesh_args)
+
+            # Flatten the batch args in tmp_bufs  
+            flatten_bufs = []
+            for i, is_batch_invar in enumerate(self.batch_invars[mesh_idx]):
+                if is_batch_invar:
+                    flatten_bufs.extend(tmp_bufs[i])
+                else:
+                    flatten_bufs.append(tmp_bufs[i])
+            input_bufs[mesh_idx] = flatten_bufs
+
+            # Convert bufs to uuids
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
-            input_uuids[mesh_idx] = (get_uuid_np_array(
-                input_bufs[mesh_idx]).reshape(len(mesh_args), num_hosts,
-                                              num_devices_per_host).transpose(
-                                                  [1, 0, 2]))
+            input_uuids = get_uuid_np_array(
+                input_bufs[mesh_idx]).reshape(
+                    -1, num_hosts, num_devices_per_host).transpose([1, 0, 2])
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
-            #print(f"after shard_args mesh_idx={mesh_idx} allocated:",
-            #       ray.get(physical_mesh.workers[0].get_memory_allocated.remote()) / 1024**3, "max_allocated:",
-            #       ray.get(physical_mesh.workers[0].get_max_memory_allocated.remote()) / 1024**3)
 
-        # Execute
-        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            # Execute
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
                     self.worker_executable_uuid_mapping[worker],
-                    input_uuids[mesh_idx][i], output_uuids[mesh_idx][i],
-                    sync_for_timer=True)
+                    input_uuids[i], output_uuids[mesh_idx][i],
+                    sync_for_timer=global_config.pipeline_sync_for_timer)
 
         # Handle donation
         for mesh_idx in range(len(self.physical_meshes)):

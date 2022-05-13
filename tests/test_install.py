@@ -16,11 +16,7 @@ from alpa import (parallelize, set_parallelize_options, grad, global_config,
 from alpa.testing import assert_allclose
 
 
-def create_train_state_and_batch():
-    batch_size = 256
-    num_micro_batches = 2
-    hidden_size = 256
-
+def create_train_state_and_batch(batch_size, hidden_size):
     class Model(nn.Module):
 
         @nn.compact
@@ -57,7 +53,7 @@ class InstallationTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 
     def test_1_shard_parallel(self):
-        state, batch = create_train_state_and_batch()
+        state, batch = create_train_state_and_batch(256, 256)
 
         def train_step(state, batch):
 
@@ -86,10 +82,11 @@ class InstallationTest(unittest.TestCase):
         device_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=device_mesh,
                                 strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_stage")
+                                pipeline_stage_mode="uniform_stage",
+                                num_micro_batches=2)
 
         layer_num = min(device_mesh.num_devices, 2)
-        state, batch = create_train_state_and_batch()
+        state, batch = create_train_state_and_batch(256, 256)
 
         def train_step(state, batch):
 
@@ -106,7 +103,6 @@ class InstallationTest(unittest.TestCase):
         expected_state = train_step(state, batch)
 
         # Parallel execution
-        global_config.num_micro_batches = 2
         parallel_train_step = parallelize(train_step)
         actual_state = parallel_train_step(state, batch)
 

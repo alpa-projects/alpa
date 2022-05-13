@@ -28,7 +28,8 @@ from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
                        compile_memset_zero_buffers, get_compile_options,
-                       get_shard_shape, profile_xla_executable)
+                       get_shard_shape, get_microbatch_sharding_spec,
+                       profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -200,10 +201,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
-        if global_config.shard_parallel_sync_for_timer:
-            self.sync_func = get_sync_func_driver(physical_mesh)
-        else:
-            self.sync_func = None
+        self.sync_func = get_sync_func_driver(physical_mesh)
 
     def set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
@@ -213,7 +211,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                 w.put_executable.remote(self.exec_uuid,
                                         NormalMeshWorkerExecutable, hlo_proto,
                                         strategy_config)
-            self.hlo_text = None  # will be fetched from the workers later
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
 
@@ -248,9 +245,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         num_outs = len(self.out_avals)
 
         input_bufs = physical_mesh.shard_args_to_bufs(self.input_indices,
-                                                      self.donated_invars, args)
+                                                      self.donated_invars,
+                                                      (False,) * len(args),
+                                                      None, args)
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
-            ## Shape: (num_hosts, num_args, num_devices_per_host)
+            # Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
                 len(args), num_hosts, num_devices_per_host).transpose([1, 0,
                                                                        2]))
@@ -259,6 +258,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             output_uuids = (next_remote_buffer_uuid(
                 num_hosts * num_outs * num_devices_per_host).reshape(
                     num_hosts, num_outs, num_devices_per_host))
+
+            if "sync_before" not in kwargs:
+                kwargs["sync_before"] = kwargs["sync_after"] = (
+                    global_config.shard_parallel_sync_for_timer)
 
             # Execute the SPMD binary
             for i in range(num_hosts):
@@ -287,17 +290,21 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                         buf.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            timers(self.timer_name).start(self.sync_func)
+            sync_func = (self.sync_func
+                         if global_config.shard_parallel_sync_for_timer else None)
+
+            timers(self.timer_name).start(sync_func)
             output_bufs = self.compiled.execute_sharded_on_local_devices(
                 input_bufs)
-            timers(self.timer_name).stop(self.sync_func)
+            timers(self.timer_name).stop(sync_func)
 
         return self.outs_handler(output_bufs)
 
     def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
         input_bufs = self.physical_mesh.shard_args_to_bufs(
-            self.input_indices, self.donated_invars, args)
+            self.input_indices, self.donated_invars,
+            (False,) * len(args), None, args)
         outs_handler = self.physical_mesh.get_outputs_handler(
             self.avals, self.input_sharding_specs)
         return outs_handler(input_bufs)
@@ -408,29 +415,22 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
     def execute_on_worker(self,
                           input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool = True,
-                          sync_after: bool = True):
+                          sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
         # Get input buffers from uuids
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
 
-        before_sync_func = self.sync_func if sync_before else None
-        after_sync_func = self.sync_func if sync_after else None
         # Execute the executable
-        timers(self.timer_name).start(before_sync_func)
-
-        # TODO(Hao): try has an overhead. Is there better ways?
-        # output_bufs = self.compiled.execute_sharded_on_local_devices(input_bufs)
+        timers(self.timer_name).start(self.sync_func if sync_before else None)
         try:
             output_bufs = self.compiled.execute_sharded_on_local_devices(
                 input_bufs)
         except RuntimeError:
-            # logger.info("Executing in actor encounters an exception: {}".format(re))
             ray.actor.exit_actor()
-
-        timers(self.timer_name).stop(after_sync_func)
+        timers(self.timer_name).stop(self.sync_func if sync_after else None)
 
         # Store output buffers
         for i in range(len(output_uuids)):
@@ -541,31 +541,38 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     avals[i], logical_mesh_shape))
 
         # Cache results for input and output sharding
-        global_arg_shard_indices = [
-            pxla.spec_to_indices(aval.shape, spec)
-            for aval, spec in zip(avals, global_arg_sharding_specs)
-        ]
         global_batch_arg_indices = [
             i for i in range(len(avals)) if batch_invars[i]
         ]
+        global_arg_shard_indices = []
+        for i, aval in enumerate(avals):
+            if batch_invars[i] and isinstance(self.physical_mesh,
+                                              DistributedPhysicalDeviceMesh):
+                # The handling of micro batches is different for
+                # distributed device mesh.
+                batch_dim = 0
+                new_shape = (num_micro_batches * aval.shape[0],) + aval.shape[1:]
+                new_spec = get_microbatch_sharding_spec(global_arg_sharding_specs[i],
+                                                        batch_dim, num_micro_batches)
+                global_arg_shard_indices.append(
+                    pxla.spec_to_indices(new_shape, new_spec))
+            else:
+                global_arg_shard_indices.append(
+                    pxla.spec_to_indices(avals[i].shape, global_arg_sharding_specs[i]))
+
         accumulate_grad_batch_arg_indices = [
             i for i, j in enumerate(accumulate_grad_invar_indices)
             if batch_invars[j]
         ]
-        next_batch_indices = []
-        for i in global_batch_arg_indices:
-            next_batch_indices.extend([global_arg_shard_indices[i]] *
-                                      (num_micro_batches - 1))
         grad_shard_shapes = [
             get_shard_shape(aval, spec)
             for aval, spec in zip(grad_avals, grad_sharding_specs)
         ]
         grad_shard_dtypes = [aval.dtype for aval in grad_avals]
+        self.global_batch_arg_indices = global_batch_arg_indices
+        self.global_arg_shard_indices = global_arg_shard_indices
         self.outs_handler = physical_mesh.get_outputs_handler(
             out_avals, output_sharding_specs)
-        self.global_batch_arg_indices = global_batch_arg_indices
-        self.next_batch_indices = next_batch_indices
-        self.global_arg_shard_indices = global_arg_shard_indices
 
         # Send the executable to workers
         self.exec_uuid = next_mesh_executable_uuid()
@@ -580,7 +587,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     grad_shard_dtypes, strategy_config, donated_invars,
                     batch_invars, num_grads, num_micro_batches)
             self.hlo_text = None  # will be fetched from the workers later
-            self.grad_sync_channel_ids = None  # TODO(lmzheng): fetch from the workers
+            self.grad_sync_channel_ids = None
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             backend = xb.get_backend("gpu")
@@ -625,41 +632,30 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
-        # Split batch argument into micro batches
-        args = list(args)
-        next_batches = []
-        for i in self.global_batch_arg_indices:
-            arg = args[i]
-            new_shape = (num_micro_batches,
-                         arg.shape[0] // num_micro_batches) + arg.shape[1:]
-            reshaped = arg.reshape(new_shape)
-            micro_batches = jnp.split(reshaped, num_micro_batches)
-            micro_batches = [x.squeeze(0) for x in micro_batches]
-
-            # Put the first micro batch in args.
-            # Put the following micro batches to next_batches.
-            args[i] = micro_batches[0]
-            next_batches.extend(micro_batches[1:])
-
-        # Shard arguments
         input_bufs = physical_mesh.shard_args_to_bufs(
-            self.global_arg_shard_indices, self.donated_invars, args)
-        next_batch_bufs = physical_mesh.shard_args_to_bufs(
-            self.next_batch_indices, (True,) * len(self.next_batch_indices),
-            next_batches)
+            self.global_arg_shard_indices,
+            self.donated_invars, self.batch_invars,
+            num_micro_batches, args)
+
+        first_batch_bufs = input_bufs
+        next_batches_bufs = []
+        for i in self.global_batch_arg_indices:
+            micro_batches = input_bufs[i]
+            first_batch_bufs[i] = micro_batches[0]
+            next_batches_bufs.extend(micro_batches[1:])
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
-            input_uuids = (get_uuid_np_array(input_bufs).reshape(
-                len(input_bufs), num_hosts,
+            first_batch_uuids = (get_uuid_np_array(first_batch_bufs).reshape(
+                len(first_batch_bufs), num_hosts,
                 num_devices_per_host).transpose([1, 0, 2]))
 
-            if next_batch_bufs:
-                next_batch_uuids = (get_uuid_np_array(next_batch_bufs).reshape(
-                    len(next_batch_bufs), num_hosts,
+            if next_batches_bufs:
+                next_batches_uuids = (get_uuid_np_array(next_batches_bufs).reshape(
+                    len(next_batches_bufs), num_hosts,
                     num_devices_per_host).transpose([1, 0, 2]))
             else:
-                next_batch_uuids = (None,) * num_hosts
+                next_batches_uuids = (None,) * num_hosts
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = (next_remote_buffer_uuid(
@@ -669,8 +665,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             # Execute SPMD binary
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
-                    self.exec_uuid, input_uuids[i], next_batch_uuids[i],
-                    output_uuids[i])
+                    self.exec_uuid, first_batch_uuids[i], next_batches_uuids[i],
+                    output_uuids[i],
+                    global_config.shard_parallel_sync_for_timer,
+                    global_config.shard_parallel_sync_for_timer)
 
             # Shape: (num_outs, num_hosts, num_devices_per_host)
             output_uuids = output_uuids.transpose([1, 0, 2])
@@ -688,25 +686,28 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                         output_uuids[i][host_id][device_id])
 
             # Mark donated input buffers as already deleted on workers.
-            for bufs, is_donated in zip(input_bufs, self.donated_invars):
+            for bufs, is_donated in zip(first_batch_bufs, self.donated_invars):
                 if is_donated:
                     for buf in bufs:
                         buf.set_deleted_on_workers()
 
             # Mark micro batch buffers as already deleted on workers.
-            for bufs in next_batch_bufs:
+            for bufs in next_batches_bufs:
                 for buf in bufs:
                     buf.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
+            sync_func = (self.sync_func
+                         if global_config.shard_parallel_sync_for_timer else None)
+
             # Prepare gradient buffers
-            timers(self.timer_name).start(self.sync_func)
+            timers(self.timer_name).start(sync_func)
             grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
                 [])
 
             # Call accumulate_grad multiple times
             tmp_input_bufs = (
-                [input_bufs[i] for i in self.accumulate_grad_invar_indices] +
+                [first_batch_bufs[i] for i in self.accumulate_grad_invar_indices] +
                 grad_bufs)
             os.environ[
                 self.skip_allreduce_env_name] = self.grad_sync_channel_ids
@@ -716,7 +717,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     tmp_input_bufs[-num_grads:] = grad_bufs
                     for j, idx in enumerate(
                             self.accumulate_grad_batch_arg_indices):
-                        tmp_input_bufs[idx] = next_batch_bufs[
+                        tmp_input_bufs[idx] = next_batches_bufs[
                             j * (num_micro_batches - 1) + (i - 1)]
                 if i == num_micro_batches - 1:
                     os.environ[self.skip_allreduce_env_name] = ""
@@ -725,11 +726,11 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
             # Call apply_grad
             tmp_input_bufs = (
-                [input_bufs[i] for i in self.apply_grad_invar_indices] +
+                [first_batch_bufs[i] for i in self.apply_grad_invar_indices] +
                 grad_bufs)
             output_bufs = self.apply_grad.execute_sharded_on_local_devices(
                 tmp_input_bufs)
-            timers(self.timer_name).stop(self.sync_func)
+            timers(self.timer_name).stop(sync_func)
 
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
@@ -822,18 +823,23 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids, next_batch_uuids, output_uuids):
+    def execute_on_worker(self,
+                          first_batch_uuids: Sequence[Sequence[int]],
+                          next_batches_uuids: Sequence[Sequence[int]],
+                          output_uuids: Sequence[Sequence[int]],
+                          sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.buffer_dict
         num_micro_batches = self.num_micro_batches
 
         tmp_input_bufs = [
-            get_buffers(buffer_dict, input_uuids[i])
+            get_buffers(buffer_dict, first_batch_uuids[i])
             for i in self.accumulate_grad_invar_indices
         ]
 
         # Prepare gradient buffers
-        timers(self.timer_name).start(self.sync_func)
+        timers(self.timer_name).start(self.sync_func if sync_before else None)
         grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
             [])
 
@@ -847,7 +853,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 for j, idx in enumerate(self.accumulate_grad_batch_arg_indices):
                     tmp_input_bufs[idx] = get_buffers(
                         buffer_dict,
-                        next_batch_uuids[j * (num_micro_batches - 1) + (i - 1)])
+                        next_batches_uuids[j * (num_micro_batches - 1) + (i - 1)])
             if i == num_micro_batches - 1:
                 os.environ[self.skip_allreduce_env_name] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
@@ -855,25 +861,25 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Call apply_grad
         tmp_input_bufs = [
-            get_buffers(buffer_dict, input_uuids[i])
+            get_buffers(buffer_dict, first_batch_uuids[i])
             for i in self.apply_grad_invar_indices
         ] + grad_bufs
         output_bufs = self.apply_grad.execute_sharded_on_local_devices(
             tmp_input_bufs)
-        timers(self.timer_name).stop(self.sync_func)
+        timers(self.timer_name).stop(self.sync_func if sync_after else None)
 
         # Store output buffers
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
         # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, input_uuids)
+        delete_donated_buffers(buffer_dict, first_batch_uuids)
 
         # Delete micro batch buffers
-        if next_batch_uuids is not None:
-            for i in range(len(next_batch_uuids)):
-                for j in range(len(next_batch_uuids[i])):
-                    del buffer_dict[next_batch_uuids[i][j]]
+        if next_batches_uuids is not None:
+            for i in range(len(next_batches_uuids)):
+                for j in range(len(next_batches_uuids[i])):
+                    del buffer_dict[next_batches_uuids[i][j]]
 
     def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
         """Profile the time cost of this executable with dummy inputs."""
@@ -969,22 +975,19 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     def execute_on_worker(self,
                           input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          skip_grad_sync: bool = False,
-                          **kwargs):
+                          sync_before: bool,
+                          sync_after: bool,
+                          skip_grad_sync: bool):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
-        return super().execute_on_worker(input_uuids, output_uuids, **kwargs)
+        return super().execute_on_worker(input_uuids, output_uuids,
+                                         sync_before, sync_after)
 
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
+    def profile_with_dummy_inputs(self, backend, local_devices, skip_grad_sync):
         """Profile the time cost of this executable with dummy inputs."""
-        skip_grad_sync = False
-        if 'skip_grad_sync' in kwargs:
-            skip_grad_sync = kwargs.pop('skip_grad_sync')
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
-        if len(kwargs):
-            logger.warning(f"kwargs {(list(kwargs.keys()))} are ignored")
         return profile_xla_executable(self.compiled, backend, local_devices)
 
 
@@ -1068,10 +1071,6 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
 
         return self.outs_handler(output_bufs)
 
-    def preshard_dynamic_args(self, *args):
-        """Pre-shard the input arguments."""
-        raise NotImplementedError
-
     def __del__(self):
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             self.physical_mesh.delete_remote_executable(self)
@@ -1094,20 +1093,18 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
     def execute_on_worker(self,
                           input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool = False,
-                          sync_after: bool = False):
+                          sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
-        before_sync_func = self.sync_func if sync_before else None
-        after_sync_func = self.sync_func if sync_after else None
 
         # Execute
-        timers(self.timer_name).start(before_sync_func)
-        grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
+        timers(self.timer_name).start(self.sync_func if sync_before else None)
+        output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
             [])
-        timers(self.timer_name).stop(after_sync_func)
+        timers(self.timer_name).stop(self.sync_func if sync_after else None)
         for i in range(len(output_uuids)):
-            set_buffers(buffer_dict, output_uuids[i], grad_bufs[i])
+            set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
     def __del__(self):
         self.allocate_zero_buffers.delete()
@@ -1131,19 +1128,18 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
     def execute_on_worker(self,
                           input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool = False,
-                          sync_after: bool = False):
+                          sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
-        before_sync_func = self.sync_func if sync_before else None
-        after_sync_func = self.sync_func if sync_after else None
 
         # Get input
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+
         # Execute
-        timers(self.timer_name).start(before_sync_func)
+        timers(self.timer_name).start(self.sync_func if sync_before else None)
         _ = self.memzero.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(after_sync_func)
+        timers(self.timer_name).stop(self.sync_func if sync_after else None)
 
 
 class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
@@ -1168,18 +1164,18 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
     def execute_on_worker(self,
                           input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool = False,
-                          sync_after: bool = False):
+                          sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
-        before_sync_func = self.sync_func if sync_before else None
-        after_sync_func = self.sync_func if sync_after else None
 
         # Get input
         input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+
         # Execute
-        timers(self.timer_name).start(before_sync_func)
+        timers(self.timer_name).start(self.sync_func if sync_before else None)
         output_bufs = self.concat.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(after_sync_func)
+        timers(self.timer_name).stop(self.sync_func if sync_after else None)
+
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])

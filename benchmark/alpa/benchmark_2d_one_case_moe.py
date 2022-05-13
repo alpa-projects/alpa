@@ -117,7 +117,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = executable.auto_sharding_objective or 0.0
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last_2d.hlo", "w") as fout:
+    with open("tmp/last_2d_moe.hlo", "w") as fout:
         fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
@@ -134,7 +134,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         latencies = [-1]
     else:
         for i in range(niter):
-            print(f"Iteration {i}")
+            print(f"Iteration {i} ...")
             state = train_step(state, batch, rngkey)
 
         latencies = executable.get_execution_time_costs(warmup=warmup)

@@ -71,3 +71,6 @@ def test_gpt_lm():
             "labels": labels,
             "rng": rngkey
         }, model.apply)
+
+if __name__ == "__main__":
+    test_gpt_lm()

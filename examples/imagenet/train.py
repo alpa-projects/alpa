@@ -240,7 +240,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     Final TrainState.
   """
   #ray.init(address="auto")
-  #physical_mesh = alpa.DeviceCluster().launch_physical_mesh()
+  #physical_mesh = alpa.DeviceCluster().get_physical_mesh()
   physical_mesh = alpa.LocalPhysicalDeviceMesh()
   alpa.set_parallelize_options(physical_mesh)
 

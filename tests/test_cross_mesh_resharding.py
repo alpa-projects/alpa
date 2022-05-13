@@ -193,7 +193,7 @@ class ReshardingTest(unittest.TestCase):
         dst_num_host = dst_mesh_shape[0]
         src_mesh = virtual_mesh.slice_2d(range(src_num_host),
                                          [range(src_mesh_shape[1])] *
-                                         src_num_host).launch_physical_mesh()
+                                         src_num_host).get_physical_mesh()
         if (src_mesh_shape[1] + dst_mesh_shape[1] <=
                 virtual_mesh.num_devices_per_host):
             dst_host_indices = range(dst_num_host)
@@ -204,7 +204,7 @@ class ReshardingTest(unittest.TestCase):
             dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
             dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
         dst_mesh = virtual_mesh.slice_2d(
-            dst_host_indices, dst_device_indices).launch_physical_mesh()
+            dst_host_indices, dst_device_indices).get_physical_mesh()
 
         tensor_dtype = tensor_dtype or jnp.int32
         var = Var(0, "", ShapedArray(tensor_shape, tensor_dtype))

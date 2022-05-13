@@ -1661,10 +1661,10 @@ class VirtualPhysicalMesh:
         mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
-    def launch_physical_mesh(self):
+    def get_physical_mesh(self):
         """Convert to a physical mesh (which will request resources from Ray)."""
         assert self.launched_physical_mesh == None
-        
+
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
@@ -1673,18 +1673,18 @@ class VirtualPhysicalMesh:
             parent=self,
             devices=self.devices)
         return self.launched_physical_mesh
-    
+
     def launch_physical_mesh_groups(self, sliced_virtual_meshes):
         assert self.launched_physical_mesh_group == None
-        
+
         # TODO(lmzheng): check validity
 
         # Launch physical meshes in parallel
         physical_meshes = [None] * len(sliced_virtual_meshes)
-    
+
         def launch_func(i):
-            physical_meshes[i] = sliced_virtual_meshes[i].launch_physical_mesh()
-    
+            physical_meshes[i] = sliced_virtual_meshes[i].get_physical_mesh()
+
         threads = []
         for i in range(len(sliced_virtual_meshes)):
             t = threading.Thread(target=launch_func, args=(i,))
@@ -1692,7 +1692,7 @@ class VirtualPhysicalMesh:
             threads.append(t)
         for i in range(len(sliced_virtual_meshes)):
             threads[i].join()
-    
+
         return DistributedPhysicalDeviceMeshGroup(physical_meshes)
 
 
@@ -1811,7 +1811,7 @@ class DeviceCluster:
     def num_devices(self):
         return sum(self.host_num_devices)
 
-    def launch_physical_mesh(self,
+    def get_physical_mesh(self,
                           host_ids: Sequence[int] = None,
                           num_devices_per_host: int = None):
         """

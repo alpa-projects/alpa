@@ -190,7 +190,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
                                     submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
         else:
             logical_mesh_shape = sub_logical_mesh_shapes[0]
-            physical_mesh = virtual_mesh.launch_physical_mesh()
+            physical_mesh = virtual_mesh.get_physical_mesh()
             logical_mesh = physical_mesh.get_logical_mesh(logical_mesh_shape)
             set_parallelize_options(devices=logical_mesh,
                                     strategy="shard_parallel",

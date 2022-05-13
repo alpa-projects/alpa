@@ -76,7 +76,7 @@ class SearchAPITest(unittest.TestCase):
 
     @unittest.skip("This test is broken due to unhandled cuda error in nccl.")
     def test_search_multi_host(self):
-        physical_mesh = DeviceCluster().launch_physical_mesh()
+        physical_mesh = DeviceCluster().get_physical_mesh()
 
         alpa.set_parallelize_options(
             devices=physical_mesh,

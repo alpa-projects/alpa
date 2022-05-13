@@ -176,7 +176,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Launch the physical mesh group
     if virtual_mesh.launched_physical_mesh_group is None:
-        virtual_mesh.launch_physical_mesh_group(sliced_virtual_meshes)
+        virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}

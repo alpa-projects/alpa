@@ -27,7 +27,7 @@ class DeviceMeshTest(unittest.TestCase):
     def test_add_one(self):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster(use_cpu_on_driver=False)
-        physical_mesh = device_cluster.launch_physical_mesh()
+        physical_mesh = device_cluster.get_physical_mesh()
         num_devices = len(
             physical_mesh.host_ids) * physical_mesh.num_devices_per_host
         logical_mesh = physical_mesh.get_logical_mesh([1, num_devices])
@@ -54,7 +54,7 @@ class DeviceMeshTest(unittest.TestCase):
     def test_mlp(self):
         # Launch a multi-host device mesh
         device_cluster = DeviceCluster(use_cpu_on_driver=False)
-        physical_mesh = device_cluster.launch_physical_mesh()
+        physical_mesh = device_cluster.get_physical_mesh()
         set_parallelize_options(devices=physical_mesh)
 
         batch_size = 16
@@ -105,7 +105,7 @@ class DeviceMeshTest(unittest.TestCase):
 
     def test_distributed_array(self):
         device_cluster = DeviceCluster(use_cpu_on_driver=False)
-        physical_mesh = device_cluster.launch_physical_mesh()
+        physical_mesh = device_cluster.get_physical_mesh()
         logical_mesh = physical_mesh.get_default_logical_mesh()
 
         array = jnp.ones((16, 16))
@@ -129,7 +129,7 @@ class DeviceMeshTest(unittest.TestCase):
 
         # Multi host
         device_cluster = DeviceCluster(use_cpu_on_driver=False)
-        physical_mesh = device_cluster.launch_physical_mesh()
+        physical_mesh = device_cluster.get_physical_mesh()
         set_parallelize_options(devices=physical_mesh)
 
         a = jnp.ones((64, 64))

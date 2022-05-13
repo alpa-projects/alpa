@@ -106,7 +106,7 @@ for start in range(0, N, int(2 * N / num_layer_per_stage)):
 
 compiled_outputs = compile_all(stage_infos,
                                virtual_mesh.get_default_logical_mesh(), 16, 4)
-physical_mesh = virtual_mesh.launch_physical_mesh()
+physical_mesh = virtual_mesh.get_physical_mesh()
 for compiled_output, stage_info in zip(compiled_outputs, stage_infos):
     _, avals, out_avals, tot_donation = stage_info
     proto, config, in_shardings, out_shardings = compiled_output

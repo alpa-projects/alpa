@@ -37,7 +37,7 @@ if __name__ == "__main__":
     ray.init(address="auto")
 
     cluster = alpa.DeviceCluster()
-    physical_mesh = cluster.launch_physical_mesh()
+    physical_mesh = cluster.get_physical_mesh()
 
     shape = (8192, 8192)
 

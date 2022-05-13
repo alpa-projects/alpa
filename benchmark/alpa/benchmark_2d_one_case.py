@@ -28,7 +28,7 @@ def benchmark_one_case(model, case, niter,
         else:
             ray.init(address="auto", ignore_reinit_error=True)
             device_cluster = DeviceCluster()
-            physical_mesh = device_cluster.launch_physical_mesh(
+            physical_mesh = device_cluster.get_physical_mesh(
                 list(range(num_hosts)), num_devices_per_host)
             jax.config.update('jax_platform_name', 'cpu')
 

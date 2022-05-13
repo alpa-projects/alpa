@@ -24,7 +24,7 @@ from alpa.util import count_communication_primitives, get_ray_namespace_str
 # launch the cluster
 ray.init()
 cluster = DeviceCluster()
-global_config.devices = cluster.launch_physical_mesh()
+global_config.devices = cluster.get_physical_mesh()
 
 # define consts
 batch_size = 64

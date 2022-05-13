@@ -24,7 +24,7 @@ class DataLoaderTest(unittest.TestCase):
 
     def run_test(self, sharding_specs):
         device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.launch_physical_mesh()
+        physical_mesh = device_cluster.get_physical_mesh()
         num_devices = physical_mesh.num_devices
 
         batch_size = 64

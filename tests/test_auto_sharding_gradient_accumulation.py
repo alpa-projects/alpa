@@ -35,7 +35,7 @@ class GradAccumulationTest(unittest.TestCase):
     def run_gradient_accumulation(self, use_ray, use_2d_mesh):
         if use_ray:
             device_cluster = DeviceCluster(use_cpu_on_driver=False)
-            physical_mesh = device_cluster.launch_physical_mesh()
+            physical_mesh = device_cluster.get_physical_mesh()
             logical_mesh = physical_mesh.get_default_logical_mesh()
         else:
             physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])

@@ -70,7 +70,7 @@ def shard_parallel_callable(
     elif isinstance(devices, (list, tuple)):
         devices = LocalPhysicalDeviceMesh(devices=devices)
     elif isinstance(devices, DeviceCluster):
-        devices = devices.launch_physical_mesh()
+        devices = devices.get_physical_mesh()
 
     search_task = None
     record_file = None

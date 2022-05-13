@@ -124,7 +124,7 @@ def benchmark_model_one_case(benchmark_case):
         physical_mesh = LocalPhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.launch_physical_mesh()
+        physical_mesh = device_cluster.get_physical_mesh()
     logical_mesh = physical_mesh.get_logical_mesh([mesh_dim0, mesh_dim1],
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,

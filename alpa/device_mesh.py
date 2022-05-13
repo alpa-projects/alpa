@@ -35,8 +35,8 @@ from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
-from alpa.util import (benchmark_func, get_microbatch_sharding_spec,
-                       list_gpu_info, jax_tensor_to_cupy, cupy_to_jax_tensor,
+from alpa.util import (benchmark_func, list_gpu_info,
+                       jax_tensor_to_cupy, cupy_to_jax_tensor,
                        jax_tensor_set, xla_buffer_to_jax_tensor,
                        jax_tensor_to_xla_buffer, xla_buffer_to_cupy,
                        cupy_to_xla_buffer, is_continuous_subset,
@@ -876,7 +876,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                            args: Sequence):
         bufs = []
         for arg, indices, donated, is_batch_var in zip(
-            args, shard_indices, donated_invars, batch_invars):
+                args, shard_indices, donated_invars, batch_invars):
             if is_batch_var:
                 micro_batches = jnp.split(arg, num_micro_batches)
                 bufs.append([pxla._shard_arg(x, self.devices, indices)
@@ -1167,8 +1167,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 bufs = _shard_array(arg, self, indices, num_micro_batches)
                 bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
                                               num_micro_batches)
-                bufs = bufs.transpose([2, 0, 1]).reshape((num_micro_batches,
-                    self.num_hosts * self.num_devices_per_host))
+                bufs = bufs.transpose([2, 0, 1]).reshape(
+                    (num_micro_batches, self.num_hosts * self.num_devices_per_host))
                 ret_bufs.append(bufs)
             else:
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
@@ -1189,7 +1189,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         # so we can delete the old buffers
                         arg.delete()
 
-            if False:  # pylint: disable=using-constant-test
+            if False and slow_path:  # pylint: disable=using-constant-test
                 # Print debug info
                 size = np.prod(arg.shape) * arg.dtype.itemsize
                 bandwidth = size / (time.time() - tic)

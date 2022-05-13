@@ -261,7 +261,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
             if "sync_before" not in kwargs:
                 kwargs["sync_before"] = kwargs["sync_after"] = (
-                  global_config.shard_parallel_sync_for_timer)
+                        global_config.shard_parallel_sync_for_timer)
 
             # Execute the SPMD binary
             for i in range(num_hosts):
@@ -291,7 +291,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             sync_func = (self.sync_func
-                if global_config.shard_parallel_sync_for_timer else None)
+                    if global_config.shard_parallel_sync_for_timer else None)
 
             timers(self.timer_name).start(sync_func)
             output_bufs = self.compiled.execute_sharded_on_local_devices(
@@ -547,7 +547,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         global_arg_shard_indices = []
         for i, aval in enumerate(avals):
             if batch_invars[i] and isinstance(self.physical_mesh,
-                    DistributedPhysicalDeviceMesh):
+                                              DistributedPhysicalDeviceMesh):
                 # The handling of micro batches is different for
                 # distributed device mesh.
                 batch_dim = 0

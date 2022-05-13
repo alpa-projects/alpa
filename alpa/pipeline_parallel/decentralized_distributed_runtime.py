@@ -542,7 +542,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         num_mesh = len(self.physical_meshes)
         num_batch = self.num_batch
         mesh_arg_lists = [None for _ in range(num_mesh)]
-        batch_arg_indices = {v: idx for idx, v in enumerate(self.global_invars)}
 
         # Dispatch args to each mesh
         arg_last_use = {}

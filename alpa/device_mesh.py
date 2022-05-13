@@ -605,7 +605,7 @@ class MeshHostWorker:
     def delete_data_loader(self, uuid):
         del self.data_loaders[uuid]
 
-    ##### Profiling Related Functions #####
+    ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
                         single_timeout: float):
         num_devices = self.num_hosts * len(self.local_devices)
@@ -657,6 +657,9 @@ class MeshHostWorker:
     @staticmethod
     def reset_timer(name: str):
         timers(name).reset()
+
+    def get_live_buffer_uuids(self):
+        return list(self.buffers.keys())
 
     ##### Other Functions #####
     def sync(self):
@@ -1239,7 +1242,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         for i in range(self.num_hosts):
             self.workers[i].delete_executable.remote(executable.exec_uuid)
 
-    ##### Profiling Related Functions #####
+    ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self,
                         op_infos: Sequence[Tuple],
                         cache_filename: str,
@@ -1328,6 +1331,7 @@ class DistributedArray:
     def delete(self):
         for buf in self.remote_buffers:
             del buf
+        self.remote_buffers = None
         self.device_buffers = None
         self._npy_value = None
 

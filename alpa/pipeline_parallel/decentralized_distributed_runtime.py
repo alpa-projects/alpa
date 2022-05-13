@@ -293,12 +293,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             instruction_lists, executable_config_lists, var_at)
 
         # Split input into micro batches
-        not_batch_invars = OrderedSet([
+        global_batch_invar_set = OrderedSet([
             var for var, batch in zip(self.global_invars, self.is_batch)
-            if not batch
+            if batch
         ])
         input_local_uuid_lists = self._compile_split_input_to_microbatches(
-            not_batch_invars, var_at)
+            global_batch_invar_set, var_at)
 
         # Simulate the pipeline schedule and generate instructions
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
@@ -382,7 +382,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_tmp_instructions[worker] = []
 
         def get_invar_key(invar, batch_idx):
-            if invar in not_batch_invars:
+            if invar in self.global_invars and invar not in global_batch_invar_set:
                 var_key = repr(invar)
                 key = (repr(invar), 0)
             elif (invar in self.grad_dummy_invars and
@@ -524,7 +524,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         return grad_uuids
 
-    def _compile_split_input_to_microbatches(self, not_batch_invars, var_at):
+    def _compile_split_input_to_microbatches(self, global_batch_invar_set, var_at):
         """
         Split batch arguments into micro batches.
 
@@ -555,18 +555,19 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                        stage.invars):
                     if invar in self.global_invars:
                         var_to_spec[invar] = spec
-                        if invar in not_batch_invars:
-                            mesh_arg_set.add((invar, 0))
-                        else:
+                        if invar in global_batch_invar_set:
                             # Split batch arg
                             for batch_idx in range(num_batch):
                                 mesh_arg_set.add((invar, batch_idx))
                             mesh_batch_vars.add(invar)
+                        else:
+                            mesh_arg_set.add((invar, 0))
             mesh_arg_list = list(mesh_arg_set)
             mesh_arg_lists[mesh_idx] = mesh_arg_list
 
             self.donate_invars.append(
-                [key[0] in donated_invar_set for key in mesh_arg_list])
+                [var in donated_invar_set or var in global_batch_invar_set
+                 for var, batch_idx in mesh_arg_list])
 
             tmp_mesh_arg_indices = []
             tmp_input_shard_indices = []

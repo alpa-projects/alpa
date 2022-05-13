@@ -25,6 +25,8 @@ def create_train_state_and_batch(batch_size, hidden_size):
             x = nn.Dense(hidden_size, use_bias=True)(x)
             x = nn.Dense(hidden_size, use_bias=True)(x)
             x = nn.Dense(hidden_size, use_bias=True)(x)
+            x = nn.Dense(hidden_size, use_bias=True)(x)
+            x = nn.Dense(hidden_size, use_bias=True)(x)
             return x
 
     rngkey = jax.random.PRNGKey(0)

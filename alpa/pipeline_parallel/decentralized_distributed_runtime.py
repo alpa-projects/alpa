@@ -308,14 +308,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
-            self._compile_exec_one_tick(sched, not_batch_invars,
+            self._compile_exec_one_tick(sched, global_batch_invar_set,
                                         donation_mapping, var_at,
                                         instruction_lists, executable_uuids,
                                         executable_config_lists)
 
-        # Compile concate:
+        # Compile concate
         self._compile_concate(instruction_lists, executable_config_lists,
                               concat_vars_mapping, var_at)
+
         # Compile information for outputs
         self._compile_collect_outputs(concat_vars_mapping, var_at)
 
@@ -373,7 +374,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                     recv_uuids, instruction_lists)
             received_keys.add(key)
 
-    def _compile_exec_one_tick(self, sched, not_batch_invars, donation_mapping,
+    def _compile_exec_one_tick(self, sched, global_batch_invar_set, donation_mapping,
                                var_at, instruction_lists, executable_uuids,
                                executable_config_lists):
         worker_tmp_instructions = {}

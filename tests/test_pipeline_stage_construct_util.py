@@ -95,12 +95,14 @@ class StageConstructUtilTest(unittest.TestCase):
                             num_microbatch=2):
         gensym_func = gensym([closed_jaxpr.jaxpr])
         closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
-            split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
+            split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func,
+                                              num_microbatch))
         have_apply_grad = barrier is not None
         assert have_apply_grad
+        reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
         (acc_grad_jaxpr, acc_grad_dict,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-             compute_grad_jaxpr, gensym_func)
+             compute_grad_jaxpr, reduction_vector, gensym_func)
         acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
         acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
 
@@ -119,13 +121,14 @@ class StageConstructUtilTest(unittest.TestCase):
         num_forward_layers = len(jax_pipeline_layers) // 2
         layer_to_dummy_mesh = (list(range(num_forward_layers)) +
                                list(reversed(range(num_forward_layers))))
+        reduce_invars = [True] * len(barrier.invars)
 
         (jax_apply_layers, _, _, _, _,
          dummy_donated_invars) = process_apply_gradient(
              apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
              layer_to_dummy_mesh, gensym_func, num_microbatch,
              len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-             donated_invars)
+             donated_invars, reduce_invars)
         apply_grad_donation = create_donation_mapping(donation_mapping,
                                                       dummy_donated_invars,
                                                       global_invars,

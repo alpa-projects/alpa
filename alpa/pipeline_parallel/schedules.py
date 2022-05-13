@@ -19,7 +19,8 @@ def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
     n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)
     var_stage_id = {}
-    for i, stage in enumerate(itertools.chain(compute_stages, apply_grad_stages)):
+    for i, stage in enumerate(itertools.chain(compute_stages,
+                                              apply_grad_stages)):
         for var in stage.invars:
             if var in var_stage_id:
                 d[i, var_stage_id[var]] = 1
@@ -161,6 +162,18 @@ class PipelineSchedule(metaclass=ABCMeta):
     @abstractmethod
     def previous_backward_batch_index(self, batch_idx):
         """Return microbatch index during backward prior to batch_idx."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def first_backward_batch_index(self):
+        """Return the index of the first microbatch at backward pass."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def last_backward_batch_index(self):
+        """Return the index of the last microbatch at backward pass."""
         raise NotImplementedError()
 
 

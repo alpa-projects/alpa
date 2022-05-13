@@ -277,8 +277,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
                 + layer_flops_prefix_sum[2 * num_layers - start] -
                 layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
-            if ((computation_source_ratio > flops_ratio * (1 + tolerance)) or
-                    (computation_source_ratio < flops_ratio / (1 + tolerance))):
+            if (computation_source_ratio > flops_ratio * (1 + tolerance) or
+                    computation_source_ratio < flops_ratio / (1 + tolerance)):
                 continue
             layer_indices = (
                 indices[start:end + 1] +
@@ -288,9 +288,9 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 [apply_grad_layers[idx] for idx in indices[start:end + 1]])
             stage_name = f"stage_{start}_{end}"
             (intermediate_vars, stage_config) = generate_stage_info(
-                layers, layer_indices, donation_mapping, global_outvars,
-                stage_name, end - start, list(selected_apply_grad_layers),
-                apply_grad_global_info)
+                layers, layer_indices, donation_mapping,
+                global_outvars, stage_name, end - start,
+                list(selected_apply_grad_layers), apply_grad_global_info)
             if is_full_mesh:
                 intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
@@ -484,10 +484,8 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
     return virtual_submeshes
 
 
-# TODO(yonghao): global_outvars is inaccurate. It is outvars for accumulate
-# gradient part instead of the whole computation
 def cluster_layers_and_slice_mesh(
-        layers, devices, donation_mapping, global_outvars, num_micro_batches,
+        layers, devices, donation_mapping, final_outvars, num_micro_batches,
         batch_size, jax_apply_layers, apply_grad_global_info,
         pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
@@ -504,7 +502,7 @@ def cluster_layers_and_slice_mesh(
         layers (Sequence[JaxPipelineComputation]): All the layers.
         mesh (VirtualPhysicalMesh): The cluser device mesh.
         donation_mapping: The donation_mapping for the layers.
-        global_outvars: Global outvars of the layers.
+        final_outvars: Global outvars of the layers.
         num_micro_batches: Number of microbatches for GPipe.
         pipeline_stage_mode (str): one of "auto_stage", "manual_stage",
           "uniform_stage".
@@ -560,7 +558,7 @@ def cluster_layers_and_slice_mesh(
             cached_result = None
         compute_cost, max_n_succ_stages = get_compute_cost(
             devices, submesh_choices, autosharding_configs, layers,
-            donation_mapping, global_outvars, jax_apply_layers,
+            donation_mapping, final_outvars, jax_apply_layers,
             apply_grad_global_info, cached_result)
         _, solution = dp(num_layers, devices.num_devices, num_micro_batches,
                          submesh_choices, num_autosharding_configs,
@@ -589,8 +587,7 @@ def cluster_layers_and_slice_mesh(
         print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
         print("Result meshes:", submesh_shapes)
         print("Result logical_mesh_shapes:", logical_mesh_shapes)
-        print("Result autosharding_option_dicts:",
-              autosharding_option_dicts)
+        print("Result autosharding_option_dicts:", autosharding_option_dicts)
         global last_forward_stage_layer_ids, last_submesh_shapes
         global last_logical_mesh_shapes, last_autosharding_option_dicts
         last_forward_stage_layer_ids = forward_stage_layer_ids
@@ -636,12 +633,9 @@ def cluster_layers_and_slice_mesh(
         raise ValueError(f"Invalid pipeline stage mode: {pipeline_stage_mode}")
 
     if given_mesh:
-        sliced_meshes = [
-            mesh.get_virtual_physical_mesh() for mesh in devices
-        ]
+        sliced_meshes = [mesh.get_virtual_physical_mesh() for mesh in devices]
     else:
-        sliced_meshes = get_sliced_virtual_submeshes(
-            devices, submesh_shapes)
+        sliced_meshes = get_sliced_virtual_submeshes(devices, submesh_shapes)
 
     num_forward_stages = len(forward_stage_layer_ids)
 
@@ -656,8 +650,7 @@ def cluster_layers_and_slice_mesh(
         stage_to_mesh = list(range(num_forward_stages)) + list(
             reversed(range(num_forward_stages)))
 
-    stage_outvars = get_stage_outvars(layers, stage_layer_ids,
-                                      global_outvars)
+    stage_outvars = get_stage_outvars(layers, stage_layer_ids, final_outvars)
     merged_stages = []
     for stage_id, layer_ids in enumerate(stage_layer_ids):
         if len(layer_ids) == 1:
@@ -679,8 +672,7 @@ def cluster_layers_and_slice_mesh(
 
     # Check the validity of logical mesh shapes
     assert len(logical_mesh_shapes) == len(sliced_meshes)
-    for logical_mesh_shape, submesh in zip(logical_mesh_shapes,
-                                           sliced_meshes):
+    for logical_mesh_shape, submesh in zip(logical_mesh_shapes, sliced_meshes):
         assert np.prod(logical_mesh_shape) == submesh.num_devices
 
     if autosharding_option_dicts is not None:

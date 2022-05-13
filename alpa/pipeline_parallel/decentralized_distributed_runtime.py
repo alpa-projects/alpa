@@ -7,12 +7,13 @@ from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 
 from jax.core import Var
 from jax.interpreters import pxla
+from jax.lib import xla_bridge as xb
 import numpy as np
 import ray.exceptions
 
 from alpa.device_mesh import MeshHostWorker, DistributedArray, ReplicatedDistributedArray
 from alpa.global_env import global_config
-from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
+from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid, get_uuid_np_array,
@@ -23,7 +24,7 @@ from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.timer import timers
-from alpa.util import DisjointDict, OrderedSet, get_shard_shape
+from alpa.util import DisjointDict, OrderedSet, compile_concatenate, get_shard_shape
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -138,6 +139,9 @@ AllocateZeroWorkerExecutableConfig = namedtuple(
 MemZeroWorkerExecutableConfig = namedtuple(
     "MemZeroWorkerExecutableConfig",
     ["exec_uuid", "grad_shard_shapes", "grad_shard_dtypes"])
+ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig", [
+    "exec_uuid", "hlo_proto"
+])
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig",
     ["exec_uuid", "hlo_proto", "strategy_config", "grad_sync_channel_ids"])
@@ -182,7 +186,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  schedule: PipelineSchedule,
                  is_batch: Sequence[bool],
                  num_batch: int,
-                 flop_count: int):
+                 flop_count: int,
+                 concat_vars_mapping: Dict[Var, Var]):
         super().__init__(pipeline_stages=pipeline_stages,
                          global_invars=global_invars,
                          grad_dummy_invars=grad_dummy_invars,
@@ -196,11 +201,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.flop_count = flop_count
 
         # List[stage_idx -> executable_uuid]
-        self.executable_uuids = [] 
+        self.executable_uuids = []
 
         # Cached sharding indices for inputs.
         # List[mesh_idx -> List[sharding_indices]].
-        self.input_indices = [] 
+        self.input_indices = []
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
@@ -225,7 +230,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Compile pipeline instructions and configs of mesh executables
         (instruction_lists, executable_config_lists,
          input_local_uuid_lists, grad_uuids,
-         accumulated_uuid_lists) = self._compile()
+         reduced_var_uuid_lists) = self._compile(concat_vars_mapping)
 
         # Create a PipelineMeshWorkerExecutable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}
@@ -240,7 +245,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         self.output_local_uuid_list[worker],
                         executable_config_lists[worker],
                         acc_grad_local_uuids,
-                        accumulated_uuid_lists[worker],
+                        reduced_var_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
                 worker.put_executable.remote(uuid, PipelineMeshWorkerExecutable,
@@ -259,7 +264,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.uuid_counter += num
         return ret
 
-    def _compile(self):
+    def _compile(self, concat_vars_mapping):
         num_mesh = self.num_mesh
 
         instruction_lists = {}  # Dict[worker -> List[PipelineInstruction]]
@@ -279,7 +284,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Compile forward, backward and apply_grad computations
         executable_uuids = self._compile_computation_executables(
             executable_config_lists)
-        self.executable_uuids = executable_uuids 
+        self.executable_uuids = executable_uuids
 
         # Compile gradient buffer allocations
         grad_uuids = self._compile_grad_buffer_allocations(
@@ -294,16 +299,85 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             not_batch_invars, var_at)
 
         # Simulate the pipeline schedule and generate instructions
-        worker_tmp_instructions = {}
-        for mesh in self.physical_meshes:
-            for worker in mesh.workers:
-                worker_tmp_instructions[worker] = []
-
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
         worker_to_idx = {}
         for mesh_idx, mesh in enumerate(self.physical_meshes):
             for worker_idx, worker in enumerate(mesh.workers):
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
+
+        for _, sched in enumerate(self.schedule.schedules):
+            self._compile_exec_one_tick(sched, not_batch_invars,
+                                        donation_mapping, var_at,
+                                        instruction_lists, executable_uuids,
+                                        executable_config_lists)
+
+        # Compile concate:
+        self._compile_concate(instruction_lists, executable_config_lists,
+                              concat_vars_mapping, var_at)
+        # Compile information for outputs
+        self._compile_collect_outputs(concat_vars_mapping, var_at)
+
+        # Insert buffer free instructions
+        reduced_var_uuid_lists = {}
+        for worker in instruction_lists:
+            used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
+            mesh_idx, worker_idx = worker_to_idx[worker]
+            reduced_var_uuids = grad_uuids[mesh_idx]
+            if len(reduced_var_uuids) > 0:
+                reduced_var_uuids = reduced_var_uuids[worker_idx]
+            reduced_var_uuids = [[
+                donation_mapping[mesh_idx].recursive_lookup(uuid)
+                for uuid in uuids
+            ] for uuids in reduced_var_uuids]
+            donated = set(donation_mapping[mesh_idx].keys())
+            used_outside.update(flatten_uuid_set(reduced_var_uuids))
+            reduced_var_uuid_lists[worker] = reduced_var_uuids
+            # pylint: disable=modified-iterating-dict
+            instruction_lists[worker] = self._compile_free(
+                worker, used_outside, donated, instruction_lists)
+
+        return (instruction_lists, executable_config_lists,
+                input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists)
+
+    def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
+                                    batch_idx, instruction_lists,
+                                    executable_config_lists, var_at,
+                                    get_invar_key):
+        if len(invars) == 0:
+            return
+        received_keys = OrderedSet()
+        keys = [get_invar_key(var, batch_idx)[1] for var in invars]
+        # TODO(yonghao): only compile alloc once, use multiple times
+        output_uuids = self._compile_alloc(invars, dst_specs, mesh_idx, keys,
+                                           False, instruction_lists,
+                                           executable_config_lists, var_at)
+        # shape: (args, num_hosts, num_devices_per_host)
+        transposed = output_uuids.transpose([1, 0, 2])
+        recv_uuid_list = transposed
+
+        for invar, recv_uuids in zip(invars, recv_uuid_list):
+            var_key, key = get_invar_key(invar, batch_idx)
+            src_idx, src_uuids = list(var_at[key].items())[0]
+            resharding_task = self._resharding_tasks[src_idx][mesh_idx][var_key]
+            if global_config.resharding_mode == "send_recv":
+                self._compile_resharding_task(self.physical_meshes[src_idx],
+                                              self.physical_meshes[mesh_idx],
+                                              src_uuids, resharding_task,
+                                              recv_uuids, instruction_lists)
+            else:
+                self._compile_broadcast_resharding_task(
+                    self.physical_meshes[src_idx],
+                    self.physical_meshes[mesh_idx], src_uuids, resharding_task,
+                    recv_uuids, instruction_lists)
+            received_keys.add(key)
+
+    def _compile_exec_one_tick(self, sched, not_batch_invars, donation_mapping,
+                               var_at, instruction_lists, executable_uuids,
+                               executable_config_lists):
+        worker_tmp_instructions = {}
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                worker_tmp_instructions[worker] = []
 
         def get_invar_key(invar, batch_idx):
             if invar in not_batch_invars:
@@ -319,145 +393,74 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 key = (repr(invar), batch_idx)
             return var_key, key
 
-        for _, sched in enumerate(self.schedule.schedules):
-            for tmp_list in worker_tmp_instructions.values():
-                tmp_list.clear()
-
-            for mesh_idx, task in enumerate(sched):
-                if not task:
+        for mesh_idx, task in enumerate(sched):
+            if not task:
+                continue
+            physical_mesh = self.physical_meshes[mesh_idx]
+            num_devices_per_host = physical_mesh.num_devices_per_host
+            batch_idx, stage_idx = task
+            stage = self.stages[stage_idx]
+            # shard_args for intermediates
+            to_reshard_vars = []
+            reshard_sharding_specs = []
+            for invar, spec in zip(stage.invars, stage.input_sharding_specs):
+                _, key = get_invar_key(invar, batch_idx)
+                if mesh_idx in var_at[key]:
+                    # have a copy at the current mesh
                     continue
-                physical_mesh = self.physical_meshes[mesh_idx]
-                num_devices_per_host = physical_mesh.num_devices_per_host
-                batch_idx, stage_idx = task
-                stage = self.stages[stage_idx]
-                received_keys = OrderedSet()
-                # shard_args for intermediates
-                to_reshard_vars = []
-                reshard_sharding_specs = []
-                for invar, spec in zip(stage.invars,
-                                       stage.input_sharding_specs):
-                    var_key, key = get_invar_key(invar, batch_idx)
-                    if mesh_idx in var_at[key]:
-                        # have a copy at the current mesh
-                        continue
-                    if len(var_at[key]) > 1:
-                        raise NotImplementedError(
-                            "Not support resharding replicated")
-                    to_reshard_vars.append(invar)
-                    reshard_sharding_specs.append(spec)
-                keys = [
-                    get_invar_key(var, batch_idx)[1] for var in to_reshard_vars
-                ]
-                if len(keys):
-                    # TODO(yonghao): only compile alloc once, use multiple times
-                    output_uuids = self._compile_alloc(to_reshard_vars,
-                                                       reshard_sharding_specs,
-                                                       mesh_idx, keys, False,
-                                                       instruction_lists,
-                                                       executable_config_lists,
-                                                       var_at)
-                    # shape: (args, num_hosts, num_devices_per_host)
-                    transposed = output_uuids.transpose([1, 0, 2])
-                    recv_uuid_list = transposed
+                if len(var_at[key]) > 1:
+                    raise NotImplementedError(
+                        "Not support resharding replicated")
+                to_reshard_vars.append(invar)
+                reshard_sharding_specs.append(spec)
+            self._compile_get_vars_from_mesh(to_reshard_vars,
+                                             reshard_sharding_specs, mesh_idx,
+                                             batch_idx, instruction_lists,
+                                             executable_config_lists, var_at,
+                                             get_invar_key)
 
-                    for invar, recv_uuids in zip(to_reshard_vars,
-                                                 recv_uuid_list):
-                        var_key, key = get_invar_key(invar, batch_idx)
-                        src_idx, src_uuids = list(var_at[key].items())[0]
-                        resharding_task = self._resharding_tasks[src_idx][
-                            mesh_idx][var_key]
-                        if global_config.resharding_mode == "send_recv":
-                            self._compile_resharding_task(
-                                self.physical_meshes[src_idx],
-                                self.physical_meshes[mesh_idx], src_uuids,
-                                resharding_task, recv_uuids, instruction_lists)
-                        else:
-                            self._compile_broadcast_resharding_task(
-                                self.physical_meshes[src_idx],
-                                self.physical_meshes[mesh_idx], src_uuids,
-                                resharding_task, recv_uuids, instruction_lists)
-                        received_keys.add(key)
+            # execute
+            # allocate uuids for buffers created by RUN
+            for outvar in stage.outvars:
+                key = (repr(outvar), batch_idx)
+                # get uuids of this outvar
+                _get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
+                    physical_mesh.num_devices).reshape(-1, num_devices_per_host)
 
-                # execute
-                # allocate uuids for buffers created by RUN
-                for outvar in stage.outvars:
+            exec_uuid = executable_uuids[stage_idx]
+            donated_invars = self.stages[stage_idx].donated_invars
+            for worker_idx, worker in enumerate(physical_mesh.workers):
+                # Get input and output uuids. They should be at the mesh
+                input_uuids = np.zeros(
+                    (len(stage.invars), num_devices_per_host), dtype=np.int64)
+                output_uuids = np.zeros(
+                    (len(stage.outvars), num_devices_per_host), dtype=np.int64)
+                for idx, invar in enumerate(stage.invars):
+                    _, key = get_invar_key(invar, batch_idx)
+                    input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
+                for idx, outvar in enumerate(stage.outvars):
                     key = (repr(outvar), batch_idx)
-                    # get uuids of this outvar
-                    _get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
-                        physical_mesh.num_devices).reshape(
-                            -1, num_devices_per_host)
+                    output_uuids[idx] = var_at[key][mesh_idx][worker_idx]
+                for idx in range(len(stage.invars)):
+                    if donated_invars[idx]:
+                        donation_mapping[mesh_idx].update(
+                            input_uuids[idx], output_uuids[idx])
 
-                exec_uuid = executable_uuids[stage_idx]
-                donated_invars = self.stages[stage_idx].donated_invars
-                for worker_idx, worker in enumerate(physical_mesh.workers):
-                    # Get input and output uuids. They should be at the mesh
-                    input_uuids = np.zeros(
-                        (len(stage.invars), num_devices_per_host),
-                        dtype=np.int64)
-                    output_uuids = np.zeros(
-                        (len(stage.outvars), num_devices_per_host),
-                        dtype=np.int64)
-                    for idx, invar in enumerate(stage.invars):
-                        _, key = get_invar_key(invar, batch_idx)
-                        input_uuids[idx] = var_at[key][mesh_idx][worker_idx]
-                    for idx, outvar in enumerate(stage.outvars):
-                        key = (repr(outvar), batch_idx)
-                        output_uuids[idx] = var_at[key][mesh_idx][worker_idx]
-                    for idx in range(len(stage.invars)):
-                        if donated_invars[idx]:
-                            donation_mapping[mesh_idx].update(
-                                input_uuids[idx], output_uuids[idx])
+                kwargs = {
+                    "skip_grad_sync": self.schedule.should_skip_grad_sync(task),
+                    "sync_before": False,
+                    "sync_after": False,
+                }
 
-                    kwargs = {
-                        "skip_grad_sync":
-                            self.schedule.should_skip_grad_sync(task),
-                        "sync_before": False,
-                        "sync_after": False,
-                    }
+                worker_tmp_instructions[worker].append(
+                    PipelineInstruction.Run(exec_uuid,
+                                            input_uuids,
+                                            output_uuids,
+                                            kwargs,
+                                            info=f"stage {stage_idx}"))
 
-                    worker_tmp_instructions[worker].append(
-                        PipelineInstruction.Run(exec_uuid,
-                                                input_uuids,
-                                                output_uuids,
-                                                kwargs,
-                                                info=f"stage {stage_idx}"))
-                # free all received buffers
-                # received_uuids = [
-                #     var_at[key].pop(mesh_idx) for key in received_keys
-                # ]
-                # for worker_idx, worker in enumerate(physical_mesh.workers):
-                #     instructions = worker_tmp_instructions[worker]
-                #     for uuids in received_uuids:
-                #         instructions.append(
-                #             PipelineInstruction.Free(uuids[worker_idx]))
-            for worker, worker_instruction in worker_tmp_instructions.items():
-                instruction_lists[worker].extend(worker_instruction)
-
-        # Compile information for outputs
-        self._compile_collect_outputs(var_at)
-
-        # Insert buffer free instructions
-        accumulated_uuid_lists = {}
-        for worker in instruction_lists:
-            used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
-            mesh_idx, worker_idx = worker_to_idx[worker]
-            accumulated_uuids = grad_uuids[mesh_idx]
-            if len(accumulated_uuids) > 0:
-                accumulated_uuids = accumulated_uuids[worker_idx]
-            accumulated_uuids = [[
-                donation_mapping[mesh_idx].recursive_lookup(uuid)
-                for uuid in uuids
-            ] for uuids in accumulated_uuids]
-            donated = set(donation_mapping[mesh_idx].keys())
-            used_outside.update(flatten_uuid_set(accumulated_uuids))
-            accumulated_uuid_lists[worker] = accumulated_uuids
-            # pylint: disable=modified-iterating-dict
-            instruction_lists[worker] = self._compile_free(
-                worker, used_outside, donated, instruction_lists)
-
-        return (instruction_lists, executable_config_lists,
-                input_local_uuid_lists, grad_uuids,
-                accumulated_uuid_lists)
+        for worker, worker_instruction in worker_tmp_instructions.items():
+            instruction_lists[worker].extend(worker_instruction)
 
     def _compile_computation_executables(self, executable_config_lists):
         """Compile executables for forward, backward, and apply_grad compuations."""
@@ -472,11 +475,11 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_idx = list(mesh_idx)[0]
             hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
+            exec_config = PartialGradWorkerExecutableConfig(
+                exec_uuid, hlo_proto, stage.strategy_config,
+                stage.output_acc_grad_indices)
             for worker in self.physical_meshes[mesh_idx].workers:
-                executable_config_lists[worker].append(
-                    PartialGradWorkerExecutableConfig(
-                        exec_uuid, hlo_proto, stage.strategy_config,
-                        stage.output_acc_grad_indices))
+                executable_config_lists[worker].append(exec_config)
 
         return executable_uuids
 
@@ -507,15 +510,14 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 grad_vars, grad_sharding_specs = list(
                     zip(*grad_var_spec_dict.items()))
 
-                # TODO(yonghao): below, we start accumulation according to hints provided by schedule;
-                #    this is a case that only works for pipeline-parallel training and gradients.
-                #    In some model, some var has non-gradient intermediate states that need accumulation.
-                #    for these vars, we need to record its first mb index when accum will take place.
+                # TODO(yonghao): Some var has non-gradient intermediate states
+                # that need accumulation. for these vars, we need to record its
+                # first mb index when accum will take place.
                 keys = [(repr(var), self.schedule.first_backward_batch_index)
                         for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
-                    grad_vars, grad_sharding_specs, mesh_idx,
-                    keys, global_config.use_memzero_for_gradient_accumulation,
+                    grad_vars, grad_sharding_specs, mesh_idx, keys,
+                    global_config.use_memzero_for_gradient_accumulation,
                     instruction_lists, executable_config_lists, var_at)
 
         return grad_uuids
@@ -613,7 +615,71 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         arg_uuids[arg_idx, worker_idx])
         return input_local_uuid_lists
 
-    def _compile_collect_outputs(self, var_at) -> None:
+    def _compile_concate_get_spec(self, to_concate_vars):
+        var_to_spec_all_meshes = []
+        num_mesh = len(self.physical_meshes)
+        for mesh_idx in range(num_mesh):
+            var_to_spec = {}
+            for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
+                stage = self.stages[stage_idx]
+                for spec, outvar in zip(stage.output_sharding_specs,
+                                        stage.outvars):
+                    if outvar in to_concate_vars:
+                        var_to_spec[outvar] = spec
+            var_to_spec_all_meshes.append(var_to_spec)
+        return var_to_spec_all_meshes
+
+    def _compile_concate(self, instruction_lists, executable_config_lists,
+                         concat_vars_mapping, var_at):
+        """
+        Generate concate instruction for variables used in non-microbatch part,
+        but are not reduced. They should be concated.
+        """
+        batch_dim = 0
+        to_concate_vars = set(concat_vars_mapping.values())
+        to_concate_specs = self._compile_concate_get_spec(to_concate_vars)
+        for var in concat_vars_mapping:
+            src_var = concat_vars_mapping[var]
+            dummy_key = (repr(src_var), self.schedule.last_backward_batch_index)
+            mesh_to_uuids = _get_dict(var_at, dummy_key)
+            dst_key = (repr(var), self.schedule.last_backward_batch_index)
+            dst_mesh_to_uuids = _get_dict(var_at, dst_key)
+            for mesh_idx in mesh_to_uuids:
+                physical_mesh = self.physical_meshes[mesh_idx]
+                # Get input and output uuids
+                input_args = np.zeros((self.num_batch, *physical_mesh.shape),
+                                      dtype=np.int64)
+                for batch_idx in range(self.num_batch):
+                    key = (repr(src_var), batch_idx)
+                    input_args[batch_idx] = _get_dict(var_at, key)[mesh_idx]
+                outputs = self.get_next_uuids(
+                    physical_mesh.num_devices).reshape(
+                        (1, *physical_mesh.shape))
+                dst_mesh_to_uuids[mesh_idx] = outputs.reshape(
+                    physical_mesh.shape)
+                input_args = input_args.transpose([1, 0, 2])
+                outputs = outputs.transpose([1, 0, 2])
+
+                # create and run concat executable
+                exec_uuid = next_mesh_executable_uuid()
+                spec = to_concate_specs[mesh_idx][src_var]
+                hlo_proto = compile_concatenate(xb.get_backend("gpu"),
+                                                physical_mesh.shape, spec,
+                                                self.num_batch, batch_dim,
+                                                src_var.aval)
+                exec_config = ConcatWorkerExecutableConfig(exec_uuid, hlo_proto)
+                kwargs = {
+                    "sync_before": False,
+                    "sync_after": False,
+                }
+                for worker_idx, worker in enumerate(physical_mesh.workers):
+                    executable_config_lists[worker].append(exec_config)
+                    instruction_lists[worker].append(
+                        PipelineInstruction.Run(exec_uuid,
+                                                input_args[worker_idx],
+                                                outputs[worker_idx], kwargs))
+
+    def _compile_collect_outputs(self, concat_vars_mapping, var_at) -> None:
         """
         Generate output information.
 
@@ -628,6 +694,12 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # collect outvar specs
         var_to_spec_all_meshes = []
         global_outvar_set = OrderedSet(self.global_outvars)
+        # This is only a patch. It will be deprecated after we move concat into a stage
+        reversed_concat = {
+            v: k
+            for k, v in concat_vars_mapping.items()
+            if k in global_outvar_set
+        }
         for mesh_idx in range(num_mesh):
             var_to_spec = {}
             for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
@@ -636,6 +708,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                                         stage.outvars):
                     if outvar in global_outvar_set:
                         var_to_spec[outvar] = spec
+                    if outvar in reversed_concat:
+                        var_to_spec[reversed_concat[outvar]] = spec
             var_to_spec_all_meshes.append(var_to_spec)
         # assign indices and get specs
         for outvar in self.global_outvars:
@@ -785,10 +859,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             else:
                 host_id = dst_mesh.workers.index(w)
                 output_uuids = recv_uuids[host_id]
-            instruction_lists[w].append(PipelineInstruction.Broadcast(task_uuid, 
-                                                                      input_uuids, 
-                                                                      output_uuids, 
-                                                                      "broadcast"))
+            instruction_lists[w].append(
+                PipelineInstruction.Broadcast(task_uuid, input_uuids,
+                                              output_uuids, "broadcast"))
 
     @staticmethod
     def _compile_free(worker, used_outside, donated, instruction_lists):
@@ -896,9 +969,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for j in range(physical_mesh.num_devices):
                     host_id = j // num_devices_per_host
                     device_id = j % num_devices_per_host
-                    # dtype = self.global_outvars[
-                    #     self.mesh_index_to_outvar_indices_mapping[mesh_idx]
-                    #     [i]].aval.dtype
                     output_bufs[mesh_idx][i][j] = RemoteBufferRef(
                         physical_mesh, host_id, device_id,
                         output_uuid_transposed[i][host_id][device_id])
@@ -1162,6 +1232,10 @@ class PipelineMeshWorkerExecutable:
                                            AllocZeroBufferWorkerExecutable,
                                            task_config.grad_shard_shapes,
                                            task_config.grad_shard_dtypes)
+            elif isinstance(task_config, ConcatWorkerExecutableConfig):
+                self.worker.put_executable(task_config.exec_uuid,
+                                           ConcatMeshWorkerExecutable,
+                                           *task_config[1:])
             else:
                 raise ValueError(f"Invalid task config {task_config}")
         self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
@@ -1217,10 +1291,10 @@ class PipelineMeshWorkerExecutable:
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.BROADCAST:
                 timers("resharding_broadcast").start()
-                self.worker.run_resharding_broadcast_task(instruction.task_uuid,
-                                                          instruction.input_uuids
-                                                          if instruction.input_uuids is not None
-                                                          else instruction.output_uuids)
+                self.worker.run_resharding_broadcast_task(
+                    instruction.task_uuid,
+                    instruction.input_uuids if instruction.input_uuids
+                    is not None else instruction.output_uuids)
                 timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()
@@ -1228,7 +1302,8 @@ class PipelineMeshWorkerExecutable:
                 timers("free").suspend()
 
         for timer_name in [
-                "compute", "resharding_send", "resharding_recv", "resharding_broadcast", "free"
+                "compute", "resharding_send", "resharding_recv",
+                "resharding_broadcast", "free"
         ]:
             if timer_name in timers:
                 timers(timer_name).stop()

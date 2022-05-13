@@ -3,7 +3,7 @@ import logging
 import threading
 
 from jax import linear_util as lu
-from jax.core import gensym, new_jaxpr_eqn
+from jax.core import gensym
 
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
@@ -12,8 +12,7 @@ from alpa.pipeline_parallel.decentralized_distributed_runtime import (
 from alpa.pipeline_parallel.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
-from alpa.pipeline_parallel.schedules import (GpipeSchedule,
-                                              PipeDreamFlush,
+from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_protos,
@@ -29,7 +28,7 @@ from alpa.pipeline_parallel.apply_grad import (
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
-from alpa.util import trace_jaxpr_with_micro_batch, OrderedSet
+from alpa.util import get_var_mapping, trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -48,28 +47,31 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
             "expected type: `VirtualPhysicalMesh`.")
 
     # Trace the function to get the jaxpr
-    num_micro_batches = global_config.num_micro_batches
-    if num_micro_batches is None:
+    num_microbatch = global_config.num_micro_batches
+    if num_microbatch is None:
         logger.warning("num microbatch is unset. Use 1 by default.")
-        num_micro_batches = 1
+        num_microbatch = 1
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
-        fun, batch_invars, num_micro_batches, avals)
+        fun, batch_invars, num_microbatch, avals)
 
     gensym_func = gensym([closed_jaxpr.jaxpr])
 
     # Split the jaxpr into compute_grad and apply_grad
-    closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
-        split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func))
-    if barrier.params['name'] == "" and num_micro_batches > 1:
-        barrier = new_jaxpr_eqn(list(compute_grad_jaxpr.jaxpr.outvars),
-                                list(compute_grad_jaxpr.jaxpr.outvars),
-                                barrier.primitive, barrier.params)
+    (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
+     microbatch_bound) = split_compute_grad_and_apply_grad(
+         closed_jaxpr, gensym_func, num_microbatch)
     inference_mode = (global_config.pipeline_parallel_schedule == "inference")
+    # FIXME(yonghao): use apply grad jaxpr returned by this function
+    batch_dim = 0
+    (reduction_vector, post_microbatch_bound,
+     _apply_grad_jaxpr) = _get_full_batch_apply_grad(fun, avals, batch_invars,
+                                                     microbatch_bound,
+                                                     num_microbatch, batch_dim)
 
-    if num_micro_batches > 1:
+    if num_microbatch > 1:
         (acc_grad_jaxpr, acc_grad_dict,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-            compute_grad_jaxpr, gensym_func)
+             compute_grad_jaxpr, reduction_vector, gensym_func)
     else:
         acc_grad_jaxpr = compute_grad_jaxpr
         acc_grad_dict = {x: x for x in compute_grad_jaxpr.jaxpr.outvars}
@@ -98,38 +100,38 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
-        jax_pipeline_layers, apply_grad_jaxpr, barrier, acc_grad_dict,
-        global_invars, global_outvars, donated_invars, donation_mapping,
-        num_micro_batches, gensym_func, inference_mode)
+         jax_pipeline_layers, apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
+         global_invars, global_outvars, donated_invars, donation_mapping,
+         reduction_vector, num_microbatch, gensym_func, inference_mode)
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
      logical_mesh_shapes,
      autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-        jax_pipeline_layers,
-        devices,
-        donation_mapping,
-        acc_grad_outvars,
-        num_micro_batches,
-        batch_size,
-        jax_apply_layers=jax_apply_layers,
-        apply_grad_global_info=apply_grad_global_info,
-        pipeline_stage_mode=global_config.pipeline_stage_mode,
-        logical_mesh_search_space=global_config.logical_mesh_search_space,
-        cache_compute_cost=global_config.cache_compute_cost,
-        forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-        submesh_shapes=global_config.sub_physical_mesh_shapes,
-        logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-        autosharding_option_dicts=global_config.
-        submesh_autosharding_option_dicts,
-        inference_mode=inference_mode)
+         jax_pipeline_layers,
+         devices,
+         donation_mapping,
+         acc_grad_outvars,
+         num_microbatch,
+         batch_size,
+         jax_apply_layers=jax_apply_layers,
+         apply_grad_global_info=apply_grad_global_info,
+         pipeline_stage_mode=global_config.pipeline_stage_mode,
+         logical_mesh_search_space=global_config.logical_mesh_search_space,
+         cache_compute_cost=global_config.cache_compute_cost,
+         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
+         submesh_shapes=global_config.sub_physical_mesh_shapes,
+         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
+         autosharding_option_dicts=global_config.
+         submesh_autosharding_option_dicts,
+         inference_mode=inference_mode)
     num_meshes = len(sliced_virtual_meshes)
 
     # Process apply_gradient and donation
     (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
      global_outvars, donated_invars) = process_apply_gradient(
-        apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_stages,
-        stage_to_mesh, gensym_func, num_micro_batches, num_meshes,
-        global_invars, global_outvars, donated_invars)
+         apply_grad_jaxpr, microbatch_bound, acc_grad_dict, jax_pipeline_stages,
+         stage_to_mesh, gensym_func, num_microbatch, num_meshes, global_invars,
+         global_outvars, donated_invars, reduction_vector)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
 
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
@@ -142,17 +144,17 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         schedule = GpipeSchedule(dependency=dependency,
                                  meshes=sliced_virtual_meshes,
                                  apply_grad_placement=apply_grad_placement,
-                                 num_batch=num_micro_batches)
+                                 num_batch=num_microbatch)
     elif global_config.pipeline_parallel_schedule == "1f1b":
         schedule = PipeDreamFlush(dependency=dependency,
                                   meshes=sliced_virtual_meshes,
                                   apply_grad_placement=apply_grad_placement,
-                                  num_batch=num_micro_batches)
+                                  num_batch=num_microbatch)
     elif global_config.pipeline_parallel_schedule == "inference":
         schedule = InferenceSchedule(dependency=dependency,
                                      meshes=sliced_virtual_meshes,
                                      apply_grad_placement=apply_grad_placement,
-                                     num_batch=num_micro_batches)
+                                     num_batch=num_microbatch)
     else:
         raise RuntimeError(f"Unrecognized pipeline parallel schedule. "
                            f"Got {global_config.pipeline_parallel_schedule}. "
@@ -163,9 +165,9 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
     xla_stages, total_flops = shard_each_stage(
         jax_all_stages, sliced_virtual_meshes, schedule, n_stages, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
-        num_micro_batches, logical_mesh_shapes, autosharding_option_dicts,
+        num_microbatch, logical_mesh_shapes, autosharding_option_dicts,
         memory_budget_per_device, gensym_func)
-    total_flops *= num_micro_batches
+    total_flops *= num_microbatch
 
     # Debug use: only compile Hlo, even without enough device.
     if global_config.debug_with_local_runtime:
@@ -182,16 +184,21 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
-                                         global_invars=global_invars,
-                                         grad_dummy_invars=grad_in_to_out,
-                                         global_outvars=global_outvars,
-                                         physical_meshes=physical_meshes,
-                                         dependency=dependency,
-                                         schedule=schedule,
-                                         is_batch=batch_invars,
-                                         num_batch=num_micro_batches,
-                                         flop_count=total_flops)
+    global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
+        global_outvars, reduction_vector, microbatch_bound,
+        post_microbatch_bound, gensym_func)
+    jp = DecentralizedDistributedRuntime(
+        pipeline_stages=xla_stages,
+        global_invars=global_invars,
+        grad_dummy_invars=grad_in_to_out,
+        global_outvars=global_outvars,
+        physical_meshes=physical_meshes,
+        dependency=dependency,
+        schedule=schedule,
+        is_batch=batch_invars,
+        num_batch=num_microbatch,
+        flop_count=total_flops,
+        concat_vars_mapping=concat_vars_mapping)
 
     def ret_func(*args):
         return jp.run(*args)
@@ -202,7 +209,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
-                     acc_grad_outvars, donate_invars_dict, num_micro_batches,
+                     acc_grad_outvars, donate_invars_dict, num_microbatch,
                      logical_mesh_shapes, autosharding_option_dicts,
                      memory_budget_per_device, gensym_func):
     """Run intra-op parallelism compilation for a stage."""
@@ -259,7 +266,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "logical_mesh": logical_mesh,
                 "return_mode": "stage_protos",
                 "as_option": autosharding_option,
-                "num_micro_batches": num_micro_batches,
+                "num_micro_batches": num_microbatch,
                 "memory_budget_per_device": memory_budget_per_device,
             }
             compile_workers.submit(compile_fn,
@@ -270,7 +277,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         else:
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
-                donatable_dict[mesh_idx], acc_grad_outvars, num_micro_batches,
+                donatable_dict[mesh_idx], acc_grad_outvars, num_microbatch,
                 logical_mesh, autosharding_option, memory_budget_per_device)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
@@ -314,11 +321,11 @@ def launch_physical_meshes(virtual_meshes):
 
 
 def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
-                                             barrier, acc_grad_dict,
+                                             microbatch_bound, acc_grad_dict,
                                              global_invars, global_outvars,
                                              donated_invars, donation_mapping,
-                                             num_microbatch, gensym_func,
-                                             inference_mode):
+                                             reduction_vector, num_microbatch,
+                                             gensym_func, inference_mode):
     if inference_mode:
         num_layers = len(pipeline_layers)
         num_mesh = num_layers
@@ -329,13 +336,11 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         num_mesh = num_layers // 2
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
-    (layers, _, _, apply_grad_placement, _,
-     donated_invars) = process_apply_gradient(apply_grad_jaxpr, barrier,
-                                              acc_grad_dict, pipeline_layers,
-                                              layer_to_mesh, gensym_func,
-                                              num_microbatch, num_mesh,
-                                              global_invars,
-                                              global_outvars, donated_invars)
+    (layers, _, _,
+     apply_grad_placement, _, donated_invars) = process_apply_gradient(
+         apply_grad_jaxpr, microbatch_bound, acc_grad_dict, pipeline_layers,
+         layer_to_mesh, gensym_func, num_microbatch, num_mesh, global_invars,
+         global_outvars, donated_invars, reduction_vector)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)
@@ -344,3 +349,52 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         wrap_layers[mesh_idx] = layers[layer_idx - num_layers]
     apply_grad_global_info = apply_grad_donation, global_outvars
     return wrap_layers, apply_grad_global_info
+
+
+# TODO(yonghao): the reduction vector should be created by a more careful analysis.
+def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars,
+                               microbatch_bound, num_microbatch, batch_dim):
+    # Trace and split a non-microbatch version for the correct shape of
+    # Global output and apply grad
+    dummy_microbatch = 1
+    stores = [lu.Store() for _ in fun.stores]
+    clone = lu.WrappedFun(fun.f, fun.transforms, stores, fun.params)
+    closed_jaxpr, _, _ = trace_jaxpr_with_micro_batch(clone, batch_invars,
+                                                      dummy_microbatch, avals)
+    gensym_func = gensym([closed_jaxpr.jaxpr])
+    (closed_jaxpr, _, apply_grad_jaxpr,
+     dummy_microbatch_bound) = (split_compute_grad_and_apply_grad(
+         closed_jaxpr, gensym_func, num_microbatch))
+    reduced_vector = []
+    for mb_var, var in zip(microbatch_bound.outvars,
+                           dummy_microbatch_bound.outvars):
+        microbatch_shape = mb_var.aval.shape
+        batch_shape = var.aval.shape
+        if microbatch_shape != batch_shape:
+            expected_microbatched_shape = list(batch_shape)
+            assert expected_microbatched_shape[batch_dim] % num_microbatch == 0
+            expected_microbatched_shape[batch_dim] //= num_microbatch
+            assert tuple(expected_microbatched_shape) == microbatch_shape
+            if len(apply_grad_jaxpr.eqns) > 0:
+                raise NotImplementedError(
+                    "apply gradient with not reduced input is not supported yet."
+                )
+        reduced_vector.append(microbatch_shape == batch_shape)
+
+    return reduced_vector, dummy_microbatch_bound, apply_grad_jaxpr
+
+
+def _rewrite_global_outvars_post_concate(global_outvars, reduction_vector,
+                                         microbatch_bound,
+                                         post_microbatch_bound, gensym_func):
+    concat_vars_mapping = {}
+    for idx, reduce in enumerate(reduction_vector):
+        if not reduce:
+            var = microbatch_bound.outvars[idx]
+            actual_aval = post_microbatch_bound.outvars[idx].aval
+            concat_vars_mapping[gensym_func(actual_aval)] = var
+    reversed_mapping = {v: k for k, v in concat_vars_mapping.items()}
+    global_outvars = [
+        get_var_mapping(reversed_mapping, v) for v in global_outvars
+    ]
+    return global_outvars, concat_vars_mapping

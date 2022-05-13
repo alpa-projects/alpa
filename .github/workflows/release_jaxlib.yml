@@ -60,7 +60,7 @@ jobs:
     - name: Publish CUDA${{ matrix.cuda }}
       run: |
         echo "Move to self-hosted pypi"
-        ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl
+        ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
         mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
       env:
         CUDA_VERSION: ${{ matrix.cuda }}

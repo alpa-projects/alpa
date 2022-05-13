@@ -1,6 +1,5 @@
 """Generate callables that combines intra- and inter-op parallelisms."""
 import logging
-import threading
 
 from jax import linear_util as lu
 from jax.core import gensym
@@ -9,7 +8,7 @@ from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.decentralized_distributed_runtime import (
     DecentralizedDistributedRuntime)
-from alpa.pipeline_parallel.device_mesh_group import (
+from alpa.device_mesh_group import (
     DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
@@ -38,13 +37,12 @@ logger.setLevel(logging.INFO)
 def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                                 donated_invars, batch_invars, devices,
                                 memory_budget_per_device, *avals):
-    """3d parallel combining pipelining and 2d sharding."""
-    if not (isinstance(
-            devices,
-            (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))):
+    """Pipeshard parallel combining pipelining and 2d sharding."""
+    if not isinstance(devices, VirtualPhysicalMesh):
         raise RuntimeError(
             f"Unrecognized type of `devices`, got: {type(devices)},"
             "expected type: `VirtualPhysicalMesh`.")
+    virtual_mesh = devices
 
     # Trace the function to get the jaxpr
     num_microbatch = global_config.num_micro_batches
@@ -108,7 +106,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
      logical_mesh_shapes,
      autosharding_option_dicts) = cluster_layers_and_slice_mesh(
          jax_pipeline_layers,
-         devices,
+         virtual_mesh,
          donation_mapping,
          acc_grad_outvars,
          num_microbatch,
@@ -176,11 +174,9 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
                             global_outvars=global_outvars,
                             get_hlo_texts=True)
 
-    # Launch all physical meshes in parallel
-    if isinstance(devices, DistributedPhysicalDeviceMeshGroup):
-        physical_meshes = devices
-    else:
-        physical_meshes = launch_physical_meshes(sliced_virtual_meshes)
+    # Launch the physical mesh group
+    if virtual_mesh.launched_physical_mesh_group is None:
+        virtual_mesh.launch_physical_mesh_group(sliced_virtual_meshes)
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
@@ -192,7 +188,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
         global_outvars=global_outvars,
-        physical_meshes=physical_meshes,
+        physical_meshes=virtual_mesh.launched_physical_mesh_group,
         dependency=dependency,
         schedule=schedule,
         is_batch=batch_invars,
@@ -301,24 +297,6 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         compile_workers.shutdown()
 
     return xla_stages, total_flops
-
-
-def launch_physical_meshes(virtual_meshes):
-    """Launch physical meshes in parallel."""
-    physical_meshes = [None] * len(virtual_meshes)
-
-    def launch_func(i):
-        physical_meshes[i] = virtual_meshes[i].get_physical_mesh()
-
-    threads = []
-    for i in range(len(virtual_meshes)):
-        t = threading.Thread(target=launch_func, args=(i,))
-        t.start()
-        threads.append(t)
-    for i in range(len(virtual_meshes)):
-        threads[i].join()
-
-    return DistributedPhysicalDeviceMeshGroup(physical_meshes)
 
 
 def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,

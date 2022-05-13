@@ -7,6 +7,7 @@ import logging
 from operator import attrgetter
 import os
 import re
+import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
@@ -793,15 +794,6 @@ class PhysicalDeviceMesh(ABC):
 
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
-    def get_default_logical_mesh(self):
-        """Return the default logical mesh."""
-        if self.num_hosts == 1:
-            return self.get_logical_mesh(
-                (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 1])
-        else:
-            return self.get_logical_mesh(
-                (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.01])
-
     ##### Executable Related Functions #####
     @abstractmethod
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
@@ -966,15 +958,17 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     """
 
     def __init__(self,
-                 devices: Union[Sequence[Sequence[int]]] = None,
-                 host_ids: Sequence[int] = None,
-                 host_info: Sequence[dict] = None,
-                 head_ip: str = None,
-                 num_devices_per_host: int = None):
+                 host_ids: Sequence[int],
+                 host_info: Sequence[dict],
+                 head_ip: str,
+                 num_devices_per_host: int,
+                 parent: VirtualPhsicalMesh = None,
+                 devices: Sequence[Sequence[int]] = None):
         self.host_ids = host_ids  # The indices of hosts in the global DeviceCluster
         self.host_info = host_info
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
+        self.parent = parent
         self.workers = None
         self.launched = False
         self.service_server = None
@@ -1086,6 +1080,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             host_info=self.host_info,
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
+            parent=self,
             devices=self.devices)
 
     ##### Buffer Related Functions #####
@@ -1539,15 +1534,20 @@ class VirtualPhysicalMesh:
     """
 
     def __init__(self,
-                 host_ids: Sequence[int] = None,
-                 host_info: Sequence[dict] = None,
-                 head_ip: str = None,
-                 num_devices_per_host: int = 1,
+                 host_ids: Sequence[int],
+                 host_info: Sequence[dict],
+                 head_ip,
+                 num_devices_per_host,
+                 parent: VirtualPhysicalMesh = None,
                  devices: Sequence[Sequence[int]] = None):
         self.host_ids = host_ids  # The indices of hosts in the global DeviceCluster
         self.host_info = host_info
         self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
+        self.parent = parent
+
+        self.launched_physical_mesh = None
+        self.launched_physical_mesh_group = None
 
         if devices is not None:
             if len(devices) != len(host_ids):
@@ -1601,7 +1601,8 @@ class VirtualPhysicalMesh:
                 host_ids=host_ids,
                 host_info=host_info,
                 head_ip=self.head_ip,
-                num_devices_per_host=self.num_devices_per_host)
+                num_devices_per_host=self.num_devices_per_host,
+                parent=self)
         else:
             # slicing along the device dimension
 
@@ -1614,6 +1615,7 @@ class VirtualPhysicalMesh:
                                        host_info=self.host_info,
                                        head_ip=self.head_ip,
                                        num_devices_per_host=len(indices[0]),
+                                       parent=self,
                                        devices=indices)
 
     def slice_2d(self, host_indices, device_indices):
@@ -1629,6 +1631,7 @@ class VirtualPhysicalMesh:
                                    host_info=host_info,
                                    head_ip=self.head_ip,
                                    num_devices_per_host=len(device_indices[0]),
+                                   parent=self,
                                    devices=device_indices)
 
     def slice_profiling_submeshes(self, submesh_num_hosts,
@@ -1651,15 +1654,6 @@ class VirtualPhysicalMesh:
                                                    device_indices))
         return all_submeshes
 
-    def get_physical_mesh(self):
-        """Convert to a physical mesh (which will request resources from Ray)."""
-        return DistributedPhysicalDeviceMesh(
-            host_ids=self.host_ids,
-            host_info=self.host_info,
-            head_ip=self.head_ip,
-            num_devices_per_host=self.num_devices_per_host,
-            devices=self.devices)
-
     def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
         """Generate a logical mesh."""
         id_mesh = np.arange(self.num_devices).reshape(mesh_shape)
@@ -1667,18 +1661,106 @@ class VirtualPhysicalMesh:
         mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
-    def get_default_logical_mesh(self):
-        """Return the default logical mesh."""
-        if self.num_hosts == 1:
-            return self.get_logical_mesh(
-                (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 1])
-        else:
-            return self.get_logical_mesh(
-                (self.num_hosts, self.num_devices_per_host), [1, 1], [1, 0.1])
+    def launch_physical_mesh(self):
+        """Convert to a physical mesh (which will request resources from Ray)."""
+        assert self.launched_physical_mesh == None
+        
+        self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
+            host_ids=self.host_ids,
+            host_info=self.host_info,
+            head_ip=self.head_ip,
+            num_devices_per_host=self.num_devices_per_host,
+            parent=self,
+            devices=self.devices)
+        return self.launched_physical_mesh
+    
+    def launch_physical_mesh_groups(self, sliced_virtual_meshes):
+        assert self.launched_physical_mesh_group == None
+        
+        # TODO(lmzheng): check validity
 
-    def get_1d_logical_mesh(self):
-        """Return a 1D logical mesh."""
-        return self.get_logical_mesh((1, self.num_devices))
+        # Launch physical meshes in parallel
+        physical_meshes = [None] * len(sliced_virtual_meshes)
+    
+        def launch_func(i):
+            physical_meshes[i] = sliced_virtual_meshes[i].launch_physical_mesh()
+    
+        threads = []
+        for i in range(len(sliced_virtual_meshes)):
+            t = threading.Thread(target=launch_func, args=(i,))
+            t.start()
+            threads.append(t)
+        for i in range(len(sliced_virtual_meshes)):
+            threads[i].join()
+    
+        return DistributedPhysicalDeviceMeshGroup(physical_meshes)
+
+
+class DistributedPhysicalDeviceMeshGroup:
+    """A list of physical devices that forms a pipeline."""
+
+    def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh]):
+        self.meshes = list(meshes)
+        self.collective_groups: List[List[Any]] = [
+            [None for _ in range(len(self))] for _ in range(len(self))
+        ]
+
+    def __getitem__(self, index):
+        return self.meshes[index]
+
+    def __len__(self):
+        return len(self.meshes)
+
+    def index(self, *args, **kwargs):
+        return self.meshes.index(*args, **kwargs)
+
+    def establish_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
+        """Establish NCCL group between two meshes."""
+        assert src_mesh_id < dst_mesh_id
+        if self.collective_groups[src_mesh_id][dst_mesh_id] is not None:
+            # Already established
+            return
+        src_mesh = self.meshes[src_mesh_id]
+        dst_mesh = self.meshes[dst_mesh_id]
+        device_strs = OrderedSet(src_mesh.device_strs + dst_mesh.device_strs)
+        cg = CollectiveGroup(device_strs, src_mesh, dst_mesh)
+        if global_config.eagerly_create_communicators:
+            cg.instantiate_now()
+        else:
+            cg.instantiate()
+        self.collective_groups[src_mesh_id][dst_mesh_id] = cg
+        self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+
+    def destroy_collective_groups(self):
+        for i in range(len(self)):
+            for j in range(len(self)):
+                if i < j and self.collective_groups[i][j] is not None:
+                    self.collective_groups[i][j].destroy()
+
+    def shutdown(self):
+        self.destroy_collective_groups()
+        for mesh in self.meshes:
+            mesh.shutdown()
+
+    def exception_shutdown(self):
+        """In this shutdown, some actors might have died."""
+        # recycle collective group info
+        for i in range(len(self)):
+            for j in range(len(self)):
+                if i < j and self.collective_groups[i][j]:
+                    group_name = self.collective_groups[i][j].group_name
+                    # TODO(Hao): move this part of recycling to ray.util.collective instead of here.
+                    name = "info_" + group_name
+                    try:
+                        store = ray.get_actor(name)
+                        ray.kill(store)
+                    except ValueError:
+                        pass
+        # TODO(Hao): recycle the NCCLUniqueID named actor. Their name is MD5 hashed.
+        #            each of them will takes 1 CPU.
+        # recycle info actors
+        for mesh in self.meshes:
+            mesh.shutdown(forced=True)
 
 
 def set_jax_env_on_driver(use_cpu_on_driver=True):
@@ -1729,7 +1811,7 @@ class DeviceCluster:
     def num_devices(self):
         return sum(self.host_num_devices)
 
-    def get_physical_mesh(self,
+    def launch_physical_mesh(self,
                           host_ids: Sequence[int] = None,
                           num_devices_per_host: int = None):
         """
@@ -1755,8 +1837,9 @@ class DeviceCluster:
         return DistributedPhysicalDeviceMesh(
             host_ids=host_ids,
             host_info=host_info,
+            head_ip=self.head_ip,
             num_devices_per_host=num_devices_per_host,
-            head_ip=self.head_ip)
+            parent=self)
 
     def get_virtual_physical_mesh(self,
                                   host_ids: Sequence[int] = None,
@@ -1777,8 +1860,9 @@ class DeviceCluster:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
+                                   head_ip=self.head_ip,
                                    num_devices_per_host=num_devices_per_host,
-                                   head_ip=self.head_ip)
+                                   parent=self)
 
     def profile_all(self, *args, **kwargs):
         """Profile computation and communication cost for all submesh shapes of this cluster."""

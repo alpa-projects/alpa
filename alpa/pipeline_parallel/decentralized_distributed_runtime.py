@@ -14,6 +14,7 @@ import ray.exceptions
 
 from alpa.device_mesh import MeshHostWorker, DistributedArray, ReplicatedDistributedArray
 from alpa.global_env import global_config
+from alpa.device_mesh import DistributedPhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
@@ -23,7 +24,6 @@ from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
 from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, SymbolicBroadcastReshardingTask
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
-from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
 from alpa.serialization import LoadInfo
 from alpa.timer import timers
 from alpa.util import (DisjointDict, OrderedSet, get_shard_shape, get_microbatch_sharding_spec,

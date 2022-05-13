@@ -109,7 +109,7 @@ stages = mark_missing_vars_in_backward_computation_pipeline_marks(stages, comput
 #     print(stage.closed_jaxpr())
 '''----------------profile cost c----------------'''
 # round = 1
-# physical_mesh = DeviceCluster().get_physical_mesh()
+# physical_mesh = DeviceCluster().launch_physical_mesh()
 # tn = "compute1"
 # timers(tn).start()
 # for t in range(round):
@@ -126,9 +126,9 @@ stages = mark_missing_vars_in_backward_computation_pipeline_marks(stages, comput
 src = stages[0]
 dst = stages[1]
 src_mesh = virtual_mesh.slice_1d(1, [[0, 1]])
-src_phy_mesh = src_mesh.get_physical_mesh()
+src_phy_mesh = src_mesh.launch_physical_mesh()
 dst_mesh = virtual_mesh.slice_1d(1, [[2, 3]])
-dst_phy_mesh = dst_mesh.get_physical_mesh()
+dst_phy_mesh = dst_mesh.launch_physical_mesh()
 
 
 def all_outvar(stages):

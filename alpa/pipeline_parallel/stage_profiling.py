@@ -248,7 +248,7 @@ class ProfileWorker:
     """
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
-        self.mesh = virtual_mesh.get_physical_mesh()
+        self.mesh = virtual_mesh.launch_physical_mesh()
         self.virtual_mesh = virtual_mesh
 
     def _profile_impl(self, stage_id, compiled_output, profile_info,
@@ -339,7 +339,7 @@ class ProfileWorker:
     def restart(self, forced):
         """Restart the physical mesh."""
         self.mesh.shutdown(forced=forced)
-        self.mesh = self.virtual_mesh.get_physical_mesh()
+        self.mesh = self.virtual_mesh.launch_physical_mesh()
 
 
 class ProfileWorkerPool(BaseWorkerPoolWrapper):

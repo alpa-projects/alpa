@@ -13,8 +13,6 @@ from alpa.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
-from alpa.pipeline_parallel.device_mesh_group import (
-    DistributedPhysicalDeviceMeshGroup)
 from alpa.pipeline_parallel.layer_stats import eqn_flops
 from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                     compile_all, profile_all)
@@ -485,7 +483,7 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
 
 
 def cluster_layers_and_slice_mesh(
-        layers, devices, donation_mapping, final_outvars, num_micro_batches,
+        layers, virtual_mesh, donation_mapping, final_outvars, num_micro_batches,
         batch_size, jax_apply_layers, apply_grad_global_info,
         pipeline_stage_mode, logical_mesh_search_space, cache_compute_cost,
         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
@@ -515,17 +513,12 @@ def cluster_layers_and_slice_mesh(
         sliced_meshes (List[VirtualPhysicalMesh]): The shapes of all submeshes.
     """
     timers("stage-construction").start()
-    assert isinstance(devices,
-                      (DistributedPhysicalDeviceMeshGroup, VirtualPhysicalMesh))
-    if isinstance(devices, VirtualPhysicalMesh):
+    if virtual_mesh.launched_physical_mesh_group is None:
         given_mesh = False
-        submesh_choices = get_submesh_choices(devices)
-    elif isinstance(devices, DistributedPhysicalDeviceMeshGroup):
+        submesh_choices = get_submesh_choices(virtual_mesh)
+    elif
         given_mesh = True
         submesh_choices = None
-    else:
-        raise ValueError("Devices must be VirtualPhysicalMesh or "
-                         "DistributedPhysicalDeviceMeshGroup.")
 
     if inference_mode:
         num_layers = len(layers)
@@ -545,7 +538,7 @@ def cluster_layers_and_slice_mesh(
             raise NotImplementedError("automatically slicing layers with "
                                       "inference mode is not supported yet.")
         autosharding_configs = get_all_submesh_autosharding_config_choices(
-            devices,
+            virtual_mesh,
             submesh_choices,
             option=logical_mesh_search_space,
             batch_size=batch_size)
@@ -557,10 +550,10 @@ def cluster_layers_and_slice_mesh(
         else:
             cached_result = None
         compute_cost, max_n_succ_stages = get_compute_cost(
-            devices, submesh_choices, autosharding_configs, layers,
+            virtual_mesh, submesh_choices, autosharding_configs, layers,
             donation_mapping, final_outvars, jax_apply_layers,
             apply_grad_global_info, cached_result)
-        _, solution = dp(num_layers, devices.num_devices, num_micro_batches,
+        _, solution = dp(num_layers, virtual_mesh.num_devices, num_micro_batches,
                          submesh_choices, num_autosharding_configs,
                          compute_cost, max_n_succ_stages)
 
@@ -607,22 +600,23 @@ def cluster_layers_and_slice_mesh(
     elif pipeline_stage_mode == "uniform_stage":
         if given_mesh:
             num_stages = num_layers
-            submesh_shapes = [x.shape for x in devices.meshes]
+            submesh_shapes = [x.shape for x in
+                              virtual_mesh.launched_physical_mesh_group.meshes]
             logical_mesh_shapes = submesh_shapes
         else:
-            num_devices = devices.num_devices
+            num_devices = virtual_mesh.num_devices
             num_stages = num_layers
 
             assert num_devices >= num_stages, "No enough devices"
             assert num_devices % num_stages == 0
             num_devices_per_mesh = num_devices // num_stages
-            if num_devices_per_mesh > devices.num_devices_per_host:
-                assert num_devices_per_mesh % devices.num_devices_per_host == 0
+            if num_devices_per_mesh > virtual_mesh.num_devices_per_host:
+                assert num_devices_per_mesh % virtual_mesh.num_devices_per_host == 0
                 submesh_shape = (num_devices_per_mesh //
-                                 devices.num_devices_per_host,
-                                 devices.num_devices_per_host)
+                                 virtual_mesh.num_devices_per_host,
+                                 virtual_mesh.num_devices_per_host)
             else:
-                assert devices.num_devices_per_host % num_devices_per_mesh == 0
+                assert virtual_mesh.num_devices_per_host % num_devices_per_mesh == 0
                 submesh_shape = (1, num_devices_per_mesh)
             submesh_shapes = [submesh_shape] * num_stages
             logical_mesh_shapes = [submesh_shape] * num_stages
@@ -633,9 +627,10 @@ def cluster_layers_and_slice_mesh(
         raise ValueError(f"Invalid pipeline stage mode: {pipeline_stage_mode}")
 
     if given_mesh:
-        sliced_meshes = [mesh.get_virtual_physical_mesh() for mesh in devices]
+        sliced_meshes = [mesh.get_virtual_physical_mesh()
+                         for mesh in virtual_mesh.launched_physical_mesh_group]
     else:
-        sliced_meshes = get_sliced_virtual_submeshes(devices, submesh_shapes)
+        sliced_meshes = get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes)
 
     num_forward_stages = len(forward_stage_layer_ids)
 

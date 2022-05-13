@@ -652,7 +652,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
 
 def profile_dot(dot_range, device_cluster, cache_filename):
     """Profile the compute cost of dot."""
-    physical_mesh = device_cluster.get_physical_mesh(host_ids=[0],
+    physical_mesh = device_cluster.launch_physical_mesh(host_ids=[0],
                                                      num_devices_per_host=1)
 
     # Profile dot
@@ -778,7 +778,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
             for spec in all_specs:
                 op_infos.append((op_type, spec))
 
-        physical_mesh = tmp_mesh.get_physical_mesh()
+        physical_mesh = tmp_mesh.launch_physical_mesh()
         available_memory_per_device = physical_mesh.get_available_memory()
 
         def get_op_info_key(op_info):  # return (op_type, replica_group)
@@ -834,7 +834,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
                 while physical_mesh is None:
                     try:
                         time.sleep(10)
-                        physical_mesh = tmp_mesh.get_physical_mesh()
+                        physical_mesh = tmp_mesh.launch_physical_mesh()
                     except ray.exceptions.RayError:
                         ray.shutdown()
                         ray.init(address="auto")

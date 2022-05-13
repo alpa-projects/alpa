@@ -55,7 +55,7 @@ def benchmark_mlp_one_case(benchmark_case, use_profiling):
         physical_mesh = LocalPhysicalDeviceMesh(jax.devices())
     else:
         device_cluster = DeviceCluster()
-        physical_mesh = device_cluster.get_physical_mesh()
+        physical_mesh = device_cluster.launch_physical_mesh()
     assert physical_mesh.num_devices == dp_size * tensor_mp_size
     logical_mesh = physical_mesh.get_logical_mesh([dp_size, tensor_mp_size])
     set_parallelize_options(devices=logical_mesh)

@@ -14,7 +14,7 @@ from alpa.util import OrderedSet
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
-from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
+from alpa.device_mesh import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.computation import (PipelineComputation,
                                                 XlaShardedPipelineComputation)
 

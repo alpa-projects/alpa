@@ -35,7 +35,7 @@ def test_multi_host_all_reduce():
     device_cluster = DeviceCluster()
 
     print("Device mesh")
-    device_mesh = device_cluster.get_physical_mesh()
+    device_mesh = device_cluster.launch_physical_mesh()
 
     def get_hlo_module_proto():
         backend = xla_client._gpu_backend_factory()
@@ -85,7 +85,7 @@ def test_multi_host_auto_sharding():
     global_config.shard_parallel_strategy = "auto_sharding"
 
     device_cluster = DeviceCluster()
-    physical_mesh = device_cluster.get_physical_mesh()
+    physical_mesh = device_cluster.launch_physical_mesh()
     num_devices = len(physical_mesh.host_ids) * physical_mesh.num_devices_per_host
     logical_mesh = physical_mesh.get_logical_mesh([1, num_devices], [1, 1], [1, 1])
 

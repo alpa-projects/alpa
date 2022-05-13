@@ -54,7 +54,7 @@ class DistSaveLoadTest(unittest.TestCase):
                 "This unit test requires a cluster with at least 4 devices! ")
         host_num = min(len(device_cluster.host_info), 4)
         device_per_host = 4 // host_num
-        physical_mesh = device_cluster.get_physical_mesh(
+        physical_mesh = device_cluster.launch_physical_mesh(
             list(range(host_num)), device_per_host)
         logical_mesh = physical_mesh.get_logical_mesh([2, 2])
 

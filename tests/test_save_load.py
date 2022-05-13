@@ -31,6 +31,7 @@ class SaveLoadTest(unittest.TestCase):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
+                                num_micro_batches=2,
                                 pipeline_stage_mode="uniform_stage")
 
         # Init model and optimizer
@@ -48,7 +49,6 @@ class SaveLoadTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 2
         serial_train_step = get_mlp_train_step(False, None, None, False)
         parallel_train_step = get_mlp_train_step(True, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)

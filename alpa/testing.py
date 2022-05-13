@@ -248,7 +248,8 @@ class PipelineBasicTest(unittest.TestCase):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
-                                pipeline_stage_mode=pipeline_stage_mode)
+                                pipeline_stage_mode=pipeline_stage_mode,
+                                num_micro_batches=4)
 
         # Init model and optimizer
         batch_size = 64
@@ -265,7 +266,6 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 4
         serial_train_step = get_mlp_train_step(False,
                                                None,
                                                None,
@@ -321,6 +321,7 @@ class PipelineBasicTest(unittest.TestCase):
 
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
+                                num_micro_batches=2,
                                 pipeline_stage_mode=pipeline_stage_mode,
                                 cache_compute_cost=cache_compute_cost,
                                 forward_stage_layer_ids=forward_stage_layer_ids,
@@ -346,7 +347,6 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        global_config.num_micro_batches = 2
         serial_train_step = get_bert_layer_train_step(False,
                                                       None,
                                                       None,

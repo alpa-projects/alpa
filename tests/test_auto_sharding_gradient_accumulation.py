@@ -46,8 +46,6 @@ class GradAccumulationTest(unittest.TestCase):
                 logical_mesh = physical_mesh.get_logical_mesh([1, 4], [1, 1],
                                                               [1, 1])
 
-        set_parallelize_options(logical_mesh)
-
         as_option.allow_all_to_all = False
 
         batch_size = 256
@@ -89,7 +87,7 @@ class GradAccumulationTest(unittest.TestCase):
         optimizer_expected = train_step(optimizer, batch, model.apply)
 
         # Distributed execution
-        global_config.num_micro_batches = num_micro_batches
+        set_parallelize_options(logical_mesh, num_micro_batches=num_micro_batches)
         train_step_parallel = parallelize(train_step)
         executable = train_step_parallel.get_executable(optimizer, batch,
                                                         model.apply)

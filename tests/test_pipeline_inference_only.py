@@ -20,6 +20,7 @@ class PipelineInferenceTest(PipelineBasicTest):
         virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
         set_parallelize_options(devices=virtual_mesh,
                                 strategy="pipeshard_parallel",
+                                num_micro_batches=4,
                                 pipeline_parallel_schedule="inference",
                                 pipeline_stage_mode=pipeline_stage_mode)
 
@@ -38,7 +39,6 @@ class PipelineInferenceTest(PipelineBasicTest):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 4
         serial_inference_step = get_mlp_inference_step(False, None)
         parallel_inference_step = get_mlp_inference_step(True, manual_pipeline_layer)
         executable = parallel_inference_step.get_executable(state, batch)
@@ -54,6 +54,7 @@ class PipelineInferenceTest(PipelineBasicTest):
 
     def test_pipeline_inference_only(self):
         self.run_mlp_inference()
+
 
 def suite():
     suite = unittest.TestSuite()

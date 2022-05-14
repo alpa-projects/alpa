@@ -27,7 +27,7 @@ echo "Python version $PY_VERSION"
 TF_BRANCH="$4"
 
 git clone -b $TF_BRANCH https://github.com/alpa-projects/tensorflow-alpa.git /build/tensorflow-alpa
-git clone -b hao-test https://github.com/alpa-projects/jax-alpa.git /build/jax
+git clone https://github.com/alpa-projects/jax-alpa.git /build/jax
 cd /build/jax/build
 
 mkdir /build/tmp

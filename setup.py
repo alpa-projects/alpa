@@ -83,6 +83,7 @@ install_require_list = [
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp",
     "tensorstore",
+    "numpy<1.22",
     "numba",
 ]
 

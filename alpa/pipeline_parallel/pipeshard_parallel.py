@@ -8,8 +8,7 @@ from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.decentralized_distributed_runtime import (
     DecentralizedDistributedRuntime)
-from alpa.device_mesh_group import (
-    DistributedPhysicalDeviceMeshGroup)
+from alpa.device_mesh import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)

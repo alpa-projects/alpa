@@ -41,7 +41,8 @@ from alpa.util import (benchmark_func, list_gpu_info,
                        jax_tensor_set, xla_buffer_to_jax_tensor,
                        jax_tensor_to_xla_buffer, xla_buffer_to_cupy,
                        cupy_to_xla_buffer, is_continuous_subset,
-                       infer_offset_and_n_elements, jax_tensor_index)
+                       infer_offset_and_n_elements, jax_tensor_index,
+                       OrderedSet)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -718,19 +719,25 @@ class PhysicalDeviceMesh(ABC):
 
     ##### Logical Mesh Related Functions #####
     def get_logical_mesh(self,
-                         mesh_shape: Sequence[int],
+                         mesh_shape: Optional[Sequence[int]] = None,
                          mesh_alpha: Optional[float] = None,
                          mesh_beta: Optional[float] = None,
                          mesh_topology: Optional[str] = None,
                          intra_host_bandwidth: Optional[float] = None,
                          inter_host_bandwidth: Optional[float] = None):
         """Return a logical mesh and parameters of the alpha-beta communication cost model."""
+        if mesh_shape is None:
+            mesh_shape = (self.num_hosts, self.num_devices_per_host)
+
         id_mesh = np.arange(self.num_devices).reshape(mesh_shape)
 
         if mesh_topology is None:
-            mesh_alpha = mesh_alpha or (1,) * len(mesh_shape)
-            mesh_beta = mesh_beta or (1,) * len(mesh_shape)
+            # Use the provided mesh_alpha and mesh_beta
+            mesh_alpha = mesh_alpha or (1, 1)
+            mesh_beta = mesh_beta or (1, 0.1)
         elif mesh_topology == "tree":
+            # Derive mesh_alpha and mesh_beta from topology,
+            # intra_host_bandwidth and inter_host_bandwidth
             assert mesh_alpha is None
             assert mesh_beta is None
             mesh_alpha = [1] * 2
@@ -962,7 +969,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                  host_info: Sequence[dict],
                  head_ip: str,
                  num_devices_per_host: int,
-                 parent: VirtualPhsicalMesh = None,
+                 parent: "VirtualPhysicalMesh" = None,
                  devices: Sequence[Sequence[int]] = None):
         self.host_ids = host_ids  # The indices of hosts in the global DeviceCluster
         self.host_info = host_info
@@ -1538,7 +1545,7 @@ class VirtualPhysicalMesh:
                  host_info: Sequence[dict],
                  head_ip,
                  num_devices_per_host,
-                 parent: VirtualPhysicalMesh = None,
+                 parent: "VirtualPhysicalMesh" = None,
                  devices: Sequence[Sequence[int]] = None):
         self.host_ids = host_ids  # The indices of hosts in the global DeviceCluster
         self.host_info = host_info
@@ -1654,16 +1661,23 @@ class VirtualPhysicalMesh:
                                                    device_indices))
         return all_submeshes
 
-    def get_logical_mesh(self, mesh_shape, mesh_alpha=None, mesh_beta=None):
+    def get_logical_mesh(self,
+                         mesh_shape: Optional[Sequence[int]] = None,
+                         mesh_alpha: Optional[float] = None,
+                         mesh_beta: Optional[float] = None):
         """Generate a logical mesh."""
+        if mesh_shape is None:
+            mesh_shape = (self.num_hosts, self.num_devices_per_host)
+
         id_mesh = np.arange(self.num_devices).reshape(mesh_shape)
-        mesh_alpha = mesh_alpha or (1.0,) * len(mesh_shape)
-        mesh_beta = mesh_beta or (1.0,) * len(mesh_shape)
+        mesh_alpha = mesh_alpha or (1, 1)
+        mesh_beta = mesh_beta or (1, 0.1)
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_physical_mesh(self):
         """Convert to a physical mesh (which will request resources from Ray)."""
-        assert self.launched_physical_mesh == None
+        assert self.launched_physical_mesh == None,\
+               "physical mesh can only be launched once"
 
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
@@ -1674,10 +1688,9 @@ class VirtualPhysicalMesh:
             devices=self.devices)
         return self.launched_physical_mesh
 
-    def launch_physical_mesh_groups(self, sliced_virtual_meshes):
-        assert self.launched_physical_mesh_group == None
-
-        # TODO(lmzheng): check validity
+    def get_physical_mesh_group(self, sliced_virtual_meshes):
+        assert self.launched_physical_mesh_group == None,\
+               "physical mesh group can only be launched once"
 
         # Launch physical meshes in parallel
         physical_meshes = [None] * len(sliced_virtual_meshes)
@@ -1693,7 +1706,9 @@ class VirtualPhysicalMesh:
         for i in range(len(sliced_virtual_meshes)):
             threads[i].join()
 
-        return DistributedPhysicalDeviceMeshGroup(physical_meshes)
+        self.launched_physical_mesh_group = (
+            DistributedPhysicalDeviceMeshGroup(physical_meshes))
+        return self.launched_physical_mesh_group
 
 
 class DistributedPhysicalDeviceMeshGroup:
@@ -1716,6 +1731,8 @@ class DistributedPhysicalDeviceMeshGroup:
 
     def establish_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
         """Establish NCCL group between two meshes."""
+        from alpa.pipeline_parallel.cross_mesh_resharding import CollectiveGroup
+
         assert src_mesh_id < dst_mesh_id
         if self.collective_groups[src_mesh_id][dst_mesh_id] is not None:
             # Already established

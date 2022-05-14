@@ -516,7 +516,7 @@ def cluster_layers_and_slice_mesh(
     if virtual_mesh.launched_physical_mesh_group is None:
         given_mesh = False
         submesh_choices = get_submesh_choices(virtual_mesh)
-    elif
+    else:
         given_mesh = True
         submesh_choices = None
 

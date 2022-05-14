@@ -111,7 +111,7 @@ def shard_parallel_callable(
                 logical_mesh_choices = []
                 strategy_config = inp.config
         else:
-            logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
+            logical_mesh_choices = [physical_mesh.get_logical_mesh()]
     elif isinstance(devices, LogicalDeviceMesh):
         physical_mesh = devices.physical_mesh
         logical_mesh_choices = [devices]

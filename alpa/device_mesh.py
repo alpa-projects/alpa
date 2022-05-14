@@ -1692,7 +1692,7 @@ class VirtualPhysicalMesh:
         id_mesh = np.arange(self.num_devices).reshape(mesh_shape)
         mesh_alpha = mesh_alpha or (1, 1)
         mesh_beta = mesh_beta or (1, 0.1)
-        return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
+        return LogicalDeviceMesh(None, id_mesh, mesh_alpha, mesh_beta)
 
     def get_physical_mesh(self):
         """Launch a physical mesh (which will request resources from Ray)."""
@@ -1801,25 +1801,13 @@ class PhysicalDeviceMeshGroup:
             mesh.shutdown(forced=True)
 
 
-def set_jax_env_on_driver(use_cpu_on_driver=True):
-    """Set jax environment flags for the driver process, so the driver
-    process can release GPU memory for the worker processes."""
-
-    # Use cpu backend
-    if use_cpu_on_driver:
-        jax.config.update("jax_platform_name", "cpu")
-
-
-global_cluster = None
-
-
 class DeviceCluster:
     """A ray cluster with GPU devices.
     
     This is the top interface for alpa to interact with ray cluster's resources.
     """
 
-    def __init__(self, use_cpu_on_driver=True):
+    def __init__(self):
         # pylint: disable=import-outside-toplevel
         from ray.worker import _global_node as ray_global_node
         try:
@@ -1843,12 +1831,6 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.host_num_devices.append(int(number))
-
-        set_jax_env_on_driver(use_cpu_on_driver)
-
-        global global_cluster
-        assert global_cluster is None, "Can only create one DeviceCluster" 
-        global_cluster = self
 
     @property
     def num_cpus(self):
@@ -1916,20 +1898,32 @@ class DeviceCluster:
         """Profile computation and communication cost for all submesh shapes of this cluster."""
         return mesh_profiling.profile_all(self, *args, **kwargs)
 
-    def __del__(self):
-        global_cluster = None
 
+global_cluster: DeviceCluster = None
+global_physical_mesh: PhysicalDeviceMesh = None
+global_virtual_physical_mesh: VirtualPhysicalMesh = None
 
-DeviceClass = Union[DeviceCluster, VirtualPhysicalMesh, PhysicalDeviceMesh, LogicalDeviceMesh]
-
-
-def get_global_cluster(create_if_not_exist):
+def set_global_cluster(cluster: DeviceCluster):
     global global_cluster
+    global_cluster = cluster
 
-    if create_if_not_exist and global_cluster is None:
-        global_cluster = DeviceCluster()
-
+def get_global_cluster():
     return global_cluster
+
+def set_global_physical_mesh(mesh: PhysicalDeviceMesh):
+    global global_physical_mesh
+    global_physical_mesh = mesh
+
+def get_global_physical_mesh():
+    return global_physical_mesh
+
+def set_global_virtual_physical_mesh(mesh: VirtualPhysicalMesh):
+    global global_virtual_physical_mesh
+    global_physical_mesh = mesh
+
+def get_global_virtual_physical_mesh():
+    return global_virtual_physical_mesh
+
 
 
 ########################################

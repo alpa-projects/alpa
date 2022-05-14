@@ -15,7 +15,7 @@ from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import alpa
 from alpa.api import parallelize
 from alpa.device_mesh import DeviceCluster
-from alpa.global_env import set_parallelize_options, global_config
+from alpa.global_env import global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.layer_construction import (

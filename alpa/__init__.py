@@ -1,11 +1,12 @@
-from alpa.api import clear_callable_cache, grad, parallelize, value_and_grad
+from alpa.api import init, parallelize, grad, value_and_grad, clear_executable_cache
 from alpa.data_loader import DataLoader, MeshDriverDataLoader
 from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
                               LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, DistributedArray,
                               fetch)
-from alpa.global_env import global_config, set_parallelize_options
+from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
+from alpa.parallel_option import ShardParallel, PipeShardParallel
 from alpa.pipeline_parallel.primitive_def import (mark_pipeline,
                                                   mark_pipeline_jaxpreqn)
 from alpa.pipeline_parallel.layer_construction import (

@@ -23,7 +23,7 @@ import multiprocessing
 import os
 import time
 import traceback
-from typing import Sequence, Optional, Union, Tuple
+from typing import Sequence, Optional, Union, Tuple, Dict
 import warnings
 
 import numpy as np
@@ -31,7 +31,7 @@ from jax._src.lib import xla_client as xc, xla_extension as xe
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 
-from alpa.global_env import global_config, AutoShardingOption
+from alpa.global_env import global_config
 from alpa.measure_record import (StrategyConfig)
 from alpa.timer import timers
 from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
@@ -122,6 +122,52 @@ class LogicalDeviceMesh:
         return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                  self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
                                      other.mesh_alpha, other.mesh_beta))
+
+
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+
+    def __init__(self):
+        # Whether to allow all-gather during re-sharding.
+        self.allow_all_gather = True
+        # Whether to allow all-to-all during re-sharding.
+        self.allow_all_to_all = True
+        # Whether to allow replicated parameters.
+        self.allow_replicated_parameters = True
+        # Whether to forcibly generate data-parallel.
+        self.force_data_parallel = False
+        # Forcibly map the batch dimension to a mesh dimension.
+        self.force_batch_dim_to_mesh_dim = None
+        # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+        self.force_zero_stage_3 = False
+        # The threshold of all-gather combiner if force_zero_stage_3 is true.
+        self.force_zero_stage_3_all_gather_threshold = 1 << 25
+        # Prefer reduce-scatter over all-reduce.
+        self.prefer_reduce_scatter = False
+        # Allow mixed 1d mesh and 2d mesh shape.
+        self.allow_mixed_mesh_shape = False
+        # Allow replicated dot computation.
+        self.allow_recompute_heavy_op = False
+        # If it is not empty, forcibly use a simple heuristic instead of the ILP solver.
+        self.force_simple_heuristic = ""
+        # The threshold of all-reduce combiner in bytes.
+        self.all_reduce_threshold = 1 << 60
+
+    def copy_and_update(self, new_values: Dict):
+        """Make a deepcopy and update some keys with new values."""
+        ret = copy.copy(self)
+        for k, v in new_values.items():
+            assert hasattr(ret, k)
+            setattr(ret, k, v)
+        return ret
+
+    def backup(self):
+        """Backup the configs."""
+        return copy.deepcopy(self.__dict__)
+
+    def restore(self, saved_dict: Dict):
+        """Restore the configs from a backup."""
+        self.__dict__ = saved_dict
 
 
 def run_auto_sharding_pass(

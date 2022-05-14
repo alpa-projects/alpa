@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-@lu.cache
 def pipeshard_parallel_callable(fun: lu.WrappedFun,
                                 in_tree: PyTreeDef,
                                 out_tree_thunk: Callable[[], PyTreeDef],
@@ -47,15 +46,10 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
     pipeline parallelism and 2d shard parallelsim.
     """
     # Resolves the polymorphism in arguments
-    if devices is None:
-        devices = get_global_cluster(
-            create_if_not_exist=True).get_virtual_physical_mesh()
-        global_config.devices = devices
-    elif isinstance(devices, DeviceCluster):
+    if isinstance(devices, DeviceCluster):
         devices = devices.get_virtual_physical_mesh()
-        global_config.devices = devices
 
-    assert isinstance(devices, VirtualPhysicalMesh)
+    assert isinstance(devices, VirtualPhysicalMesh), f"type: {type(devices)}"
     virtual_mesh = devices
 
     # Trace the function to get the jaxpr

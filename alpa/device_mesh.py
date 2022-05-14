@@ -1,4 +1,19 @@
-"""The device mesh runtime that manages buffers and runs computation distributedly."""
+"""The device mesh runtime that manages buffers and runs computation distributedly.
+
+The hierarchy of classes defined in this file:
+
+DeviceCluster  (the whole ray cluster)
+|
+PhysicalDeviceMeshGroup  (multiple device meshes)
+|
+PhysicalDeviceMesh  (one device mesh)
+|
+MeshHostWorker  (one host in a devie mesh)
+
+Besides, we have two additional classes: VirtualPhysicalMesh and LogicalDeviceMesh.
+They are only used during compilation time. They are used to manipulate meshes flexibly without
+allocating real resources during compilation time.
+"""
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
@@ -690,8 +705,13 @@ class MeshHostWorker:
 
 
 class PhysicalDeviceMesh(ABC):
-    """The base class of device mesh."""
+    """The base class of physical device mesh.
+    
+    A physical device mesh is a 2-dimensional mesh that runs SPMD computation on
+    all devices in the mesh.
+    """
 
+    num_hosts: int
     num_devices_per_host: int
 
     def get_signature(self) -> str:
@@ -711,12 +731,6 @@ class PhysicalDeviceMesh(ABC):
         """Return the total number of GPUs on this mesh."""
         return self.num_hosts * self.num_devices_per_host
 
-    @property
-    @abstractmethod
-    def num_hosts(self):
-        """Return the number of hosts in the mesh."""
-        raise NotImplementedError()
-
     ##### Logical Mesh Related Functions #####
     def get_logical_mesh(self,
                          mesh_shape: Optional[Sequence[int]] = None,
@@ -725,7 +739,10 @@ class PhysicalDeviceMesh(ABC):
                          mesh_topology: Optional[str] = None,
                          intra_host_bandwidth: Optional[float] = None,
                          inter_host_bandwidth: Optional[float] = None):
-        """Return a logical mesh and parameters of the alpha-beta communication cost model."""
+        """
+        Return a logical mesh and parameters of the alpha-beta communication cost model.
+        The logical view is used for auto-sharding.
+        """
         if mesh_shape is None:
             mesh_shape = (self.num_hosts, self.num_devices_per_host)
 
@@ -869,13 +886,9 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def __init__(self, devices: Sequence["Device"] = None):
         self.devices = devices if devices is not None else xb.local_devices()
+        self.num_hosts = 1
         self.num_devices_per_host = len(self.devices)
         self.device_strs = []
-
-    @property
-    def num_hosts(self):
-        """Return the number of hosts in the mesh."""
-        return 1
 
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
@@ -960,8 +973,8 @@ used_port_set = set((None,))
 
 class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     """
-    A multi-host physical device mesh to run computation distributedly. It uses
-    ray actors and the distributed XLA runtime.
+    A multi-host physical device mesh to run computation distributedly.
+    It uses ray actors and the distributed XLA runtime.
     """
 
     def __init__(self,
@@ -974,6 +987,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.host_ids = host_ids  # The indices of hosts in the global DeviceCluster
         self.host_info = host_info
         self.head_ip = head_ip
+        self.num_hosts = len(host_ids)
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
         self.workers = None
@@ -1075,11 +1089,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             for i, _ in enumerate(self.host_ids)
         ]
         return ips
-
-    @property
-    def num_hosts(self):
-        """Return the number of hosts in the mesh."""
-        return len(self.host_ids)
 
     def get_virtual_physical_mesh(self):
         return VirtualPhysicalMesh(
@@ -1309,7 +1318,16 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
 
 class DistributedArray:
-    """A distributed array on a PhysicalDeviceMesh."""
+    """A distributed array on a PhysicalDeviceMesh.
+
+    End users can interact with this array as if they are working with
+    a normal numpy array.
+
+    Internally, it stores pointers (uuid) of remote buffers.
+    The buffers are stored distributedly on remote workers' device memeory.
+    When users require the value of the array. These buffers will be gathered
+    to the dirver.
+    """
 
     def __init__(self,
                  device_mesh: PhysicalDeviceMesh,
@@ -1472,12 +1490,8 @@ xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
 class ReplicatedDistributedArray:
     """A distributed array that is replicated on multiple meshes.
 
-    We use this class as a workaround for symbols that type-change from DeviceArray
-    to DistributedArray in pipeline-parallel training, such as optimizer's step.
-    These variables do not have a resharding spec, and cannot be donated, but have a
-    replica generates on every participant mesh.
-
-    Warning: do not use this class unless you know exactly how.
+    These class is used for arrays that need to be replicated on
+    multiple physical meshes (e.g., optimizer's step).
     """
 
     def __init__(self, device_meshes: Sequence[PhysicalDeviceMesh],
@@ -1538,6 +1552,9 @@ class VirtualPhysicalMesh:
     When compilation is finished, we instantiated it as a PhysicalDeviceMesh and launch workers.
 
     A VirtualPhysicalMesh can also be sliced into multiple VirtualPhysicalMesh.
+    After slicing, each sliced VirtualPhysicalMesh can be instantiated as a PhysicalDeviceMesh.
+    These sliced PhysicalDeviceMesh togather can form a PhysicalDeviceMeshGroup
+    for pipeline parallelism.
     """
 
     def __init__(self,
@@ -1665,7 +1682,10 @@ class VirtualPhysicalMesh:
                          mesh_shape: Optional[Sequence[int]] = None,
                          mesh_alpha: Optional[float] = None,
                          mesh_beta: Optional[float] = None):
-        """Generate a logical mesh."""
+        """
+        Return a logical mesh and parameters of the alpha-beta communication cost model.
+        The logical view is used for auto-sharding.
+        """
         if mesh_shape is None:
             mesh_shape = (self.num_hosts, self.num_devices_per_host)
 
@@ -1675,9 +1695,9 @@ class VirtualPhysicalMesh:
         return LogicalDeviceMesh(self, id_mesh, mesh_alpha, mesh_beta)
 
     def get_physical_mesh(self):
-        """Convert to a physical mesh (which will request resources from Ray)."""
+        """Launch a physical mesh (which will request resources from Ray)."""
         assert self.launched_physical_mesh == None,\
-               "physical mesh can only be launched once"
+               "Physical mesh can only be launched once."
 
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
@@ -1689,8 +1709,9 @@ class VirtualPhysicalMesh:
         return self.launched_physical_mesh
 
     def get_physical_mesh_group(self, sliced_virtual_meshes):
+        """Launch a physical mesh group (which will request resources from Ray)."""
         assert self.launched_physical_mesh_group == None,\
-               "physical mesh group can only be launched once"
+               "Physical mesh group can only be launched once."
 
         # Launch physical meshes in parallel
         physical_meshes = [None] * len(sliced_virtual_meshes)
@@ -1707,11 +1728,11 @@ class VirtualPhysicalMesh:
             threads[i].join()
 
         self.launched_physical_mesh_group = (
-            DistributedPhysicalDeviceMeshGroup(physical_meshes))
+            PhysicalDeviceMeshGroup(physical_meshes))
         return self.launched_physical_mesh_group
 
 
-class DistributedPhysicalDeviceMeshGroup:
+class PhysicalDeviceMeshGroup:
     """A list of physical devices that forms a pipeline."""
 
     def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh]):
@@ -1789,8 +1810,14 @@ def set_jax_env_on_driver(use_cpu_on_driver=True):
         jax.config.update("jax_platform_name", "cpu")
 
 
+global_cluster = None
+
+
 class DeviceCluster:
-    """A ray cluster with GPU devices."""
+    """A ray cluster with GPU devices.
+    
+    This is the top interface for alpa to interact with ray cluster's resources.
+    """
 
     def __init__(self, use_cpu_on_driver=True):
         # pylint: disable=import-outside-toplevel
@@ -1818,6 +1845,10 @@ class DeviceCluster:
             self.host_num_devices.append(int(number))
 
         set_jax_env_on_driver(use_cpu_on_driver)
+
+        global global_cluster
+        assert global_cluster is None, "Can only create one DeviceCluster" 
+        global_cluster = self
 
     @property
     def num_cpus(self):
@@ -1884,6 +1915,21 @@ class DeviceCluster:
     def profile_all(self, *args, **kwargs):
         """Profile computation and communication cost for all submesh shapes of this cluster."""
         return mesh_profiling.profile_all(self, *args, **kwargs)
+
+    def __del__(self):
+        global_cluster = None
+
+
+DeviceClass = Union[DeviceCluster, VirtualPhysicalMesh, PhysicalDeviceMesh, LogicalDeviceMesh]
+
+
+def get_global_cluster(create_if_not_exist):
+    global global_cluster
+
+    if create_if_not_exist and global_cluster is None:
+        global_cluster = DeviceCluster()
+
+    return global_cluster
 
 
 ########################################

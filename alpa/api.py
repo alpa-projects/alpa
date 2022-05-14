@@ -13,11 +13,13 @@ from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.global_env import global_config
+from alpa.device_mesh import DeviceClass
 from alpa.pipeline_parallel.local_pipeline_parallel import (
     local_pipeline_parallel_callable)
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.pipeline_parallel.pipeshard_parallel import pipeshard_parallel_callable
 from alpa.shard_parallel.shard_callable import shard_parallel_callable
+from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval)
 
@@ -156,7 +158,7 @@ def parallelize_callable(
     static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
-    devices,
+    devices: DeviceClass,
     strategy: str,
     memory_budget_per_device: Optional[float],
     *avals: Sequence[AbstractValue],

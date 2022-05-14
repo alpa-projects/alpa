@@ -79,13 +79,12 @@ class InstallationTest(unittest.TestCase):
     def test_2_pipeline_parallel(self):
         ray.init(address="auto")
 
-        device_mesh = DeviceCluster().get_virtual_physical_mesh()
-        set_parallelize_options(devices=device_mesh,
-                                strategy="pipeshard_parallel",
+        device_cluster = DeviceCluster()
+        set_parallelize_options(strategy="pipeshard_parallel",
                                 pipeline_stage_mode="uniform_stage",
                                 num_micro_batches=2)
 
-        layer_num = min(device_mesh.num_devices, 2)
+        layer_num = min(device_cluster.num_devices, 2)
         state, batch = create_train_state_and_batch(256, 256)
 
         def train_step(state, batch):

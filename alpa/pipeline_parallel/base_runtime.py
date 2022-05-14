@@ -14,7 +14,7 @@ from alpa.util import OrderedSet
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
-from alpa.device_mesh import DistributedPhysicalDeviceMeshGroup
+from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.computation import (PipelineComputation,
                                                 XlaShardedPipelineComputation)
 
@@ -78,7 +78,7 @@ class BaseDistributedRuntime(BaseRuntime):
                  global_invars: Sequence[Var],
                  grad_dummy_invars: Sequence[Var],
                  global_outvars: Sequence[Var],
-                 physical_meshes: DistributedPhysicalDeviceMeshGroup,
+                 physical_meshes: PhysicalDeviceMeshGroup,
                  dependency: np.ndarray,
                  schedule: PipelineSchedule,
                  is_batch: Sequence[bool],

@@ -1,14 +1,15 @@
 """Generate callables that combines intra- and inter-op parallelisms."""
 import logging
+from typing import Callable, Sequence, Union
 
 from jax import linear_util as lu
-from jax.core import gensym
+from jax.core import gensym, AbstractValue
+from jax.tree_util import PyTreeDef
 
-from alpa.device_mesh import VirtualPhysicalMesh
+from alpa.device_mesh import VirtualPhysicalMesh, DeviceCluster, get_global_cluster
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.decentralized_distributed_runtime import (
     DecentralizedDistributedRuntime)
-from alpa.device_mesh import DistributedPhysicalDeviceMeshGroup
 from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
@@ -33,14 +34,28 @@ logger.setLevel(logging.INFO)
 
 
 @lu.cache
-def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
-                                donated_invars, batch_invars, devices,
-                                memory_budget_per_device, *avals):
-    """Pipeshard parallel combining pipelining and 2d sharding."""
-    if not isinstance(devices, VirtualPhysicalMesh):
-        raise RuntimeError(
-            f"Unrecognized type of `devices`, got: {type(devices)},"
-            "expected type: `VirtualPhysicalMesh`.")
+def pipeshard_parallel_callable(fun: lu.WrappedFun,
+                                in_tree: PyTreeDef,
+                                out_tree_thunk: Callable[[], PyTreeDef],
+                                donated_invars: Sequence[bool],
+                                batch_invars: Sequence[bool],
+                                devices: Union[DeviceCluster, VirtualPhysicalMesh],
+                                memory_budget_per_device: float,
+                                *avals: Sequence[AbstractValue]):
+    """
+    Compile a callable for pipeshard parallel which combines
+    pipeline parallelism and 2d shard parallelsim.
+    """
+    # Resolves the polymorphism in arguments
+    if devices is None:
+        devices = get_global_cluster(
+            create_if_not_exist=True).get_virtual_physical_mesh()
+        global_config.devices = devices
+    elif isinstance(devices, DeviceCluster):
+        devices = devices.get_virtual_physical_mesh()
+        global_config.devices = devices
+
+    assert isinstance(devices, VirtualPhysicalMesh)
     virtual_mesh = devices
 
     # Trace the function to get the jaxpr

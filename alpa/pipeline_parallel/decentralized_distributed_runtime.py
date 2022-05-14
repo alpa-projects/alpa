@@ -14,7 +14,7 @@ import ray.exceptions
 
 from alpa.device_mesh import MeshHostWorker, DistributedArray, ReplicatedDistributedArray
 from alpa.global_env import global_config
-from alpa.device_mesh import DistributedPhysicalDeviceMeshGroup
+from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
@@ -184,7 +184,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  global_invars: Sequence[Var],
                  grad_dummy_invars: Sequence[Var],
                  global_outvars: Sequence[Var],
-                 physical_meshes: DistributedPhysicalDeviceMeshGroup,
+                 physical_meshes: PhysicalDeviceMeshGroup,
                  dependency: np.ndarray,
                  schedule: PipelineSchedule,
                  is_batch: Sequence[bool],

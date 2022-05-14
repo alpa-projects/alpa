@@ -15,8 +15,8 @@ from jax.lib import xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import (LogicalDeviceMesh, PhysicalDeviceMesh,
-                              LocalPhysicalDeviceMesh, DeviceCluster)
-from alpa.global_env import global_config
+                              LocalPhysicalDeviceMesh, DeviceCluster,
+                              DeviceClass, global_cluster, get_global_cluster)
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
@@ -56,7 +56,7 @@ def shard_parallel_callable(
     static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
-    devices,
+    devices: DeviceClass,
     memory_budget_per_device: float,
     *avals: Sequence[ShapedArray],
 ):
@@ -66,11 +66,17 @@ def shard_parallel_callable(
 
     # Get physical mesh and logical mesh.
     if devices is None:
-        devices = LocalPhysicalDeviceMesh(devices=xb.local_devices())
+        global_cluster = get_global_cluster(create_if_not_exist=False)
+        if global_cluster is None:
+            devices = LocalPhysicalDeviceMesh(devices=xb.local_devices())
+        else:
+            devices = global_cluster.get_physical_mesh()
     elif isinstance(devices, (list, tuple)):
         devices = LocalPhysicalDeviceMesh(devices=devices)
     elif isinstance(devices, DeviceCluster):
         devices = devices.get_physical_mesh()
+
+    assert isinstance(devices, (PhysicalDeviceMesh, LogicalDeviceMesh))
 
     search_task = None
     record_file = None

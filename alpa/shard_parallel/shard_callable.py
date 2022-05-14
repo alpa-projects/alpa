@@ -17,6 +17,7 @@ from jax.tree_util import PyTreeDef
 from alpa.device_mesh import (LogicalDeviceMesh, PhysicalDeviceMesh,
                               LocalPhysicalDeviceMesh, DeviceCluster,
                               DeviceClass, global_cluster, get_global_cluster)
+from alpa.global_env import global_config
 from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)

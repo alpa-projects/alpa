@@ -208,12 +208,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = []
 
-        # Cached sharding indices for inputs.
-        # List[mesh_idx -> List[sharding_indices]].
-        self.input_indices = [] 
-        # Cached sharding specs for inputs.
-        # List[mesh_idx -> List[sharding_spec]]
-        self.input_specs = []
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
@@ -222,6 +216,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Cached sharding indices for input arguments
         # List[mesh_idx -> List[sharding_indices]].
         self.input_shard_indices = [] 
+        # Cached sharding specs for input arguments.
+        # List[mesh_idx -> List[sharding_spec]]
+        self.input_shard_specs = []
         # Whether the argument should be deleted after shard
         # List[mesh_idx -> List[bool]]
         self.delete_after_shard = []
@@ -581,6 +578,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
             tmp_mesh_arg_indices = []
             tmp_input_shard_indices = []
+            tmp_input_shard_specs = []
             tmp_batch_invars = []
             for key in mesh_arg_list:
                 var, batch_idx = key
@@ -599,13 +597,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                             var_to_spec[var], batch_dim, num_batch)
                         tmp_input_shard_indices.append(
                             pxla.spec_to_indices(new_shape, new_spec))
+                        tmp_input_shard_specs.append(new_spec)
                     else:
                         tmp_input_shard_indices.append(
                             pxla.spec_to_indices(var.aval.shape, var_to_spec[var])
                         )
+                        tmp_input_shard_specs.append(var_to_spec[var])
 
             self.mesh_arg_indices.append(tmp_mesh_arg_indices)
             self.input_shard_indices.append(tmp_input_shard_indices)
+            self.input_shard_specs.append(tmp_input_shard_specs)
             self.batch_invars.append(tmp_batch_invars)
 
         for mesh_idx in range(num_mesh):
@@ -925,7 +926,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for local_idx, split_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
                 aval, mesh, spec = (self.global_invars[split_to_ori[split_idx]].aval, 
                                     physical_mesh, 
-                                    self.input_specs[mesh_idx][local_idx])
+                                    self.input_shard_specs[mesh_idx][local_idx])
                 if load_info_map.get(split_idx) is None:
                     load_info_map[split_idx] = LoadInfo([aval], [mesh], [spec])
                 else:

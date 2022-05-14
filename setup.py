@@ -77,14 +77,14 @@ def get_cuda_version_str(no_dot=False):
 install_require_list = [
     "tqdm",
     "scipy",
-    "numba",
     "ray[default]",
     "jax==0.3.5",
     "flax==0.4.1",
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp",
     "tensorstore",
-    # "jaxlib-alpa"  # TODO(Hao): update pypi
+    "numpy<1.22",
+    "numba",
 ]
 
 dev_require_list = [

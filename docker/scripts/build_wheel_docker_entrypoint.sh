@@ -13,7 +13,7 @@ export CUDA_PATH=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
 usage() {
-  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.0|11.1|11.2] [tensorflow-alpa branch name]"
   exit 1
 }
 
@@ -70,9 +70,9 @@ case $2 in
     usage
 esac
 
-if ! python -m auditwheel show dist/jaxlib_alpa-*.whl  | egrep 'platform tag: "(manylinux2010_x86_64|manylinux_2_12_x86_64)"' > /dev/null; then
+if ! python -m auditwheel show dist/jaxlib-*.whl | egrep 'platform tag: "(manylinux2010_x86_64|manylinux_2_12_x86_64)"' > /dev/null; then
   # Print output for debugging
-  python -m auditwheel show dist/jaxlib_alpa-*.whl
+  python -m auditwheel show dist/jaxlib-*.whl
   echo "jaxlib wheel is not manylinux2010 compliant"
   exit 1
 fi

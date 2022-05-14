@@ -13,7 +13,7 @@ export CUDA_PATH=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
 usage() {
-  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.0|11.1|11.2] [tensorflow-alpa branch name]"
   exit 1
 }
 
@@ -27,7 +27,7 @@ echo "Python version $PY_VERSION"
 TF_BRANCH="$4"
 
 git clone -b $TF_BRANCH https://github.com/alpa-projects/tensorflow-alpa.git /build/tensorflow-alpa
-git clone https://github.com/alpa-projects/jax-alpa.git /build/jax
+git clone -b hao-test https://github.com/alpa-projects/jax-alpa.git /build/jax
 cd /build/jax/build
 
 mkdir /build/tmp

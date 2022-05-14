@@ -86,13 +86,12 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(
-            cls,  # noqa
-            task_uuid,
-            output_uuids,
-            set_empty_buffer,
-            allgather_uuid=None,
-            info=""):  # noqa
+    def Recv(cls, # noqa
+             task_uuid,
+             output_uuids,
+             set_empty_buffer,
+             allgather_uuid=None,
+             info=""):  # noqa
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
@@ -192,7 +191,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  num_batch: int,
                  flop_count: int,
                  concat_vars_mapping: Dict[Var, Var],
-                 in_tree = None):
+                 in_tree=None):
         super().__init__(pipeline_stages=pipeline_stages,
                          global_invars=global_invars,
                          grad_dummy_invars=grad_dummy_invars,

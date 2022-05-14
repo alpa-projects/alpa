@@ -102,7 +102,7 @@ class MeshHostWorker:
                 self.signal_tensors.append(
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
-                                       take_ownership=True))
+                        take_ownership=True))
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -1275,8 +1275,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def get_max_memory_allocated(self):
         self.sync_workers()
         return max(
-            ray.get([w.get_max_memory_allocated.remote() for w in self.workers
-                    ]))
+            ray.get([w.get_max_memory_allocated.remote() for w in self.workers]))
 
     def get_available_memory(self):
         return min(

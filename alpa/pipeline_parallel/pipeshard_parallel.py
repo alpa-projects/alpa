@@ -184,7 +184,6 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
-<<<<<<< HEAD
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
@@ -199,20 +198,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         is_batch=batch_invars,
         num_batch=num_microbatch,
         flop_count=total_flops,
-        concat_vars_mapping=concat_vars_mapping)
-=======
-    jp = DecentralizedDistributedRuntime(pipeline_stages=xla_stages,
-                                         global_invars=global_invars,
-                                         grad_dummy_invars=grad_in_to_out,
-                                         global_outvars=global_outvars,
-                                         physical_meshes=physical_meshes,
-                                         dependency=dependency,
-                                         schedule=schedule,
-                                         is_batch=batch_invars,
-                                         num_batch=num_micro_batches,
-                                         flop_count=total_flops,
-                                         in_tree=in_tree)
->>>>>>> d53d3d1 (reorganize API for model save load)
+        concat_vars_mapping=concat_vars_mapping,
+        in_tree=in_tree)
 
     def ret_func(*args):
         return jp.run(*args)

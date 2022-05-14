@@ -1163,7 +1163,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
             if is_batch_var:
                 slow_path = True
-                arg = np.asarray(arg)
+                if not isinstance(arg, ShapedArray):
+                    arg = np.asarray(arg)
                 bufs = _shard_array(arg, self, indices, num_micro_batches)
                 bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
                                               num_micro_batches)

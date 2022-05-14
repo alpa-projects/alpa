@@ -984,7 +984,7 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         return super().execute_on_worker(input_uuids, output_uuids,
                                          sync_before, sync_after)
 
-    def profile_with_dummy_inputs(self, backend, local_devices, skip_grad_sync):
+    def profile_with_dummy_inputs(self, backend, local_devices, skip_grad_sync=False):
         """Profile the time cost of this executable with dummy inputs."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")

@@ -17,6 +17,7 @@ from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval, set_jax_env_on_driver)
 
+is_initialized = False
 
 def init(cluster: str = "ray"):
     """Initialize global environment.
@@ -25,6 +26,11 @@ def init(cluster: str = "ray"):
       cluster: The distributed cluster.
         Possible choices: {"local", "ray"}.
     """
+    global is_initialized
+
+    if is_initialized:
+        return
+
     if cluster == "local":
         global_cluster = None
     elif cluster == "ray":
@@ -98,7 +104,7 @@ class ParallelizedFunc:
     def preshard_dynamic_args(self, *args):
         """Shard the dynamic arguments."""
         executable, in_tree, _, args_flat = self._decode_args(*args)
-        sharded_args = compiled_func.preshard_dynamic_args(*args_flat)
+        sharded_args = executable.preshard_dynamic_args(*args_flat)
         return tree_unflatten(in_tree, sharded_args)
 
     def _decode_args(self, *args):

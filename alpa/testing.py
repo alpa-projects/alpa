@@ -37,7 +37,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         for x_elt, y_elt in zip(x, y):
             assert_allclose(x_elt, y_elt, rtol, atol)
     elif hasattr(x, '__array__') or np.isscalar(x):
-        assert hasattr(y, '__array__') or np.isscalar(y)
+        assert hasattr(y, '__array__') or np.isscalar(y), f"{y}"
         x = np.asarray(x)
         y = np.asarray(y)
         np.testing.assert_allclose(x, y, rtol, atol)

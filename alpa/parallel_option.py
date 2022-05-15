@@ -69,17 +69,8 @@ class ShardParallel(ParallelOption):
     ):
         # Resolve the polymorphism in arguments
         if self.devices is None:
-            global_physical_mesh = get_global_physical_mesh()
-            if global_physical_mesh is None:
-                global_cluster = get_global_cluster()
-                if global_cluster is None:
-                    # ray is not initialized, use local devices
-                    mesh = LocalPhysicalDeviceMesh()
-                else:
-                    mesh = global_cluster.get_physical_mesh()
-                set_global_physical_mesh(mesh)
-            else:
-                mesh = global_physical_mesh
+            mesh = get_global_physical_mesh(
+                create_if_not_exist=True)
         elif isinstance(self.devices, (list, tuple)):
             mesh = LocalPhysicalDeviceMesh(self.devices)
         else:

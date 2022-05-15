@@ -747,7 +747,7 @@ def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
 
     ##### Profile communication cost
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    submesh_choices = list(reversed(get_submesh_choices(virtual_mesh)))
+    submesh_choices = list(reversed(get_submesh_choices(virtual_mesh, "all")))
 
     # Load failed batch keys
     failed_batch_keys_filename = "tmp/failed_batch_keys.pkl"

@@ -22,10 +22,10 @@ class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
+        self.option = ShardParallel(devices=self.devices)
 
     def test_donate_buffer(self):
-        @parallelize(donate_argnums=(0,),
-                     option=ShardParallel(devices=self.devices))
+        @parallelize(donate_argnums=(0,), option=self.option)
         def add_one(x):
             x = x + 1
             return x
@@ -93,7 +93,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x, True)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize(option=ShardParallel(devices=self.devices))
+        @parallelize(option=self.option)
         def func(optimizer, x, y, rngs):
 
             def loss_func(params):
@@ -134,7 +134,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize(option=ShardParallel(devices=self.devices))
+        @parallelize(option=self.option)
         def func(optimizer, x, y):
 
             def loss_func(params):
@@ -158,7 +158,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         # TODO(lmzheng): Support the uneven partition of reshape.
         # But this seems too complicated.
 
-        @parallelize(option=ShardParallel(devices=self.devices))
+        @parallelize(option=self.option)
         def split(a):
             b = a.reshape((8, 18))
             #b = a.reshape((9, 16))
@@ -172,7 +172,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_argmax(self):
 
-        @parallelize(option=ShardParallel(devices=self.devices))
+        @parallelize(option=self.option)
         def split(a):
             b = jnp.argmax(a, axis=0)
             return b
@@ -187,7 +187,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_sort(self):
 
-        @parallelize(option=ShardParallel(devices=self.devices))
+        @parallelize(option=self.option)
         def split(a):
             b = jnp.argsort(a)
             return b
@@ -195,6 +195,19 @@ class AutoShardingBasicTest(unittest.TestCase):
         a = jnp.ones((1024,), dtype=jnp.int32)
 
         executable = split.get_executable(a)
+
+    def test_fast_call(self):
+
+        @parallelize
+        def add_one(x, y):
+            return x + y
+
+        a = jnp.ones((32, 32))
+        b = jnp.ones((32, 32))
+        executable = add_one.get_executable(a, b)
+        c = executable(a, b)
+
+        assert isinstance(c, pxla.ShardedDeviceArray)
 
 
 def suite():
@@ -207,6 +220,7 @@ def suite():
     suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
     suite.addTest(AutoShardingBasicTest("test_argmax"))
     suite.addTest(AutoShardingBasicTest("test_sort"))
+    suite.addTest(AutoShardingBasicTest("test_fast_call"))
     return suite
 
 

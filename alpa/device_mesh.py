@@ -1914,7 +1914,17 @@ def set_global_physical_mesh(mesh: PhysicalDeviceMesh):
     global global_physical_mesh
     global_physical_mesh = mesh
 
-def get_global_physical_mesh():
+def get_global_physical_mesh(create_if_not_exist=False):
+    global global_physical_mesh
+
+    if global_physical_mesh is None and create_if_not_exist:
+        if global_cluster is None:
+            # ray is not initialized, use local devices
+            mesh = LocalPhysicalDeviceMesh()
+        else:
+            mesh = global_cluster.get_physical_mesh()
+        global_physical_mesh = mesh
+
     return global_physical_mesh
 
 def set_global_virtual_physical_mesh(mesh: VirtualPhysicalMesh):

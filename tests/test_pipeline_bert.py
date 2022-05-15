@@ -8,8 +8,8 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import (parallelize, set_parallelize_options, mark_pipeline,
-                  DeviceCluster, manual_layer_construction)
+from alpa import (parallelize, mark_pipeline, manual_layer_construction,
+                  PipeshardParallel)
 from alpa.testing import BertLayerModel, assert_allclose
 from alpa.model.model_util import TrainState
 from alpa.model.bert_model import BertConfig
@@ -20,19 +20,10 @@ class PipelineBERTTest(unittest.TestCase):
 
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        assert len(jax.local_devices()) >= 4
 
-        ray.init(address="auto",
-                 namespace=get_ray_namespace_str(prefix="alpa-unittest"))
-        device_cluster = DeviceCluster()
-        self.devices = device_cluster.get_virtual_physical_mesh()
+        init(cluster="ray")
 
-    def tearDown(self):
-        ray.shutdown()
-
-    def train_2_layer_bert(self, devices, strategy):
-        set_parallelize_options(devices=devices, strategy=strategy)
-
+    def train_2_layer_bert(self, option):
         def train_step(state, batch):
 
             def loss_func(params, x, y, attention_mask):
@@ -76,8 +67,8 @@ class PipelineBERTTest(unittest.TestCase):
         # Train step
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         gradients = train_step(state, batch)
-        pipelined_train_step = parallelize(donate_argnums=())(train_step)
-        gradients_with_pipeline = pipelined_train_step(state, batch)
+        p_train_step = parallelize(train_step, donate_argnums=(), option=option)
+        gradients_with_pipeline = p_train_sep(state, batch)
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
@@ -87,12 +78,13 @@ class PipelineBERTTest(unittest.TestCase):
         self.train_2_layer_bert(self.devices, "local_pipeline_parallel")
 
     def test_2_layer_bert_pipeshard_parallel(self):
-        self.train_2_layer_bert(self.devices, "pipeshard_parallel")
+        option = PipeshardParallel()
+        self.train_2_layer_bert(self.devices, option)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineBERTTest("test_2_layer_bert_local_pipeline_parallel"))
+    #suite.addTest(PipelineBERTTest("test_2_layer_bert_local_pipeline_parallel"))
     suite.addTest(PipelineBERTTest("test_2_layer_bert_pipeshard_parallel"))
     return suite
 

@@ -9,7 +9,7 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from alpa import parallelize, set_parallelize_options, testing
+from alpa import parallelize, ShardParallel, testing
 from alpa.util import count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close
@@ -21,11 +21,11 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        set_parallelize_options(jax.local_devices()[:4])
+        self.devices = jax.local_devices()[:4]
 
     def test_donate_buffer(self):
-
-        @parallelize(donate_argnums=(0,))
+        @parallelize(donate_argnums=(0,),
+                     option=ShardParallel(devices=self.devices))
         def add_one(x):
             x = x + 1
             return x
@@ -41,7 +41,6 @@ class AutoShardingBasicTest(unittest.TestCase):
                                      mesh_mapping=(ShardedAxis(0),)))
 
     def test_dot_reshape_transpose(self):
-        set_parallelize_options(memory_budget_per_device=1 * MB)
         dim_0 = 64
         dim_1 = 1024
 
@@ -53,20 +52,18 @@ class AutoShardingBasicTest(unittest.TestCase):
             out = -out
             return out
 
-        para_func = parallelize(func)
+        p_func = parallelize(func)
 
         a = jnp.ones((dim_0, dim_1 // 4, 4))
         b = jnp.ones((dim_1, dim_0 // 4, 4))
 
         # Check correctness
         expected = func(a, b)
-        actual = para_func(a, b)
+        actual = p_func(a, b)
         testing.assert_allclose(expected, actual)
 
     def test_one_by_one_mesh(self):
-        set_parallelize_options(devices=jax.local_devices()[0:1])
-
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.devices[0:1]))
         def add_one(x):
             x = x + 1
             return x
@@ -96,7 +93,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x, True)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.devices))
         def func(optimizer, x, y, rngs):
 
             def loss_func(params):
@@ -137,7 +134,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.devices))
         def func(optimizer, x, y):
 
             def loss_func(params):
@@ -161,7 +158,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         # TODO(lmzheng): Support the uneven partition of reshape.
         # But this seems too complicated.
 
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.devices))
         def split(a):
             b = a.reshape((8, 18))
             #b = a.reshape((9, 16))
@@ -175,7 +172,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_argmax(self):
 
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.devices))
         def split(a):
             b = jnp.argmax(a, axis=0)
             return b
@@ -190,7 +187,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_sort(self):
 
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.devices))
         def split(a):
             b = jnp.argsort(a)
             return b

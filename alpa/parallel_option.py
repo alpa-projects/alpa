@@ -72,6 +72,10 @@ class ShardParallel(ParallelOption):
                 set_global_physical_mesh(mesh)
             else:
                 mesh = global_physical_mesh
+        elif isinstance(self.devices, (list, tuple)):
+            mesh = LocalPhysicalDeviceMesh(self.devices)
+        else:
+            mesh = self.devices
 
         assert isinstance(mesh, (PhysicalDeviceMesh, LogicalDeviceMesh))
 

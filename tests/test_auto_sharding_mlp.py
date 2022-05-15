@@ -12,11 +12,10 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh
+from alpa import parallelize, LocalPhysicalDeviceMesh, ShardParallel
 from alpa.global_env import global_config
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
-
-as_option = global_config.default_autosharding_option
 
 
 def assert_close(x, y, atol=0.01):
@@ -102,6 +101,7 @@ def assert_data_parallel_cost(state,
                               hlo_ir,
                               objective,
                               device_mesh,
+                              as_option,
                               mesh_dim,
                               allow_not_sharded_params=0,
                               optimizer_type=None):
@@ -169,17 +169,12 @@ class AutoShardingMLPTest(unittest.TestCase):
 
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = jax.local_devices()[:4]
+        self.physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
+        self.as_option = AutoShardingOption()
         self.optimizer_type = "adam"
 
-        self.as_option_backup = as_option.backup()
-
-    def tearDown(self):
-        as_option.restore(self.as_option_backup)
-
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = LocalPhysicalDeviceMesh(devices=self.devices)
-        return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
+        return self.physical_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_n_layer_mlp(self,
                         num_layers,
@@ -189,8 +184,6 @@ class AutoShardingMLPTest(unittest.TestCase):
                         hidden_dim,
                         device_mesh,
                         use_bias=True):
-        set_parallelize_options(devices=device_mesh)
-
         class Model(nn.Module):
 
             @nn.compact
@@ -201,7 +194,10 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=output_dim, use_bias=use_bias)(x)
                 return x
 
-        @parallelize
+        shard_option = ShardParallel(devices=device_mesh)
+        shard_option.as_option = self.as_option
+
+        @parallelize(option=shard_option)
         def train_step(state, batch):
 
             def loss_func(params):
@@ -251,6 +247,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                                       hlo_ir,
                                       objective,
                                       device_mesh,
+                                      self.as_option,
                                       i,
                                       optimizer_type=self.optimizer_type)
 
@@ -274,7 +271,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
-            if as_option.prefer_reduce_scatter:
+            if self.as_option.prefer_reduce_scatter:
                 assert n_all_reduce + n_reduce_scatter == num_layers - 1
                 assert n_reduce_scatter == n_all_gather
                 assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
@@ -313,7 +310,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir))
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers - 1
             assert n_all_gather == 1
             assert n_reduce_scatter == 2
@@ -323,7 +320,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
         # Check sharding specification
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             for weight in jax.tree_util.tree_leaves(state.opt_state):
                 if len(weight.shape) > 1:
                     assert_fully_sharded(weight)
@@ -342,27 +339,28 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         # Test on different device meshes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
-            as_option.force_data_parallel = True
-
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+            self.as_option.force_data_parallel = True
             state, hlo_ir, objective = self.run_n_layer_mlp(
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
+            assert_data_parallel_cost(state, hlo_ir, objective,
+                                      device_mesh, self.as_option, i)
 
     def test_n_layer_mlp_force_batch_dim_mapping(self):
         num_layers = 6
         batch_size = 32
         hidden_dim = 256
-        as_option.force_batch_dim_to_mesh_dim = 0
+        self.as_option.force_batch_dim_to_mesh_dim = 0
 
         # Data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
         state, hlo_ir, objective = self.run_n_layer_mlp(num_layers, batch_size,
                                                         hidden_dim, hidden_dim,
                                                         hidden_dim, device_mesh)
-        assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, 0)
+        assert_data_parallel_cost(state, hlo_ir, objective,
+                                  device_mesh, self.as_option, 0)
 
         # Model parallel
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
@@ -374,34 +372,29 @@ class AutoShardingMLPTest(unittest.TestCase):
         assert_close(objective, expected)
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_model_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_model_parallel()
 
     def test_n_layer_mlp_2d_mesh_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_2d_mesh()
 
-    def test_n_layer_mlp_data_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
-        self.test_n_layer_mlp_data_parallel()
-
     def test_n_layer_mlp_data_parallel_reduce_scatter_adafactor(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.optimizer_type = "adafactor"
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
-        as_option.force_zero_stage_3 = True
-        as_option.force_zero_stage_3_all_gather_threshold = (32 * 32 +
-                                                             32) * 6 * 4
+        self.as_option.force_zero_stage_3 = True
+        self.as_option.force_zero_stage_3_all_gather_threshold = (32 * 32 +
+                                                                  32) * 6 * 4
         self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):
-        set_parallelize_options(devices=self.devices)
 
         class Model(nn.Module):
 
@@ -418,7 +411,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
 
-        @parallelize
+        @parallelize(option=ShardParallel(devices=self.physical_mesh))
         def init_weight(rngkey):
             params = model.init(rngkey, x, True)
             tx = optax.adam(learning_rate=1e-2)
@@ -430,7 +423,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         state = init_weight(rngkey)
 
         # Check sharding specification
-        assert_all_replicated(state.step, len(self.devices))
+        assert_all_replicated(state.step, self.physical_mesh.num_devices)
         assert_sharded(state.params["params"]["Dense_0"]["kernel"])
         assert_sharded(state.params["params"]["Dense_1"]["kernel"])
         assert_sharded(state.opt_state[0].mu["params"]["Dense_0"]["kernel"])

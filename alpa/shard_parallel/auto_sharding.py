@@ -18,6 +18,7 @@ SPMD_PARTITIONED
   V
 FULLY_OPTIMIZED
 """
+import copy
 import logging
 import multiprocessing
 import os

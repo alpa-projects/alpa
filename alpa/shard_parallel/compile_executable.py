@@ -56,12 +56,12 @@ def compile_shard_executable(
     as_option: AutoShardingOption,
     *avals: Sequence[ShapedArray],
 ):
-    """Compile a callable with auto-sharding pass."""
+    """Compile an executable with auto-sharding pass."""
     if isinstance(device_mesh, PhysicalDeviceMesh):
         physical_mesh = device_mesh
         logical_mesh_choices = [physical_mesh.get_logical_mesh()]
     elif isinstance(device_mesh, LogicalDeviceMesh):
-        physical_mesh = devices.physical_mesh
+        physical_mesh = device_mesh.physical_mesh
         logical_mesh_choices = [device_mesh]
     else:
         raise ValueError("Invalid value of devices")
@@ -111,18 +111,15 @@ def shard_parallel_internal(
         built.as_hlo_module())
 
     # Compile a XLA executable
-    if strategy_config is None:
-        hlo_module, strategy_config = run_auto_sharding_pass(
-            built,
-            avals,
-            out_avals,
-            donated_invars,
-            logical_mesh_choices[0],
-            "single",
-            1,
-            as_option)
-    else:
-        assert NotImplementedError
+    hlo_module, strategy_config = run_auto_sharding_pass(
+        built,
+        avals,
+        out_avals,
+        donated_invars,
+        logical_mesh_choices[0],
+        "single",
+        1,
+        as_option)
 
     if global_config.print_xla_compilation_time:
         print(f" - XLA Compilation time: {time.time() - tic:.2f} s")

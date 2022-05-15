@@ -903,7 +903,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             new_list.append(instruction)
         return list(reversed(new_list))
 
-<<<<<<< HEAD
     def get_load_info(self):
         assert self.in_tree is not None
 

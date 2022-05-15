@@ -4,7 +4,8 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
-The driver part sends control commands to launch the worker parts on workers.
+The driver part runs on the user script and the worker parts runs on distributed workers.
+The driver parts sends control commands to launch the worker parts on workers.
 """
 import logging
 from typing import Callable, Sequence, Optional
@@ -40,22 +41,19 @@ mesh_executable_counter = 0
 remote_buffer_counter = 0
 
 
-def next_mesh_executable_uuid():
-    """Return the next uuid of a mesh executable."""
-    global mesh_executable_counter
-    mesh_executable_counter = (mesh_executable_counter + 1) % (1 << 60)
-    return mesh_executable_counter
+class MeshDriverExecutable:
+    """The base class of the driver part of a mesh executable.
+
+    TODO(lmzheng): Define common interface here.
+    """
+
+    def sync(self):
+        self.physical_mesh.sync_workers()
 
 
-def next_remote_buffer_uuid(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    if number == 1:
-        ret = remote_buffer_counter
-    else:
-        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
+class MeshWorkerExecutable:
+    """The base class of the worker part of a mesh executable."""
+
 
 
 class RemoteBufferRef:
@@ -93,6 +91,24 @@ class RemoteBufferRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
+def next_mesh_executable_uuid():
+    """Return the next uuid of a mesh executable."""
+    global mesh_executable_counter
+    mesh_executable_counter = (mesh_executable_counter + 1) % (1 << 60)
+    return mesh_executable_counter
+
+
+def next_remote_buffer_uuid(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    if number == 1:
+        ret = remote_buffer_counter
+    else:
+        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
+
+
 def create_remote_buffer_refs(device_mesh,
                               num_batches=1,
                               host_indices=None,
@@ -115,14 +131,6 @@ def create_remote_buffer_refs(device_mesh,
                     RemoteBufferRef(device_mesh, host_id, device_id,
                                     next(uuid_iter)))
     return refs, uuids
-
-
-class MeshDriverExecutable:
-    """The base class of the driver part of a mesh executable."""
-
-
-class MeshWorkerExecutable:
-    """The base class of the worker part of a mesh executable."""
 
 
 def get_execution_timer_name(exec_uuid):
@@ -999,13 +1007,6 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
 
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
-
-    def get_driver_callable(self):
-        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
-        ret = partial(self.launch_on_driver)
-        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
-        ret.get_executable = lambda: self
-        return ret
 
     def launch_on_driver(self, *args):
         """Launch the executable on the driver."""

@@ -3,12 +3,13 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
+import time
 from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
-from jax.tree_util import tree_unflatten
+from jax.tree_util import tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
@@ -20,8 +21,8 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable, ConcatMeshWor
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid, get_uuid_np_array,
                                   next_remote_buffer_uuid, RemoteBufferRef)
-from alpa.pipeline_parallel.base_runtime import BaseDistributedRuntime
-from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask, SymbolicBroadcastReshardingTask
+from alpa.pipeline_parallel.cross_mesh_resharding import (
+        CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.serialization import LoadInfo
@@ -169,18 +170,12 @@ def _get_dict(d: Dict[Any, Dict], k) -> Dict:
     return d.setdefault(k, {})
 
 
-class DecentralizedDistributedRuntime(BaseDistributedRuntime):
-    """
-    A decentralized pipeline_parallel runtime.
-
-    This runtime uses the driver to compile and generate static instructions for each
-    worker. It sends the instructions to distributed workers and launches the training.
-    See the docstring of `BaseDistributedRuntime`.
-    """
+class PipeshardDriverExecutable:
+    """The driver part of the executable for pipeshard parallel."""
 
     def __init__(self,
                  *,
-                 pipeline_stages: Sequence[XlaShardedPipelineComputation],
+                 stages: Sequence[XlaShardedPipelineComputation],
                  global_invars: Sequence[Var],
                  grad_dummy_invars: Sequence[Var],
                  global_outvars: Sequence[Var],
@@ -191,23 +186,38 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  num_batch: int,
                  flop_count: int,
                  concat_vars_mapping: Dict[Var, Var],
-                 in_tree=None):
-        super().__init__(pipeline_stages=pipeline_stages,
-                         global_invars=global_invars,
-                         grad_dummy_invars=grad_dummy_invars,
-                         global_outvars=global_outvars,
-                         physical_meshes=physical_meshes,
-                         dependency=dependency,
-                         schedule=schedule,
-                         is_batch=is_batch,
-                         num_batch=num_batch)
-        self.uuid_counter = 0  # counter for local buffer uuid
+                 in_tree: PyTreeDef):
+        ##### Input arguments #####
+        self.stages = stages
+        self.global_invars = global_invars
+        self.global_invars = global_invars
+        self.grad_dummy_invars = grad_dummy_invars
+        self.global_outvars = global_outvars
+        self.physical_meshes = physical_meshes
+        self.dependency = dependency
+        self.schedule = schedule
+        self.is_batch = is_batch
+        self.num_batch = num_batch
         self.flop_count = flop_count
         self.in_tree = in_tree
+
+        ##### Internal states #####
+        self.uuid_counter = 0  # counter for local buffer uuid
 
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = []
 
+        # for cross mesh communications
+        self._precompile_sharding_specs()
+        self._communicator = CrossMeshCommunicator(self.stages, self.schedule)
+        self.num_mesh = len(physical_meshes)
+        self._resharding_tasks = [
+            [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
+        ]
+        self._establish_nccl_groups()
+        self._compile_resharding_tasks()
+
+        ##### For handling inputs of the executable ####
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
         self.donate_invars = []
@@ -226,13 +236,15 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # List[mesh_idx -> List[bool]]
         self.batch_invars = []
 
+        ##### For handling outputs of the executable ####
         # Dict[worker -> List[uuid]]
         self.output_local_uuid_list = {}
         # List[arg_idx -> List[mesh_idx -> int]]
         self.mesh_output_indices = []
         # List[mesh_idx -> List[arg_idx -> sharding_spec]]
-        self.output_spec_list = [[] for _ in range(self.num_mesh)]
+        self.output_spec_list = [[] for _ in range(len(physical_meshes))]
 
+        ##### For debugging #####
         # List[stage_idx -> str]
         self.hlo_texts_after_spmd_partitioner = []
 
@@ -241,7 +253,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
          input_local_uuid_lists, grad_uuids,
          reduced_var_uuid_lists) = self._compile(concat_vars_mapping)
 
-        # Create a PipelineMeshWorkerExecutable for each MeshHostWorker
+        # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_grad_uuids = grad_uuids[mesh_idx]
@@ -257,7 +269,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                         reduced_var_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
-                worker.put_executable.remote(uuid, PipelineMeshWorkerExecutable,
+                worker.put_executable.remote(uuid, PipeshardMeshWorkerExecuable,
                                              *args)
                 self.worker_executable_uuid_mapping[worker] = uuid
 
@@ -265,7 +277,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         self.outs_handler: Callable = None
         self._setup_outs_handler()
 
-    def get_next_uuids(self, num) -> np.ndarray:
+    ##### Compilation Related Functions #####
+    def _get_next_uuids(self, num) -> np.ndarray:
         """Get the next uuids as a numpy array of uuids."""
         ret = np.arange(start=self.uuid_counter,
                         stop=self.uuid_counter + num,
@@ -274,7 +287,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         return ret
 
     def _compile(self, concat_vars_mapping):
-        num_mesh = self.num_mesh
+        """Compile pipeline instructions and executables for workers.""" 
+        num_mesh = len(self.physical_meshes)
 
         instruction_lists = {}  # Dict[worker -> List[PipelineInstruction]]
         executable_config_lists = {}  # Dict[worker -> List[ExecutableConfig]]
@@ -434,7 +448,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for outvar in stage.outvars:
                 key = (repr(outvar), batch_idx)
                 # get uuids of this outvar
-                _get_dict(var_at, key)[mesh_idx] = self.get_next_uuids(
+                _get_dict(var_at, key)[mesh_idx] = self._get_next_uuids(
                     physical_mesh.num_devices).reshape(-1, num_devices_per_host)
 
             exec_uuid = executable_uuids[stage_idx]
@@ -622,7 +636,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             mesh_arg_list = mesh_arg_lists[mesh_idx]
             num_args = len(mesh_arg_list)
             # shape: (num_args, num_hosts, num_devices_per_host)
-            arg_uuids = self.get_next_uuids(
+            arg_uuids = self._get_next_uuids(
                 num_args * physical_mesh.num_devices).reshape(
                     num_args, -1, physical_mesh.num_devices_per_host)
             for arg_idx, key in enumerate(mesh_arg_lists[mesh_idx]):
@@ -670,7 +684,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 for batch_idx in range(self.num_batch):
                     key = (repr(src_var), batch_idx)
                     input_args[batch_idx] = _get_dict(var_at, key)[mesh_idx]
-                outputs = self.get_next_uuids(
+                outputs = self._get_next_uuids(
                     physical_mesh.num_devices).reshape(
                         (1, *physical_mesh.shape))
                 dst_mesh_to_uuids[mesh_idx] = outputs.reshape(
@@ -768,7 +782,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         config = config_class(exec_uuid, sharded_shapes, dtypes)
 
         physical_mesh = self.physical_meshes[mesh_idx]
-        output_uuids = self.get_next_uuids(
+        output_uuids = self._get_next_uuids(
             len(variables) * physical_mesh.num_devices).reshape(
                 len(physical_mesh.workers), len(variables), -1)
         for worker_idx, worker in enumerate(physical_mesh.workers):
@@ -903,30 +917,111 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             new_list.append(instruction)
         return list(reversed(new_list))
 
-    def get_load_info(self):
-        assert self.in_tree is not None
+    def _precompile_sharding_specs(self):
+        """Run spmd partitioner pass for each stage to get sharding specs."""
+        for stage_idx, stage in enumerate(self.stages):
+            mesh_indices = list(self.schedule.stage_placement(stage_idx))
+            assert len(mesh_indices) == 1
+            stage.get_spmd_partitioned()
 
-        # build load_info_map: flatten global index => LoadInfo object
-        load_info_map = {}
-        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
-                aval, mesh, spec = (self.global_invars[global_idx].aval, 
-                                    physical_mesh, 
-                                    self.input_shard_specs[mesh_idx][local_idx])
-                if load_info_map.get(global_idx) is None:
-                    load_info_map[global_idx] = LoadInfo([aval], [mesh], [spec])
+    def _establish_nccl_groups(self):
+        """
+        Identify and create NCCL groups based on resharding specs.
+
+        We establish one collective group between two physical meshes, covering all the devices in
+        these two meshes that require NCCL communication.
+
+        Returns:
+            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
+                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
+                (spec[i][j], spec[j][i]) will share collective groups.
+        """
+        device_str_groups = [[OrderedSet()
+                              for _ in range(self.num_mesh)]
+                             for _ in range(self.num_mesh)]
+        # Merge (i, j) and (j, i)
+        for i, j, var_spec_map in self._communicator.task_spec_iter():
+            participants = OrderedSet()
+            for _, spec in var_spec_map.items():  # for each var
+                participants = participants | spec.get_participant_device_strs()
+            if i <= j:
+                device_str_groups[i][j] = device_str_groups[i][j] | participants
+            else:
+                device_str_groups[j][i] = device_str_groups[j][i] | participants
+
+        # construct groups
+        start_time = time.time()
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i >= j:
+                    assert not device_str_groups[i][j]
+                    continue
+                if not device_str_groups[i][j]:
+                    continue
+                self.physical_meshes.establish_nccl_group(i, j)
+        end_time = time.time()
+        logger.debug(
+            f"Initialize collective group takes {end_time - start_time:.2f}")
+
+    def _compile_resharding_tasks(self):
+        """Create and compile all resharding (send/recv/allgather) tasks."""
+        for (src_mesh_idx, dst_mesh_idx,
+             var_spec_map) in self._communicator.task_spec_iter():
+            for key, spec in var_spec_map.items():
+                cg = self.physical_meshes.collective_groups[src_mesh_idx][
+                    dst_mesh_idx]
+                src_mesh = self.physical_meshes[src_mesh_idx]
+                dst_mesh = self.physical_meshes[dst_mesh_idx]
+                if global_config.resharding_mode == "send_recv":
+                    self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
+                        key] = SymbolicReshardingTask(spec, cg, src_mesh, dst_mesh)
                 else:
-                    load_info_map[global_idx].add_replica(aval, mesh, spec)
+                    self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
+                        key] = SymbolicBroadcastReshardingTask(spec, cg, src_mesh, dst_mesh)
 
-        # build load_info_arr
-        load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
-        return tree_unflatten(self.in_tree, load_info_arr)
+    @cached_property
+    def mesh_index_to_outvar_indices_mapping(self) -> Dict[int, List[int]]:
+        """
+        A mapping from mesh index to its related global invar index.
 
+        Returns:
+            mapping (Dict[int, List[int]]): mapping[mesh_idx] is a list containing
+                the indices of global outvars of this mesh.
+        """
+        if self.mesh_output_indices is None:
+            raise RuntimeError()
+        mapping = {}
+        for i, _ in enumerate(self.global_outvars):
+            mesh_out_indices = self.mesh_output_indices[i]
+            for mesh_idx in mesh_out_indices:
+                if mesh_idx not in mapping:
+                    mapping[mesh_idx] = []
+                mapping[mesh_idx].append(i)
+        return mapping
+
+    @cached_property
+    def outvar_index_to_mesh_index_mapping(self) -> Dict[int, List[int]]:
+        """
+        A mapping from an outvar to the indices of meshes it locates on.
+
+        Returns:
+            mapping (Dict[int, List[int]]): mapping[outvar_idx] is a list
+                containing the indices of meshes it locates on.
+        """
+        if self.mesh_output_indices is None:
+            raise RuntimeError()
+        mapping = {}
+        for i, _ in enumerate(self.global_outvars):
+            mapping[i] = list(self.mesh_output_indices[i].keys())
+        return mapping
+
+    ##### Execution Related Functions #####
     def launch_on_driver(self, *args):
         """Launch the computation on the driver."""
-        input_bufs = [None for _ in range(self.num_mesh)]
-        output_bufs = [None for _ in range(self.num_mesh)]
-        output_uuids = [None for _ in range(self.num_mesh)]
+        num_mesh = len(self.physical_meshes)
+        input_bufs = [None for _ in range(num_mesh)]
+        output_bufs = [None for _ in range(num_mesh)]
+        output_uuids = [None for _ in range(num_mesh)]
 
         num_outs = [
             len(self.output_local_uuid_list[mesh.workers[0]])
@@ -1048,51 +1143,27 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
         self.outs_handler = outs_handler
 
-    @cached_property
-    def mesh_index_to_outvar_indices_mapping(self) -> Dict[int, List[int]]:
-        """
-        A mapping from mesh index to its related global invar index.
+    ##### Load/Store Related Functions #####
+    def get_load_info(self):
+        assert self.in_tree is not None
 
-        Returns:
-            mapping (Dict[int, List[int]]): mapping[mesh_idx] is a list containing
-                the indices of global outvars of this mesh.
-        """
-        if self.mesh_output_indices is None:
-            raise RuntimeError()
-        mapping = {}
-        for i, _ in enumerate(self.global_outvars):
-            mesh_out_indices = self.mesh_output_indices[i]
-            for mesh_idx in mesh_out_indices:
-                if mesh_idx not in mapping:
-                    mapping[mesh_idx] = []
-                mapping[mesh_idx].append(i)
-        return mapping
-
-    @cached_property
-    def outvar_index_to_mesh_index_mapping(self) -> Dict[int, List[int]]:
-        """
-        A mapping from an outvar to the indices of meshes it locates on.
-
-        Returns:
-            mapping (Dict[int, List[int]]): mapping[outvar_idx] is a list
-                containing the indices of meshes it locates on.
-        """
-        if self.mesh_output_indices is None:
-            raise RuntimeError()
-        mapping = {}
-        for i, _ in enumerate(self.global_outvars):
-            mapping[i] = list(self.mesh_output_indices[i].keys())
-        return mapping
-
-    def _debug_check(self):
-        for mesh in self.physical_meshes:
-            num_outs = -1
-            for worker in mesh.workers:
-                if num_outs == -1:
-                    num_outs = len(self.output_local_uuid_list[worker])
+        # build load_info_map: flatten global index => LoadInfo object
+        load_info_map = {}
+        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
+                aval, mesh, spec = (self.global_invars[global_idx].aval, 
+                                    physical_mesh, 
+                                    self.input_shard_specs[mesh_idx][local_idx])
+                if load_info_map.get(global_idx) is None:
+                    load_info_map[global_idx] = LoadInfo([aval], [mesh], [spec])
                 else:
-                    assert len(self.output_local_uuid_list[worker]) == num_outs
+                    load_info_map[global_idx].add_replica(aval, mesh, spec)
 
+        # build load_info_arr
+        load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
+        return tree_unflatten(self.in_tree, load_info_arr)
+
+    ##### Profiling and Debugging Related Functions #####
     def get_execution_time_costs(self,
                                  warmup=2,
                                  timer_name="overall",
@@ -1124,6 +1195,22 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             for mesh in self.physical_meshes:
                 mesh.reset_remote_timer(name)
 
+    def get_memory_allocated(self):
+        """Get the current size of allocated memory."""
+        calls = []
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                calls.append(worker.get_memory_allocated.remote())
+        return max(ray.get(calls))
+
+    def get_max_memory_allocated(self):
+        """Get the maximal size of memory allocated so far."""
+        calls = []
+        for mesh in self.physical_meshes:
+            for worker in mesh.workers:
+                calls.append(worker.get_max_memory_allocated.remote())
+        return max(ray.get(calls))
+
     def get_total_allocation_size(self):
         """Get the total allocated memory size of each mesh."""
         # TODO: compute the theoretical total allocation size
@@ -1152,26 +1239,6 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                 ret.append(stage.get_hlo_text())
             return ret
 
-    def _check_alive(self):
-        try:
-            rets = [
-                worker.check_alive.remote()
-                for mesh in self.physical_meshes
-                for worker in mesh.workers
-            ]
-            ray.get(rets)
-        except ray.exceptions.RayActorError:
-            self._exception_shutdown()
-
-    def shutdown(self):
-        """Shutdown the runtime and recycle resources."""
-        self.reset_benchmark_timers()
-        self.physical_meshes.shutdown()
-
-    def _exception_shutdown(self):
-        """In this shutdown, some actors might have died."""
-        self.physical_meshes.exception_shutdown()
-
     def profile_all_executables(self):
         """Profile all executables in the runtime."""
         all_profiled_handles = []
@@ -1188,8 +1255,44 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         all_profiled = [ray.get(handles) for handles in all_profiled_handles]
         return all_profiled
 
+    def print_resharding_tasks(self):
+        """Pretty print all compiled resharding tasks."""
+        ret = ""
+        for src_idx in range(len(self._resharding_tasks)):
+            for dst_idx in range(len(self._resharding_tasks)):
+                for var, task in self._resharding_tasks[src_idx][dst_idx].items(
+                ):
+                    ret += f"{var}: Mesh {src_idx}->{dst_idx}, {task}\n\n"
+        return ret
 
-class PipelineMeshWorkerExecutable:
+    def _debug_check(self):
+        for mesh in self.physical_meshes:
+            num_outs = -1
+            for worker in mesh.workers:
+                if num_outs == -1:
+                    num_outs = len(self.output_local_uuid_list[worker])
+                else:
+                    assert len(self.output_local_uuid_list[worker]) == num_outs
+
+    ##### Other Functions #####
+    def sync(self):
+        """Sync all workers' GPU activities."""
+        all_workers = [w for mesh in self.physical_meshes for w in mesh.workers]
+        ray.get([w.sync.remote() for w in all_workers])
+
+    def _check_alive(self):
+        try:
+            rets = [
+                worker.check_alive.remote()
+                for mesh in self.physical_meshes
+                for worker in mesh.workers
+            ]
+            ray.get(rets)
+        except ray.exceptions.RayActorError:
+            self.physical_meshes._exception_shutdown()
+
+
+class PipeshardMeshWorkerExecuable:
     """An executable that executes static pipeline runtime instructions on a worker."""
 
     def __init__(self, worker: MeshHostWorker, uuid: int,

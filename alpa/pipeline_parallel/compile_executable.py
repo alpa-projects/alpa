@@ -8,8 +8,7 @@ from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
-from alpa.pipeline_parallel.decentralized_distributed_runtime import (
-    DecentralizedDistributedRuntime)
+from alpa.pipeline_parallel.pipeline_executable import PipeshardDriverExecutable
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
@@ -161,8 +160,8 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
-    return DecentralizedDistributedRuntime(
-        pipeline_stages=xla_stages,
+    return PipeshardDriverExecutable(
+        stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
         global_outvars=global_outvars,

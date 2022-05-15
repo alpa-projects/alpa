@@ -37,7 +37,8 @@ class ParallelOption(ABC):
 
 
 class ShardParallel(ParallelOption):
-    """Use shard parallel with options.
+    """Use the "shard" parallel strategy with options.
+    This strategy includes data parallelism, operator parallelism and their combinations.
 
     Args:
         devices: Specify the devices to use.
@@ -83,7 +84,9 @@ class ShardParallel(ParallelOption):
 
 
 class PipeshardParallel(ParallelOption):
-    """Use pipeshard parallel with options.
+    """Use the "pipeshard" parallel strategy with options.
+    This strategy combines pipeline parallelism with shard parallelism.
+    Shard parallelim includes data paralelism, operator parallelism and their combinations.
 
     Args:
         devices: Specify the devices to use.

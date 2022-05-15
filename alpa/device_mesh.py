@@ -237,6 +237,7 @@ class MeshHostWorker:
     def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
                              shard_indices: Sequence[Index],
                              device_ids: Sequence[int]):
+        assert len(uuids) > 0
         ts_spec = self.get_ts_spec(ckpt_dir)
         t = ts.open(ts.Spec(ts_spec), open=True).result()
 
@@ -247,6 +248,7 @@ class MeshHostWorker:
     def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
                            shard_indices: Sequence[Index],
                            global_shape: Sequence[int]):
+        assert len(uuids) > 0
         for uuid in uuids:
             assert uuid in self.buffers
 
@@ -628,6 +630,7 @@ class MeshHostWorker:
         # TODO(yonghao): the sync function should be carefully reconsidered
         def run_fn():
             self.run_resharding_send_task(uuid, buf_uuids)
+
         sync_fn = self.sync if sync else None
         costs = benchmark_func(run_fn, sync_fn, warmup, repeat, number)
         return np.mean(costs)
@@ -1039,7 +1042,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     "XLA_PYTHON_CLIENT_ALLOCATOR"]
 
             if "NCCL_DEBUG" in os.environ:
-                env_vars["NCCL_DEBUG"] = os.environ["NCCL_DEBUG"] if i == 0 else "VERSION"
+                env_vars["NCCL_DEBUG"] = os.environ[
+                    "NCCL_DEBUG"] if i == 0 else "VERSION"
 
             if global_config.use_aws_efa:
                 env_vars.update({
@@ -1271,8 +1275,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def get_max_memory_allocated(self):
         self.sync_workers()
         return max(
-            ray.get([w.get_max_memory_allocated.remote()
-                     for w in self.workers]))
+            ray.get([w.get_max_memory_allocated.remote() for w in self.workers]))
 
     def get_available_memory(self):
         return min(
@@ -1348,16 +1351,21 @@ class DistributedArray:
         one_replica_indices = [
             self.indices[i] for i in self.one_replica_buffer_indices
         ]
-        buf_refs_per_host = {k: [] for k in self.device_mesh.host_ids}
-        indices_per_host = {k: [] for k in self.device_mesh.host_ids}
+        buf_refs_per_host = {}
+        indices_per_host = {}
         for buf_ref, indice in zip(one_replica_buffers, one_replica_indices):
-            buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-            indices_per_host[buf_ref.host_id].append(indice)
+            if buf_refs_per_host.get(buf_ref.host_id) is None:
+                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
+                indices_per_host[buf_ref.host_id] = [indice]
+            else:
+                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
+                indices_per_host[buf_ref.host_id].append(indice)
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
-            obj_refs.append(
-                self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
-                    path, uuids, indices_per_host[host_id], self.shape))
+            if len(uuids) > 0:
+                obj_refs.append(
+                    self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
+                        path, uuids, indices_per_host[host_id], self.shape))
         return ray.get(obj_refs)
 
     @classmethod
@@ -1369,19 +1377,25 @@ class DistributedArray:
         buf_refs, _ = create_remote_buffer_refs(device_mesh, 1)
         indices = pxla.spec_to_indices(aval.shape, sharding_spec)
 
-        buf_refs_per_host = {k: [] for k in device_mesh.host_ids}
-        indices_per_host = {k: [] for k in device_mesh.host_ids}
-        device_ids_per_host = {k: [] for k in device_mesh.host_ids}
+        buf_refs_per_host = {}
+        indices_per_host = {}
+        device_ids_per_host = {}
         for buf_ref, indice in zip(buf_refs, indices):
-            buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-            indices_per_host[buf_ref.host_id].append(indice)
-            device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
+            if buf_refs_per_host.get(buf_ref.host_id) is None:
+                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
+                indices_per_host[buf_ref.host_id] = [indice]
+                device_ids_per_host[buf_ref.host_id] = [buf_ref.device_id]
+            else:
+                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
+                indices_per_host[buf_ref.host_id].append(indice)
+                device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
         obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
-            obj_refs.append(
-                device_mesh.workers[host_id].load_buffers_from_ts.remote(
-                    path, uuids, indices_per_host[host_id],
-                    device_ids_per_host[host_id]))
+            if len(uuids) > 0:
+                obj_refs.append(
+                    device_mesh.workers[host_id].load_buffers_from_ts.remote(
+                        path, uuids, indices_per_host[host_id],
+                        device_ids_per_host[host_id]))
         ray.get(obj_refs)
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
                                 indices)

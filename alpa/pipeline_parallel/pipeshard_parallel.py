@@ -198,7 +198,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun, in_tree, out_tree_thunk,
         is_batch=batch_invars,
         num_batch=num_microbatch,
         flop_count=total_flops,
-        concat_vars_mapping=concat_vars_mapping)
+        concat_vars_mapping=concat_vars_mapping,
+        in_tree=in_tree)
 
     def ret_func(*args):
         return jp.run(*args)

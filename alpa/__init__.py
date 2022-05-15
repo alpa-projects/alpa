@@ -11,6 +11,7 @@ from alpa.pipeline_parallel.primitive_def import (mark_pipeline,
 from alpa.pipeline_parallel.layer_construction import (
     manual_remat, automatic_remat, automatic_layer_construction,
     manual_layer_construction)
+from alpa.serialization import save_checkpoint, restore_checkpoint
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.util import XlaPassContext
 from alpa.timer import timers

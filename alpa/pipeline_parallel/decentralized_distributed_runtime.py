@@ -8,6 +8,7 @@ from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
+from jax.tree_util import tree_unflatten
 import numpy as np
 import ray.exceptions
 
@@ -23,6 +24,7 @@ from alpa.pipeline_parallel.cross_mesh_resharding import SymbolicReshardingTask,
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.device_mesh_group import DistributedPhysicalDeviceMeshGroup
+from alpa.serialization import LoadInfo
 from alpa.timer import timers
 from alpa.util import (DisjointDict, OrderedSet, get_shard_shape, get_microbatch_sharding_spec,
                        compile_concatenate)
@@ -188,7 +190,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                  is_batch: Sequence[bool],
                  num_batch: int,
                  flop_count: int,
-                 concat_vars_mapping: Dict[Var, Var]):
+                 concat_vars_mapping: Dict[Var, Var],
+                 in_tree=None):
         super().__init__(pipeline_stages=pipeline_stages,
                          global_invars=global_invars,
                          grad_dummy_invars=grad_dummy_invars,
@@ -200,6 +203,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                          num_batch=num_batch)
         self.uuid_counter = 0  # counter for local buffer uuid
         self.flop_count = flop_count
+        self.in_tree = in_tree
 
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = []
@@ -212,6 +216,9 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         # Cached sharding indices for input arguments
         # List[mesh_idx -> List[sharding_indices]].
         self.input_shard_indices = [] 
+        # Cached sharding specs for input arguments.
+        # List[mesh_idx -> List[sharding_spec]]
+        self.input_shard_specs = []
         # Whether the argument should be deleted after shard
         # List[mesh_idx -> List[bool]]
         self.delete_after_shard = []
@@ -571,6 +578,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
             tmp_mesh_arg_indices = []
             tmp_input_shard_indices = []
+            tmp_input_shard_specs = []
             tmp_batch_invars = []
             for key in mesh_arg_list:
                 var, batch_idx = key
@@ -589,13 +597,16 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
                             var_to_spec[var], batch_dim, num_batch)
                         tmp_input_shard_indices.append(
                             pxla.spec_to_indices(new_shape, new_spec))
+                        tmp_input_shard_specs.append(new_spec)
                     else:
                         tmp_input_shard_indices.append(
                             pxla.spec_to_indices(var.aval.shape, var_to_spec[var])
                         )
+                        tmp_input_shard_specs.append(var_to_spec[var])
 
             self.mesh_arg_indices.append(tmp_mesh_arg_indices)
             self.input_shard_indices.append(tmp_input_shard_indices)
+            self.input_shard_specs.append(tmp_input_shard_specs)
             self.batch_invars.append(tmp_batch_invars)
 
         for mesh_idx in range(num_mesh):
@@ -892,7 +903,26 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             new_list.append(instruction)
         return list(reversed(new_list))
 
-    def run(self, *args):
+    def get_load_info(self):
+        assert self.in_tree is not None
+
+        # build load_info_map: flatten global index => LoadInfo object
+        load_info_map = {}
+        for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
+            for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
+                aval, mesh, spec = (self.global_invars[global_idx].aval, 
+                                    physical_mesh, 
+                                    self.input_shard_specs[mesh_idx][local_idx])
+                if load_info_map.get(global_idx) is None:
+                    load_info_map[global_idx] = LoadInfo([aval], [mesh], [spec])
+                else:
+                    load_info_map[global_idx].add_replica(aval, mesh, spec)
+
+        # build load_info_arr
+        load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
+        return tree_unflatten(self.in_tree, load_info_arr)
+
+    def run(self, *args, **kwargs):
         """The run function that maps to train_step()."""
         input_bufs = [None for _ in range(self.num_mesh)]
         output_bufs = [None for _ in range(self.num_mesh)]

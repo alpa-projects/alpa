@@ -38,8 +38,17 @@ class DistSaveLoadTest(unittest.TestCase):
         assert_allclose(x, y)
 
     def test_distributed_array_save_load(self):
-        # Launch a device mesh contains four devices
         device_cluster = DeviceCluster()
+        if len(device_cluster.host_info) > 1:
+            # Get EFS mount point for the multi-host test
+            save_prefix = self._get_efs_mount_point()
+            if save_prefix is None:
+                self.skipTest("The multi-host test requires a mounted EFS! ")
+        else:
+            # Use tmp dir for the single-host test
+            save_prefix = "/tmp/"
+
+        # Launch a device mesh contains four devices
         if device_cluster.num_devices < 4:
             self.skipTest(
                 "This unit test requires a cluster with at least 4 devices! ")
@@ -72,7 +81,7 @@ class DistSaveLoadTest(unittest.TestCase):
         self.check_dist_array_eq(desired_buffers1, dist_input_data1)
 
         # Save the DistributedArray (one replica only)
-        tmpdir = tempfile.TemporaryDirectory()
+        tmpdir = tempfile.TemporaryDirectory(prefix=save_prefix)
         subprocess.run(["rm", "-rf", tmpdir.name])
         dist_input_data1.save(tmpdir.name)
 
@@ -116,6 +125,7 @@ class DistSaveLoadTest(unittest.TestCase):
             if save_prefix is None:
                 self.skipTest("The multi-host test requires a mounted EFS! ")
         else:
+            # Use tmp dir for the single-host test
             save_prefix = "/tmp/"
 
         # Init model and optimizer
@@ -177,6 +187,7 @@ class DistSaveLoadTest(unittest.TestCase):
             if save_prefix is None:
                 self.skipTest("The multi-host test requires a mounted EFS! ")
         else:
+            # Use tmp dir for the single-host test
             save_prefix = "/tmp/"
 
         # Config

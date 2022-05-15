@@ -4,7 +4,7 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
-The driver part runs on the user script and the worker parts runs on distributed workers.
+The driver part runs on the user script and the worker parts run on distributed workers.
 The driver parts sends control commands to launch the worker parts on workers.
 """
 import logging
@@ -13,7 +13,6 @@ import os
 
 import jax.numpy as jnp
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
-from jax._src.util import partial
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -53,7 +52,6 @@ class MeshDriverExecutable:
 
 class MeshWorkerExecutable:
     """The base class of the worker part of a mesh executable."""
-
 
 
 class RemoteBufferRef:

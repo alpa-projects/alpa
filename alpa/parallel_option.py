@@ -1,3 +1,4 @@
+"""Options for parallelzing a function."""
 from abc import ABC, abstractmethod
 from typing import Callable, Optional, Sequence, Dict, Union
 

@@ -22,7 +22,7 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable, ConcatMeshWor
                                   next_mesh_executable_uuid, get_uuid_np_array,
                                   next_remote_buffer_uuid, RemoteBufferRef)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
-        CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
+    CrossMeshCommunicator, SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.schedules import cached_property, PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.serialization import LoadInfo

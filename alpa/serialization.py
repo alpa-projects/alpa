@@ -15,7 +15,6 @@ from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 import msgpack
 import numpy as np
-from tensorflow.io import gfile
 
 from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh
 
@@ -94,7 +93,7 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
     state_dict = to_state_dict(target)
     os.makedirs(ckpt_dir, exist_ok=True)
     ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
-    with gfile.GFile(ckpt_path, 'wb') as fp:
+    with open(ckpt_path, 'wb') as fp:
         fp.write(
             msgpack.packb(state_dict,
                           default=_msgpack_ext_pack_wrapper(ckpt_dir),
@@ -145,7 +144,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
             load_info: shardingSpec and deviceMesh allocation info for loading.
     """
     ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
-    with gfile.GFile(ckpt_path, 'rb') as fp:
+    with open(ckpt_path, 'rb') as fp:
         ckpt_contents = fp.read()
     state_dict_content = msgpack.unpackb(ckpt_contents,
                                          ext_hook=_msgpack_ext_unpack,

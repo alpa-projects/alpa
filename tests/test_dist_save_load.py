@@ -201,7 +201,7 @@ class DistSaveLoadTest(unittest.TestCase):
         option = PipeshardParallel(num_micro_batches=2)
         serial_train_step = get_bert_layer_train_step(None, None, None,
                                                       n_layers, False)
-        parallel_train_step = get_bert_layer_train_step(True, True, False,
+        parallel_train_step = get_bert_layer_train_step(option, True, False,
                                                         n_layers, False)
         executable = parallel_train_step.get_executable(state, batch)
 

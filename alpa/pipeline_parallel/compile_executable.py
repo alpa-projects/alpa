@@ -8,7 +8,7 @@ from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
-from alpa.pipeline_parallel.pipeline_executable import PipeshardDriverExecutable
+from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (

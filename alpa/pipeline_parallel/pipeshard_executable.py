@@ -1,4 +1,4 @@
-"""Decentralized inter-op parallel runtime using static instructions."""
+"""The dirver part and worker part of a pipeshard executable."""
 from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum

@@ -19,9 +19,9 @@ from alpa.global_env import global_config
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
     SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
-from alpa.pipeline_parallel.decentralized_distributed_runtime import (
-    AllocateZeroWorkerExecutableConfig, DecentralizedDistributedRuntime,
-    PipelineInstruction, PipelineMeshWorkerExecutable)
+from alpa.pipeline_parallel.pipeshard_executable import (
+    AllocateZeroWorkerExecutableConfig, PipeshardDriverExecutable,
+    PipelineInstruction, PipeshardMeshWorkerExecuable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str, get_shard_shape
@@ -107,10 +107,10 @@ def test_resharding(var,
                                     info="allocate zero for recv"))
     # Create resharding task
     if resharding_mode == "send_recv":
-        DecentralizedDistributedRuntime._compile_resharding_task(
+        PipeshardDriverExecutable._compile_resharding_task(
             src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
     else:
-        DecentralizedDistributedRuntime._compile_broadcast_resharding_task(
+        PipeshardDriverExecutable._compile_broadcast_resharding_task(
             src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
 
     exec_uuids = {}
@@ -118,14 +118,14 @@ def test_resharding(var,
     # Compile Pipeline Executable
     for worker_idx, worker in enumerate(src_mesh.workers):
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
                                      instruction_lists[worker],
                                      [src_uuids[worker_idx]], [], [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     for worker_idx, worker in enumerate(dst_mesh.workers):
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
                                      instruction_lists[worker], [],
                                      [dst_uuids[worker_idx]],
                                      executable_config_lists[worker], [], [],

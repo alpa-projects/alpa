@@ -21,7 +21,6 @@ class DataLoaderTest(unittest.TestCase):
         self.physical_mesh = get_global_physical_mesh(create_if_not_exist=True)
 
     def run_test(self, sharding_specs):
-        physical_mesh = self.physical_mesh
 
         batch_size = 64
         num_samples = 256
@@ -33,7 +32,7 @@ class DataLoaderTest(unittest.TestCase):
 
         data_loader = MeshDriverDataLoader(batch_size, num_samples,
                                            input_iter_func, avals,
-                                           sharding_specs, physical_mesh,
+                                           sharding_specs, self.physical_mesh,
                                            prefetch_size)
         expected_data_loader = input_iter_func(0, num_samples, batch_size)
 

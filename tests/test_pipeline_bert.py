@@ -1,26 +1,23 @@
 import unittest
 import os
 
-from flax import linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import (parallelize, mark_pipeline, manual_layer_construction,
+from alpa import (init, parallelize, mark_pipeline, manual_layer_construction,
                   PipeshardParallel)
-from alpa.testing import BertLayerModel, assert_allclose
+from alpa.parallel_option import LocalPipelineParallel
 from alpa.model.model_util import TrainState
 from alpa.model.bert_model import BertConfig
-from alpa.util import get_ray_namespace_str
+from alpa.testing import BertLayerModel, assert_allclose
 
 
 class PipelineBERTTest(unittest.TestCase):
 
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-
         init(cluster="ray")
 
     def train_2_layer_bert(self, option):
@@ -68,23 +65,21 @@ class PipelineBERTTest(unittest.TestCase):
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         gradients = train_step(state, batch)
         p_train_step = parallelize(train_step, donate_argnums=(), option=option)
-        gradients_with_pipeline = p_train_sep(state, batch)
+        gradients_with_pipeline = p_train_step(state, batch)
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
-        pipelined_train_step.get_executable(state, batch).shutdown()
 
     def test_2_layer_bert_local_pipeline_parallel(self):
-        self.train_2_layer_bert(self.devices, "local_pipeline_parallel")
+        self.train_2_layer_bert(LocalPipelineParallel())
 
     def test_2_layer_bert_pipeshard_parallel(self):
-        option = PipeshardParallel()
-        self.train_2_layer_bert(self.devices, option)
+        self.train_2_layer_bert(PipeshardParallel())
 
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(PipelineBERTTest("test_2_layer_bert_local_pipeline_parallel"))
+    suite.addTest(PipelineBERTTest("test_2_layer_bert_local_pipeline_parallel"))
     suite.addTest(PipelineBERTTest("test_2_layer_bert_pipeshard_parallel"))
     return suite
 

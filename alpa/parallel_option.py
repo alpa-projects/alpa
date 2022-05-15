@@ -8,11 +8,10 @@ import numpy as np
 
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
                               LocalPhysicalDeviceMesh,
-                              DeviceCluster, get_global_cluster,
-                              get_global_physical_mesh, set_global_physical_mesh,
-                              get_global_virtual_physical_mesh,
-                              set_global_virtual_physical_mesh)
+                              get_global_physical_mesh,
+                              get_global_virtual_physical_mesh)
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable
+from alpa.pipeline_parallel.local_pipeline import compile_local_pipeline_executable
 from alpa.pipeline_parallel.stage_construction import (
     AutoStageOption, ManualStageOption, UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
@@ -69,8 +68,7 @@ class ShardParallel(ParallelOption):
     ):
         # Resolve the polymorphism in arguments
         if self.devices is None:
-            mesh = get_global_physical_mesh(
-                create_if_not_exist=True)
+            mesh = get_global_physical_mesh(create_if_not_exist=True)
         elif isinstance(self.devices, (list, tuple)):
             mesh = LocalPhysicalDeviceMesh(self.devices)
         else:
@@ -149,17 +147,8 @@ class PipeshardParallel(ParallelOption):
     ):
         # Resolve the polymorphism in arguments
         if self.devices is None:
-            global_virtual_mesh = get_global_virtual_physical_mesh()
-            if global_virtual_mesh is None:
-                global_cluster = get_global_cluster()
-                if global_cluster is None:
-                    # ray is not initialized, init ray environment
-                    init(cluster="ray")
-                    global_cluster = get_global_cluster()
-                mesh = global_cluster.get_virtual_physical_mesh()
-                set_global_virtual_physical_mesh(mesh)
-            else:
-                mesh = global_virtual_mesh
+            mesh = get_global_virtual_physical_mesh()
+            assert mesh is not None, "Please run `alpa.init()` to initialize alpa."
         else:
             mesh = self.devices
 
@@ -173,4 +162,23 @@ class PipeshardParallel(ParallelOption):
 
 class ManualPipeShardParallel(ParallelOption):
     pass
+
+
+
+class LocalPipelineParallel(ParallelOption):
+    """
+    Run pipeline parallel on a single device.
+    This is only used for debugging.
+    """
+    def compile_executable(
+        self,
+        fun: lu.WrappedFun,
+        in_tree: PyTreeDef,
+        out_tree_thunk: Callable[[], PyTreeDef],
+        static_argnums: Sequence[int],
+        donated_invars: Sequence[bool],
+        batch_invars: Sequence[bool],
+        *avals: Sequence[AbstractValue],
+    ):
+        return compile_local_pipeline_executable(fun, *avals)
 

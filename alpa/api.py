@@ -9,9 +9,9 @@ from jax.api_util import (argnums_partial, donation_vector,
 from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
-import ray
 
-from alpa.device_mesh import DeviceCluster, set_global_cluster
+from alpa.device_mesh import (DeviceCluster, init_global_cluster,
+                              shutdown_global_cluster)
 from alpa.parallel_option import ParallelOption, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
@@ -30,16 +30,17 @@ def init(cluster: str = "ray"):
 
     if is_initialized:
         return
+    is_initialized = True
 
-    if cluster == "local":
-        global_cluster = None
-    elif cluster == "ray":
-        if not ray.is_initialized():
-            ray.init(address="auto", ignore_reinit_error=True)
-        set_jax_env_on_driver(use_cpu_on_driver=True)
-        global_cluster = DeviceCluster()
+    set_jax_env_on_driver(use_cpu_on_driver=True)
+    init_global_cluster(cluster)
 
-    set_global_cluster(global_cluster)
+def shutdown():
+    """Shutdown the global environment."""
+    global is_initialized
+
+    is_initialized = False
+    shutdown_global_cluster()
 
 
 def parallelize(fun: Optional[Callable] = None,

@@ -1903,6 +1903,34 @@ global_cluster: DeviceCluster = None
 global_physical_mesh: PhysicalDeviceMesh = None
 global_virtual_physical_mesh: VirtualPhysicalMesh = None
 
+
+def init_global_cluster(cluster: str):
+    global global_cluster, global_physical_mesh, global_virtual_physical_mesh
+
+    if cluster == "local":
+        global_physical_mesh = LocalPhysicalDeviceMesh()
+    elif cluster == "ray":
+        if not ray.is_initialized():
+            ray.init(address="auto", ignore_reinit_error=True)
+        global_cluster = DeviceCluster()
+        global_virtual_physical_mesh = global_cluster.get_virtual_physical_mesh()
+
+
+def shutdown_global_cluster():
+    global global_cluster, global_physical_mesh, global_virtual_physical_mesh
+
+    global_cluster = None
+
+    if global_physical_mesh:
+        global_physical_mesh.shutdown()
+        global_physical_mesh = None
+
+    if global_virtual_physical_mesh:
+        if global_virtual_physical_mesh.launched_physical_mesh_group:
+            global_virtual_physical_mesh.launched_physical_mesh_group.shutdown()
+        global_virtual_physical_mesh = None
+
+
 def set_global_cluster(cluster: DeviceCluster):
     global global_cluster
     global_cluster = cluster
@@ -1929,7 +1957,7 @@ def get_global_physical_mesh(create_if_not_exist=False):
 
 def set_global_virtual_physical_mesh(mesh: VirtualPhysicalMesh):
     global global_virtual_physical_mesh
-    global_physical_mesh = mesh
+    global_virtual_physical_mesh = mesh
 
 def get_global_virtual_physical_mesh():
     return global_virtual_physical_mesh

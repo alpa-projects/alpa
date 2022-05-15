@@ -231,13 +231,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
 
-    def get_driver_callable(self):
-        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
-        ret = partial(self.launch_on_driver)
-        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
-        ret.get_executable = lambda: self
-        return ret
-
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
         physical_mesh = self.physical_mesh
@@ -440,10 +433,8 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids)
 
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
+    def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
-        if len(kwargs):
-            logger.warning(f"kwargs {(list(kwargs.keys()))} are ignored")
         return profile_xla_executable(self.compiled, backend, local_devices)
 
     def get_hlo_text(self):
@@ -616,13 +607,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
 
-    def get_driver_callable(self):
-        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
-        ret = partial(self.launch_on_driver)
-        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
-        ret.get_executable = lambda: self
-        return ret
-
     def launch_on_driver(self, *args):
         """Launch the executable on the driver."""
         num_micro_batches = self.num_micro_batches
@@ -735,14 +719,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
-
-    def preshard_dynamic_args(self, *args):
-        """Pre-shard the input arguments."""
-        raise NotImplementedError
-
-    def profile_with_dummy_inputs(self, **kwargs):
-        """Profile the time cost of this executable with dummy inputs."""
-        raise NotImplementedError
 
     def get_execution_time_costs(self, warmup):
         """Return the pure execution time costs recorded by an internal timer."""
@@ -882,7 +858,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 for j in range(len(next_batches_uuids[i])):
                     del buffer_dict[next_batches_uuids[i][j]]
 
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
+    def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
         raise NotImplementedError
 

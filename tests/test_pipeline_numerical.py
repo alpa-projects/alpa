@@ -1,9 +1,9 @@
 """Test the numerical correctness of shard parallel."""
 import unittest
-import time
 
 import jax
 
+from alpa.pipeline_parallel.stage_construction import ManualStageOption
 from alpa.testing import PipelineBasicTest
 
 
@@ -23,12 +23,14 @@ class AccumulateGradTest(PipelineBasicTest):
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert_manual_stage_assignment(self):
+        stage_option = ManualStageOption(
+            forward_stage_layer_ids=[[0, 1, 2, 3], [4, 5, 6, 7]],
+            submesh_physical_shapes=[(1, 4), (1, 4)],
+            submesh_logical_shapes=None,
+            submesh_autosharding_option_dicts=None)
         self.run_n_layer_bert(n_layers=8,
                               use_value_and_grad=True,
-                              pipeline_stage_mode="manual_stage",
-                              forward_stage_layer_ids=[[0, 1, 2, 3],
-                                                       [4, 5, 6, 7]],
-                              submesh_shapes=[(1, 4), (1, 4)])
+                              stage_option=stage_option)
 
 
 def suite():

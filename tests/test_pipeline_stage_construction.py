@@ -1,36 +1,38 @@
 import unittest
 
+from alpa.pipeline_parallel.stage_construction import AutoStageOption
 from alpa.testing import PipelineBasicTest
 
+def auto_stage():
+    return AutoStageOption("small_power_of_two", "default",
+                           float("inf"), False, None, None)
 
 class StageConstructionTest(PipelineBasicTest):
 
     def test_mlp_stage_construction(self):
-        self.run_mlp(pipeline_stage_mode="auto_stage")
+        self.run_mlp(stage_option=auto_stage())
 
     def test_mlp_layer_and_stage(self):
         self.run_mlp(manual_pipeline_layer=False,
-                     pipeline_stage_mode="auto_stage")
+                     stage_option=auto_stage())
 
     def test_2_layer_bert_stage_construction(self):
         self.run_n_layer_bert(n_layers=2,
-                              pipeline_stage_mode="auto_stage")
+                              stage_option=auto_stage())
 
     def test_2_layer_bert_layer_and_stage(self):
         self.run_n_layer_bert(n_layers=2,
                               manual_pipeline_layer=False,
-                              pipeline_stage_mode="auto_stage")
+                              stage_option=auto_stage())
 
     def test_8_layer_bert_stage_construction(self):
         self.run_n_layer_bert(n_layers=8,
-                              pipeline_stage_mode="auto_stage",
-                              cache_compute_cost=None)
+                              stage_option=auto_stage())
 
     def test_8_layer_bert_layer_and_stage(self):
         self.run_n_layer_bert(n_layers=8,
                               manual_pipeline_layer=False,
-                              pipeline_stage_mode="auto_stage",
-                              cache_compute_cost=None)
+                              stage_option=auto_stage())
 
 
 def suite():

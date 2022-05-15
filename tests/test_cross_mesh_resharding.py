@@ -11,7 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import init
-from alpa.device_mesh import (DeviceCluster, DistributedArray, get_global_cluster)
+from alpa.device_mesh import (DeviceCluster, DistributedArray,
+                              get_global_virtual_physical_mesh)
 from alpa.mesh_executable import (create_remote_buffer_refs, get_uuid_np_array,
                                   next_mesh_executable_uuid)
 from alpa.global_env import global_config
@@ -188,7 +189,7 @@ class ReshardingTest(unittest.TestCase):
                             use_scatter_gather=True,
                             resharding_mode="send_recv",
                             tensor_dtype=None):
-        virtual_mesh = get_global_cluster().get_virtual_physical_mesh()
+        virtual_mesh = get_global_virtual_physical_mesh()
         src_num_host = src_mesh_shape[0]
         dst_num_host = dst_mesh_shape[0]
         src_mesh = virtual_mesh.slice_2d(range(src_num_host),

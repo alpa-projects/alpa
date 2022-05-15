@@ -7,6 +7,7 @@ import unittest
 import jax
 import jax.numpy as jnp
 import numpy as np
+<<<<<<< HEAD
 import optax
 import ray
 
@@ -17,14 +18,18 @@ from alpa.model.model_util import TrainState
 from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
                           get_bert_layer_train_step, get_mlp_train_step,
                           assert_allclose)
+=======
+
+from alpa import init, DistributedArray
+from alpa.device_mesh import get_global_cluster
+from alpa.testing import assert_allclose
+
+>>>>>>> pass all unit tests
 
 class DistSaveLoadTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto", ignore_reinit_error=True)
-
-    def tearDown(self):
-        ray.shutdown()
+        init(cluster="ray")
 
     def check_dist_array_eq(self, x, y):
         if isinstance(x, DistributedArray):
@@ -38,6 +43,7 @@ class DistSaveLoadTest(unittest.TestCase):
         assert_allclose(x, y)
 
     def test_distributed_array_save_load(self):
+<<<<<<< HEAD
         device_cluster = DeviceCluster()
         if len(device_cluster.host_info) > 1:
             # Get EFS mount point for the multi-host test
@@ -49,6 +55,10 @@ class DistSaveLoadTest(unittest.TestCase):
             save_prefix = "/tmp/"
 
         # Launch a device mesh contains four devices
+=======
+        # Launch a device mesh contains four devices
+        device_cluster = get_global_cluster()
+>>>>>>> pass all unit tests
         if device_cluster.num_devices < 4:
             self.skipTest(
                 "This unit test requires a cluster with at least 4 devices! ")

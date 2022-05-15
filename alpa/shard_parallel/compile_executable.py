@@ -16,7 +16,7 @@ from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from alpa.global_env import global_config
-from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
+from alpa.measure_record import StrategyConfig
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
@@ -37,6 +37,11 @@ def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
     # input arguments specification to a string.
     # Then compute a hash value of this string.
     #
+    # TODO(lmzheng): use jaxpr or hlo instead of source code?
+
+    location = fun.f.__str__().split("at")[0]
+    source_code = inspect.getsource(fun.f)
+    donated_invars = str(donated_invars)
     aval = "".join(x.str_short() for x in aval)
 
     string = location + source_code + donated_invars + aval

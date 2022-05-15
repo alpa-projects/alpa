@@ -10,14 +10,16 @@ from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from alpa.device_mesh import (DeviceCluster, init_global_cluster,
+from alpa.device_mesh import (init_global_cluster,
                               shutdown_global_cluster)
 from alpa.parallel_option import ParallelOption, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval, set_jax_env_on_driver)
 
+
 is_initialized = False
+
 
 def init(cluster: str = "ray"):
     """Initialize global environment.
@@ -34,6 +36,7 @@ def init(cluster: str = "ray"):
 
     set_jax_env_on_driver(use_cpu_on_driver=True)
     init_global_cluster(cluster)
+
 
 def shutdown():
     """Shutdown the global environment."""
@@ -93,7 +96,7 @@ class ParallelizedFunc:
 
     def __call__(self, *args):
         """Launch the computation on the driver."""
-        executable, in_tree, out_tree_thunk, args_flat = self._decode_args(*args)
+        executable, _, out_tree_thunk, args_flat = self._decode_args(*args)
         out = executable.launch_on_driver(*args_flat)
         return tree_unflatten(out_tree_thunk(), out)
 
@@ -186,9 +189,10 @@ def _compile_parallel_executable(
                                      static_argnums, donated_invars,
                                      batch_invars, *avals)
 
+
 def clear_executable_cache():
     """Clear all cached executables."""
-    parallelize_callable.cache_clear()
+    _compile_parallel_executable.cache_clear()
 
 
 def grad(*args, **kwargs):

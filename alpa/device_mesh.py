@@ -706,7 +706,7 @@ class MeshHostWorker:
 
 class PhysicalDeviceMesh(ABC):
     """The base class of physical device mesh.
-    
+
     A physical device mesh is a 2-dimensional mesh that runs SPMD computation on
     all devices in the mesh.
     """
@@ -1696,7 +1696,7 @@ class VirtualPhysicalMesh:
 
     def get_physical_mesh(self):
         """Launch a physical mesh (which will request resources from Ray)."""
-        assert self.launched_physical_mesh == None,\
+        assert self.launched_physical_mesh is None,\
                "Physical mesh can only be launched once."
 
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
@@ -1710,7 +1710,7 @@ class VirtualPhysicalMesh:
 
     def get_physical_mesh_group(self, sliced_virtual_meshes):
         """Launch a physical mesh group (which will request resources from Ray)."""
-        assert self.launched_physical_mesh_group == None,\
+        assert self.launched_physical_mesh_group is None,\
                "Physical mesh group can only be launched once."
 
         # Launch physical meshes in parallel
@@ -1752,6 +1752,7 @@ class PhysicalDeviceMeshGroup:
 
     def establish_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
         """Establish NCCL group between two meshes."""
+        # pylint: disable=import-outside-toplevel
         from alpa.pipeline_parallel.cross_mesh_resharding import CollectiveGroup
 
         assert src_mesh_id < dst_mesh_id
@@ -1802,8 +1803,9 @@ class PhysicalDeviceMeshGroup:
 
 
 class DeviceCluster:
-    """A ray cluster with GPU devices.
-    
+    """
+    A ray cluster with GPU devices.
+
     This is the top interface for alpa to interact with ray cluster's resources.
     """
 
@@ -1935,12 +1937,15 @@ def set_global_cluster(cluster: DeviceCluster):
     global global_cluster
     global_cluster = cluster
 
+
 def get_global_cluster():
     return global_cluster
+
 
 def set_global_physical_mesh(mesh: PhysicalDeviceMesh):
     global global_physical_mesh
     global_physical_mesh = mesh
+
 
 def get_global_physical_mesh(create_if_not_exist=False):
     global global_physical_mesh
@@ -1955,13 +1960,14 @@ def get_global_physical_mesh(create_if_not_exist=False):
 
     return global_physical_mesh
 
+
 def set_global_virtual_physical_mesh(mesh: VirtualPhysicalMesh):
     global global_virtual_physical_mesh
     global_virtual_physical_mesh = mesh
 
+
 def get_global_virtual_physical_mesh():
     return global_virtual_physical_mesh
-
 
 
 ########################################

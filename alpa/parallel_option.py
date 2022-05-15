@@ -33,7 +33,7 @@ class ParallelOption(ABC):
         *avals: Sequence[AbstractValue],
     ):
         """Compile an executable."""
-        raise NotImplemented
+        raise NotImplemented()
 
 
 class ShardParallel(ParallelOption):
@@ -164,7 +164,6 @@ class ManualPipeShardParallel(ParallelOption):
     pass
 
 
-
 class LocalPipelineParallel(ParallelOption):
     """
     Run pipeline parallel on a single device.
@@ -181,4 +180,3 @@ class LocalPipelineParallel(ParallelOption):
         *avals: Sequence[AbstractValue],
     ):
         return compile_local_pipeline_executable(fun, *avals)
-

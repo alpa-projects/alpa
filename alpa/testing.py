@@ -1,5 +1,4 @@
 """Utilities for testing."""
-import time
 import unittest
 from collections.abc import Iterable
 
@@ -8,14 +7,11 @@ import jax.numpy as jnp
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 import numpy as np
 import optax
-import ray
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 import alpa
 from alpa.api import init, shutdown, parallelize
-from alpa.device_mesh import DeviceCluster
-from alpa.global_env import global_config
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
 from alpa.parallel_option import PipeshardParallel
@@ -24,7 +20,6 @@ from alpa.pipeline_parallel.layer_construction import (
 from alpa.pipeline_parallel.stage_construction import UniformStageOption
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
-from alpa.util import get_ray_namespace_str
 
 
 def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
@@ -178,7 +173,7 @@ def get_mlp_inference_step(parallel_option,
 
         if parallel_option:
             forward = decorate_loss_fn(forward, manual_pipeline_layer,
-                                            False, 2)
+                                       False, 2)
 
         out = forward(state.params)
         return out
@@ -237,6 +232,7 @@ class PipelineBasicTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
+    # pylint: disable=no-self-use
     def tearDown(self):
         shutdown()
 
@@ -244,10 +240,12 @@ class PipelineBasicTest(unittest.TestCase):
                 manual_pipeline_layer=True,
                 use_remat=False,
                 use_value_and_grad=False,
+                as_option=None,
                 stage_option=None,
                 do_numerical_test=True):
         option = PipeshardParallel(num_micro_batches=4)
         option.stage_option = stage_option or UniformStageOption()
+        option.as_option = as_option or AutoShardingOption()
 
         # Init model and optimizer
         batch_size = 64
@@ -311,7 +309,7 @@ class PipelineBasicTest(unittest.TestCase):
                          do_numerical_test=True):
         option = PipeshardParallel(num_micro_batches=2)
         option.stage_option = stage_option or UniformStageOption()
-        option.default_autosharding_option = as_option or AutoShardingOption()
+        option.as_option = as_option or AutoShardingOption()
 
         # Init model and optimizer
         rngkey = jax.random.PRNGKey(0)

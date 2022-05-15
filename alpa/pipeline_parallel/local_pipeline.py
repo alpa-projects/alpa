@@ -1,5 +1,5 @@
 """Pipeline parallel on a single device. This is only used for debugging."""
-from typing import Sequence, Mapping, Any, Dict
+from typing import Sequence, Any, Dict
 
 import jax
 from jax import linear_util as lu
@@ -8,7 +8,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import DeviceArray
 
 from alpa.pipeline_parallel.computation import (
-    PipelineComputation, XlaPipelineComputation, XlaShardedPipelineComputation,
+    PipelineComputation, XlaPipelineComputation,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)
 

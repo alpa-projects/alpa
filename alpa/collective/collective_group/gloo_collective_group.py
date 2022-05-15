@@ -126,7 +126,7 @@ class Rendezvous:
                 raise RuntimeError("Unable to get gloo_queue.")
             if self._context.rank == 0:
                 ray.get(q.put_nowait.remote(self._group_name))
-            while (ray.get(q.index.remote(self._group_name))):
+            while ray.get(q.index.remote(self._group_name)):
                 time.sleep(0.1)
             self._context.connectFullMesh(self._store, self._device)
             ray.get(s.send.remote(self._context.rank))

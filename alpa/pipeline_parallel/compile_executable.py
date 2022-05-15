@@ -1,6 +1,6 @@
 """Generate callables that combines intra- and inter-op parallelisms."""
 import logging
-from typing import Callable, Sequence, Union
+from typing import Callable, Sequence
 
 from jax import linear_util as lu
 from jax.core import gensym, AbstractValue

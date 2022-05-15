@@ -8,7 +8,7 @@ import numpy as np
 from jax import linear_util as lu
 from jax._src.lib import xla_bridge as xb
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
-                      ShapedArray, get_aval, raise_to_shaped, AbstractValue)
+                      get_aval, raise_to_shaped, AbstractValue)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_client as xc, xla_extension
@@ -16,7 +16,6 @@ from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from alpa.global_env import global_config
-from alpa.measure_record import StrategyConfig
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
@@ -29,7 +28,7 @@ from alpa.util import (jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch,
 
 def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
                     donated_invars: Sequence[bool],
-                    *aval: Sequence[ShapedArray]):
+                    *aval: Sequence[AbstractValue]):
     """Return a unique string as the query key of a computation definition."""
 
     # Algorithm:
@@ -59,7 +58,7 @@ def compile_shard_executable(
     device_mesh: Union[PhysicalDeviceMesh, LogicalDeviceMesh],
     num_micro_batches: Optional[int],
     as_option: AutoShardingOption,
-    *avals: Sequence[ShapedArray],
+    *avals: Sequence[AbstractValue],
 ):
     """Compile an executable with auto-sharding pass."""
     if isinstance(device_mesh, PhysicalDeviceMesh):
@@ -86,7 +85,7 @@ def shard_parallel_internal(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
         static_argnums: Sequence[int], donated_invars: Sequence[bool],
         physical_mesh: PhysicalDeviceMesh, logical_mesh_choices: Sequence[LogicalDeviceMesh],
-        as_option: AutoShardingOption, *avals: Sequence[ShapedArray]):
+        as_option: AutoShardingOption, *avals: Sequence[AbstractValue]):
     """
     Compile an executable with auto-sharding pass.
 
@@ -147,7 +146,7 @@ def shard_parallel_internal_gradient_accumulation(
         batch_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
         num_micro_batches: int, as_option: AutoShardingOption,
-        *raw_avals: Sequence[ShapedArray]):
+        *raw_avals: Sequence[AbstractValue]):
     """Compile a gradient accumulation executable with auto-sharding pass."""
     # Split the batch dimension
     closed_jaxpr, avals, _ = trace_jaxpr_with_micro_batch(

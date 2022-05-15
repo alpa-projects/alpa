@@ -13,7 +13,7 @@ from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable
 from alpa.pipeline_parallel.local_pipeline import compile_local_pipeline_executable
 from alpa.pipeline_parallel.stage_construction import (
-    AutoStageOption, ManualStageOption, UniformStageOption)
+    AutoStageOption, UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
 
@@ -33,12 +33,12 @@ class ParallelOption(ABC):
         *avals: Sequence[AbstractValue],
     ):
         """Compile an executable."""
-        raise NotImplemented()
+        raise NotImplementedError()
 
 
 class ShardParallel(ParallelOption):
     """Use shard parallel with options.
- 
+
     Args:
         devices: Specify the devices to use.
         num_micro_batches: The number of micro batches for gradient accumulation.
@@ -84,7 +84,7 @@ class ShardParallel(ParallelOption):
 
 class PipeshardParallel(ParallelOption):
     """Use pipeshard parallel with options.
- 
+
     Args:
         devices: Specify the devices to use.
         num_micro_batches: The number of micro batches for gradient accumulation.

@@ -1,4 +1,5 @@
-from alpa.api import init, parallelize, grad, value_and_grad, clear_executable_cache
+from alpa.api import (init, shutdown, parallelize, grad, value_and_grad,
+                      clear_executable_cache)
 from alpa.data_loader import DataLoader, MeshDriverDataLoader
 from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
                               LocalPhysicalDeviceMesh,

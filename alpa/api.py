@@ -15,7 +15,7 @@ from alpa.device_mesh import (init_global_cluster,
 from alpa.parallel_option import ParallelOption, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
-                       abstractify_with_aval, set_jax_env_on_driver)
+                       abstractify_with_aval)
 
 
 is_initialized = False
@@ -34,7 +34,6 @@ def init(cluster: str = "ray"):
         return
     is_initialized = True
 
-    set_jax_env_on_driver(use_cpu_on_driver=True)
     init_global_cluster(cluster)
 
 

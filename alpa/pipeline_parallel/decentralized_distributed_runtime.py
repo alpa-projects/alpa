@@ -905,40 +905,21 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
 
     def get_load_info(self):
         assert self.in_tree is not None
-        split_to_ori = {}
-        ori_to_split = {}
+
+        # build load_info_map: flatten global index => LoadInfo object
         load_info_map = {}
-
-        # build the mapping between original (flatten) index and split (and flatten) index
-        split_idx = 0
-        for i, is_batch in enumerate(self.is_batch):
-            ori_to_split[i] = split_idx
-            split_to_ori[split_idx] = i
-            if is_batch:
-                for j in range(self.num_batch):
-                    split_to_ori[split_idx + j] = i
-                split_idx += self.num_batch
-            else:
-                split_idx += 1
-
-        # build load_info_map: split index => LoadInfo object
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
-            for local_idx, split_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
-                aval, mesh, spec = (self.global_invars[split_to_ori[split_idx]].aval, 
+            for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
+                aval, mesh, spec = (self.global_invars[global_idx].aval, 
                                     physical_mesh, 
                                     self.input_shard_specs[mesh_idx][local_idx])
-                if load_info_map.get(split_idx) is None:
-                    load_info_map[split_idx] = LoadInfo([aval], [mesh], [spec])
+                if load_info_map.get(global_idx) is None:
+                    load_info_map[global_idx] = LoadInfo([aval], [mesh], [spec])
                 else:
-                    load_info_map[split_idx].add_replica(aval, mesh, spec)
+                    load_info_map[global_idx].add_replica(aval, mesh, spec)
 
-        # build load_info_arr by merging split batch args
-        load_info_arr = [None] * len(self.is_batch)
-        for i, is_batch in enumerate(self.is_batch):
-            if is_batch:
-                load_info_arr[i] = [load_info_map[j] for j in range(ori_to_split[i], ori_to_split[i] + self.num_batch)]
-            else:
-                load_info_arr[i] = load_info_map[ori_to_split[i]]
+        # build load_info_arr
+        load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
         return tree_unflatten(self.in_tree, load_info_arr)
 
     def run(self, *args, **kwargs):

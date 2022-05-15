@@ -8,7 +8,7 @@ import optax
 import ray
 
 import alpa
-from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh
 from alpa.model.bert_model import BertConfig, FlaxBertLayer, TrainState
 from alpa.testing import assert_allclose
 
@@ -43,7 +43,7 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
     def test_2_layer_bert_shard_parallel(self):
         physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
         logical_mesh = physical_mesh.get_logical_mesh([2, 2], [2, 2], [1, 0.1])
-        set_parallelize_options(logical_mesh)
+        shard_option = ShardParallel(devices=logical_mesh)
 
         def train_step(state, batch):
 

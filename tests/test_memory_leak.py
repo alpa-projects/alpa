@@ -4,7 +4,7 @@ import unittest
 import jax.numpy as jnp
 import ray
 
-from alpa import (init, parallelize, grad, global_config,
+from alpa import (init, shutdown, parallelize, grad, global_config,
                   ShardParallel, PipeshardParallel, automatic_layer_construction)
 from alpa.device_mesh import get_global_cluster
 
@@ -15,6 +15,9 @@ class MemoryLeakTest(unittest.TestCase):
     def setUp(self):
         init()
         global_config.delete_remote_buffers_threshold = 0
+
+    def tearDonw(self):
+        shutdown()
 
     def test_shard_parallel(self):
         @parallelize(option=ShardParallel(num_micro_batches=2))

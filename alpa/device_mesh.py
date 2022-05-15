@@ -8,7 +8,7 @@ from operator import attrgetter
 import os
 import re
 import time
-from typing import Any, List, Union, Sequence, Tuple, Optional
+from typing import Any, Dict, List, Union, Sequence, Tuple, Optional, Callable
 
 import jax
 from jax import core, xla, device_put
@@ -140,6 +140,36 @@ class MeshHostWorker:
             dtype = np.int32
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
             np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
+
+    def put_init_buffer(self,
+                        uuid: int,
+                        device_id: int,
+                        shape: Sequence[int],
+                        init_func_info: Tuple[Callable, Dict[str, Any]],
+                        dtype=np.float32):
+        if dtype == np.int64:
+            dtype = np.int32
+
+        init_func = init_func_info[0]
+        init_func_kwargs = init_func_info[1]
+        init_func_kwargs["shape"] = shape
+        init_func_kwargs["dtype"] = dtype
+
+        self.buffers[uuid] = (self.backend.buffer_from_pyval(
+            init_func(**init_func_kwargs), self.local_devices[device_id]))
+
+    def shard_and_put_init_buffer(self, uuids, shape, dtype, indices,
+                                  num_batch, init_func_info):
+        assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
+        for i in range(len(self.local_devices)):
+            for b in range(num_batch):
+                shard_shape = []
+                idx = i * num_batch + b
+                for j, s in enumerate(indices[idx]):
+                    filled_slice = s.indices(shape[j])
+                    dim_size = len(range(*filled_slice))
+                    shard_shape.append(dim_size)
+                self.put_init_buffer(uuids[idx], i, shard_shape, init_func_info, dtype)
 
     def shard_and_put_non_zero_buffer(self, uuids, shape, dtype, indices,
                                       num_batch):
@@ -1122,7 +1152,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
-        if self.workers is None or not ray.is_initialized():
+        if self.workers is None or ray.is_initialized is None or not ray.is_initialized():
             return
 
         # Put delete requests into per-host buffers
@@ -1341,6 +1371,24 @@ class DistributedArray:
 
     def flush(self):
         self._npy_value = None
+
+    def init_with_func(self, init_func, **kwargs):
+        num_batch = 1
+        device_mesh = self.device_mesh
+        indices = self.indices
+        buf_refs = self.remote_buffers
+        buf_uuids = [buf_ref.uuid for buf_ref in buf_refs]
+        step = device_mesh.num_devices_per_host * num_batch
+        for host_id in range(device_mesh.num_hosts):
+            device_mesh.workers[host_id].shard_and_put_init_buffer.remote(
+                buf_uuids[host_id * step:(host_id + 1) * step], self._value.shape,
+                self._value.dtype, indices[host_id * step:(host_id + 1) * step],
+                num_batch, (init_func, kwargs))
+        # Remove previously cached value
+        self._npy_value = None
+        self._one_replica_buffer_indices = None
+        self._fetched_np_buffers = None
+        return self
 
     ##### distributed save/load #####
     def save(self, path: str):

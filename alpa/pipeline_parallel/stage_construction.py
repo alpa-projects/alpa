@@ -1,8 +1,9 @@
 """Core implementations for stage construction algorithms."""
-import logging
+from collections import namedtuple
 from datetime import datetime
+import logging
 from time import time
-from typing import Sequence, List, Tuple, Dict
+from typing import Sequence, List, Tuple, Dict, Union
 
 from jax.core import Var
 import numpy as np
@@ -17,12 +18,29 @@ from alpa.pipeline_parallel.computation import (
 from alpa.pipeline_parallel.layer_stats import eqn_flops
 from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                     compile_all, profile_all)
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.timer import timers
 from alpa.util import OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Options for stage construction
+AutoStageOption = namedtuple(
+    "AutoStageOption", 
+    ["submesh_physical_shape_space", "submesh_logical_shape_space",
+     "stage_imbalance_tolerance", "use_hlo_cost_model",
+     "profiling_database_filename", "cached_compute_cost"])
+ManualStageOption = namedtuple(
+    "ManualStageOption",
+    ["forward_stage_layer_ids", "submesh_physical_shapes", "submesh_logical_shapes",
+     "submesh_autosharding_option_dicts"])
+UniformStageOption = namedtuple("UniformStageOption", [])
+
+StageOption = Union[AutoStageOption, ManualStageOption, UniformStageOption]
+
+
+# Get results for debugging
 last_compute_cost_file_name = None
 last_forward_stage_layer_ids = None
 last_submesh_shapes = None
@@ -116,6 +134,7 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
 
 def dp(num_layers, num_devices, num_microbatches, submesh_choices,
        num_autosharding_configs, compute_cost, max_n_succ_stages):
+    """Auto stage dynamic programming."""
     timers("stage-construction-dp").start()
 
     all_possible_stage_costs = np.sort(np.unique(compute_cost))
@@ -145,7 +164,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
     return best_cost, best_solution
 
 
-def get_submesh_choices(mesh: VirtualPhysicalMesh):
+def get_submesh_choices(mesh: VirtualPhysicalMesh, space: str):
     """Gets the valid choices of submesh shapes."""
     if global_config.overwrite_submesh_choices is not None:
         return global_config.overwrite_submesh_choices
@@ -163,45 +182,43 @@ def get_submesh_choices(mesh: VirtualPhysicalMesh):
         f"while now num_devices_per_host = {num_devices_per_host}")
 
     # larger meshes:
-    if global_config.submesh_choices_mode == "all":
+    if space == "all":
         for i in range(2, num_hosts + 1):
             submesh_choices.append((i, num_devices_per_host))
-    elif global_config.submesh_choices_mode == "power_of_two":
+    elif space == "power_of_two":
         i = 2
         while i <= num_hosts:
             submesh_choices.append((i, num_devices_per_host))
             i *= 2
-    elif global_config.submesh_choices_mode == "small_power_of_two":
+    elif space == "small_power_of_two":
         i = 2
         while i <= min(num_hosts, 4):
             submesh_choices.append((i, num_devices_per_host))
             i *= 2
     else:
-        raise ValueError(f"Invalid submesh_choices: "
-                         f"{global_config.submesh_choices}")
+        raise ValueError(f"Invalid submesh space: {space}")
 
     return tuple(submesh_choices)
 
 
 def get_one_submesh_autosharding_config_choices(
         virtual_submesh: VirtualPhysicalMesh,
-        option: str,
-        batch_size: int):
+        space: str, batch_size: int):
     """
     Return a list of logical meshes and autosharding configs.
     Which will be used by the auto stage construction algorithm.
 
     Args:
         virtual_submesh: a submesh.
-        option: possible choices: {"all", "single_node_model_parallel", "default"}.
+        space: possible choices: {"default", "single_node_model_parallel", "all"}.
         batch_size: the batch size used.
     """
     results = []
     num_devices = virtual_submesh.num_devices
-    if option in ["all", "single_node_model_parallel"]:
-        if option == "all":
+    if space in ["all", "single_node_model_parallel"]:
+        if space == "all":
             max_mp_dimension = num_devices
-        else:  # option == "single_node_model_parallel"
+        else:  # space == "single_node_model_parallel"
             max_mp_dimension = virtual_submesh.num_devices_per_host
 
         for mp_size in range(1, max_mp_dimension + 1):
@@ -213,9 +230,9 @@ def get_one_submesh_autosharding_config_choices(
                             "force_batch_dim_to_mesh_dim": 0
                     }))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
-    elif option == "default":
+    elif space == "default":
         results.append((virtual_submesh.get_default_logical_mesh(), {}))
-    elif option == "dp_only":
+    elif space == "dp_only":
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
             "force_batch_dim_to_mesh_dim": 0
         }))
@@ -223,7 +240,7 @@ def get_one_submesh_autosharding_config_choices(
 
 
 def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
-                                                option, batch_size):
+                                                space, batch_size):
     """Get all possible auto sharding config choices for all possible submesh shapes."""
     # A config is: Tuple(logical_mesh_shape, autosharding_option_dict).
     # Enumerate all (2D Mesh with force batch dim) + one (1D Mesh with mix batch dim).
@@ -234,7 +251,7 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
             list(range(num_hosts)),
             [list(range(num_devices)) for _ in range(num_hosts)])
         submesh_autosharding_configs = (
-            get_one_submesh_autosharding_config_choices(virtual_submesh, option,
+            get_one_submesh_autosharding_config_choices(virtual_submesh, space,
                                                         batch_size))
         autosharding_configs.append(submesh_autosharding_configs)
 
@@ -251,7 +268,8 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                 donation_mapping, global_outvars,
                                 apply_grad_layers, apply_grad_global_info,
                                 autosharding_configs, cluster_size,
-                                layer_flops_prefix_sum, mesh_cached_result):
+                                layer_flops_prefix_sum, default_as_option,
+                                stage_imbalance_tolerance, mesh_cached_result):
     timers("stage-construction-compilation").start()
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
@@ -265,7 +283,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
     # TODO(yonghao): only generate these info once for all mesh shapes
     computation_source_ratio = meshes[0].num_devices / cluster_size
     is_full_mesh = computation_source_ratio == 1
-    tolerance = global_config.auto_stage_construction_imbalance_tolerance
+    tolerance = stage_imbalance_tolerance
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             if is_full_mesh and not (start == 0 and end == num_layers - 1):
@@ -308,7 +326,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
 
     print("- Compile all stages")
     try:
-        compiled_outputs = compile_all(stages)
+        compiled_outputs = compile_all(stages, default_as_option)
     except RayActorError as e:
         logger.warning(f"Compilation fatal error: {e}")
         timers("stage-construction-compilation").suspend()
@@ -342,6 +360,8 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
                      global_outvars: Sequence[Var],
                      apply_grad_layers: Sequence[JaxPipelineComputation],
                      apply_grad_global_info: Tuple,
+                     default_as_option: AutoShardingOption,
+                     stage_imbalance_tolerance: float,
                      cached_result: Tuple):
     """Get computation cost for each possible (stage, mesh) configuration.
 
@@ -356,12 +376,14 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
             profiling.
         submesh_choices: All available submesh shape choices.
         autosharding_configs: All auto sharding configs for each submesh.
-        layers: Layers for computing and
-            accumulating gradients (forward + backward).
+        layers: Layers for computing and accumulating gradients (forward + backward).
         donation_mapping: Donation mapping for all layers.
         global_outvars: Global output variables for all layers.
         apply_grad_layers: Apply gradient computations corresponding to each
             forward layers.
+        default_as_option: The default auto-sharding options.
+        stage_imbalance_tolerance: The tolerance of imbalance in the auto-stage
+            construction.
         apply_grad_global_info: Donation mapping and outvars for apply gradient
             stages.
 
@@ -420,7 +442,8 @@ def get_compute_cost(virtual_mesh: VirtualPhysicalMesh,
              sliced_virtual_meshes, layers, donation_mapping, global_outvars,
              apply_grad_layers, apply_grad_global_info,
              autosharding_configs[mesh_id], cluster_size,
-             layer_flops_prefix_sum, mesh_cached_result)
+             layer_flops_prefix_sum, default_as_option,
+             stage_imbalance_tolerance, mesh_cached_result)
 
         compute_cost[:, :, mesh_id, :] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
@@ -493,14 +516,9 @@ def cluster_layers_and_slice_mesh(
         batch_size: int,
         jax_apply_layers: Sequence[JaxPipelineComputation],
         apply_grad_global_info: Tuple,
-        pipeline_stage_mode: str,
-        logical_mesh_search_space: str,
-        cache_compute_cost: str,
-        forward_stage_layer_ids: Sequence[Sequence[int]],
-        submesh_shapes: Sequence[Sequence[int]],
-        logical_mesh_shapes: Sequence[Sequence[int]],
-        autosharding_option_dicts: Sequence[dict],
-        inference_mode: bool):
+        pipeline_schedule: str,
+        default_as_option: AutoShardingOption,
+        stage_option: StageOption):
     """
     Stage-mesh assignment.
 
@@ -515,32 +533,19 @@ def cluster_layers_and_slice_mesh(
         donation_mapping: The donation_mapping for the layers.
         final_outvars: Global outvars of the layers.
         num_micro_batches: The number of microbatches.
-        batch_size: The global batch size.
+        batch_size: The micro batch size.
         jax_apply_layers: The apply gradient computations corresponding
           to each forward layers.
-        pipeline_stage_mode: How to construct pipeline stages.
-          Possible choices: {"auto_stage", "manual_stage", "uniform_stage"}.
-        logical_mesh_search_space: The space of logical mesh shapes.
-          Possible choices: {"all", "single_node_model_parallel", "default"}.
-        cache_compute_cost: Only used for auto_stage.
-          Load cached compute cost from a file.
-        forward_stage_layer_ids: Only used for manual_stage.
-          Layer IDs of each forward stage.
-        sub_physical_mesh_shapes: Only used for manual_stage.
-          The shapes of submeshes for each forward stage.
-        sub_logical_mesh_shapes: Only used for manual_stage.
-          The logical shapes of submeshes for each stage.
-        submesh_autosharding_option_dicts: Only used for manual_stage.
-          The auto-sharding options of each stage.
-        inference_mode: Whether is inference mode.
+        pipeline_schedule: The pipeline schedule.
+        default_as_option: The default auto-sharding option.
+        stage_option: The options controling how to construct stages.
     """
+    inference_mode = (pipeline_schedule == "inference")
     timers("stage-construction").start()
     if virtual_mesh.launched_physical_mesh_group is None:
         given_mesh = False
-        submesh_choices = get_submesh_choices(virtual_mesh)
     else:
         given_mesh = True
-        submesh_choices = None
 
     if inference_mode:
         num_layers = len(layers)
@@ -549,7 +554,7 @@ def cluster_layers_and_slice_mesh(
         assert len(layers) % 2 == 0
         num_layers = len(layers) // 2
 
-    if pipeline_stage_mode == "auto_stage":
+    if isinstance(stage_option, AutoStageOption):
         if given_mesh:
             # TODO(zhuohan): Implement the auto slicing with given mesh.
             raise NotImplementedError("automatically slicing layers with "
@@ -559,22 +564,25 @@ def cluster_layers_and_slice_mesh(
             # TODO(zhuohan): Implement the auto slicing in inference mode.
             raise NotImplementedError("automatically slicing layers with "
                                       "inference mode is not supported yet.")
+
+        submesh_choices = get_submesh_choices(
+            virtual_mesh, stage_optioin.submesh_physical_shape_space)
         autosharding_configs = get_all_submesh_autosharding_config_choices(
-            virtual_mesh,
-            submesh_choices,
-            option=logical_mesh_search_space,
-            batch_size=batch_size)
+            virtual_mesh, submesh_choices,
+            stage_option.submesh_logical_shape_space, batch_size)
         num_autosharding_configs = len(autosharding_configs[0])
 
         # Use DP to find the optimal solution.
-        if cache_compute_cost is not None:
+        if stage_option.cache_compute_cost is not None:
             cached_result = np.load(cache_compute_cost, allow_pickle=True)
         else:
             cached_result = None
         compute_cost, max_n_succ_stages = get_compute_cost(
             virtual_mesh, submesh_choices, autosharding_configs, layers,
             donation_mapping, final_outvars, jax_apply_layers,
-            apply_grad_global_info, cached_result)
+            apply_grad_global_info, default_as_option,
+            stage_option.stage_imbalance_tolerance,
+            cached_result)
         _, solution = dp(num_layers, virtual_mesh.num_devices, num_micro_batches,
                          submesh_choices, num_autosharding_configs,
                          compute_cost, max_n_succ_stages)
@@ -609,17 +617,18 @@ def cluster_layers_and_slice_mesh(
         last_submesh_shapes = submesh_shapes
         last_logical_mesh_shapes = logical_mesh_shapes
         last_autosharding_option_dicts = autosharding_option_dicts
-    elif pipeline_stage_mode == "manual_stage":
+    elif isinstance(stage_option, ManualStageOption):
         # Check forward_stage_layer_ids is a partition of range(num_layers)
         last_layer_id = 0
-        for stage_layer_ids in forward_stage_layer_ids:
+        for stage_layer_ids in stage_option.forward_stage_layer_ids:
             for layer_id in stage_layer_ids:
                 assert layer_id == last_layer_id
                 last_layer_id += 1
         assert last_layer_id == num_layers
-        if logical_mesh_shapes is None:
+        submesh_shapes = stage_option.submesh_physical_shapes
+        if stage_option.submesh_logical_shapes is None:
             logical_mesh_shapes = submesh_shapes
-    elif pipeline_stage_mode == "uniform_stage":
+    elif isinstance(stage_option, UniformStageOption):
         if given_mesh:
             num_stages = num_layers
             submesh_shapes = [x.shape for x in
@@ -646,7 +655,7 @@ def cluster_layers_and_slice_mesh(
         forward_stage_layer_ids = [[i] for i in range(num_layers)]
         autosharding_option_dicts = [{}] * num_stages
     else:
-        raise ValueError(f"Invalid pipeline stage mode: {pipeline_stage_mode}")
+        raise ValueError(f"Invalid pipeline stage option: {stage_option}")
 
     if given_mesh:
         sliced_meshes = [mesh.get_virtual_physical_mesh()

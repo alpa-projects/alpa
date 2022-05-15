@@ -903,6 +903,7 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
             new_list.append(instruction)
         return list(reversed(new_list))
 
+<<<<<<< HEAD
     def get_load_info(self):
         assert self.in_tree is not None
 
@@ -922,8 +923,8 @@ class DecentralizedDistributedRuntime(BaseDistributedRuntime):
         load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
         return tree_unflatten(self.in_tree, load_info_arr)
 
-    def run(self, *args, **kwargs):
-        """The run function that maps to train_step()."""
+    def launch_on_driver(self, *args):
+        """Launch the computation on the driver."""
         input_bufs = [None for _ in range(self.num_mesh)]
         output_bufs = [None for _ in range(self.num_mesh)]
         output_uuids = [None for _ in range(self.num_mesh)]

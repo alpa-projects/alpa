@@ -6,7 +6,7 @@ from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
                               fetch)
 from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
-from alpa.parallel_option import ShardParallel, PipeShardParallel
+from alpa.parallel_option import ShardParallel, PipeshardParallel
 from alpa.pipeline_parallel.primitive_def import (mark_pipeline,
                                                   mark_pipeline_jaxpreqn)
 from alpa.pipeline_parallel.layer_construction import (

@@ -6,11 +6,10 @@ from jax import linear_util as lu
 from jax.core import gensym, AbstractValue
 from jax.tree_util import PyTreeDef
 
-from alpa.device_mesh import VirtualPhysicalMesh, DeviceCluster, get_global_cluster
+from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.decentralized_distributed_runtime import (
     DecentralizedDistributedRuntime)
-from alpa.pipeline_parallel.local_pipeline_parallel import LocalRuntime
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
@@ -25,38 +24,31 @@ from alpa.pipeline_parallel.apply_grad import (
     process_apply_gradient,
     split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.stage_construction import (
-    cluster_layers_and_slice_mesh)
+    cluster_layers_and_slice_mesh, StageOption)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.util import get_var_mapping, trace_jaxpr_with_micro_batch, OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def pipeshard_parallel_callable(fun: lu.WrappedFun,
-                                in_tree: PyTreeDef,
-                                out_tree_thunk: Callable[[], PyTreeDef],
-                                donated_invars: Sequence[bool],
-                                batch_invars: Sequence[bool],
-                                devices: Union[DeviceCluster, VirtualPhysicalMesh],
-                                memory_budget_per_device: float,
-                                *avals: Sequence[AbstractValue]):
+def compile_pipeshard_executable(fun: lu.WrappedFun,
+                                 in_tree: PyTreeDef,
+                                 out_tree_thunk: Callable[[], PyTreeDef],
+                                 donated_invars: Sequence[bool],
+                                 batch_invars: Sequence[bool],
+                                 virtual_mesh: VirtualPhysicalMesh,
+                                 num_microbatch: int,
+                                 pipeline_schedule: str,
+                                 default_as_option: AutoShardingOption,
+                                 stage_option: StageOption,
+                                 *avals: Sequence[AbstractValue]):
     """
     Compile a callable for pipeshard parallel which combines
     pipeline parallelism and 2d shard parallelsim.
     """
-    # Resolves the polymorphism in arguments
-    if isinstance(devices, DeviceCluster):
-        devices = devices.get_virtual_physical_mesh()
-
-    assert isinstance(devices, VirtualPhysicalMesh), f"type: {type(devices)}"
-    virtual_mesh = devices
-
     # Trace the function to get the jaxpr
-    num_microbatch = global_config.num_micro_batches
-    if num_microbatch is None:
-        logger.warning("num microbatch is unset. Use 1 by default.")
-        num_microbatch = 1
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_microbatch, avals)
 
@@ -66,7 +58,6 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
     (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
      microbatch_bound) = split_compute_grad_and_apply_grad(
          closed_jaxpr, gensym_func, num_microbatch)
-    inference_mode = (global_config.pipeline_parallel_schedule == "inference")
     # FIXME(yonghao): use apply grad jaxpr returned by this function
     batch_dim = 0
     (reduction_vector, post_microbatch_bound,
@@ -104,32 +95,20 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
     global_outvars = closed_jaxpr.jaxpr.outvars
     donation_mapping = dict(grad_in_to_out)
 
+    inference_mode = (pipeline_schedule == "inference")
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
          jax_pipeline_layers, apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
          global_invars, global_outvars, donated_invars, donation_mapping,
          reduction_vector, num_microbatch, gensym_func, inference_mode)
+
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
-     logical_mesh_shapes,
-     autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-         jax_pipeline_layers,
-         virtual_mesh,
-         donation_mapping,
-         acc_grad_outvars,
-         num_microbatch,
-         batch_size,
-         jax_apply_layers=jax_apply_layers,
-         apply_grad_global_info=apply_grad_global_info,
-         pipeline_stage_mode=global_config.pipeline_stage_mode,
-         logical_mesh_search_space=global_config.logical_mesh_search_space,
-         cache_compute_cost=global_config.cache_compute_cost,
-         forward_stage_layer_ids=global_config.forward_stage_layer_ids,
-         submesh_shapes=global_config.sub_physical_mesh_shapes,
-         logical_mesh_shapes=global_config.sub_logical_mesh_shapes,
-         autosharding_option_dicts=global_config.
-         submesh_autosharding_option_dicts,
-         inference_mode=inference_mode)
+     logical_mesh_shapes, autosharding_option_dicts) = cluster_layers_and_slice_mesh(
+         jax_pipeline_layers, virtual_mesh, donation_mapping,
+         acc_grad_outvars, num_microbatch, batch_size,
+         jax_apply_layers, apply_grad_global_info, pipeline_schedule,
+         default_as_option, stage_option)
     num_meshes = len(sliced_virtual_meshes)
 
     # Process apply_gradient and donation
@@ -146,25 +125,23 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
         donation_mapping, jax_all_stages, gensym_func)
 
     # Generate pipeline schedule and placement
-    if global_config.pipeline_parallel_schedule == "gpipe":
+    if pipeline_schedule == "gpipe":
         schedule = GpipeSchedule(dependency=dependency,
                                  meshes=sliced_virtual_meshes,
                                  apply_grad_placement=apply_grad_placement,
                                  num_batch=num_microbatch)
-    elif global_config.pipeline_parallel_schedule == "1f1b":
+    elif pipeline_schedule == "1f1b":
         schedule = PipeDreamFlush(dependency=dependency,
                                   meshes=sliced_virtual_meshes,
                                   apply_grad_placement=apply_grad_placement,
                                   num_batch=num_microbatch)
-    elif global_config.pipeline_parallel_schedule == "inference":
+    elif pipeline_schedule == "inference":
         schedule = InferenceSchedule(dependency=dependency,
                                      meshes=sliced_virtual_meshes,
                                      apply_grad_placement=apply_grad_placement,
                                      num_batch=num_microbatch)
     else:
-        raise RuntimeError(f"Unrecognized pipeline parallel schedule. "
-                           f"Got {global_config.pipeline_parallel_schedule}. "
-                           f"Available ones are `gpipe` or `1f1b`.")
+        raise ValueError(f"Invalid schedule: {pipeline_schedule}")
     logger.debug(schedule.pprint_schedule(to_print=False))
 
     # Call auto-sharding pass to shard each stage
@@ -172,15 +149,8 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
         jax_all_stages, sliced_virtual_meshes, schedule, n_stages, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
         num_microbatch, logical_mesh_shapes, autosharding_option_dicts,
-        memory_budget_per_device, gensym_func)
+        default_as_option, gensym_func)
     total_flops *= num_microbatch
-
-    # Debug use: only compile Hlo, even without enough device.
-    if global_config.debug_with_local_runtime:
-        return LocalRuntime(pipeline_stages=xla_stages,
-                            global_invars=global_invars,
-                            global_outvars=global_outvars,
-                            get_hlo_texts=True)
 
     # Launch the physical mesh group
     if virtual_mesh.launched_physical_mesh_group is None:
@@ -191,7 +161,7 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
-    jp = DecentralizedDistributedRuntime(
+    return DecentralizedDistributedRuntime(
         pipeline_stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
@@ -205,18 +175,12 @@ def pipeshard_parallel_callable(fun: lu.WrappedFun,
         concat_vars_mapping=concat_vars_mapping,
         in_tree=in_tree)
 
-    def ret_func(*args):
-        return jp.run(*args)
-
-    ret_func.get_executable = lambda: jp
-    return ret_func  # pylint: disable=unnecessary-lambda
-
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict, num_microbatch,
                      logical_mesh_shapes, autosharding_option_dicts,
-                     memory_budget_per_device, gensym_func):
+                     default_as_option, gensym_func):
     """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
@@ -241,18 +205,18 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         donatable_dict[mesh_idx].append(donatable_list[i])
 
     # Call auto-sharding pass on each stage
+    distributed_compile = global_config.pipeline_distributed_compile
     xla_stages = [None] * n_stages
-    if global_config.pipeline_distributed_compile:
+    if distributed_compile:
         compile_workers = CompileWorkerPool(num_meshes, 1)
         compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
         compile_intermediate = [None] * num_meshes
     total_flops = 0
-    default_autosharding_option = global_config.default_autosharding_option
     for mesh_idx in range(num_meshes):
         virtual_mesh = virtual_meshes[mesh_idx]
         logical_mesh = virtual_mesh.get_logical_mesh(
             logical_mesh_shapes[mesh_idx])
-        autosharding_option = default_autosharding_option.deepcopy_and_update(
+        autosharding_option = default_as_option.copy_and_update(
             autosharding_option_dicts[mesh_idx])
 
         # Setup dummy stages
@@ -264,7 +228,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             donate_invars_dict[stage_idx]
             for stage_idx in stage_id_dict[mesh_idx]
         ]
-        if global_config.pipeline_distributed_compile:
+        if distributed_compile:
             proto, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
             other_kwargs = {
@@ -272,7 +236,6 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "return_mode": "stage_protos",
                 "as_option": autosharding_option,
                 "num_micro_batches": num_microbatch,
-                "memory_budget_per_device": memory_budget_per_device,
             }
             compile_workers.submit(compile_fn,
                                    (mesh_idx, proto, jaxpr_args, other_kwargs))
@@ -283,13 +246,13 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             sharded_xla_stages, flops = generate_sharded_xla_computations(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars,
                 donatable_dict[mesh_idx], acc_grad_outvars, num_microbatch,
-                logical_mesh, autosharding_option, memory_budget_per_device)
+                logical_mesh, autosharding_option)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):
                 xla_stages[i] = xla_stage
 
-    if global_config.pipeline_distributed_compile:
+    if distributed_compile:
         for _ in range(num_meshes):
             mesh_idx, (computation_names, computation_protos,
                        strategy_config) = compile_workers.get_next_unordered()

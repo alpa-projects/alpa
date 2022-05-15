@@ -5,7 +5,8 @@ import jax.numpy as jnp
 import ray
 
 from alpa import (init, parallelize, grad, global_config,
-                  ShardParallel, automatic_layer_construction)
+                  ShardParallel, PipeshardParallel, automatic_layer_construction)
+from alpa.device_mesh import get_global_cluster
 
 from test_install import create_train_state_and_batch
 
@@ -38,15 +39,12 @@ class MemoryLeakTest(unittest.TestCase):
         for w in executable.physical_mesh.workers:
             assert len(ray.get(w.get_live_buffer_uuids.remote())) == 0
 
+        executable.physical_mesh.shutdown()
+
     def test_pipeline_parallel(self):
-        cluster = init_cluster()
-        set_parallelize_options(strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_stage",
-                                num_micro_batches=2)
+        layer_num = min(get_global_cluster().num_devices, 2)
 
-        layer_num = min(cluster.num_devices, 2)
-
-        @parallelize
+        @parallelize(option=PipeshardParallel(num_micro_batches=2))
         def train_step(state, batch):
 
             @automatic_layer_construction(layer_num=layer_num)
@@ -74,7 +72,7 @@ class MemoryLeakTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(MemoryLeakTest("test_shard_parallel"))
-    #suite.addTest(MemoryLeakTest("test_pipeline_parallel"))
+    suite.addTest(MemoryLeakTest("test_pipeline_parallel"))
     return suite
 
 

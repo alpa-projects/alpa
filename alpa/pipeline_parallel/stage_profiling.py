@@ -428,7 +428,7 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         self.pool = ActorPool(self.actors)
 
 
-def compile_all(stages):
+def compile_all(stages, default_as_option):
     """
     Compile all input stages.
 
@@ -447,7 +447,7 @@ def compile_all(stages):
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
             (stage_id, stage_config.compile_config, logical_mesh,
-             default_autosharding_option.deepcopy_and_update(
+             default_as_option.copy_and_update(
                  autosharding_option_dict), global_config.num_micro_batches))
 
     compiled_outputs = [None] * len(stages)

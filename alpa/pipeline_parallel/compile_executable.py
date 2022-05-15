@@ -1,4 +1,4 @@
-"""Generate callables that combines intra- and inter-op parallelisms."""
+"""Compile executables for pipeshard parallelism."""
 import logging
 from typing import Callable, Sequence
 

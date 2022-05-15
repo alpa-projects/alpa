@@ -1,4 +1,16 @@
-"""Options for parallelzing a function."""
+"""Options for parallelzing a function.
+
+Alpa classifies common parallel techniques into two categories:
+1. shard parallelism or intra-operator parallelism. This includes data parallelism,
+   operator parallelism (or tensor model parallelism), expert parallelism,
+   zero optimizer and their combinations.
+2. pipeline parallelism or inter-operator parallleism.
+Please see our paper (https://arxiv.org/abs/2201.12023) for more details.
+
+Based on this, alpa provides two base parallel options:
+- ShardParallel: which only uses shard parallelsim.
+- PipeshardParallel: which combines pipeline parallelism and shard parallelism.
+"""
 from abc import ABC, abstractmethod
 from typing import Callable, Optional, Sequence, Dict, Union
 
@@ -38,8 +50,7 @@ class ParallelOption(ABC):
 
 
 class ShardParallel(ParallelOption):
-    """Use the "shard" parallel strategy with options.
-    This strategy includes data parallelism, operator parallelism and their combinations.
+    """Use shard parallelism with options.
 
     Args:
         devices: Specify the devices to use.
@@ -85,9 +96,8 @@ class ShardParallel(ParallelOption):
 
 
 class PipeshardParallel(ParallelOption):
-    """Use the "pipeshard" parallel strategy with options.
-    This strategy combines pipeline parallelism with shard parallelism.
-    Shard parallelim includes data paralelism, operator parallelism and their combinations.
+    """Use pipeshard parallelism with options.
+    This strategy combines pipeline parallelism and shard parallelism.
 
     Args:
         devices: Specify the devices to use.

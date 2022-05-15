@@ -1,4 +1,4 @@
-"""Generate callables for shard_parallel."""
+"""Compile executables for shard parallelism."""
 import hashlib
 import inspect
 import time

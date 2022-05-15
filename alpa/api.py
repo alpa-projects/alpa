@@ -22,7 +22,7 @@ is_initialized = False
 
 
 def init(cluster: str = "ray"):
-    """Initialize global environment.
+    """Initialize the global environment.
 
     Args:
       cluster: The distributed cluster.
@@ -52,7 +52,7 @@ def parallelize(fun: Optional[Callable] = None,
                 batch_argnums: Union[Sequence[int], str] = (1,),
                 option: Optional[ParallelOption] = None):
     """
-    Automatically parallelize a jax function.
+    Parallelize a jax function.
 
     Args:
         fun: The function to be parallelized.
@@ -63,7 +63,7 @@ def parallelize(fun: Optional[Callable] = None,
         batch_argnums: The indices of arguments that are the data batch.
           This information is used to split the original data batch into micro batches
           to perform gradient accumulation or pipeline parallelism.
-          Alpa assumes the first dimension of the tensor is the batch dimension.
+          Alpa assumes the 0-th dimension of the tensor is the batch dimension.
         option: The options of parallel strategy.
     """
     def decorate_fun(fun):
@@ -100,7 +100,7 @@ class ParallelizedFunc:
         return tree_unflatten(out_tree_thunk(), out)
 
     def get_executable(self, *args):
-        """Get the compiled exectuable"""
+        """Get the compiled exectuable."""
         executable, _, _, _ = self._decode_args(*args)
         return executable
 
@@ -111,7 +111,7 @@ class ParallelizedFunc:
         return tree_unflatten(in_tree, sharded_args)
 
     def _decode_args(self, *args):
-        """Decode the arguments"""
+        """Flatten PyTree arguments and get the executable."""
         static_argnums, donate_argnums, batch_argnums = (
             self.static_argnums, self.donate_argnums, self.batch_argnums)
         kwargs = {}
@@ -177,7 +177,6 @@ def _compile_parallel_executable(
     *avals: Sequence[AbstractValue],
 ):
     """Cached parallelized callable."""
-
     # Clean stores for the next call
     for store in fun.stores:
         if store:

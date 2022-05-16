@@ -18,7 +18,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    def train_tied_embedding(self, option):
+    def train_tied_embedding(self, method):
         vocab_size = 256
         hidden_size = 16
         batch_size = 8

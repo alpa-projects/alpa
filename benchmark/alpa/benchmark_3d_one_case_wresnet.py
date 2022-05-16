@@ -11,7 +11,7 @@ import alpa
 from alpa import (parallelize, get_global_cluster,
                   set_global_virtual_physical_mesh,
                   ShardParallel, PipeshardParallel, ManualPipeshardParallel,
-                  automatic_layer_construction)
+                  AutoShardingOption, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.layer_construction import automatic_remat
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
@@ -173,20 +173,20 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         method = PipeshardParallel(
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
-            overwrite_auto_sharding_option={
-               "prefer_reduce_scatter": prefer_reduce_scatter,
-               "allow_mixed_mesh_shape": allow_mixed_mesh_shape,
-            },
+            default_auto_sharding_option=AutoShardingOption(
+               prefer_reduce_scatter=prefer_reduce_scatter,
+               allow_mixed_mesh_shape=allow_mixed_mesh_shape,
+            ),
             **auto_stage_option)
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, manual_stage_option = parallel_args
         method = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
-            overwrite_auto_sharding_option={
-               "prefer_reduce_scatter": prefer_reduce_scatter,
-               "allow_mixed_mesh_shape": allow_mixed_mesh_shape,
-            })
+            default_auto_sharding_option=AutoShardingOption(
+               prefer_reduce_scatter=prefer_reduce_scatter,
+               allow_mixed_mesh_shape=allow_mixed_mesh_shape,
+            ),
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
 

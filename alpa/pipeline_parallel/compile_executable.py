@@ -1,5 +1,6 @@
 """Compile executables for pipeshard parallelism."""
 import logging
+import time
 from typing import Callable, Sequence
 
 from jax import linear_util as lu
@@ -47,11 +48,13 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     Compile a callable for pipeshard parallel which combines
     pipeline parallelism and 2d shard parallelsim.
     """
+    debug_compilation_time(None)
+
     # Trace the function to get the jaxpr
     closed_jaxpr, _, batch_size = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_microbatch, avals)
-
     gensym_func = gensym([closed_jaxpr.jaxpr])
+    debug_compilation_time("trace")
 
     # Split the jaxpr into compute_grad and apply_grad
     (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
@@ -100,6 +103,7 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
          jax_pipeline_layers, apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
          global_invars, global_outvars, donated_invars, donation_mapping,
          reduction_vector, num_microbatch, gensym_func, inference_mode)
+    debug_compilation_time("jaxpr operations")
 
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
@@ -109,6 +113,7 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
          jax_apply_layers, apply_grad_global_info, pipeline_schedule,
          default_as_option, stage_option)
     num_meshes = len(sliced_virtual_meshes)
+    debug_compilation_time("stage construction")
 
     # Process apply_gradient and donation
     (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
@@ -122,6 +127,7 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
                                                global_invars, global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
         donation_mapping, jax_all_stages, gensym_func)
+    debug_compilation_time("apply grad")
 
     # Generate pipeline schedule and placement
     if pipeline_schedule == "gpipe":
@@ -141,7 +147,6 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
                                      num_batch=num_microbatch)
     else:
         raise ValueError(f"Invalid schedule: {pipeline_schedule}")
-    logger.debug(schedule.pprint_schedule(to_print=False))
 
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(
@@ -150,17 +155,20 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
         num_microbatch, logical_mesh_shapes, autosharding_option_dicts,
         default_as_option, gensym_func)
     total_flops *= num_microbatch
+    debug_compilation_time("shard stages")
 
     # Launch the physical mesh group
     if virtual_mesh.launched_physical_mesh_group is None:
         virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
+    debug_compilation_time("launch meshes")
 
     # Wrap all things into a distributed runtime
     grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
-    return PipeshardDriverExecutable(
+
+    executable = PipeshardDriverExecutable(
         stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
@@ -173,6 +181,8 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
         flop_count=total_flops,
         concat_vars_mapping=concat_vars_mapping,
         in_tree=in_tree)
+    debug_compilation_time("driver executable")
+    return executable
 
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
@@ -207,7 +217,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     distributed_compile = global_config.pipeline_distributed_compile
     xla_stages = [None] * n_stages
     if distributed_compile:
-        compile_workers = CompileWorkerPool(num_meshes, 1)
+        compile_workers = CompileWorkerPool(num_meshes)
         compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
         compile_intermediate = [None] * num_meshes
     total_flops = 0
@@ -347,3 +357,12 @@ def _rewrite_global_outvars_post_concate(global_outvars, reduction_vector,
         get_var_mapping(reversed_mapping, v) for v in global_outvars
     ]
     return global_outvars, concat_vars_mapping
+
+_tic = None
+
+def debug_compilation_time(message):
+    global _tic
+    if message:
+        print(f"compile_pipeshard_executable::{message}: "
+              f"{time.time() - _tic:.2f} s")
+    _tic = time.time()

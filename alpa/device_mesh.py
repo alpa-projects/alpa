@@ -1079,7 +1079,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "env_vars": env_vars
             }).remote(self.server_address, self.num_hosts, i)
             self.workers.append(worker)
-        self.sync_workers()
         self.launched = True
 
     @property

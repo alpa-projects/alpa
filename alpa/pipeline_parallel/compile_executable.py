@@ -362,7 +362,7 @@ _tic = None
 
 def debug_compilation_time(message):
     global _tic
-    if message:
+    if message and global_config.print_compilation_time:
         print(f"compile_pipeshard_executable::{message}: "
               f"{time.time() - _tic:.2f} s")
     _tic = time.time()

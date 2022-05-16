@@ -1,6 +1,6 @@
 """
 Distributed Training with Both Shard and Pipeline Parallelism
-====================================================================
+=============================================================
 
 Alpa can automatically parallelizes jax functions with both shard
 parallelism (a.k.a. intra-operator parallelism) and pipeline parallelism
@@ -176,7 +176,7 @@ alpa.shutdown()
 # partitioning algorithm consists of the following steps:
 #
 # 1. **Layer Construction:** In this step, the operators in the model are
-#    clustered into ``layers'' based on a graph clustering algorithm. The
+#    clustered into "layers" based on a graph clustering algorithm. The
 #    user needs to specify the total number of layers (i.e. clusters) as
 #    a hyperparameter.
 # 2. **Stage Construction and Mesh Slicing:** In this step, we partition
@@ -191,7 +191,7 @@ alpa.init(cluster="ray")
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
 
-@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16, stage_mode="auto")
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16, stage_mode="auto"))
 def auto_pipeline_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the

@@ -1,8 +1,8 @@
 """
-.. _Alpa Quickstart
+.. _Alpa Quickstart:
 
 Alpa Quickstart
-=========================
+===============
 
 Alpa is built on top of a tensor computation framework `Jax <https://jax.readthedocs.io/en/latest/index.html>`_ .
 Alpa can automatically parallelize jax functions and runs them on a distributed cluster.
@@ -96,7 +96,7 @@ expected_state = train_step(state, batch)
 
 ################################################################################
 # Auto-parallelization with ``alpa.parallelize``
-# ---------------------------------------------
+# ----------------------------------------------
 # Alpa provides a transformation ``alpa.parallelize`` to parallelize a jax function.
 # ``alpa.parallelize`` is similar to ``jax.jit`` . ``jax.jit`` compiles a jax
 # function for a single device, while ``alpa.parallelize`` compiles a jax function

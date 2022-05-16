@@ -40,7 +40,7 @@ def init(cluster: str = "ray"):
 def shutdown():
     """Shutdown the global environment."""
     global is_initialized
-    assert is_initialized == False
+    assert is_initialized is False
     is_initialized = False
     shutdown_global_cluster()
 

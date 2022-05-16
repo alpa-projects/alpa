@@ -1,7 +1,6 @@
 """Compile executables for shard parallelism."""
 import hashlib
 import inspect
-import time
 from typing import Callable, Sequence, Optional, Union
 
 import numpy as np

@@ -18,14 +18,13 @@ SPMD_PARTITIONED
   V
 FULLY_OPTIMIZED
 """
-import copy
 import dataclasses
 import logging
 import multiprocessing
 import os
 import time
 import traceback
-from typing import Sequence, Optional, Union, Tuple, Dict
+from typing import Sequence, Optional, Union, Tuple
 import warnings
 
 import numpy as np
@@ -124,6 +123,7 @@ class LogicalDeviceMesh:
         return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                  self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
                                      other.mesh_alpha, other.mesh_beta))
+
 
 @dataclasses.dataclass
 class AutoShardingOption:

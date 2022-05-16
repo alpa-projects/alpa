@@ -55,9 +55,6 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
 
             return executable
 
-        # TODO(zhuohan): Support distributed compile when there are multiple graphs
-        global_config.pipeline_distributed_compile = False
-
         option = PipeshardParallel(stage_mode=stage_mode,
                                    num_micro_batches=2)
         executable = test_one_mlp(option)

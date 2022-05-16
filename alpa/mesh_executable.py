@@ -5,7 +5,7 @@ A mesh executable encapsulates all compiled binary and meta information of a dis
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
 The driver part runs on the user script and the worker parts run on distributed workers.
-The driver parts sends control commands to launch the worker parts on workers.
+The driver part sends control commands to launch the worker parts on workers.
 """
 from abc import ABC, abstractmethod
 import logging

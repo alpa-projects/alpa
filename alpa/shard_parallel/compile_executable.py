@@ -100,8 +100,6 @@ def shard_parallel_internal(
       as_option: The options of auto-sharding solver.
       avals: The input abstract values.
     """
-    tic = time.time()
-
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 

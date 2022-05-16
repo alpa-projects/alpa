@@ -1693,8 +1693,8 @@ class VirtualPhysicalMesh:
 
     def get_physical_mesh(self):
         """Launch a physical mesh (which will request resources from Ray)."""
-        assert self.launched_physical_mesh is None,\
-               "Physical mesh can only be launched once."
+        assert self.launched_physical_mesh is None, (
+           "Physical mesh can only be launched once.")
 
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
@@ -1707,8 +1707,8 @@ class VirtualPhysicalMesh:
 
     def get_physical_mesh_group(self, sliced_virtual_meshes):
         """Launch a physical mesh group (which will request resources from Ray)."""
-        assert self.launched_physical_mesh_group is None,\
-               "Physical mesh group can only be launched once."
+        assert self.launched_physical_mesh_group is None, (
+           "Physical mesh group can only be launched once.")
 
         # Launch physical meshes in parallel
         physical_meshes = [None] * len(sliced_virtual_meshes)

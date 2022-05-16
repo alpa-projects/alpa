@@ -1,11 +1,11 @@
 """Options for parallelzing a function.
 
 Alpa classifies common parallel techniques into two categories:
-1. shard parallelism or intra-operator parallelism. This includes data parallelism,
+1. Shard parallelism or intra-operator parallelism. This includes data parallelism,
    operator parallelism (or tensor model parallelism), expert parallelism,
    zero optimizer and their combinations.
-2. pipeline parallelism or inter-operator parallleism.
-Please see our paper (https://arxiv.org/abs/2201.12023) for more details.
+2. Sipeline parallelism or inter-operator parallleism.
+Please see the paper (https://arxiv.org/abs/2201.12023) for more details.
 
 Based on this, alpa provides two base parallel options:
 - ShardParallel: which only uses shard parallelsim.

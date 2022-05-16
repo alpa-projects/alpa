@@ -15,7 +15,6 @@ from jax.lib import xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
-from alpa.global_env import global_config
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
@@ -124,9 +123,6 @@ def shard_parallel_internal(
         "single",
         1,
         as_option)
-
-    if global_config.print_xla_compilation_time:
-        print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,

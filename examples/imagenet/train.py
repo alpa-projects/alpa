@@ -239,10 +239,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
-  #ray.init(address="auto")
-  #physical_mesh = alpa.DeviceCluster().get_physical_mesh()
-  physical_mesh = alpa.LocalPhysicalDeviceMesh()
-  alpa.set_parallelize_options(physical_mesh)
+  alpa.init(cluster="local")
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)
@@ -309,6 +306,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     "label": jax.core.ShapedArray((config.batch_size,), jnp.int32),
   }
   executable = p_train_step.get_executable(state, batch)
+  physical_mesh = executable.physical_mesh
   logging.info('Initial compilation completed.')
 
   sharding_specs = executable.input_sharding_specs[-2:]

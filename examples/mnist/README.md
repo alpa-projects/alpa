@@ -3,6 +3,11 @@ Adopted from https://github.com/google/flax/tree/main/examples/mnist with the fo
 - Use numpy array for data loading instead of jax numpy array
 - Remove random permutation
 
+Quick run
+```
+python3 main.py --workdir=/tmp/mnist --config=configs/default.py
+```
+
 ## MNIST classification
 
 Trains a simple convolutional network on the MNIST dataset.

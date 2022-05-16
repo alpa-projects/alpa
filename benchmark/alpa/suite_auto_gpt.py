@@ -32,8 +32,8 @@ def get_solution_case(model_name, num_micro_batches, num_auto_layers,
              num_micro_batches, "load_solution",
              (prefer_reduce_scatter, use_remat, num_auto_layers,
               (forward_stage_layer_ids,
-              submesh_physical_shapes, submesh_logical_shapes,
-              submesh_autosharding_option_dicts)))]
+               submesh_physical_shapes, submesh_logical_shapes,
+               submesh_autosharding_option_dicts)))]
 
 
 # Temporary debug suite

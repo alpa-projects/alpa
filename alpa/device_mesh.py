@@ -869,7 +869,7 @@ class PhysicalDeviceMesh(ABC):
     ##### Other Functions #####
     @abstractmethod
     def sync_workers(self):
-        """Sync all device activities on workers."""
+        """Sync device activities on all workers."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -1253,13 +1253,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         return outs_handler
 
-    def delete_remote_executable(self, executable: "MeshDriverExecutable"):
+    def delete_remote_executable(self, exec_uuid: int):
         """Delete remote worker executables of a driver executable."""
         if self.workers is None or not ray.is_initialized():
             return
 
         for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(executable.exec_uuid)
+            self.workers[i].delete_executable.remote(exec_uuid)
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self,
@@ -1282,12 +1282,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get(worker.reset_timer.remote(timer_name))
 
     def get_memory_allocated(self):
-        self.sync_workers()
         return max(
             ray.get([w.get_memory_allocated.remote() for w in self.workers]))
 
     def get_max_memory_allocated(self):
-        self.sync_workers()
         return max(
             ray.get([w.get_max_memory_allocated.remote() for w in self.workers]))
 
@@ -1769,6 +1767,27 @@ class PhysicalDeviceMeshGroup:
             cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+
+    def sync_workers():
+        """Sync device activities on all workers."""
+        all_workers = [w for mesh in self.meshes for w in mesh.workers]
+        ray.get([w.sync.remote() for w in all_workers])
+
+    def get_memory_allocated(self):
+        """Get the current size of allocated memory."""
+        calls = []
+        for mesh in self.meshes:
+            for worker in mesh.workers:
+                calls.append(worker.get_memory_allocated.remote())
+        return max(ray.get(calls))
+
+    def get_max_memory_allocated(self):
+        """Get the maximal size of memory allocated so far."""
+        calls = []
+        for mesh in self.meshes:
+            for worker in mesh.workers:
+                calls.append(worker.get_max_memory_allocated.remote())
+        return max(ray.get(calls))
 
     def destroy_collective_groups(self):
         for i in range(len(self)):

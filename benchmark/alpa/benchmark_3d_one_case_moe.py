@@ -17,9 +17,6 @@ from benchmark_3d_one_case_gpt_bert import get_train_step
 from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
 
 
-as_option = global_config.default_autosharding_option
-
-
 def create_train_state(rngkey, model, dtype, batch):
     params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
                               batch["token_type_ids"], batch["position_ids"])

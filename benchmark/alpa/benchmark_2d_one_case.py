@@ -5,7 +5,7 @@ import pickle
 import jax
 import ray
 
-from alpa import global_config, LocalPhysicalDeviceMesh, DeviceCluster
+from alpa import init, global_config, get_global_cluster, LocalPhysicalDeviceMesh
 from alpa.util import run_cmd
 
 from benchmark_2d_one_case_gpt_bert import benchmark_gpt_bert_internal
@@ -26,11 +26,9 @@ def benchmark_one_case(model, case, niter,
             assert num_hosts == 1
             physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:num_devices_per_host])
         else:
-            ray.init(address="auto", ignore_reinit_error=True)
-            device_cluster = DeviceCluster()
-            physical_mesh = device_cluster.get_physical_mesh(
+            init(cluster="ray")
+            physical_mesh = get_global_cluster().get_physical_mesh(
                 list(range(num_hosts)), num_devices_per_host)
-            jax.config.update('jax_platform_name', 'cpu')
 
         global_config.use_dummy_value_for_benchmarking = True
         global_config.shard_parallel_sync_for_timer = True

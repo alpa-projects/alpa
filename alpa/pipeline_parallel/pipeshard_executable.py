@@ -254,7 +254,7 @@ class PipeshardDriverExecutable:
          reduced_var_uuid_lists) = self._compile(concat_vars_mapping)
 
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
-        self.worker_executable_uuid_mapping = {}
+        self.worker_executable_uuid_mapping = {}  # Dict[
         for mesh_idx, physical_mesh in enumerate(self.physical_meshes):
             mesh_grad_uuids = grad_uuids[mesh_idx]
             for worker_idx, worker in enumerate(physical_mesh.workers):
@@ -1017,7 +1017,11 @@ class PipeshardDriverExecutable:
 
     ##### Execution Related Functions #####
     def launch_on_driver(self, *args):
-        """Launch the computation on the driver."""
+        """Launch the executable on the driver.
+
+        Args:
+            args: The original arguments of the parallelized function.
+        """
         num_mesh = len(self.physical_meshes)
         input_bufs = [None for _ in range(num_mesh)]
         output_bufs = [None for _ in range(num_mesh)]
@@ -1168,7 +1172,7 @@ class PipeshardDriverExecutable:
                                  warmup=2,
                                  timer_name="overall",
                                  return_all_costs=False):
-        """Get the execution time cost given a timer name."""
+        """Get the execution time costs with internal timers."""
         if timer_name not in timer_names:
             raise RuntimeError(
                 f"Unrecognized timer name for pipeline parallel runtime. "
@@ -1195,27 +1199,6 @@ class PipeshardDriverExecutable:
             for mesh in self.physical_meshes:
                 mesh.reset_remote_timer(name)
 
-    def get_memory_allocated(self):
-        """Get the current size of allocated memory."""
-        calls = []
-        for mesh in self.physical_meshes:
-            for worker in mesh.workers:
-                calls.append(worker.get_memory_allocated.remote())
-        return max(ray.get(calls))
-
-    def get_max_memory_allocated(self):
-        """Get the maximal size of memory allocated so far."""
-        calls = []
-        for mesh in self.physical_meshes:
-            for worker in mesh.workers:
-                calls.append(worker.get_max_memory_allocated.remote())
-        return max(ray.get(calls))
-
-    def get_total_allocation_size(self):
-        """Get the total allocated memory size of each mesh."""
-        # TODO: compute the theoretical total allocation size
-        raise NotImplementedError()
-
     def get_hlo_text(self, after_spmd_partitioner=True):
         """Return the HLO text for all stages."""
         if after_spmd_partitioner:
@@ -1239,8 +1222,13 @@ class PipeshardDriverExecutable:
                 ret.append(stage.get_hlo_text())
             return ret
 
-    def profile_all_executables(self):
-        """Profile all executables in the runtime."""
+    def get_total_allocation_size(self):
+        """Get the total allocated memory size of each mesh."""
+        # TODO: compute the theoretical total allocation size
+        raise NotImplementedError()
+
+    def profile_all_executable_with_dummy_inputs(self):
+        """Profile all stage executables with dummy inputs."""
         all_profiled_handles = []
         for _, physical_mesh in enumerate(self.physical_meshes):
             all_worker_profiled = []
@@ -1290,6 +1278,10 @@ class PipeshardDriverExecutable:
             ray.get(rets)
         except ray.exceptions.RayActorError:
             self.physical_meshes._exception_shutdown()
+
+    def __del__(self):
+        for worker, uuid in self.worker_executable_uuid_mapping:
+            worker.delete_executable.remote(uuid)
 
 
 class PipeshardMeshWorkerExecuable:
@@ -1457,7 +1449,8 @@ class PipeshardMeshWorkerExecuable:
         self.worker.reset_memory_stats()
         ret = {
             exec_id:
-            (np.mean(self.worker.profile_executable_with_dummy_inputs(exec_id)),
+            (np.mean(self.worker.profile_executable_with_dummy_inputs(exec_id,
+                                                                      skip_grad_sync=False)),
              self.worker.get_exec_total_allocation_size(exec_id) / 1024**3)
             for exec_id in self.partial_grad_exec_uuids
         }

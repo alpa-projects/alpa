@@ -7,12 +7,10 @@ import numpy as np
 import optax
 
 import alpa
-from alpa import parallelize, global_config, set_parallelize_options
+from alpa import parallelize, global_config, ShardParallel
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.util import (map_to_shape, count_communication_primitives,
                         print_used_time, compute_param_number, GB)
-
-as_option = global_config.default_autosharding_option
 
 
 def compute_metrics(logits, labels):
@@ -71,9 +69,9 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc):
+def get_train_step(learning_rate_fn, use_grad_acc, option):
 
-    @parallelize
+    @parallelize(option=option)
     def train_step(state, batch):
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
@@ -157,23 +155,25 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         use_grad_acc = False
         num_micro_batches = None
 
+    as_option = {}
     if force_batch_dim_mapping:
         # Always map batch dim to mesh dim 0
-        as_option.force_batch_dim_to_mesh_dim = 0
-    as_option.prefer_reduce_scatter = prefer_reduce_scatter
-    as_option.allow_mixed_mesh_shape = True
+        as_option["force_batch_dim_to_mesh_dim"] = 0
+    as_option["prefer_reduce_scatter"] = prefer_reduce_scatter
+    as_option["allow_mixed_mesh_shape"] = True
     if parallel_mode == "zero-3":
-        as_option.force_zero_stage_3 = True
+        as_option["force_zero_stage_3"] = True
     elif parallel_mode in ["shard-largest"]:
-        as_option.force_simple_heuristic = other
+        as_option["force_simple_heuristic"] = other
         global_config.remat_using_while = True
 
     logical_mesh = physical_mesh.get_logical_mesh(logical_mesh_shape,
                                                   mesh_topology="tree",
                                                   inter_host_bandwidth=1,
                                                   intra_host_bandwidth=30)
-    set_parallelize_options(devices=logical_mesh,
-                            num_micro_batches=num_micro_batches)
+    option = ShardParallel(devices=logical_mesh,
+                           num_micro_batches=num_micro_batches,
+                           overwrite_auto_sharding_option=as_option)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
@@ -196,7 +196,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
     param_count = compute_param_number(state.params)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc, option)
     print_used_time("Create train state")
 
     # Compile executable

@@ -26,7 +26,7 @@ from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable
 from alpa.pipeline_parallel.local_pipeline import compile_local_pipeline_executable
 from alpa.pipeline_parallel.stage_construction import (
-    AutoStageOption, UniformStageOption)
+    AutoStageOption, ManualStageOption, UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
 
@@ -53,7 +53,8 @@ class ShardParallel(ParallelOption):
     """Use shard parallelism with options.
 
     Args:
-        devices: Specify the devices to use.
+        devices: Specify the devices to use. If it is None, use all the devices
+          in the cluster.
         num_micro_batches: The number of micro batches for gradient accumulation.
         overwrite_auto_sharding_option: Overrite default auto sharding options.
           see also AutoShardingOption for valid options.
@@ -100,12 +101,15 @@ class PipeshardParallel(ParallelOption):
     This strategy combines pipeline parallelism and shard parallelism.
 
     Args:
-        devices: Specify the devices to use.
+        devices: Specify the devices to use. If it is None, use all the devices
+          in the cluster.
         num_micro_batches: The number of micro batches for gradient accumulation.
-        stage_mode: How to construct stages.
-          Possible choices: {"uniform", "auto"}
         overwrite_auto_sharding_option: Overrite default auto sharding options.
           see also AutoShardingOption for valid options.
+        pipeline_schedule: The pipieline schedules.
+          Possible choices: {"1f1b", "gpipe", "inference"}
+        stage_mode: How to construct stages.
+          Possible choices: {"uniform", "auto"}
         submesh_physical_shape_space: The search space of the physical submesh shapes. 
           Possible choices: {"power_of_two", "small_power_of_two", "all"}.
         submesh_logical_shape_space: The search space of the logical mesh shapes.
@@ -119,7 +123,7 @@ class PipeshardParallel(ParallelOption):
     """
 
     def __init__(self,
-                 devices: Optional[Union[LogicalDeviceMesh, PhysicalDeviceMesh]] = None,
+                 devices: Optional[VirtualPhysicalMesh] = None,
                  num_micro_batches: int = 1,
                  overwrite_auto_sharding_option: Optional[Dict] = None,
                  pipeline_schedule: str = "1f1b",
@@ -174,8 +178,46 @@ class PipeshardParallel(ParallelOption):
             self.as_option, self.stage_option, *avals)
 
 
-class ManualPipeShardParallel(ParallelOption):
-    pass
+class ManualPipeshardParallel(PipeshardParallel):
+    """Use pipeshard parallelism with manual assignment.
+
+    This option can be used to load the solution found by auto PipeshardParallel.
+
+    Args:
+        forward_stage_layer_ids: Layer IDs of each forward stage.
+        submesh_physical_shapes: The physical shapes of submeshes of each stage.
+        submesh_logical_shapes: The logical shapes of submeshes of each stage.
+        submesh_autosharding_option_dicts: The auto-sharding options of each stage.
+        devices: Specify the devices to use. If it is None, use all the devices
+          in the cluster.
+        num_micro_batches: The number of micro batches for gradient accumulation.
+        overwrite_auto_sharding_option: Overrite default auto sharding options.
+          see also AutoShardingOption for valid options.
+        pipeline_schedule: The pipieline schedules.
+          Possible choices: {"1f1b", "gpipe", "inference"}
+    """
+
+    def __init__(self,
+                 forward_stage_layer_ids: Sequence[Sequence[int]],
+                 submesh_physical_shapes: Sequence[Sequence[int]],
+                 submesh_logical_shapes: Sequence[Sequence[int]],
+                 submesh_autosharding_option_dicts: Sequence[dict],
+                 devices: Optional[VirtualPhysicalMesh] = None,
+                 num_micro_batches: int = 1,
+                 overwrite_auto_sharding_option: Optional[Dict] = None,
+                 pipeline_schedule: str = "1f1b"):
+        self.devices = devices
+        self.num_micro_batches = num_micro_batches
+        self.as_option = AutoShardingOption()
+        if overwrite_auto_sharding_option:
+            self.as_option = self.as_option.copy_and_update(overwrite_auto_sharding_option)
+        self.pipeline_schedule = pipeline_schedule
+        self.stage_option = ManualStageOption(
+             forward_stage_layer_ids,
+             submesh_physical_shapes,
+             submesh_logical_shapes,
+             submesh_autosharding_option_dicts,
+        )
 
 
 class LocalPipelineParallel(ParallelOption):

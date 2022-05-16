@@ -170,7 +170,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     allow_mixed_mesh_shape = True
     if parallel_mode == "search":
         prefer_reduce_scatter, use_remat, auto_stage_option = parallel_args
-        option = PipeshardParallel(
+        method = PipeshardParallel(
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
             overwrite_auto_sharding_option={
@@ -180,7 +180,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
             **auto_stage_option)
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, manual_stage_option = parallel_args
-        option = ManualPipeshardParallel(
+        method = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
             overwrite_auto_sharding_option={

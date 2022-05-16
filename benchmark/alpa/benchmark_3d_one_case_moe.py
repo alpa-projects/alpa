@@ -83,7 +83,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         auto_remat_mode = "fine_grained" if use_remat else None
         num_auto_remat_layers = num_layers
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        option = ManualPipeshardParallel(
+        method = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
@@ -112,7 +112,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
             physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
                                    num_devices_per_host)
 
-        option = ManualPipeshardParallel(
+        method = ManualPipeshardParallel(
             num_micro_batches=num_micro_batches,
             forward_stage_layer_ids=[[i] for i in range(pp)],
             submesh_physical_shapes=[physical_mesh_shape] * pp,

@@ -77,7 +77,7 @@ b = random.normal(k2, (dim,), jnp.float32)
 # Generate the training data
 ksample, knoise = random.split(k1)
 x = random.normal(ksample, (batch_size, dim), jnp.float32)
-y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
+y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim), jnp.float32)
 
 # Initialize a train state, which includes the model paramter and optimizer
 # state.
@@ -165,6 +165,8 @@ manual_pipeline_actual_state = manual_pipeline_train_step(manual_pipeline_state,
 assert_allclose(expected_state.params, manual_pipeline_actual_state.params,
                 atol=5e-3)
 
+alpa.shutdown()
+
 ################################################################################
 # Pipeline Parallelism with Automatic Assignment
 # ----------------------------------------------
@@ -182,8 +184,6 @@ assert_allclose(expected_state.params, manual_pipeline_actual_state.params,
 #    layers to submeshes to form pipeline stages to minimize the total
 #    pipeline execution latency.
 
-# Restart alap to clean the previous status
-alpa.shutdown()
 alpa.init(cluster="ray")
 
 # Define training step with automatic pipeline-operator parallelism. Note that
@@ -191,10 +191,7 @@ alpa.init(cluster="ray")
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
 
-method = alpa.PipeshardParallel(num_micro_batches=16,
-                                stage_mode="auto")
-
-@alpa.parallelize(method=method)
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16, stage_mode="auto")
 def auto_pipeline_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the

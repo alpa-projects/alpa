@@ -187,11 +187,13 @@ def _compile_parallel_executable(
                                      static_argnums, donated_invars,
                                      batch_invars, *avals)
 
+
 def set_parallelize_options(*args, **kwargs):
     """Deprecated. see https://github.com/alpa-projects/alpa/pull/451"""
     raise RuntimeError("The API `set_parallelize_options` is deprecated. "
                        "Check https://github.com/alpa-projects/alpa/pull/451 "
                        "on how to upgrade.")
+
 
 def clear_executable_cache():
     """Clear all cached executables."""
@@ -229,4 +231,3 @@ def value_and_grad(*args, **kwargs):
         return mark_gradient((val, ggrad))
 
     return ret
-

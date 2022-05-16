@@ -1,3 +1,4 @@
+# pylint: disable=arguments-differ
 """
 A mesh executable encapsulates all compiled binary and meta information of a distributed executable.
 

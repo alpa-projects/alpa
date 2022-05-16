@@ -206,6 +206,7 @@ class ManualPipeshardParallel(PipeshardParallel):
                  num_micro_batches: int = 1,
                  overwrite_auto_sharding_option: Optional[Dict] = None,
                  pipeline_schedule: str = "1f1b"):
+        # pylint: disable=super-init-not-called
         self.devices = devices
         self.num_micro_batches = num_micro_batches
         self.as_option = AutoShardingOption()
@@ -213,10 +214,10 @@ class ManualPipeshardParallel(PipeshardParallel):
             self.as_option = self.as_option.copy_and_update(overwrite_auto_sharding_option)
         self.pipeline_schedule = pipeline_schedule
         self.stage_option = ManualStageOption(
-             forward_stage_layer_ids,
-             submesh_physical_shapes,
-             submesh_logical_shapes,
-             submesh_autosharding_option_dicts,
+            forward_stage_layer_ids,
+            submesh_physical_shapes,
+            submesh_logical_shapes,
+            submesh_autosharding_option_dicts,
         )
 
 

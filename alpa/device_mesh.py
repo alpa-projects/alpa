@@ -1768,7 +1768,7 @@ class PhysicalDeviceMeshGroup:
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
 
-    def sync_workers():
+    def sync_workers(self):
         """Sync device activities on all workers."""
         all_workers = [w for mesh in self.meshes for w in mesh.workers]
         ray.get([w.sync.remote() for w in all_workers])

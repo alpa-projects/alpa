@@ -1264,9 +1264,8 @@ class PipeshardDriverExecutable:
 
     ##### Other Functions #####
     def sync(self):
-        """Sync all workers' GPU activities."""
-        all_workers = [w for mesh in self.physical_meshes for w in mesh.workers]
-        ray.get([w.sync.remote() for w in all_workers])
+        """Sync device activities on all workers."""
+        self.physical_meshes.sync()
 
     def _check_alive(self):
         try:

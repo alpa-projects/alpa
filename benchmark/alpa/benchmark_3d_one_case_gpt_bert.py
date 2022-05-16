@@ -9,9 +9,9 @@ import time
 import alpa
 from alpa import (parallelize, global_config, get_global_cluster,
                   set_global_virtual_physical_mesh,
+                  PipeshardParallel, ManualPipeshardParallel,
                   mark_pipeline, manual_layer_construction,
-                  automatic_layer_construction, automatic_remat,
-                  PipeshardParallel, ManualPipeshardParallel)
+                  automatic_layer_construction, automatic_remat)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
@@ -200,7 +200,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         logical_mesh_shape = (dp, op)
         num_manual_pipeline_stages = pp
         num_mesh_devices = np.prod(logical_mesh_shape)
-        num_devices_per_host = 8
+        num_devices_per_host = virtual_mesh.num_devices_per_host
         if num_mesh_devices <= num_devices_per_host:
             physical_mesh_shape = (1, num_mesh_devices)
         else:

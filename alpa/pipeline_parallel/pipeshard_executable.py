@@ -1265,7 +1265,7 @@ class PipeshardDriverExecutable:
     ##### Other Functions #####
     def sync(self):
         """Sync device activities on all workers."""
-        self.physical_meshes.sync()
+        self.physical_meshes.sync_workers()
 
     def _check_alive(self):
         try:

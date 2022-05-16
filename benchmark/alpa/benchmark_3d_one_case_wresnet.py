@@ -9,7 +9,9 @@ import optax
 
 import alpa
 from alpa import (parallelize, get_global_cluster,
-                  set_global_virtual_physical_mesh)
+                  set_global_virtual_physical_mesh,
+                  ShardParallel, PipeshardParallel, ManualPipeshardParallel,
+                  automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.layer_construction import automatic_remat
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
@@ -100,7 +102,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
             }
             return loss, (new_model_state, metrics)
 
-        if global_config.strategy == "shard_parallel" and use_remat:
+        if isinstance(option, ShardParallel) and use_remat:
             loss_fn = automatic_remat(loss_fn, layer_num=num_auto_layers)
         else:
             loss_fn = automatic_layer_construction(loss_fn,
@@ -215,8 +217,8 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(option, learning_rate_fn, use_grad_acc,
-                                use_remat, num_auto_layers)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc,
+                                use_remat, num_auto_layers, option)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 

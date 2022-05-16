@@ -1,4 +1,5 @@
 """Compile executables for pipeshard parallelism."""
+import dataclasses 
 import logging
 import time
 from typing import Callable, Sequence
@@ -225,8 +226,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         virtual_mesh = virtual_meshes[mesh_idx]
         logical_mesh = virtual_mesh.get_logical_mesh(
             logical_mesh_shapes[mesh_idx])
-        autosharding_option = default_as_option.replace(
-            **autosharding_option_dicts[mesh_idx])
+        autosharding_option = dataclasses.replace(
+            default_as_option, **autosharding_option_dicts[mesh_idx])
 
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:

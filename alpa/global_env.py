@@ -60,6 +60,7 @@ class GlobalConfig:
         self.default_ray_namespace_prefix = "alpa-train"
         self.unittest_ray_namespace_prefix = "alpa-unittest"
 
+global_config = GlobalConfig()
 
 # Other environment setup
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"

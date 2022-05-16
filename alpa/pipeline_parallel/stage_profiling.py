@@ -1,8 +1,9 @@
 """Functionalities about profiling the stages."""
-import gc
-import logging
 from abc import ABC, abstractmethod
 from collections import namedtuple
+import dataclasses
+import gc
+import logging
 from typing import Dict, Sequence
 
 import jax.numpy as jnp
@@ -439,7 +440,8 @@ def compile_all(stages, num_micro_batches, default_as_option):
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
             (stage_id, stage_config.compile_config, logical_mesh,
-             default_as_option.replace(**autosharding_option_dict), num_micro_batches))
+             dataclasses.replace(default_as_option, **autosharding_option_dict),
+             num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):

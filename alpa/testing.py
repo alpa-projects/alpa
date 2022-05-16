@@ -306,7 +306,7 @@ class PipelineBasicTest(unittest.TestCase):
                          use_value_and_grad=False,
                          manual_pipeline_layer=True,
                          stage_option: Optional[StageOption] = None,
-                         as_option: Optiona[AutoShardingOption] = None,
+                         as_option: Optional[AutoShardingOption] = None,
                          do_numerical_test: bool = True):
         method = PipeshardParallel(num_micro_batches=2)
         method.stage_option = stage_option or UniformStageOption()

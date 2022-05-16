@@ -32,13 +32,9 @@ import optax
 import ray
 
 ################################################################################
-# Besides alpa and jax related libraries, we also import  and start (or connect to) a ray cluster. We use ray to manage the
-# devices in the distributed cluster in alpa.
-
-################################################################################
 # Connect to a Ray Cluster
 # -------------------------------------------
-# Alpa uses a distributed framework `ray <https://docs.ray.io/>`_  to manage
+# Alpa uses a distributed framework `ray <https://docs.ray.io/>`_ to manage
 # the cluster and disributed workers. We initialize ray and alpa.
 
 ray.init()

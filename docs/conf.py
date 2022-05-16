@@ -50,7 +50,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The unlisted files always appear after listed files.
 within_subsection_order = {
     "tutorials": [
-        "getting_started.py",
+        "quickstart.py",
         "pipeshard_parallelism.py",
         "alpa_vs_pmap.py",
         "advanced_api_usage.py",

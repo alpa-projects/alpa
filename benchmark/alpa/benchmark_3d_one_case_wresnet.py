@@ -76,9 +76,9 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
 
 
 def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
-                   option):
+                   method):
 
-    @parallelize(method=option)
+    @parallelize(method=method)
     def train_step(state, batch):
 
         def loss_fn(params):
@@ -102,7 +102,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
             }
             return loss, (new_model_state, metrics)
 
-        if isinstance(option, ShardParallel) and use_remat:
+        if isinstance(method, ShardParallel) and use_remat:
             loss_fn = automatic_remat(loss_fn, layer_num=num_auto_layers)
         else:
             loss_fn = automatic_layer_construction(loss_fn,
@@ -186,7 +186,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
             default_auto_sharding_option=AutoShardingOption(
                prefer_reduce_scatter=prefer_reduce_scatter,
                allow_mixed_mesh_shape=allow_mixed_mesh_shape,
-            ),
+            ))
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
 
@@ -218,7 +218,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
     train_step = get_train_step(learning_rate_fn, use_grad_acc,
-                                use_remat, num_auto_layers, option)
+                                use_remat, num_auto_layers, method)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 
@@ -235,7 +235,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         compilation_times = None
 
     # Dump hlo ir for debugging
-    if isinstance(option, PipeshardParallel):
+    if isinstance(method, PipeshardParallel):
         stage_hlo_texts = executable.get_hlo_text()
         for i in range(len(stage_hlo_texts)):
             with open(f"tmp/stage_{i}.hlo", "w") as fout:
@@ -256,7 +256,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=2)
-    if isinstance(option, PipeshardParallel):
+    if isinstance(method, PipeshardParallel):
         max_mem_allocated = executable.physical_meshes.get_max_memory_allocated()
     else:
         max_mem_allocated = executable.physical_mesh.get_max_memory_allocated()

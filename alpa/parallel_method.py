@@ -12,7 +12,7 @@ Based on this, alpa provides two base parallel methods:
 - PipeshardParallel: which combines pipeline parallelism and shard parallelism.
 """
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Sequence, Dict, Union
+from typing import Callable, Optional, Sequence, Union
 
 from jax import linear_util as lu
 from jax.core import AbstractValue
